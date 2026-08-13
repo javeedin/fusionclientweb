@@ -1,8 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import type { User, AuthContextType, LoginResult } from '../types';
-
-const APEX_AUTH_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/auth';
-const APEX_ADMIN_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/admin';
+import { getCurrentCompany } from '../config/company.config';
 
 
 const isElectron = !!(window as any).electronAPI?.isElectron;
@@ -35,6 +33,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginWithStatus = useCallback(async (username: string, password: string): Promise<LoginResult> => {
     try {
+      // Get company-specific APEX base URL from company config
+      const currentCompany = getCurrentCompany();
+      const APEX_AUTH_BASE = `${currentCompany.apexBaseUrl}/auth`;
+      const APEX_ADMIN_BASE = `${currentCompany.apexBaseUrl}/admin`;
+
+      console.log('[Auth] Logging in with company:', currentCompany.code, 'APEX base:', APEX_AUTH_BASE);
+
       const res = await fetch(`${APEX_AUTH_BASE}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -105,6 +110,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const sendOtp = useCallback(async (username: string) => {
     try {
+      const currentCompany = getCurrentCompany();
+      const APEX_AUTH_BASE = `${currentCompany.apexBaseUrl}/auth`;
+
       // Step 1: Ask APEX to generate & store OTP — returns the OTP value
       const res = await fetch(`${APEX_AUTH_BASE}/send-otp`, {
         method: 'POST',
@@ -140,6 +148,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const setPassword = useCallback(async (username: string, otp: string, newPassword: string) => {
     try {
+      const currentCompany = getCurrentCompany();
+      const APEX_AUTH_BASE = `${currentCompany.apexBaseUrl}/auth`;
+
       const res = await fetch(`${APEX_AUTH_BASE}/set-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -153,6 +164,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const uploadPhoto = useCallback(async (username: string, base64: string, mimeType: string) => {
     try {
+      const currentCompany = getCurrentCompany();
+      const APEX_AUTH_BASE = `${currentCompany.apexBaseUrl}/auth`;
+
       const res = await fetch(`${APEX_AUTH_BASE}/upload-photo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -176,6 +190,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const changePassword = useCallback(async (username: string, currentPassword: string, newPassword: string) => {
     try {
+      const currentCompany = getCurrentCompany();
+      const APEX_AUTH_BASE = `${currentCompany.apexBaseUrl}/auth`;
+
       const res = await fetch(`${APEX_AUTH_BASE}/change-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
