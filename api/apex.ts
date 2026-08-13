@@ -13,9 +13,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { method = 'GET', path = '', body, companyCode = 'BUMERIC' } = req.body;
 
     // Get company-specific config from env
-    const baseUrl = process.env[`APEX_BASE_URL_${companyCode}`]
-      || process.env.APEX_BASE_URL
-      || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+    // Env var format: REACT_APP_<COMPANY>_APEX_BASE_URL
+    const baseUrl = process.env[`REACT_APP_${companyCode}_APEX_BASE_URL`]
+      || process.env.REACT_APP_BUMERIC_APEX_BASE_URL;
 
     const url = `${baseUrl}${path}`;
 

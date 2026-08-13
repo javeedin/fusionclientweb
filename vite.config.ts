@@ -27,11 +27,11 @@ export default defineConfig(() => {
           changeOrigin: true,
           secure: false,
         },
-        // Proxy Mitsumi ORDS calls to avoid CORS in dev
-        '/ords-mitsu': {
-          target: 'https://g827cd88c3cfc03-mitsumioracledb.adb.me-dubai-1.oraclecloudapps.com',
+        // Proxy ORDS calls to company-specific endpoints from env vars (avoid CORS in dev)
+        '/ords-proxy': {
+          target: process.env.REACT_APP_MITSUMI_APEX_BASE_URL || 'https://g827cd88c3cfc03-mitsumioracledb.adb.me-dubai-1.oraclecloudapps.com',
           changeOrigin: true,
-          rewrite: (path: string) => path.replace(/^\/ords-mitsu/, '/ords/test/FUSIONCLIENTERP'),
+          rewrite: (path: string) => path.replace(/^\/ords-proxy/, ''),
           secure: true,
         },
       },
