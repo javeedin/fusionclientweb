@@ -491,38 +491,40 @@ const Login: React.FC = () => {
             </div>
           )}
 
-          {/* Fusion Login Checkbox */}
-          <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #e8e8e8' }}>
-            <div
-              onClick={() => setUseFusionLogin(!useFusionLogin)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                cursor: 'pointer',
-                padding: '8px 0',
-                userSelect: 'none',
-              }}
-            >
-              <div style={{
-                width: 18,
-                height: 18,
-                borderRadius: 3,
-                border: '1.5px solid #1677ff',
-                background: useFusionLogin ? '#1677ff' : '#fff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#fff',
-                fontSize: 11,
-              }}>
-                {useFusionLogin && '✓'}
+          {/* Fusion Login Checkbox - Only show if instances available */}
+          {fusionInstances.length > 0 && (
+            <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #e8e8e8' }}>
+              <div
+                onClick={() => setUseFusionLogin(!useFusionLogin)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  cursor: 'pointer',
+                  padding: '8px 0',
+                  userSelect: 'none',
+                }}
+              >
+                <div style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 3,
+                  border: '1.5px solid #1677ff',
+                  background: useFusionLogin ? '#1677ff' : '#fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#fff',
+                  fontSize: 11,
+                }}>
+                  {useFusionLogin && '✓'}
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 500, color: '#262626' }}>
+                  Login using Oracle Fusion
+                </span>
               </div>
-              <span style={{ fontSize: 13, fontWeight: 500, color: '#262626' }}>
-                Login using Oracle Fusion
-              </span>
             </div>
-          </div>
+          )}
 
           {/* Fusion Instance Selector */}
           {useFusionLogin && fusionInstances.length > 0 && (
