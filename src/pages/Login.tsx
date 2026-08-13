@@ -245,6 +245,13 @@ const Login: React.FC = () => {
   const currentCompanyConfig = getAllCompanies().find(c => c.code === selectedCompany);
   const fusionInstances = currentCompanyConfig?.fusionInstances || [];
 
+  // Debug: Log company and instances info
+  React.useEffect(() => {
+    console.log('[DEBUG] Selected Company:', selectedCompany);
+    console.log('[DEBUG] Company Config:', currentCompanyConfig);
+    console.log('[DEBUG] Fusion Instances for', selectedCompany, ':', fusionInstances);
+  }, [selectedCompany, currentCompanyConfig, fusionInstances]);
+
   const onFinish = async (values: { username: string; password: string }) => {
     // Validate Fusion instance selection if Fusion login is selected
     if (useFusionLogin && !selectedInstance) {
