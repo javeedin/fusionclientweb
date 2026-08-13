@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
 import { SearchTabPanel } from './SearchTabPanel';
@@ -59,7 +60,7 @@ const { Text } = Typography;
 const { Option } = Select;
 
 // API Base URL
-const API_BASE_URL = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/gl';
+const API_BASE_URL = buildApexUrl('gl');
 
 // Oracle Redwood Color Palette
 const REDWOOD = {
@@ -172,7 +173,7 @@ const reportMenuItems: MenuItemType[] = [
   { key: 'account-analysis', icon: <FundOutlined />, label: 'Account Analysis', description: 'Account detail analysis', color: REDWOOD.warning, path: '/gl/account-analysis' },
 ];
 
-const VALUES_API = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/valuesets/getvalues';
+const VALUES_API = buildApexUrl('valuesets/getvalues');
 const COMPANY_VALUESET = 'BUIMERC_FIN_GLB_COA_CO';
 const COMPANY_LOV_URL  = `${VALUES_API}/${COMPANY_VALUESET}`;
 
@@ -374,7 +375,7 @@ const AccountAnalysis: React.FC = () => {
       params.append('P_APPLICATION_NAME', 'General Ledger');
       params.append('P_LEDGER_NAME', selectedLedger);
 
-      const url = `https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/periodsstatus/create?${params.toString()}`;
+      const url = `${buildApexUrl("periodsstatus/create?${params.toString()}")}`;
       console.log('Fetching all periods from:', url);
 
       const response = await fetch(url);
@@ -532,7 +533,7 @@ const AccountAnalysis: React.FC = () => {
   const fetchAccounts = useCallback(async () => {
     setAccountsLoading(true);
     try {
-      const url = `https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/glaccountslist`;
+      const url = `${buildApexUrl("glaccountslist")}`;
       console.log('Fetching accounts from:', url);
 
       const response = await fetch(url);

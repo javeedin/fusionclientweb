@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
@@ -40,7 +41,7 @@ const REDWOOD = {
   neutral600: '#6B6B6B', neutral900: '#1A1A1A', surface: '#FFFFFF',
 };
 
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface TransferRecord {
@@ -2247,7 +2248,7 @@ const AccountingApiTesterModal: React.FC<{
     if (!resolvedLedger && ['gl_create_d', 'gl_create_r', 'sla_create_d', 'sla_create_r'].includes(step.key) && txn?.businessUnit) {
       setResults(prev => ({ ...prev, ledger: { loading: true } }));
       try {
-        const apexBase = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+        const apexBase = buildApexUrl('');
         const ledgerRes = await fetch(`${apexBase}/gl/getledgername?P_BUSINESS_UNIT_NAME=${encodeURIComponent(txn.businessUnit)}`, { headers: { Accept: 'application/json' } });
         if (ledgerRes.ok) {
           const ledgerData = await ledgerRes.json();

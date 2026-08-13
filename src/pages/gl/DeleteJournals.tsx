@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState } from 'react';
 import {
   Layout, Card, Row, Col, Input, Button, Space, Tabs, message, Modal, Divider,
@@ -11,7 +12,7 @@ import { APEX_DB_CONFIG } from '../../config/api.config';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 
 const REDWOOD = {
   primary: '#C74634',

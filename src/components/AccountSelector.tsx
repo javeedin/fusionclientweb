@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Modal, Select, Button, Space, Typography, Spin, Row, Col, message } from 'antd';
 import { SearchOutlined, ReloadOutlined } from '@ant-design/icons';
@@ -35,8 +36,8 @@ interface AccountSelectorProps {
 }
 
 // API endpoints
-const SEGMENTS_API = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/chartofaccounts/structuresegments';
-const VALUES_API = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/valuesets/getvalues';
+const SEGMENTS_API = buildApexUrl('chartofaccounts/structuresegments');
+const VALUES_API = buildApexUrl('valuesets/getvalues');
 
 // Cache for segments and values
 let segmentsCache: Segment[] = [];

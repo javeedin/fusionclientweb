@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useCallback, useEffect } from 'react';
 import dayjs from 'dayjs';
 import {
@@ -746,7 +747,7 @@ const ManageSLAJournals: React.FC = () => {
   };
 
   // ── Post to GL helpers ────────────────────────────────────────────────────
-  const GL_CREATE_URL = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/journals/create';
+  const GL_CREATE_URL = buildApexUrl('journals/create');
   const SLA_POST_URL  = `${APEX_DB_CONFIG.baseUrl}/${APEX_DB_CONFIG.endpoints.slaAccountingPost}`;
 
   /** Build the journals/create payload from SLA header + its fetched lines */

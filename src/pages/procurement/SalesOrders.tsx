@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Form, Input, Select, DatePicker, Button,
@@ -37,7 +38,7 @@ const _isElectron = !!(window as unknown as { electron?: unknown; electronAPI?: 
 const FUSION_BASE = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
 const AUTH_HEADER = FUSION_POD_AUTH;
 const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 const PAGE_LIMIT = 500;
 
 const REDWOOD = {
@@ -2859,7 +2860,7 @@ const PAYMENT_TERMS = ['Immediate', '30 Net', '45 Net', '60 Net', 'CR7D', 'CR30D
 // Custom ORDS lookups (customers, payment terms, salespersons).
 // Electron goes direct; the browser build routes via the /ords-mitsu proxy to avoid CORS.
 const ORDS_AR = _isElectron
-  ? 'https://g827cd88c3cfc03-mitsumioracledb.adb.me-dubai-1.oraclecloudapps.com/ords/test/FUSIONCLIENTERP/ar'
+  ? buildApexUrl('test/FUSIONCLIENTERP/ar')
   : '/ords-mitsu/ar';
 const PAYMENT_TERMS_URL = `${ORDS_AR}/paymentterms`;
 const SALESREPS_URL = `${ORDS_AR}/salesperson`;

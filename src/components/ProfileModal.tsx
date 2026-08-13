@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useRef, useState } from 'react';
 import {
   Modal, Avatar, Button, Progress, Typography, Space, Divider,
@@ -318,7 +319,7 @@ const ChangePasswordTab: React.FC = () => {
 /* ─────────────────────────────────────────────
    Tab 3 — My Access
 ───────────────────────────────────────────── */
-const APEX_ADMIN = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/admin';
+const APEX_ADMIN = buildApexUrl('admin');
 
 const moduleLabel: Record<string, string> = {
   GL: 'General Ledger', AP: 'Accounts Payable', AR: 'Accounts Receivable',

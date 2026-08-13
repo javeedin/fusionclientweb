@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState } from 'react';
 import {
   Button, Drawer, Table, Tag, Space, Alert, Tooltip, Typography, Divider, Badge, Modal, Spin,
@@ -70,7 +71,7 @@ const confidenceColor = (c: number) =>
 const fmtAmt = (v: number) =>
   new Intl.NumberFormat('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 
 const maskKey = (k: string) => !k || k.length < 16 ? k : k.substring(0, 14) + '••••••••••••' + k.substring(k.length - 4);
 

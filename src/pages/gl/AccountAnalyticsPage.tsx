@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Card, Row, Col, Typography, Space, Button, Table, Tag, Select,
@@ -105,7 +106,7 @@ const periodKey = (p: string) => {
 
 // ─── Chat ────────────────────────────────────────────────────────────────────
 interface ChatMsg { role: 'user' | 'assistant'; content: string; loading?: boolean; }
-const CLAUDE_API = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/ai/chat';
+const CLAUDE_API = buildApexUrl('ai/chat');
 
 // ─── Recharts custom tooltip ──────────────────────────────────────────────────
 const ChartTooltip = ({ active, payload, label, ccy }: any) => {

@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   Layout,
@@ -599,7 +600,7 @@ const Banks: React.FC = () => {
     // Fetch payment documents for this account
     fetchPaymentDocuments(account.BankAccountId);
     // Enrich with local APEX data (PDC account combination is stored locally only)
-    fetch('https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/banks/bankaccounts', {
+    fetch(buildApexUrl('banks/bankaccounts'), {
       headers: { Accept: 'application/json' },
     })
       .then(r => r.json())
@@ -631,7 +632,7 @@ const Banks: React.FC = () => {
       const values = await accountForm.validateFields();
       if (!editingAccount?.BankAccountId) return;
 
-      const url = `https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/banks/bankaccounts/${editingAccount.BankAccountId}`;
+      const url = `${buildApexUrl("banks/bankaccounts/${editingAccount.BankAccountId}")}`;
       const body = {
         cashAccountCombination:                 values.CashAccountCombination || null,
         cashClearingAccountCombination:         values.CashClearingAccountCombination || null,

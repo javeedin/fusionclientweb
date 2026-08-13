@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Layout, Card, Form, Select, Input, Button, Space, Typography, Table, Tag,
@@ -52,7 +53,7 @@ const REDWOOD = {
 const APEX_AR_RECEIPTS     = `${APEX_DB_CONFIG.baseUrl}/ar/receipts`;
 const APEX_RECEIPT_APPS    = `${APEX_DB_CONFIG.baseUrl}/ar/receipt-applications`;
 const APEX_RECEIPT_METHODS = `${APEX_DB_CONFIG.baseUrl}/ar/receiptmethods`;
-const GL_ORDS_BASE         = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const GL_ORDS_BASE         = buildApexUrl('');
 const APEX_AR_INVOICES     = `${APEX_DB_CONFIG.baseUrl}/ar/invoices`;
 const ORDS_RECEIPT_METHOD_ACCOUNTS = `${GL_ORDS_BASE}/ar/receipt-method-accounts`;
 

@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
@@ -27,10 +28,10 @@ const { Text, Title } = Typography;
 const { Option } = Select;
 
 const FUSION_BASE = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
-const ORDS_DIRECT = 'https://g827cd88c3cfc03-mitsumioracledb.adb.me-dubai-1.oraclecloudapps.com/ords/test/FUSIONCLIENTERP';
+const ORDS_DIRECT = buildApexUrl('test/FUSIONCLIENTERP');
 // In dev (localhost) use Vite proxy to avoid CORS; in Electron/production use direct URL.
 const ORDS_BASE   = window.location.hostname === 'localhost' ? '/ords-mitsu' : ORDS_DIRECT;
-const GL_ORDS_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const GL_ORDS_BASE = buildApexUrl('');
 const AUTH_HEADER = FUSION_POD_AUTH;
 const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
 

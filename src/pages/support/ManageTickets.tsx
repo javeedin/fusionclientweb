@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input, Select,
@@ -22,7 +23,7 @@ const { Content } = Layout;
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 
 const REDWOOD = {
   primary: '#C74634', info: '#0572CE', success: '#1D7B4D',

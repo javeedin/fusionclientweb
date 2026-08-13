@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useRef } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
@@ -148,7 +149,7 @@ const reportMenuItems: FloatingMenuItem[] = [
 ];
 
 // API Base URL
-const API_BASE_URL = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/gl/journals';
+const API_BASE_URL = buildApexUrl('gl/journals');
 
 // Ledger interface from API
 interface Ledger {

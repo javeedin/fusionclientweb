@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useRef } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
@@ -147,7 +148,7 @@ const reportMenuItems: FloatingMenuItem[] = [
 ];
 
 // API Base URL
-const API_BASE_URL = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/gl/journals';
+const API_BASE_URL = buildApexUrl('gl/journals');
 
 // Ledger interface from API
 interface Ledger {
@@ -470,7 +471,7 @@ const ManageJournals: React.FC = () => {
     const fetchLedgers = async () => {
       setLoadingLedgers(true);
       try {
-        const response = await fetch('https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/ledgers');
+        const response = await fetch(buildApexUrl('ledgers'));
         const data = await response.json();
         if (data.items && data.items.length > 0) {
           setLedgers(data.items);

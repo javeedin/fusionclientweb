@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Layout, Breadcrumb, Typography, Table, Button, Input, Tag, Space,
@@ -32,7 +33,7 @@ const REDWOOD = {
   surface: '#FFFFFF',
 };
 
-const APEX_ADMIN_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/admin';
+const APEX_ADMIN_BASE = buildApexUrl('admin');
 
 // ─── API types ─────────────────────────────────────────────────────────────
 interface UserRecord {

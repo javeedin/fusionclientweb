@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useRef } from 'react';
 import {
   Modal, Form, Input, Select, Button, Space, Tag, Tooltip,
@@ -14,7 +15,7 @@ const { TextArea } = Input;
 const { Option } = Select;
 const { Text } = Typography;
 
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 
 // ── Page context map ─────────────────────────────────────────
 const PAGE_MAP: Record<string, { module: string; pageName: string }> = {

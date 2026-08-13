@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import dayjs from 'dayjs';
 import {
@@ -1375,7 +1376,7 @@ const TrialBalance: React.FC = () => {
     fetchLedgers();
     fetchPeriods();
     // Fetch all companies from COA value set
-    const VALUES_API = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/valuesets/getvalues';
+    const VALUES_API = buildApexUrl('valuesets/getvalues');
     fetch(`${VALUES_API}/BUIMERC_FIN_GLB_COA_CO`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {

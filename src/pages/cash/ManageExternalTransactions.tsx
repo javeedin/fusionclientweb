@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAccountDescriptions } from '../../hooks/useAccountDescriptions';
 import dayjs, { type Dayjs } from 'dayjs';
@@ -45,7 +46,7 @@ const REDWOOD = {
   textSecondary: '#6B6B6B',
 };
 
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface ExternalTxnRecord {

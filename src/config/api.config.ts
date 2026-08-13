@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 // Proxy Server Configuration - Use to avoid CORS issues in production
 const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
 export const PROXY_CONFIG = {
@@ -19,7 +20,7 @@ export const ORACLE_FUSION_CONFIG = {
 
 // APEX Database Configuration
 export const APEX_DB_CONFIG = {
-  baseUrl: 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp',
+  baseUrl: buildApexUrl(''),
   endpoints: {
     // GL Endpoints
     journalBatches: 'gl/journalbatches',
@@ -220,7 +221,7 @@ export const SYNC_OBJECTS: SyncObjectConfig[] = [
         label: 'Period',
         type: 'api-select',
         required: false,
-        apiUrl: 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/sync/glbatchesperiods',
+        apiUrl: buildApexUrl('sync/glbatchesperiods'),
         apiLabelKey: 'default_period_name',
         apiValueKey: 'default_period_name',
         apiCountKey: 'count',
@@ -242,7 +243,7 @@ export const SYNC_OBJECTS: SyncObjectConfig[] = [
         label: 'Period',
         type: 'api-select',
         required: false,
-        apiUrl: 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/sync/glbatchesperiods',
+        apiUrl: buildApexUrl('sync/glbatchesperiods'),
         apiLabelKey: 'default_period_name',
         apiValueKey: 'default_period_name',
         apiCountKey: 'count',
@@ -290,7 +291,7 @@ export const SYNC_OBJECTS: SyncObjectConfig[] = [
         label: 'Business Unit',
         type: 'api-select',
         required: false,
-        apiUrl: 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/gl/businessunits',
+        apiUrl: buildApexUrl('gl/businessunits'),
         apiLabelKey: 'business_unit_name',
         apiValueKey: 'business_unit_name',
         placeholder: 'All business units',
@@ -300,7 +301,7 @@ export const SYNC_OBJECTS: SyncObjectConfig[] = [
         label: 'Supplier',
         type: 'api-select',
         required: false,
-        apiUrl: 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/suppliers',
+        apiUrl: buildApexUrl('suppliers'),
         apiLabelKey: 'supplier_number',
         apiValueKey: 'supplier_number',
         apiSubLabelKey: 'supplier',
@@ -350,7 +351,7 @@ export const SYNC_OBJECTS: SyncObjectConfig[] = [
         label: 'Business Unit',
         type: 'api-select',
         required: false,
-        apiUrl: 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/gl/businessunits',
+        apiUrl: buildApexUrl('gl/businessunits'),
         apiLabelKey: 'business_unit_name',
         apiValueKey: 'business_unit_name',
         placeholder: 'All business units',
@@ -388,7 +389,7 @@ export const SYNC_OBJECTS: SyncObjectConfig[] = [
         label: 'Business Unit',
         type: 'api-select',
         required: false,
-        apiUrl: 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/gl/businessunits',
+        apiUrl: buildApexUrl('gl/businessunits'),
         apiLabelKey: 'business_unit_name',
         apiValueKey: 'business_unit_name',
         placeholder: 'All business units',
@@ -426,7 +427,7 @@ export const SYNC_OBJECTS: SyncObjectConfig[] = [
         label: 'Customer',
         type: 'api-select',
         required: false,
-        apiUrl: 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/ar/customers',
+        apiUrl: buildApexUrl('ar/customers'),
         apiLabelKey: 'account_name',
         apiValueKey: 'cust_account_id',
         apiSubLabelKey: 'account_number',

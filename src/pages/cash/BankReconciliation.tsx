@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useCallback, useEffect } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
@@ -44,7 +45,7 @@ const REDWOOD = {
 };
 
 const APEX_BASE =
-  'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+  buildApexUrl('');
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface StmtLine {

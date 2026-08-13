@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Resizable } from 'react-resizable';
@@ -204,7 +205,7 @@ const generateBatchName = (): string => {
   return `JB-${now.format('YYYYMMDD-HHmmss')}`;
 };
 
-const GL_ORDS_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/gl';
+const GL_ORDS_BASE = buildApexUrl('gl');
 
 // Period to last date mapping
 const periodEndDates: Record<string, string> = {
@@ -428,7 +429,7 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
   const [validationModalVisible, setValidationModalVisible] = useState(false);
   const [postConfirmVisible, setPostConfirmVisible] = useState(false);
 
-  const SAVE_ENDPOINT = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/journals/create';
+  const SAVE_ENDPOINT = buildApexUrl('journals/create');
 
   const copyEndpoint = () => {
     navigator.clipboard.writeText(SAVE_ENDPOINT);
@@ -483,7 +484,7 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
     const fetchLedgers = async () => {
       setLoadingLedgers(true);
       try {
-        const response = await fetch('https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/ledgers');
+        const response = await fetch(buildApexUrl('ledgers'));
         const data = await response.json();
         if (data.items && data.items.length > 0) {
           setLedgers(data.items);

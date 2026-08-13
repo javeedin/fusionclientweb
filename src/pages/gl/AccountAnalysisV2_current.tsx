@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Layout, Typography, Card, Breadcrumb, Space, Select, Input,
@@ -24,8 +25,8 @@ const { Text } = Typography;
 const { Option } = Select;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const API_BASE           = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/gl';
-const APEX_BASE          = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const API_BASE           = buildApexUrl('gl');
+const APEX_BASE          = buildApexUrl('');
 const COMPANY_LOV_URL    = `${APEX_BASE}/valuesets/getvalues/BUIMERC_FIN_GLB_COA_CO`;
 const ACCOUNTS_LOV_URL   = `${APEX_BASE}/glaccountslist`;
 const SEGMENTS_API_URL   = `${APEX_BASE}/chartofaccounts/structuresegments`;

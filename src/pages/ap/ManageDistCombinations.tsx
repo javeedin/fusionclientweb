@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Layout, Card, Typography, Breadcrumb, Tabs, Form, Input, Select,
@@ -115,7 +116,7 @@ const ManageDistCombinations: React.FC = () => {
 
   // ── Load Business Units ───────────────────────────────────
   useEffect(() => {
-    fetch(`https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/gl/businessunits`, { headers: { Accept: 'application/json' } })
+    fetch(`${buildApexUrl("gl/businessunits")}`, { headers: { Accept: 'application/json' } })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data) return;

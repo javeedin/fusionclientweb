@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   Layout, Card, Row, Col, Typography, Space, Button, Table, Tag,
@@ -56,7 +57,7 @@ interface Holding {
 type CurrencyMode = 'ALL' | 'USD' | 'AED' | 'INR';
 
 // ─── API ──────────────────────────────────────────────────────────────────────
-const API_URL = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/pms/PMS_V_PORTFOLIO_POSTION';
+const API_URL = buildApexUrl('pms/PMS_V_PORTFOLIO_POSTION');
 
 const r2 = (v: unknown): number => {
   const n = parseFloat(String(v));

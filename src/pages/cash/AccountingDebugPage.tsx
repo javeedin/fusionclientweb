@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 /**
  * AccountingDebugPage
  * Full-page API tester for the bank-transfer accounting flow.
@@ -17,7 +18,7 @@ import { useAuth } from '../../context/AuthContext';
 const { Content } = Layout;
 const { Title, Text } = Typography;
 
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 
 // ── Palette ──────────────────────────────────────────────────────────────────
 const RED = '#C74634';

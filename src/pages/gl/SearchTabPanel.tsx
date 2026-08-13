@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
 import ExcelJS from 'exceljs';
@@ -17,8 +18,8 @@ const { Text } = Typography;
 const { Option } = Select;
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const API_BASE_URL = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/gl';
-const VALUES_API   = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/valuesets/getvalues';
+const API_BASE_URL = buildApexUrl('gl');
+const VALUES_API   = buildApexUrl('valuesets/getvalues');
 const COMPANY_VALUESET = 'BUIMERC_FIN_GLB_COA_CO';
 const COMPANY_LOV_URL  = `${VALUES_API}/${COMPANY_VALUESET}`;
 
@@ -180,7 +181,7 @@ export const SearchTabPanel: React.FC<SearchTabPanelProps> = ({ ledgerOptions, o
       const params = new URLSearchParams();
       params.append('P_APPLICATION_NAME', 'General Ledger');
       params.append('P_LEDGER_NAME', selectedLedger);
-      const url = `https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/periodsstatus/create?${params.toString()}`;
+      const url = `${buildApexUrl("periodsstatus/create?${params.toString()}")}`;
       const response = await fetch(url);
       if (!response.ok) throw new Error(`${response.status}`);
       const result = await response.json();
@@ -238,7 +239,7 @@ export const SearchTabPanel: React.FC<SearchTabPanelProps> = ({ ledgerOptions, o
   const fetchAccounts = useCallback(async () => {
     setAccountsLoading(true);
     try {
-      const res = await fetch(`https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/glaccountslist`);
+      const res = await fetch(`${buildApexUrl("glaccountslist")}`);
       if (res.ok) { const d = await res.json(); setAccountsList(d.items || []); }
     } catch { message.error('Failed to load accounts'); }
     finally { setAccountsLoading(false); }

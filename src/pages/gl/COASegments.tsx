@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Layout,
@@ -150,9 +151,9 @@ const reportMenuItems: MenuItemType[] = [
 ];
 
 // APEX endpoints
-const APEX_SYNC_URL = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/valuesets/addvalues';
-const APEX_GET_VALUES_URL = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/valuesets/getvalues';
-const APEX_VALUES_URL = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/valuesets/values';
+const APEX_SYNC_URL = buildApexUrl('valuesets/addvalues');
+const APEX_GET_VALUES_URL = buildApexUrl('valuesets/getvalues');
+const APEX_VALUES_URL = buildApexUrl('valuesets/values');
 const APEX_VALUES_CONSTRAINT_URL = `${APEX_VALUES_URL}/constraint-info`;
 
 const ACCOUNT_TYPE_OPTIONS = [
@@ -390,7 +391,7 @@ const COASegments: React.FC = () => {
 
     setLoading(true);
     try {
-      const apiUrl = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/chartofaccounts/structuresegments';
+      const apiUrl = buildApexUrl('chartofaccounts/structuresegments');
       const response = await fetch(apiUrl);
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();

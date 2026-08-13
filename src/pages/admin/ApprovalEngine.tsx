@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 // ─────────────────────────────────────────────────────────────────────────────
 // Approval Management Engine — Main UI Page
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,8 +96,8 @@ import {
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 
-const APEX_ADMIN_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/admin';
-const APPROVAL_BASE   = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/approvals';
+const APEX_ADMIN_BASE = buildApexUrl('admin');
+const APPROVAL_BASE   = buildApexUrl('approvals');
 
 // ─── Oracle Redwood Color Palette ─────────────────────────────────────────────
 

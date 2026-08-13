@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input, Select,
@@ -25,7 +26,7 @@ const REDWOOD = {
   neutral600: '#6B6B6B', neutral900: '#1A1A1A', surface: '#FFFFFF',
 };
 
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Tax {

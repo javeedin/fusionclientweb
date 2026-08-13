@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Modal, Form, Input, Select, Button, Space, Tag, Divider,
@@ -15,7 +16,7 @@ const { Text, Title } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
 
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 
 const REDWOOD_SUCCESS = '#1D7B4D';
 

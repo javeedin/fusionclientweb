@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Input, Row, Col,
@@ -17,7 +18,7 @@ import { saveAs } from 'file-saver';
 const { Content } = Layout;
 const { Title, Text } = Typography;
 
-const ORDS_BASE    = 'https://g827cd88c3cfc03-mitsumioracledb.adb.me-dubai-1.oraclecloudapps.com/ords/test/FUSIONCLIENTERP';
+const ORDS_BASE = buildApexUrl('test/FUSIONCLIENTERP');
 const FUSION_BASE  = 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/11.13.18.05';
 const AUTH_HEADER  = 'Basic ' + btoa('emparun:Fusion@1234');
 const FUSION_HDRS  = { Authorization: AUTH_HEADER, Accept: 'application/json' };

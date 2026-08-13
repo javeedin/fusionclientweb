@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Row, Col, Input, Tag, Collapse, Badge, Spin, Alert,
@@ -8,7 +9,7 @@ import { Link } from 'react-router-dom';
 const { Content } = Layout;
 const { Title, Text } = Typography;
 
-const ORDS_BASE = 'https://g827cd88c3cfc03-mitsumioracledb.adb.me-dubai-1.oraclecloudapps.com/ords/test/FUSIONCLIENTERP';
+const ORDS_BASE = buildApexUrl('test/FUSIONCLIENTERP');
 
 const REDWOOD = {
   primary: '#C74634', primaryDark: '#A33B2C', primaryLight: '#E85D4A',

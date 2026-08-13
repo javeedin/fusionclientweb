@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useCallback, useRef } from 'react';
 import FixedAssetsSync from './FixedAssetsSync';
 import APPayablesSync from './APPayablesSync';
@@ -4058,8 +4059,8 @@ const SyncData: React.FC = () => {
                             onClick={async () => {
                               const buParam = form.getFieldValue('BusinessUnit');
                               const url = buParam
-                                ? `https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/suppliers?P_BUSINESS_UNIT=${encodeURIComponent(buParam)}`
-                                : 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/suppliers';
+                                ? `${buildApexUrl("suppliers?P_BUSINESS_UNIT=${encodeURIComponent(buParam)}")}`
+                                : buildApexUrl('suppliers');
                               try {
                                 const resp = await fetch(url);
                                 const data = await resp.json();

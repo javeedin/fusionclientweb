@@ -1,3 +1,4 @@
+import { buildApexUrl } from '../config/api.helper';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Tag, Badge,
@@ -19,7 +20,7 @@ import TicketDetailModal, {
 const { Content } = Layout;
 const { Title, Text } = Typography;
 
-const APEX_BASE = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
+const APEX_BASE = buildApexUrl('');
 
 const REDWOOD = {
   primary: '#C74634',
