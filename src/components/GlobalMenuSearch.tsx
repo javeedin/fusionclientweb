@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { Select, Tag, Typography, Switch, Tooltip } from 'antd';
 import { SearchOutlined, ExportOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { MENU_ITEMS_GROUPED, type MenuSearchItem } from '../data/menuItems';
+import { getFilteredMenuItemsGrouped, type MenuSearchItem } from '../data/menuItems';
+import { getCurrentCompany } from '../config/company.config';
 
 const { Text } = Typography;
 
@@ -27,6 +28,9 @@ const GlobalMenuSearch: React.FC = () => {
   const [open,      setOpen]      = useState(false);
   const [newWindow, setNewWindow] = useState(false);
   const selectRef = useRef<any>(null);
+  const currentCompany = getCurrentCompany();
+
+  const filteredMenuItems = useMemo(() => getFilteredMenuItemsGrouped(), [currentCompany.code]);
 
   const handleSelect = (path: string | null) => {
     if (!path) return;
@@ -61,7 +65,7 @@ const GlobalMenuSearch: React.FC = () => {
         }
         onSelect={handleSelect}
         value={null}
-        options={MENU_ITEMS_GROUPED}
+        options={filteredMenuItems}
         optionRender={(opt) => {
           const item: MenuSearchItem = (opt.data as any).item;
           return (

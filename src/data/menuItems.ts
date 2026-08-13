@@ -1,3 +1,5 @@
+import { getCurrentCompany } from '../config/company.config';
+
 export interface MenuSearchItem {
   key:          string;
   label:        string;
@@ -136,6 +138,21 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
   { key: 'training',              label: 'Training Library',            module: 'EXT',   moduleLabel: 'External',               path: '/training',                       description: 'Training videos and documentation', keywords: 'training help docs tutorial' },
 ];
 
+// Get filtered menu items based on current company
+export const getFilteredMenuItems = (): MenuSearchItem[] => {
+  const company = getCurrentCompany();
+  const isBumeric = company.code === 'BUMERIC';
+
+  if (isBumeric) {
+    return ALL_MENU_ITEMS;
+  }
+
+  // For MITSUMI and GRAYSINC: filter out PMS and RM modules
+  return ALL_MENU_ITEMS.filter(
+    item => item.module !== 'PMS' && item.module !== 'RM'
+  );
+};
+
 // Grouped for use in Select options
 export const MENU_ITEMS_GROUPED = (() => {
   const map = new Map<string, { moduleLabel: string; items: MenuSearchItem[] }>();
@@ -154,3 +171,30 @@ export const MENU_ITEMS_GROUPED = (() => {
     })),
   }));
 })();
+
+// Get grouped menu items filtered by company
+export const getFilteredMenuItemsGrouped = () => {
+  const company = getCurrentCompany();
+  const isBumeric = company.code === 'BUMERIC';
+
+  const map = new Map<string, { moduleLabel: string; items: MenuSearchItem[] }>();
+  const items = isBumeric ? ALL_MENU_ITEMS : ALL_MENU_ITEMS.filter(
+    item => item.module !== 'PMS' && item.module !== 'RM'
+  );
+
+  for (const item of items) {
+    if (!map.has(item.module)) map.set(item.module, { moduleLabel: item.moduleLabel, items: [] });
+    map.get(item.module)!.items.push(item);
+  }
+
+  return Array.from(map.entries()).map(([, group]) => ({
+    label: group.moduleLabel,
+    options: group.items.map(item => ({
+      value: item.path,
+      label: item.label,
+      searchText: [item.label, item.module, item.moduleLabel, item.description, item.keywords]
+        .filter(Boolean).join(' ').toLowerCase(),
+      item,
+    })),
+  }));
+};

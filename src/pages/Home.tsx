@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Row, Col, Typography, Card, Tag, Spin } from 'antd';
 import {
   AccountBookOutlined, BankOutlined, DollarOutlined,
@@ -13,6 +13,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { APEX_DB_CONFIG } from '../config/api.config';
+import { getCurrentCompany } from '../config/company.config';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -127,6 +128,21 @@ const Home: React.FC = () => {
   const [recentJnls, setRecentJnls] = useState<any[]>([]);
   const [loading,    setLoading]    = useState(true);
 
+  const currentCompany = getCurrentCompany();
+  const isBumeric = currentCompany.code === 'BUMERIC';
+
+  const filteredModules = useMemo(
+    () => isBumeric ? MODULES : MODULES.filter(m => m.id !== 'rm' && m.id !== 'pms'),
+    [isBumeric]
+  );
+
+  const filteredQuickActions = useMemo(
+    () => isBumeric
+      ? QUICK_ACTIONS
+      : QUICK_ACTIONS.filter(a => a.label !== 'Manage RM Agreements' && a.label !== 'Investment Holdings'),
+    [isBumeric]
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -213,7 +229,7 @@ const Home: React.FC = () => {
             styles={{ body: { padding: '16px 18px' } }}
             title={<Text strong style={{ fontSize: 13 }}><ThunderboltOutlined style={{ color: REDWOOD.primary, marginRight: 6 }} />Modules</Text>}>
             <Row gutter={[10, 10]}>
-              {MODULES.map(mod => (
+              {filteredModules.map(mod => (
                 <Col key={mod.id} xs={24} sm={12} xl={8}>
                   <ModuleTile mod={mod} onClick={() => navigate(mod.path)} />
                 </Col>
@@ -230,7 +246,7 @@ const Home: React.FC = () => {
             styles={{ body: { padding: '16px 18px' } }}
             title={<Text strong style={{ fontSize: 13 }}><ThunderboltOutlined style={{ color: REDWOOD.primary, marginRight: 6 }} />Quick Actions</Text>}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-              {QUICK_ACTIONS.map((item, i) => (
+              {filteredQuickActions.map((item, i) => (
                 <div key={i} onClick={() => navigate(item.path)}
                   style={{ padding: '7px 10px', borderRadius: 8, cursor: 'pointer', background: REDWOOD.neutral50, display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${REDWOOD.neutral200}` }}
                   onMouseEnter={e => { (e.currentTarget.style.background = `${item.color}10`); (e.currentTarget.style.borderColor = item.color); }}
