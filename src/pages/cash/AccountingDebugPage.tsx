@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../config/api.helper';
+import { buildApexUrl } from '../../config/api.helper';
 /**
  * AccountingDebugPage
  * Full-page API tester for the bank-transfer accounting flow.

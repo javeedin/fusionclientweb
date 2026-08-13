@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../config/api.helper';
+import { buildApexUrl } from '../../config/api.helper';
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';

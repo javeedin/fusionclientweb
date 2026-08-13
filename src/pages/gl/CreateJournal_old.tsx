@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../config/api.helper';
+import { buildApexUrl } from '../../config/api.helper';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Resizable } from 'react-resizable';

@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../config/api.helper';
+import { buildApexUrl } from '../../config/api.helper';
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   Layout, Card, Row, Col, Typography, Space, Button, Table, Tag,

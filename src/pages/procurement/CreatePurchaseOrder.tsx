@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../config/api.helper';
+import { buildApexUrl } from '../../config/api.helper';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type * as XLSX from 'xlsx';
 import dayjs from 'dayjs';

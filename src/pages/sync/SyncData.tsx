@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../config/api.helper';
+import { buildApexUrl } from '../../config/api.helper';
 import React, { useState, useCallback, useRef } from 'react';
 import FixedAssetsSync from './FixedAssetsSync';
 import APPayablesSync from './APPayablesSync';

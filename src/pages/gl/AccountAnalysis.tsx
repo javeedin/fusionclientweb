@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../config/api.helper';
+import { buildApexUrl } from '../../config/api.helper';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
 import { SearchTabPanel } from './SearchTabPanel';
