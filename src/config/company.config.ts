@@ -107,3 +107,19 @@ export function setCurrentCompany(code: CompanyCode): void {
   localStorage.setItem('selectedCompany', code);
   window.location.reload();
 }
+
+// Helper functions to get company-specific APEX endpoints
+export function getApexAuthUrl(): string {
+  const company = getCurrentCompany();
+  return `${company.apexBaseUrl}/auth`;
+}
+
+export function getApexAdminUrl(): string {
+  const company = getCurrentCompany();
+  return `${company.apexBaseUrl}/admin`;
+}
+
+export function getApexBaseUrl(): string {
+  const company = getCurrentCompany();
+  return company.apexBaseUrl;
+}
