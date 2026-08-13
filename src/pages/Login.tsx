@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import {
-  Form, Input, Button, Card, Typography, Modal,
+  Form, Input, Button, Card, Typography, Modal, Tag, Tooltip, Table, Space, Code,
   Steps, Alert, Divider,
 } from 'antd';
 import {
   UserOutlined, LockOutlined, CloudServerOutlined,
-  MailOutlined, KeyOutlined, CheckCircleOutlined,
+  MailOutlined, KeyOutlined, CheckCircleOutlined, BugOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -24,6 +24,115 @@ function passwordStrength(pw: string): { label: string; color: string } | null {
   if (!/[0-9!@#$%^&*]/.test(pw))       return { label: 'Good',       color: '#52c41a' };
   return                                       { label: 'Strong',     color: '#1677ff' };
 }
+
+// ─── API Inspector Modal ─────────────────────────────────────────────────────
+const ApiInspectorModal: React.FC<{
+  open: boolean;
+  onClose: () => void;
+  selectedCompany: CompanyCode;
+  selectedInstance: string;
+  fusionInstances: any[];
+}> = ({ open, onClose, selectedCompany, selectedInstance, fusionInstances }) => {
+  const currentCompanyConfig = getAllCompanies().find(c => c.code === selectedCompany);
+  const instanceName = fusionInstances.find(i => i.url === selectedInstance)?.name || 'Unknown';
+
+  const apiEndpoints = [
+    {
+      name: 'Fusion Cloud REST API',
+      baseUrl: selectedInstance || currentCompanyConfig?.fusionBaseUrl,
+      resource: '/fscmRestApi/resources/11.13.18.05',
+      description: 'Oracle Fusion Supply Chain and Financial APIs'
+    },
+    {
+      name: 'Oracle APEX ORDS',
+      baseUrl: currentCompanyConfig?.apexBaseUrl,
+      resource: '/ords/...',
+      description: 'Oracle APEX REST API endpoints'
+    },
+    {
+      name: 'HCM API',
+      baseUrl: currentCompanyConfig?.hcmBaseUrl,
+      resource: '/hcmRestApi/resources/11.13.18.05',
+      description: 'Oracle Human Capital Management APIs'
+    }
+  ];
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      title="API Inspector - POD Information"
+      width={700}
+      footer={[
+        <Button key="close" onClick={onClose}>Close</Button>
+      ]}
+    >
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ marginBottom: 16 }}>
+          <Text strong>Company:</Text>
+          <Tag color="blue" style={{ marginLeft: 8 }}>{selectedCompany}</Tag>
+        </div>
+
+        {selectedInstance && (
+          <div>
+            <Text strong>Fusion Instance:</Text>
+            <Tag color="green" style={{ marginLeft: 8 }}>{instanceName}</Tag>
+            <div style={{ marginTop: 8, padding: '8px 12px', background: '#f5f5f5', borderRadius: 4, fontSize: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <code>{selectedInstance}</code>
+                <Tooltip title="Copy to clipboard">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CopyOutlined />}
+                    onClick={() => copyToClipboard(selectedInstance)}
+                  />
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Text strong style={{ fontSize: 14 }}>Available API Endpoints (PODs):</Text>
+      </div>
+
+      {apiEndpoints.map((endpoint, idx) => (
+        <div key={idx} style={{ marginBottom: 16, padding: '12px', border: '1px solid #e8e8e8', borderRadius: 4 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <Text strong>{endpoint.name}</Text>
+            {endpoint.baseUrl && (
+              <Tooltip title="Copy full URL">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() => copyToClipboard(`${endpoint.baseUrl}${endpoint.resource}`)}
+                />
+              </Tooltip>
+            )}
+          </div>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>{endpoint.description}</div>
+          <div style={{ background: '#fafafa', padding: '8px', borderRadius: 4, marginBottom: 8, fontSize: 11 }}>
+            <div><strong>Base URL:</strong></div>
+            <code style={{ wordBreak: 'break-all' }}>{endpoint.baseUrl || 'Not configured'}</code>
+          </div>
+          <div style={{ background: '#fafafa', padding: '8px', borderRadius: 4, fontSize: 11 }}>
+            <div><strong>Resource Path:</strong></div>
+            <code>{endpoint.resource}</code>
+          </div>
+        </div>
+      ))}
+    </Modal>
+  );
+};
 
 // ─── Forgot-password / Set-password modal ────────────────────────────────────
 const ForgotPasswordModal: React.FC<{ open: boolean; onClose: () => void }> = ({ open, onClose }) => {
@@ -234,6 +343,7 @@ const Login: React.FC = () => {
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState('');
   const [forgotOpen, setForgotOpen]     = useState(false);
+  const [apiInspectorOpen, setApiInspectorOpen] = useState(false);
   const [useFusionLogin, setUseFusionLogin] = useState(false);
   const [selectedInstance, setSelectedInstance] = useState('');
   const [selectedCompany, setSelectedCompany] = useState<CompanyCode>(
@@ -417,26 +527,39 @@ const Login: React.FC = () => {
             <div style={{ marginBottom: 24, padding: '12px 16px', background: '#fffbe6', borderRadius: 8, border: '1px solid #ffe58f' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                 <label style={{ fontSize: 13, fontWeight: 500, color: '#262626', margin: 0 }}>Fusion Instance:</label>
-                <select
-                  onChange={(e) => setSelectedInstance(e.target.value)}
-                  value={selectedInstance}
-                  style={{
-                    flex: 1,
-                    padding: '6px 8px',
-                    border: '1px solid #ffc069',
-                    borderRadius: 4,
-                    fontSize: 13,
-                    background: '#fff',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <option value="">-- Select Instance --</option>
-                  {fusionInstances.map((instance, idx) => (
-                    <option key={idx} value={instance.url}>
-                      {instance.name}
-                    </option>
-                  ))}
-                </select>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <select
+                    onChange={(e) => setSelectedInstance(e.target.value)}
+                    value={selectedInstance}
+                    style={{
+                      flex: 1,
+                      padding: '6px 8px',
+                      border: '1px solid #ffc069',
+                      borderRadius: 4,
+                      fontSize: 13,
+                      background: '#fff',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="">-- Select Instance --</option>
+                    {fusionInstances.map((instance, idx) => (
+                      <option key={idx} value={instance.url}>
+                        {instance.name}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedInstance && (
+                    <Tooltip title="View API Endpoints">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<BugOutlined />}
+                        onClick={() => setApiInspectorOpen(true)}
+                        style={{ color: '#1677ff' }}
+                      />
+                    </Tooltip>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -516,6 +639,13 @@ const Login: React.FC = () => {
       </div>
 
       <ForgotPasswordModal open={forgotOpen} onClose={() => setForgotOpen(false)} />
+      <ApiInspectorModal
+        open={apiInspectorOpen}
+        onClose={() => setApiInspectorOpen(false)}
+        selectedCompany={selectedCompany}
+        selectedInstance={selectedInstance}
+        fusionInstances={fusionInstances}
+      />
     </>
   );
 };
