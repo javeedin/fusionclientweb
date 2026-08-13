@@ -9,6 +9,8 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { getCurrentCompany, getAllCompanies, setCurrentCompany } from '../config/company.config';
+import type { CompanyCode } from '../config/company.config';
 
 const { Title, Text, Link } = Typography;
 
@@ -286,9 +288,38 @@ const Login: React.FC = () => {
               <text x="9" y="24" fontFamily="Arial Black, Arial, sans-serif" fontSize="14" fontWeight="900" fill="#C74634">Re</text>
             </svg>
             <Title level={2} style={{ margin: 0, color: '#1a1a2e' }}>
-              Re-<span style={{ fontWeight: 400 }}>ERP</span>
+              Fusion<span style={{ fontWeight: 400 }}>Client</span>
             </Title>
-            <Text type="secondary">Enterprise Resource Planning</Text>
+            <Text type="secondary">Multi-Tenant ERP Platform</Text>
+          </div>
+
+          {/* Company Selector */}
+          <div style={{ marginBottom: 24, padding: '12px 16px', background: '#f5f5f5', borderRadius: 8, border: '1px solid #e8e8e8' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <label style={{ fontSize: 13, fontWeight: 500, color: '#262626', margin: 0 }}>Company:</label>
+              <select
+                onChange={(e) => {
+                  const code = e.target.value as CompanyCode;
+                  setCurrentCompany(code);
+                }}
+                defaultValue={getCurrentCompany().code}
+                style={{
+                  flex: 1,
+                  padding: '6px 8px',
+                  border: '1px solid #d9d9d9',
+                  borderRadius: 4,
+                  fontSize: 13,
+                  background: '#fff',
+                  cursor: 'pointer',
+                }}
+              >
+                {getAllCompanies().map((company) => (
+                  <option key={company.code} value={company.code}>
+                    {company.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Error alert */}
