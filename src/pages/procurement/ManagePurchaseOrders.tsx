@@ -1361,7 +1361,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
   );
 
   const columns: ColumnsType<RawPO> = [
-    { title: 'Created', dataIndex: 'CreationDate', width: 80, render: d => fmtDate(d),
+    { title: 'Created', dataIndex: 'CreationDate', width: 115, render: d => fmtDate(d),
       sorter: (a, b) => (a.CreationDate ?? '').localeCompare(b.CreationDate ?? ''),
       defaultSortOrder: 'descend' as const,
     },
@@ -1417,7 +1417,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
       title: 'Buyer', dataIndex: 'BuyerDisplayName', width: 110, ellipsis: true,
       render: v => <Text style={{ fontSize: 11 }}>{v ?? '—'}</Text>,
     },
-    { title: 'Order Date', dataIndex: 'OrderDate', width: 80, render: d => fmtDate(d),
+    { title: 'Order Date', dataIndex: 'OrderDate', width: 115, render: d => fmtDate(d),
       sorter: (a, b) => (a.OrderDate ?? '').localeCompare(b.OrderDate ?? ''),
     },
     {
