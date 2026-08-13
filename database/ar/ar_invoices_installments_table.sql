@@ -1,0 +1,77 @@
+-- =====================================================
+-- AR Invoice Installments Table
+-- RR_AR_INVOICE_INSTALLMENTS : receivablesInvoiceInstallments
+-- Child of RR_AR_INVOICE_HEADERS (CustomerTransactionId)
+-- =====================================================
+
+-- DROP TABLE RR_AR_INVOICE_INSTALLMENTS CASCADE CONSTRAINTS;
+
+CREATE TABLE RR_AR_INVOICE_INSTALLMENTS (
+    -- Primary Key (Fusion InstallmentId)
+    INSTALLMENT_ID                      NUMBER          NOT NULL,
+
+    -- FK to Header
+    CUSTOMER_TRANSACTION_ID             NUMBER          NOT NULL,
+
+    -- Installment Identity
+    INSTALLMENT_SEQUENCE_NUMBER         NUMBER,
+    INSTALLMENT_STATUS                  VARCHAR2(30),
+
+    -- Dates
+    INSTALLMENT_DUE_DATE                DATE,
+    INSTALLMENT_CLOSED_DATE             DATE,
+    INSTALLMENT_GL_CLOSED_DATE          DATE,
+    DISPUTE_DATE                        DATE,
+
+    -- Amounts — Original
+    ORIGINAL_AMOUNT                     NUMBER,
+    INSTALLMENT_LINE_AMOUNT_ORIGINAL    NUMBER,
+    INSTALLMENT_FREIGHT_AMOUNT_ORIGINAL NUMBER,
+    INSTALLMENT_TAX_AMOUNT_ORIGINAL     NUMBER,
+
+    -- Amounts — Due / Balance
+    INSTALLMENT_BALANCE_DUE             NUMBER,
+    ACCOUNTED_BALANCE_DUE               NUMBER,
+    INSTALLMENT_LINE_AMOUNT_DUE         NUMBER,
+    INSTALLMENT_FREIGHT_AMOUNT_DUE      NUMBER,
+    INSTALLMENT_TAX_AMOUNT_DUE          NUMBER,
+
+    -- Amounts — Activity
+    AMOUNT_PAID                         NUMBER,
+    INSTALLMENT_AMOUNT_ADJUSTED         NUMBER,
+    INSTALLMENT_AMOUNT_CREDITED         NUMBER,
+    PENDING_ADJUSTMENT_AMOUNT           NUMBER,
+    DISPUTE_AMOUNT                      NUMBER,
+
+    -- Other
+    PAYMENT_DAYS_LATE                   NUMBER,
+    EXCLUDE_FROM_COLLECTIONS            VARCHAR2(10),
+
+    -- Fusion Audit
+    FUSION_CREATED_BY                   VARCHAR2(240),
+    FUSION_CREATION_DATE                TIMESTAMP,
+    FUSION_LAST_UPDATED_BY              VARCHAR2(240),
+    FUSION_LAST_UPDATE_DATE             TIMESTAMP,
+
+    -- Local Audit
+    CREATED_BY                          VARCHAR2(100)   DEFAULT USER,
+    CREATION_DATE                       TIMESTAMP       DEFAULT SYSTIMESTAMP,
+    LAST_UPDATED_BY                     VARCHAR2(100),
+    LAST_UPDATE_DATE                    TIMESTAMP,
+    SYNC_DATE                           TIMESTAMP       DEFAULT SYSTIMESTAMP,
+    SYNC_STATUS                         VARCHAR2(20)    DEFAULT 'NEW',
+    ERROR_MESSAGE                       VARCHAR2(4000),
+
+    CONSTRAINT RR_AR_INSTL_PK PRIMARY KEY (INSTALLMENT_ID),
+    CONSTRAINT RR_AR_INSTL_HDR_FK FOREIGN KEY (CUSTOMER_TRANSACTION_ID)
+        REFERENCES RR_AR_INVOICE_HEADERS (CUSTOMER_TRANSACTION_ID) ON DELETE CASCADE
+);
+
+CREATE INDEX RR_AR_INSTL_HDR_IX ON RR_AR_INVOICE_INSTALLMENTS (CUSTOMER_TRANSACTION_ID);
+CREATE INDEX RR_AR_INSTL_STATUS_IX ON RR_AR_INVOICE_INSTALLMENTS (INSTALLMENT_STATUS);
+
+COMMENT ON TABLE  RR_AR_INVOICE_INSTALLMENTS IS 'AR Invoice Installments from Oracle Fusion receivablesInvoiceInstallments';
+COMMENT ON COLUMN RR_AR_INVOICE_INSTALLMENTS.INSTALLMENT_ID IS 'Oracle Fusion InstallmentId (PK)';
+COMMENT ON COLUMN RR_AR_INVOICE_INSTALLMENTS.CUSTOMER_TRANSACTION_ID IS 'FK to RR_AR_INVOICE_HEADERS';
+
+COMMIT;

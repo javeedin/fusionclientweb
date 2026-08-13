@@ -1,0 +1,136 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+/* Compact table styles */
+.compact-table .ant-table-thead > tr > th {
+  font-size: 11px !important;
+  padding: 8px 8px !important;
+  background: #f5f5f5 !important;
+}
+
+.compact-table .ant-table-tbody > tr > td {
+  font-size: 11px !important;
+  padding: 6px 8px !important;
+}
+
+.compact-table .ant-table-pagination {
+  font-size: 11px !important;
+}
+
+.compact-table .ant-tag {
+  font-size: 10px !important;
+}
+
+.compact-table .ant-table-cell {
+  font-size: 11px !important;
+}
+
+/* Summary row styles */
+.compact-table .ant-table-summary .ant-table-cell {
+  font-size: 11px !important;
+  padding: 6px 8px !important;
+}
+
+.compact-table .ant-table-summary .ant-typography {
+  font-size: 11px !important;
+}
+
+/* Account Analysis grid — slightly smaller than global compact */
+.aa-grid.compact-table .ant-table-thead > tr > th,
+.aa-grid.compact-table .ant-table-tbody > tr > td,
+.aa-grid.compact-table .ant-table-cell {
+  font-size: 10px !important;
+}
+
+/* Account Analysis row styles */
+.aa-v2-grid .aa-opening-row > td {
+  background-color: #fefce8 !important;
+  font-weight: 600 !important;
+  border-bottom: 1px solid #fde68a !important;
+}
+.aa-v2-grid .aa-closing-row > td {
+  background-color: #f0f9ff !important;
+  font-weight: 600 !important;
+  border-top: 1px solid #bae6fd !important;
+}
+.aa-v2-grid .aa-totals-row > td {
+  background-color: #1e293b !important;
+  color: #f1f5f9 !important;
+  font-weight: 700 !important;
+  border-top: 2px solid #334155 !important;
+}
+.aa-v2-grid .aa-totals-row > td .ant-typography {
+  color: #f1f5f9 !important;
+}
+.aa-v2-grid .aa-totals-row > td span {
+  color: #f1f5f9 !important;
+}
+
+
+/* Account combination column — never clip text */
+.aa-v2-grid td:first-child {
+  overflow: visible !important;
+  white-space: nowrap !important;
+}
+.aa-v2-grid .ant-table-cell:first-child {
+  overflow: visible !important;
+  white-space: nowrap !important;
+}
+
+/* Account Analysis search tabs */
+.aa-search-tabs > .ant-tabs-nav .ant-tabs-nav-add {
+  display: none !important;
+}
+
+
+  padding: 8px 16px !important;
+}
+
+.ant-tabs-tab-active {
+  background: #fff !important;
+  border-bottom: 2px solid #0572CE !important;
+}
+
+.ant-tabs-tab-btn {
+  font-size: 12px !important;
+}

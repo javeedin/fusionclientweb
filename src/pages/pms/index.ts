@@ -1,0 +1,11 @@
+export { default as PMSModule } from './PMSModule';
+export { default as FundManagement } from './FundManagement';
+export { default as OrderManagement } from './OrderManagement';
+export { default as TransactionsPage } from './Transactions';
+export { default as ClientManagement } from './ClientManagement';
+export { default as RiskAnalytics } from './RiskAnalytics';
+export { default as CompliancePage } from './Compliance';
+export { default as ReportsPage } from './Reports';
+export { default as ModelPortfolioPage } from './ModelPortfolio';
+export { default as FeeManagementPage } from './FeeManagement';
+export { default as BenchmarkComparison } from './BenchmarkComparison';

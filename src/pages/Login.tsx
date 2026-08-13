@@ -1,0 +1,367 @@
+import React, { useState } from 'react';
+import {
+  Form, Input, Button, Card, Typography, Modal,
+  Steps, Alert, Divider,
+} from 'antd';
+import {
+  UserOutlined, LockOutlined, CloudServerOutlined,
+  MailOutlined, KeyOutlined, CheckCircleOutlined,
+} from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+
+const { Title, Text, Link } = Typography;
+
+// ─── password strength helper ────────────────────────────────────────────────
+function passwordStrength(pw: string): { label: string; color: string } | null {
+  if (!pw) return null;
+  if (pw.length < 6)                    return { label: 'Too short',  color: '#f5222d' };
+  if (pw.length < 8)                    return { label: 'Weak',       color: '#fa8c16' };
+  if (!/[A-Z]/.test(pw))               return { label: 'Fair',       color: '#fadb14' };
+  if (!/[0-9!@#$%^&*]/.test(pw))       return { label: 'Good',       color: '#52c41a' };
+  return                                       { label: 'Strong',     color: '#1677ff' };
+}
+
+// ─── Forgot-password / Set-password modal ────────────────────────────────────
+const ForgotPasswordModal: React.FC<{ open: boolean; onClose: () => void }> = ({ open, onClose }) => {
+  const { sendOtp, setPassword } = useAuth();
+  const [step, setStep]           = useState(0);          // 0 = email, 1 = otp+pwd, 2 = done
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState('');
+  const [username, setUsername]   = useState('');
+  const [newPwd, setNewPwd]       = useState('');
+  const [form]                    = Form.useForm();
+
+  const handleClose = () => {
+    form.resetFields();
+    setStep(0); setError(''); setUsername(''); setNewPwd('');
+    onClose();
+  };
+
+  // Step 0 → send OTP
+  const handleSendOtp = async (values: { username: string }) => {
+    setLoading(true); setError('');
+    const result = await sendOtp(values.username);
+    setLoading(false);
+    if (result.status === 'SENT') {
+      setUsername(values.username);
+      setStep(1);
+    } else {
+      setError(result.message || 'Failed to send OTP.');
+    }
+  };
+
+  // Step 1 → verify OTP + set password
+  const handleSetPassword = async (values: { otp: string; new_password: string; confirm_password: string }) => {
+    if (values.new_password !== values.confirm_password) {
+      setError('Passwords do not match.'); return;
+    }
+    setLoading(true); setError('');
+    const result = await setPassword(username, values.otp, values.new_password);
+    setLoading(false);
+    if (result.status === 'SUCCESS') {
+      setStep(2);
+    } else {
+      setError(result.message || 'Failed to set password.');
+    }
+  };
+
+  const strength = passwordStrength(newPwd);
+
+  return (
+    <Modal
+      open={open}
+      onCancel={handleClose}
+      footer={null}
+      title={null}
+      width={440}
+      centered
+      destroyOnHidden
+    >
+      <div style={{ textAlign: 'center', marginBottom: 24 }}>
+        <KeyOutlined style={{ fontSize: 36, color: '#1677ff', marginBottom: 8 }} />
+        <Title level={4} style={{ margin: 0 }}>
+          {step === 2 ? 'Password Set!' : 'Reset / Set Password'}
+        </Title>
+      </div>
+
+      <Steps
+        current={step}
+        size="small"
+        style={{ marginBottom: 24 }}
+        items={[
+          { title: 'Enter Email' },
+          { title: 'OTP + Password' },
+          { title: 'Done' },
+        ]}
+      />
+
+      {error && (
+        <Alert title={error} type="error" showIcon style={{ marginBottom: 16 }} />
+      )}
+
+      {/* ── Step 0: Enter email ── */}
+      {step === 0 && (
+        <Form form={form} layout="vertical" onFinish={handleSendOtp} requiredMark={false}>
+          <Form.Item
+            label="Email Address"
+            name="username"
+            rules={[
+              { required: true, message: 'Please enter your email' },
+              { type: 'email', message: 'Enter a valid email address' },
+            ]}
+          >
+            <Input
+              prefix={<MailOutlined style={{ color: '#bfbfbf' }} />}
+              placeholder="you@example.com"
+              size="large"
+              autoFocus
+            />
+          </Form.Item>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 16 }}>
+            We will send a 6-digit OTP to this email. Valid for 15 minutes.
+          </Text>
+          <Button type="primary" htmlType="submit" block size="large" loading={loading}>
+            Send OTP
+          </Button>
+        </Form>
+      )}
+
+      {/* ── Step 1: OTP + new password ── */}
+      {step === 1 && (
+        <Form form={form} layout="vertical" onFinish={handleSetPassword} requiredMark={false}>
+          <Alert
+            title={`OTP sent to ${username}`}
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+          <Form.Item
+            label="One-Time Password (OTP)"
+            name="otp"
+            rules={[
+              { required: true, message: 'Please enter the OTP' },
+              { len: 6, message: 'OTP must be exactly 6 digits' },
+              { pattern: /^\d{6}$/, message: 'OTP must be 6 digits' },
+            ]}
+          >
+            <Input
+              prefix={<MailOutlined style={{ color: '#bfbfbf' }} />}
+              placeholder="6-digit code"
+              size="large"
+              maxLength={6}
+              autoFocus
+            />
+          </Form.Item>
+          <Form.Item
+            label="New Password"
+            name="new_password"
+            rules={[
+              { required: true, message: 'Please enter a new password' },
+              { min: 8, message: 'Password must be at least 8 characters' },
+            ]}
+          >
+            <Input.Password
+              prefix={<LockOutlined style={{ color: '#bfbfbf' }} />}
+              placeholder="Min 8 characters"
+              size="large"
+              onChange={e => setNewPwd(e.target.value)}
+            />
+          </Form.Item>
+          {strength && (
+            <div style={{ marginTop: -12, marginBottom: 16 }}>
+              <Text style={{ fontSize: 12, color: strength.color }}>
+                ● Strength: {strength.label}
+              </Text>
+            </div>
+          )}
+          <Form.Item
+            label="Confirm Password"
+            name="confirm_password"
+            rules={[{ required: true, message: 'Please confirm your password' }]}
+          >
+            <Input.Password
+              prefix={<LockOutlined style={{ color: '#bfbfbf' }} />}
+              placeholder="Re-enter new password"
+              size="large"
+            />
+          </Form.Item>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button block size="large" onClick={() => { setStep(0); setError(''); form.resetFields(['otp','new_password','confirm_password']); }}>
+              Back
+            </Button>
+            <Button type="primary" htmlType="submit" block size="large" loading={loading}>
+              Set Password
+            </Button>
+          </div>
+          <div style={{ textAlign: 'center', marginTop: 12 }}>
+            <Link onClick={async () => {
+              setLoading(true); setError('');
+              const r = await sendOtp(username);
+              setLoading(false);
+              if (r.status !== 'SENT') setError(r.message || 'Failed to resend OTP.');
+            }}>
+              Resend OTP
+            </Link>
+          </div>
+        </Form>
+      )}
+
+      {/* ── Step 2: Done ── */}
+      {step === 2 && (
+        <div style={{ textAlign: 'center' }}>
+          <CheckCircleOutlined style={{ fontSize: 48, color: '#52c41a', marginBottom: 16 }} />
+          <Title level={5}>Password set successfully!</Title>
+          <Text type="secondary">You can now log in with your new password.</Text>
+          <Button type="primary" block size="large" style={{ marginTop: 24 }} onClick={handleClose}>
+            Go to Login
+          </Button>
+        </div>
+      )}
+    </Modal>
+  );
+};
+
+
+// ─── Main Login page ─────────────────────────────────────────────────────────
+const Login: React.FC = () => {
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState('');
+  const [forgotOpen, setForgotOpen]     = useState(false);
+  const { loginWithStatus }             = useAuth();
+  const navigate                        = useNavigate();
+
+  const onFinish = async (values: { username: string; password: string }) => {
+    setLoading(true); setError('');
+    const result = await loginWithStatus(values.username, values.password);
+    setLoading(false);
+
+    if (result.status === 'SUCCESS') {
+      navigate('/home');
+      return;
+    }
+
+    // Show specific messages per status
+    if (result.status === 'NO_PASSWORD') {
+      setError('No password found for this account. Use "Forgot Password" below to set one via OTP.');
+    } else {
+      setError(result.message || 'Login failed. Please try again.');
+    }
+  };
+
+  return (
+    <>
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+        }}
+      >
+        <Card
+          style={{
+            width: 420,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+            borderRadius: 12,
+            border: 'none',
+          }}
+          styles={{ body: { padding: '40px' } }}
+        >
+          {/* Header */}
+          <div style={{ textAlign: 'center', marginBottom: 32 }}>
+            {/* Re-ERP Logo */}
+            <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginBottom: 12 }}>
+              <rect width="64" height="64" rx="13" fill="#C74634"/>
+              <rect x="0" y="0" width="64" height="32" rx="13" fill="rgba(255,255,255,0.1)"/>
+              <rect x="7"  y="7"  width="21" height="21" rx="4" fill="rgba(255,255,255,0.92)"/>
+              <rect x="36" y="7"  width="21" height="21" rx="4" fill="rgba(255,255,255,0.60)"/>
+              <rect x="7"  y="36" width="21" height="21" rx="4" fill="rgba(255,255,255,0.60)"/>
+              <rect x="36" y="36" width="21" height="21" rx="4" fill="rgba(255,255,255,0.35)"/>
+              <rect x="28" y="15" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.55)"/>
+              <rect x="28" y="46" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.35)"/>
+              <rect x="15" y="28" width="3" height="8" rx="1.5" fill="rgba(255,255,255,0.55)"/>
+              <rect x="46" y="28" width="3" height="8" rx="1.5" fill="rgba(255,255,255,0.35)"/>
+              <text x="9" y="24" fontFamily="Arial Black, Arial, sans-serif" fontSize="14" fontWeight="900" fill="#C74634">Re</text>
+            </svg>
+            <Title level={2} style={{ margin: 0, color: '#1a1a2e' }}>
+              Re-<span style={{ fontWeight: 400 }}>ERP</span>
+            </Title>
+            <Text type="secondary">Enterprise Resource Planning</Text>
+          </div>
+
+          {/* Error alert */}
+          {error && (
+            <Alert title={error} type="error" showIcon style={{ marginBottom: 20 }} />
+          )}
+
+          {/* Login form */}
+          <Form
+            name="login"
+            onFinish={onFinish}
+            layout="vertical"
+            requiredMark={false}
+          >
+            <Form.Item
+              name="username"
+              rules={[{ required: true, message: 'Please enter your email' }]}
+            >
+              <Input
+                prefix={<UserOutlined style={{ color: '#bfbfbf' }} />}
+                placeholder="Email address"
+                size="large"
+                style={{ borderRadius: 8 }}
+                autoComplete="username"
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="password"
+              rules={[{ required: true, message: 'Please enter your password' }]}
+            >
+              <Input.Password
+                prefix={<LockOutlined style={{ color: '#bfbfbf' }} />}
+                placeholder="Password"
+                size="large"
+                style={{ borderRadius: 8 }}
+                autoComplete="current-password"
+              />
+            </Form.Item>
+
+            <Form.Item style={{ marginBottom: 8 }}>
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={loading}
+                block
+                size="large"
+                style={{ borderRadius: 8, height: 48, fontSize: 16, fontWeight: 500 }}
+              >
+                Sign In
+              </Button>
+            </Form.Item>
+          </Form>
+
+          <Divider style={{ margin: '16px 0' }} />
+
+          <div style={{ textAlign: 'center' }}>
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              First time or forgot password?{' '}
+            </Text>
+            <Link
+              style={{ fontSize: 13 }}
+              onClick={() => { setError(''); setForgotOpen(true); }}
+            >
+              Reset / Set Password
+            </Link>
+          </div>
+        </Card>
+      </div>
+
+      <ForgotPasswordModal open={forgotOpen} onClose={() => setForgotOpen(false)} />
+    </>
+  );
+};
+
+export default Login;

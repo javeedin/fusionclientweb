@@ -1,0 +1,448 @@
+-- ============================================================
+-- RENTAL MANAGEMENT MODULE — DATABASE DDL
+-- Dubai Real Estate Rental Management
+-- Table / Sequence prefix: RR_RM  (Rental Revenue – Rental Management)
+-- Run order: this file first, then 02_lookup_data, 03_packages, 04_ords_apis
+-- ============================================================
+
+-- ============================================================
+-- SEQUENCES
+-- ============================================================
+CREATE SEQUENCE RR_RM_CUSTOMERS_S     START WITH 1000 INCREMENT BY 1 NOCACHE NOCYCLE;
+CREATE SEQUENCE RR_RM_BROKERS_S       START WITH 1000 INCREMENT BY 1 NOCACHE NOCYCLE;
+CREATE SEQUENCE RR_RM_PROPERTIES_S    START WITH 1000 INCREMENT BY 1 NOCACHE NOCYCLE;
+CREATE SEQUENCE RR_RM_AGREEMENTS_S    START WITH 1000 INCREMENT BY 1 NOCACHE NOCYCLE;
+CREATE SEQUENCE RR_RM_INSTALLMENTS_S  START WITH 1000 INCREMENT BY 1 NOCACHE NOCYCLE;
+CREATE SEQUENCE RR_RM_SPLITS_S        START WITH 1000 INCREMENT BY 1 NOCACHE NOCYCLE;
+CREATE SEQUENCE RR_RM_AGRDOCS_S       START WITH 1000 INCREMENT BY 1 NOCACHE NOCYCLE;
+CREATE SEQUENCE RR_RM_EXPENSES_S      START WITH 1000 INCREMENT BY 1 NOCACHE NOCYCLE;
+CREATE SEQUENCE RR_RM_EXP_TYPES_S     START WITH 100  INCREMENT BY 1 NOCACHE NOCYCLE;
+CREATE SEQUENCE RR_RM_DOC_TYPES_S     START WITH 100  INCREMENT BY 1 NOCACHE NOCYCLE;
+/
+
+-- ============================================================
+-- RR_RM_LOOKUP_CODES  — Shared reference / lookup table
+-- ============================================================
+CREATE TABLE RR_RM_LOOKUP_CODES (
+    LOOKUP_TYPE       VARCHAR2(50)  NOT NULL,
+    LOOKUP_CODE       VARCHAR2(30)  NOT NULL,
+    MEANING           VARCHAR2(100) NOT NULL,
+    DESCRIPTION       VARCHAR2(255),
+    DISPLAY_ORDER     NUMBER        DEFAULT 10,
+    ENABLED_FLAG      VARCHAR2(1)   DEFAULT 'Y' NOT NULL,
+    CREATED_BY        VARCHAR2(100) DEFAULT USER NOT NULL,
+    CREATION_DATE     DATE          DEFAULT SYSDATE NOT NULL,
+    CONSTRAINT RR_RM_LOOKUP_PK  PRIMARY KEY (LOOKUP_TYPE, LOOKUP_CODE),
+    CONSTRAINT RR_RM_LOOKUP_EF  CHECK (ENABLED_FLAG IN ('Y','N'))
+);
+/
+
+-- ============================================================
+-- RR_RM_CUSTOMERS  — Tenant / customer master
+-- ============================================================
+CREATE TABLE RR_RM_CUSTOMERS (
+    CUSTOMER_ID            NUMBER         NOT NULL,
+    CUSTOMER_NUMBER        VARCHAR2(20)   NOT NULL,
+    CUSTOMER_TYPE          VARCHAR2(20)   DEFAULT 'INDIVIDUAL' NOT NULL,
+    FIRST_NAME             VARCHAR2(100),
+    LAST_NAME              VARCHAR2(100),
+    FULL_NAME              VARCHAR2(200)  NOT NULL,
+    COMPANY_NAME           VARCHAR2(200),
+    EMAIL                  VARCHAR2(150),
+    PHONE                  VARCHAR2(30),
+    MOBILE                 VARCHAR2(30)   NOT NULL,
+    NATIONALITY            VARCHAR2(50),
+    PASSPORT_NO            VARCHAR2(30),
+    PASSPORT_EXPIRY        DATE,
+    EMIRATES_ID            VARCHAR2(20),
+    EMIRATES_ID_EXPIRY     DATE,
+    TRADE_LICENSE_NO       VARCHAR2(50),
+    TRADE_LICENSE_EXPIRY   DATE,
+    ADDRESS_LINE1          VARCHAR2(200),
+    ADDRESS_LINE2          VARCHAR2(200),
+    CITY                   VARCHAR2(100),
+    EMIRATE                VARCHAR2(50)   DEFAULT 'Dubai',
+    COUNTRY                VARCHAR2(50)   DEFAULT 'UAE',
+    OCCUPATION             VARCHAR2(100),
+    EMPLOYER_NAME          VARCHAR2(200),
+    NOTES                  CLOB,
+    STATUS                 VARCHAR2(20)   DEFAULT 'ACTIVE' NOT NULL,
+    CREATED_BY             VARCHAR2(100)  DEFAULT USER NOT NULL,
+    CREATION_DATE          DATE           DEFAULT SYSDATE NOT NULL,
+    LAST_UPDATED_BY        VARCHAR2(100)  DEFAULT USER NOT NULL,
+    LAST_UPDATE_DATE       DATE           DEFAULT SYSDATE NOT NULL,
+    CONSTRAINT RR_RM_CUST_PK     PRIMARY KEY (CUSTOMER_ID),
+    CONSTRAINT RR_RM_CUST_NUM_UK UNIQUE (CUSTOMER_NUMBER),
+    CONSTRAINT RR_RM_CUST_TYPE   CHECK (CUSTOMER_TYPE IN ('INDIVIDUAL','COMPANY')),
+    CONSTRAINT RR_RM_CUST_STAT   CHECK (STATUS IN ('ACTIVE','INACTIVE','BLACKLISTED'))
+);
+/
+
+-- ============================================================
+-- RR_RM_BROKERS  — Real-estate broker / agent master
+-- ============================================================
+CREATE TABLE RR_RM_BROKERS (
+    BROKER_ID              NUMBER         NOT NULL,
+    BROKER_NUMBER          VARCHAR2(20)   NOT NULL,
+    BROKER_NAME            VARCHAR2(200)  NOT NULL,
+    COMPANY_NAME           VARCHAR2(200),
+    RERA_NO                VARCHAR2(50),        -- RERA broker registration (Dubai)
+    RERA_EXPIRY            DATE,
+    EMAIL                  VARCHAR2(150),
+    PHONE                  VARCHAR2(30),
+    MOBILE                 VARCHAR2(30),
+    COMMISSION_RATE        NUMBER(5,2),         -- Default commission %
+    NOTES                  VARCHAR2(500),
+    STATUS                 VARCHAR2(20)   DEFAULT 'ACTIVE' NOT NULL,
+    CREATED_BY             VARCHAR2(100)  DEFAULT USER NOT NULL,
+    CREATION_DATE          DATE           DEFAULT SYSDATE NOT NULL,
+    LAST_UPDATED_BY        VARCHAR2(100)  DEFAULT USER NOT NULL,
+    LAST_UPDATE_DATE       DATE           DEFAULT SYSDATE NOT NULL,
+    CONSTRAINT RR_RM_BRKR_PK     PRIMARY KEY (BROKER_ID),
+    CONSTRAINT RR_RM_BRKR_NUM_UK UNIQUE (BROKER_NUMBER),
+    CONSTRAINT RR_RM_BRKR_STAT   CHECK (STATUS IN ('ACTIVE','INACTIVE'))
+);
+/
+
+-- ============================================================
+-- RR_RM_PROPERTIES  — Property / unit master
+-- ============================================================
+CREATE TABLE RR_RM_PROPERTIES (
+    PROPERTY_ID            NUMBER         NOT NULL,
+    PROPERTY_NUMBER        VARCHAR2(20)   NOT NULL,
+    PROPERTY_NAME          VARCHAR2(200)  NOT NULL,
+    PROPERTY_TYPE          VARCHAR2(30)   NOT NULL,  -- APARTMENT/VILLA/STUDIO/TOWNHOUSE/OFFICE/SHOP/WAREHOUSE/LAND
+    USAGE_TYPE             VARCHAR2(20)   NOT NULL,  -- RESIDENTIAL/COMMERCIAL/MIXED
+    BUILDING_NAME          VARCHAR2(200),
+    FLOOR_NO               VARCHAR2(10),
+    UNIT_NO                VARCHAR2(20),
+    AREA_SQFT              NUMBER(10,2),
+    AREA_SQMT              NUMBER(10,2),
+    BEDROOMS               NUMBER(2),
+    BATHROOMS              NUMBER(2),
+    PARKING_SPACES         NUMBER(2),
+    PLOT_NO                VARCHAR2(50),
+    MAKANI_NO              VARCHAR2(20),           -- Dubai geocode (10-digit)
+    COMMUNITY              VARCHAR2(100),
+    DISTRICT               VARCHAR2(100),
+    CITY                   VARCHAR2(100)  DEFAULT 'Dubai',
+    EMIRATE                VARCHAR2(50)   DEFAULT 'Dubai',
+    COUNTRY                VARCHAR2(50)   DEFAULT 'UAE',
+    TITLE_DEED_NO          VARCHAR2(50),
+    TITLE_DEED_DATE        DATE,
+    MUNICIPALITY_NO        VARCHAR2(50),
+    DEWA_PREMISE_NO        VARCHAR2(30),           -- Dubai Electricity & Water Authority
+    DEWA_ACCOUNT_NO        VARCHAR2(30),
+    OWNER_NAME             VARCHAR2(200),
+    OWNER_CONTACT          VARCHAR2(30),
+    ANNUAL_MARKET_RENT     NUMBER(15,2),           -- Expected AED market rent
+    PURCHASE_VALUE         NUMBER(15,2),
+    FEATURES               VARCHAR2(1000),         -- comma-separated (Pool, Gym, Balcony, Maid Room…)
+    DESCRIPTION            CLOB,
+    STATUS                 VARCHAR2(20)   DEFAULT 'AVAILABLE' NOT NULL,
+    CREATED_BY             VARCHAR2(100)  DEFAULT USER NOT NULL,
+    CREATION_DATE          DATE           DEFAULT SYSDATE NOT NULL,
+    LAST_UPDATED_BY        VARCHAR2(100)  DEFAULT USER NOT NULL,
+    LAST_UPDATE_DATE       DATE           DEFAULT SYSDATE NOT NULL,
+    CONSTRAINT RR_RM_PROP_PK     PRIMARY KEY (PROPERTY_ID),
+    CONSTRAINT RR_RM_PROP_NUM_UK UNIQUE (PROPERTY_NUMBER),
+    CONSTRAINT RR_RM_PROP_TYPE   CHECK (PROPERTY_TYPE  IN ('APARTMENT','VILLA','STUDIO','TOWNHOUSE','OFFICE','SHOP','WAREHOUSE','LAND')),
+    CONSTRAINT RR_RM_PROP_USAGE  CHECK (USAGE_TYPE     IN ('RESIDENTIAL','COMMERCIAL','MIXED')),
+    CONSTRAINT RR_RM_PROP_STAT   CHECK (STATUS         IN ('AVAILABLE','RENTED','MAINTENANCE','RESERVED','SOLD'))
+);
+/
+
+-- ============================================================
+-- RR_RM_DOCUMENT_TYPES  — Required document type catalogue
+-- ============================================================
+CREATE TABLE RR_RM_DOCUMENT_TYPES (
+    DOCUMENT_TYPE_ID       NUMBER         NOT NULL,
+    DOC_TYPE_CODE          VARCHAR2(30)   NOT NULL,
+    DOC_TYPE_NAME          VARCHAR2(100)  NOT NULL,
+    CUSTOMER_TYPE          VARCHAR2(20)   DEFAULT 'ALL',  -- ALL/INDIVIDUAL/COMPANY
+    MANDATORY_FLAG         VARCHAR2(1)    DEFAULT 'Y',
+    DISPLAY_ORDER          NUMBER         DEFAULT 10,
+    DESCRIPTION            VARCHAR2(255),
+    ENABLED_FLAG           VARCHAR2(1)    DEFAULT 'Y',
+    CREATED_BY             VARCHAR2(100)  DEFAULT USER NOT NULL,
+    CREATION_DATE          DATE           DEFAULT SYSDATE NOT NULL,
+    CONSTRAINT RR_RM_DOCTYPE_PK  PRIMARY KEY (DOCUMENT_TYPE_ID),
+    CONSTRAINT RR_RM_DOCTYPE_UK  UNIQUE (DOC_TYPE_CODE),
+    CONSTRAINT RR_RM_DOCTYPE_MF  CHECK (MANDATORY_FLAG  IN ('Y','N')),
+    CONSTRAINT RR_RM_DOCTYPE_EF  CHECK (ENABLED_FLAG    IN ('Y','N')),
+    CONSTRAINT RR_RM_DOCTYPE_CT  CHECK (CUSTOMER_TYPE   IN ('ALL','INDIVIDUAL','COMPANY'))
+);
+/
+
+-- ============================================================
+-- RR_RM_EXPENSE_TYPES  — Expense category catalogue
+-- ============================================================
+CREATE TABLE RR_RM_EXPENSE_TYPES (
+    EXPENSE_TYPE_ID        NUMBER         NOT NULL,
+    EXPENSE_TYPE_CODE      VARCHAR2(30)   NOT NULL,
+    EXPENSE_TYPE_NAME      VARCHAR2(100)  NOT NULL,
+    CATEGORY               VARCHAR2(30)   NOT NULL,  -- MAINTENANCE/UTILITY/LEGAL/ADMIN/INSURANCE/CAPITAL/OTHER
+    RECOVERABLE_FLAG       VARCHAR2(1)    DEFAULT 'N',  -- Chargeable to tenant?
+    ENABLED_FLAG           VARCHAR2(1)    DEFAULT 'Y',
+    CREATED_BY             VARCHAR2(100)  DEFAULT USER NOT NULL,
+    CREATION_DATE          DATE           DEFAULT SYSDATE NOT NULL,
+    CONSTRAINT RR_RM_EXPTYPE_PK  PRIMARY KEY (EXPENSE_TYPE_ID),
+    CONSTRAINT RR_RM_EXPTYPE_UK  UNIQUE (EXPENSE_TYPE_CODE),
+    CONSTRAINT RR_RM_EXPTYPE_CAT CHECK (CATEGORY IN ('MAINTENANCE','UTILITY','LEGAL','ADMIN','INSURANCE','CAPITAL','OTHER')),
+    CONSTRAINT RR_RM_EXPTYPE_REC CHECK (RECOVERABLE_FLAG IN ('Y','N')),
+    CONSTRAINT RR_RM_EXPTYPE_EF  CHECK (ENABLED_FLAG     IN ('Y','N'))
+);
+/
+
+-- ============================================================
+-- RR_RM_AGREEMENTS  — Rental agreement header
+-- ============================================================
+CREATE TABLE RR_RM_AGREEMENTS (
+    AGREEMENT_ID               NUMBER         NOT NULL,
+    AGREEMENT_NUMBER           VARCHAR2(30)   NOT NULL,   -- AGR-2025-000001
+    AGREEMENT_TYPE             VARCHAR2(20)   DEFAULT 'NEW' NOT NULL,  -- NEW/RENEWAL/TRANSFER
+    SIGN_DATE                  DATE           NOT NULL,
+    VALID_FROM                 DATE,
+    VALID_TO                   DATE,
+    STATUS                     VARCHAR2(20)   DEFAULT 'DRAFT' NOT NULL,
+
+    -- Property
+    PROPERTY_ID                NUMBER         NOT NULL,
+
+    -- Tenant / Customer
+    CUSTOMER_ID                NUMBER         NOT NULL,
+    TENANT_CONTACT_PHONE       VARCHAR2(30),
+    TENANT_CONTACT_EMAIL       VARCHAR2(150),
+    TENANT_CONTACT_ADDRESS     VARCHAR2(300),
+
+    -- Broker
+    BROKER_ID                  NUMBER,
+    BROKER_COMMISSION_AMOUNT   NUMBER(15,2),
+    BROKER_COMMISSION_PCT      NUMBER(5,2),
+    BROKER_COMMISSION_PAID     VARCHAR2(1)    DEFAULT 'N',
+
+    -- Agreement period
+    START_DATE                 DATE           NOT NULL,
+    END_DATE                   DATE           NOT NULL,
+    -- NO_OF_MONTHS is calculated in the package; stored for fast display
+    NO_OF_MONTHS               NUMBER(4),
+
+    -- Payment terms
+    PAYMENT_FREQUENCY          VARCHAR2(20)   NOT NULL,   -- MONTHLY/QUARTERLY/HALF_YEARLY/YEARLY
+    NO_OF_PAYMENTS             NUMBER(3),                 -- Calculated on save
+    TOTAL_AMOUNT               NUMBER(15,2)   NOT NULL,
+    FREQUENCY_AMOUNT           NUMBER(15,2),              -- TOTAL_AMOUNT / NO_OF_PAYMENTS
+    CURRENCY_CODE              VARCHAR2(5)    DEFAULT 'AED',
+
+    -- Security deposit
+    SECURITY_DEPOSIT_AMOUNT    NUMBER(15,2),
+    SECURITY_DEPOSIT_CHEQUE    VARCHAR2(30),
+    SECURITY_DEPOSIT_DATE      DATE,
+    SECURITY_DEPOSIT_BANK      VARCHAR2(100),
+    SECURITY_DEPOSIT_STATUS    VARCHAR2(20)   DEFAULT 'HELD',  -- HELD/RETURNED/FORFEITED
+
+    -- Advance rent
+    ADVANCE_RENT_AMOUNT        NUMBER(15,2),
+    ADVANCE_RENT_MONTHS        NUMBER(2),
+
+    -- Dubai-specific compliance
+    EJARI_NUMBER               VARCHAR2(30),
+    EJARI_REG_DATE             DATE,
+    EJARI_EXPIRY_DATE          DATE,
+    MUNICIPALITY_FEES          NUMBER(15,2),              -- 5% of annual rent (residential)
+    MUNICIPALITY_FEES_PAID     VARCHAR2(1)    DEFAULT 'N',
+    RERA_INDEX_PCT             NUMBER(5,2),               -- RERA-allowed rent increment %
+
+    -- Contract terms
+    GRACE_PERIOD_DAYS          NUMBER(3)      DEFAULT 0,
+    NOTICE_PERIOD_DAYS         NUMBER(3)      DEFAULT 90,
+    RENEWAL_OPTION             VARCHAR2(1)    DEFAULT 'N',
+    RENT_INCREMENT_PCT         NUMBER(5,2),
+
+    -- Termination
+    TERMINATED_DATE            DATE,
+    TERMINATION_REASON         VARCHAR2(500),
+    TERMINATED_BY              VARCHAR2(100),
+
+    -- Notes
+    SPECIAL_CONDITIONS         CLOB,
+    INTERNAL_NOTES             CLOB,
+
+    -- Audit
+    CREATED_BY                 VARCHAR2(100)  DEFAULT USER NOT NULL,
+    CREATION_DATE              DATE           DEFAULT SYSDATE NOT NULL,
+    LAST_UPDATED_BY            VARCHAR2(100)  DEFAULT USER NOT NULL,
+    LAST_UPDATE_DATE           DATE           DEFAULT SYSDATE NOT NULL,
+
+    CONSTRAINT RR_RM_AGR_PK    PRIMARY KEY (AGREEMENT_ID),
+    CONSTRAINT RR_RM_AGR_UK    UNIQUE (AGREEMENT_NUMBER),
+    CONSTRAINT RR_RM_AGR_PROP  FOREIGN KEY (PROPERTY_ID)  REFERENCES RR_RM_PROPERTIES(PROPERTY_ID),
+    CONSTRAINT RR_RM_AGR_CUST  FOREIGN KEY (CUSTOMER_ID)  REFERENCES RR_RM_CUSTOMERS(CUSTOMER_ID),
+    CONSTRAINT RR_RM_AGR_BRKR  FOREIGN KEY (BROKER_ID)    REFERENCES RR_RM_BROKERS(BROKER_ID),
+    CONSTRAINT RR_RM_AGR_TYPE  CHECK (AGREEMENT_TYPE      IN ('NEW','RENEWAL','TRANSFER')),
+    CONSTRAINT RR_RM_AGR_STAT  CHECK (STATUS              IN ('DRAFT','ACTIVE','EXPIRED','TERMINATED','CANCELLED')),
+    CONSTRAINT RR_RM_AGR_FREQ  CHECK (PAYMENT_FREQUENCY   IN ('MONTHLY','QUARTERLY','HALF_YEARLY','YEARLY')),
+    CONSTRAINT RR_RM_AGR_DPST  CHECK (SECURITY_DEPOSIT_STATUS IN ('HELD','RETURNED','FORFEITED')),
+    CONSTRAINT RR_RM_AGR_CURR  CHECK (CURRENCY_CODE       IN ('AED','USD','EUR','GBP'))
+);
+/
+
+-- ============================================================
+-- RR_RM_INSTALLMENTS  — Payment installment lines  (Tab 1)
+-- ============================================================
+CREATE TABLE RR_RM_INSTALLMENTS (
+    INSTALLMENT_ID             NUMBER         NOT NULL,
+    AGREEMENT_ID               NUMBER         NOT NULL,
+    INSTALLMENT_NUMBER         NUMBER(3)      NOT NULL,
+    DUE_DATE                   DATE           NOT NULL,
+    AMOUNT                     NUMBER(15,2)   NOT NULL,
+    PAYMENT_METHOD             VARCHAR2(20)   DEFAULT 'CHEQUE',  -- CHEQUE/BANK_TRANSFER/CASH/CARD/ONLINE
+    CHEQUE_NO                  VARCHAR2(30),
+    CHEQUE_DATE                DATE,
+    BANK_NAME                  VARCHAR2(100),
+    ACCOUNT_NO                 VARCHAR2(30),
+    STATUS                     VARCHAR2(20)   DEFAULT 'PENDING',
+    -- PENDING/PRESENTED/CLEARED/BOUNCED/CANCELLED/REPLACED/WAIVED
+    PRESENTED_DATE             DATE,
+    CLEARED_DATE               DATE,
+    BOUNCED_DATE               DATE,
+    BOUNCED_REASON             VARCHAR2(200),
+    LATE_PAYMENT_CHARGE        NUMBER(10,2)   DEFAULT 0,
+    REPLACED_BY_ID             NUMBER,        -- Self-FK: replacement installment
+    RECEIPT_NUMBER             VARCHAR2(50),
+    RECEIPT_DATE               DATE,
+    GL_POSTED_FLAG             VARCHAR2(1)    DEFAULT 'N',
+    GL_POSTED_DATE             DATE,
+    JOURNAL_ENTRY_NO           VARCHAR2(50),
+    NOTES                      VARCHAR2(500),
+    CREATED_BY                 VARCHAR2(100)  DEFAULT USER NOT NULL,
+    CREATION_DATE              DATE           DEFAULT SYSDATE NOT NULL,
+    LAST_UPDATED_BY            VARCHAR2(100)  DEFAULT USER NOT NULL,
+    LAST_UPDATE_DATE           DATE           DEFAULT SYSDATE NOT NULL,
+    CONSTRAINT RR_RM_INST_PK    PRIMARY KEY (INSTALLMENT_ID),
+    CONSTRAINT RR_RM_INST_AGR   FOREIGN KEY (AGREEMENT_ID) REFERENCES RR_RM_AGREEMENTS(AGREEMENT_ID),
+    CONSTRAINT RR_RM_INST_METH  CHECK (PAYMENT_METHOD IN ('CHEQUE','BANK_TRANSFER','CASH','CARD','ONLINE')),
+    CONSTRAINT RR_RM_INST_STAT  CHECK (STATUS IN ('PENDING','PRESENTED','CLEARED','BOUNCED','CANCELLED','REPLACED','WAIVED'))
+);
+/
+
+-- ============================================================
+-- RR_RM_MONTHLY_SPLITS  — Monthly revenue recognition  (Tab 2)
+-- One row per calendar month covered by the agreement.
+-- Amount = prorated monthly portion of TOTAL_AMOUNT.
+-- ============================================================
+CREATE TABLE RR_RM_MONTHLY_SPLITS (
+    SPLIT_ID               NUMBER         NOT NULL,
+    AGREEMENT_ID           NUMBER         NOT NULL,
+    INSTALLMENT_ID         NUMBER,                 -- Which installment funds this month
+    PERIOD_YEAR            NUMBER(4)      NOT NULL,
+    PERIOD_MONTH           NUMBER(2)      NOT NULL, -- 1–12
+    PERIOD_DATE            DATE           NOT NULL, -- First day of month
+    AMOUNT                 NUMBER(15,2)   NOT NULL, -- Prorated monthly amount
+    STATUS                 VARCHAR2(20)   DEFAULT 'ACCRUED',  -- ACCRUED/RECOGNIZED/REVERSED
+    GL_POSTED_FLAG         VARCHAR2(1)    DEFAULT 'N',
+    GL_POSTED_DATE         DATE,
+    JOURNAL_ENTRY_NO       VARCHAR2(50),
+    CREATED_BY             VARCHAR2(100)  DEFAULT USER NOT NULL,
+    CREATION_DATE          DATE           DEFAULT SYSDATE NOT NULL,
+    LAST_UPDATED_BY        VARCHAR2(100)  DEFAULT USER NOT NULL,
+    LAST_UPDATE_DATE       DATE           DEFAULT SYSDATE NOT NULL,
+    CONSTRAINT RR_RM_SPLIT_PK    PRIMARY KEY (SPLIT_ID),
+    CONSTRAINT RR_RM_SPLIT_AGR   FOREIGN KEY (AGREEMENT_ID)   REFERENCES RR_RM_AGREEMENTS(AGREEMENT_ID),
+    CONSTRAINT RR_RM_SPLIT_INST  FOREIGN KEY (INSTALLMENT_ID) REFERENCES RR_RM_INSTALLMENTS(INSTALLMENT_ID),
+    CONSTRAINT RR_RM_SPLIT_MON   CHECK (PERIOD_MONTH BETWEEN 1 AND 12),
+    CONSTRAINT RR_RM_SPLIT_STAT  CHECK (STATUS IN ('ACCRUED','RECOGNIZED','REVERSED'))
+);
+/
+
+-- ============================================================
+-- RR_RM_AGREEMENT_DOCUMENTS  — Document checklist per agreement
+-- ============================================================
+CREATE TABLE RR_RM_AGREEMENT_DOCUMENTS (
+    DOCUMENT_ID            NUMBER         NOT NULL,
+    AGREEMENT_ID           NUMBER         NOT NULL,
+    DOCUMENT_TYPE_ID       NUMBER         NOT NULL,
+    DOCUMENT_NUMBER        VARCHAR2(100),           -- Passport no / Emirates ID / TL no
+    DOCUMENT_EXPIRY        DATE,
+    SUBMITTED_FLAG         VARCHAR2(1)    DEFAULT 'N',
+    SUBMITTED_DATE         DATE,
+    VERIFIED_FLAG          VARCHAR2(1)    DEFAULT 'N',
+    VERIFIED_BY            VARCHAR2(100),
+    VERIFIED_DATE          DATE,
+    FILE_NAME              VARCHAR2(200),
+    FILE_PATH              VARCHAR2(500),
+    NOTES                  VARCHAR2(500),
+    CREATED_BY             VARCHAR2(100)  DEFAULT USER NOT NULL,
+    CREATION_DATE          DATE           DEFAULT SYSDATE NOT NULL,
+    LAST_UPDATED_BY        VARCHAR2(100)  DEFAULT USER NOT NULL,
+    LAST_UPDATE_DATE       DATE           DEFAULT SYSDATE NOT NULL,
+    CONSTRAINT RR_RM_ADOC_PK    PRIMARY KEY (DOCUMENT_ID),
+    CONSTRAINT RR_RM_ADOC_AGR   FOREIGN KEY (AGREEMENT_ID)     REFERENCES RR_RM_AGREEMENTS(AGREEMENT_ID),
+    CONSTRAINT RR_RM_ADOC_TYPE  FOREIGN KEY (DOCUMENT_TYPE_ID) REFERENCES RR_RM_DOCUMENT_TYPES(DOCUMENT_TYPE_ID),
+    CONSTRAINT RR_RM_ADOC_SUB   CHECK (SUBMITTED_FLAG IN ('Y','N')),
+    CONSTRAINT RR_RM_ADOC_VER   CHECK (VERIFIED_FLAG  IN ('Y','N'))
+);
+/
+
+-- ============================================================
+-- RR_RM_EXPENSES  — Property expenses
+-- ============================================================
+CREATE TABLE RR_RM_EXPENSES (
+    EXPENSE_ID             NUMBER         NOT NULL,
+    EXPENSE_NUMBER         VARCHAR2(20)   NOT NULL,  -- EXP-2025-000001
+    PROPERTY_ID            NUMBER         NOT NULL,
+    AGREEMENT_ID           NUMBER,                   -- Optional: linked to an agreement
+    EXPENSE_TYPE_ID        NUMBER         NOT NULL,
+    EXPENSE_DATE           DATE           NOT NULL,
+    DESCRIPTION            VARCHAR2(500)  NOT NULL,
+    AMOUNT                 NUMBER(15,2)   NOT NULL,
+    CURRENCY_CODE          VARCHAR2(5)    DEFAULT 'AED',
+    PAID_BY                VARCHAR2(20)   DEFAULT 'OWNER',  -- OWNER/TENANT
+    PAYMENT_METHOD         VARCHAR2(20),
+    RECEIPT_NO             VARCHAR2(50),
+    VENDOR_NAME            VARCHAR2(200),
+    VENDOR_CONTACT         VARCHAR2(50),
+    STATUS                 VARCHAR2(20)   DEFAULT 'PENDING',  -- PENDING/APPROVED/PAID/CANCELLED
+    APPROVED_BY            VARCHAR2(100),
+    APPROVED_DATE          DATE,
+    PAID_DATE              DATE,
+    NOTES                  CLOB,
+    CREATED_BY             VARCHAR2(100)  DEFAULT USER NOT NULL,
+    CREATION_DATE          DATE           DEFAULT SYSDATE NOT NULL,
+    LAST_UPDATED_BY        VARCHAR2(100)  DEFAULT USER NOT NULL,
+    LAST_UPDATE_DATE       DATE           DEFAULT SYSDATE NOT NULL,
+    CONSTRAINT RR_RM_EXP_PK    PRIMARY KEY (EXPENSE_ID),
+    CONSTRAINT RR_RM_EXP_UK    UNIQUE (EXPENSE_NUMBER),
+    CONSTRAINT RR_RM_EXP_PROP  FOREIGN KEY (PROPERTY_ID)    REFERENCES RR_RM_PROPERTIES(PROPERTY_ID),
+    CONSTRAINT RR_RM_EXP_AGR   FOREIGN KEY (AGREEMENT_ID)   REFERENCES RR_RM_AGREEMENTS(AGREEMENT_ID),
+    CONSTRAINT RR_RM_EXP_TYPE  FOREIGN KEY (EXPENSE_TYPE_ID) REFERENCES RR_RM_EXPENSE_TYPES(EXPENSE_TYPE_ID),
+    CONSTRAINT RR_RM_EXP_PAID  CHECK (PAID_BY IN ('OWNER','TENANT')),
+    CONSTRAINT RR_RM_EXP_STAT  CHECK (STATUS  IN ('PENDING','APPROVED','PAID','CANCELLED'))
+);
+/
+
+-- ============================================================
+-- INDEXES  — performance
+-- ============================================================
+CREATE INDEX RR_RM_AGR_PROP_IX   ON RR_RM_AGREEMENTS(PROPERTY_ID);
+CREATE INDEX RR_RM_AGR_CUST_IX   ON RR_RM_AGREEMENTS(CUSTOMER_ID);
+CREATE INDEX RR_RM_AGR_STAT_IX   ON RR_RM_AGREEMENTS(STATUS);
+CREATE INDEX RR_RM_AGR_DATE_IX   ON RR_RM_AGREEMENTS(START_DATE, END_DATE);
+CREATE INDEX RR_RM_INST_AGR_IX   ON RR_RM_INSTALLMENTS(AGREEMENT_ID);
+CREATE INDEX RR_RM_INST_DUE_IX   ON RR_RM_INSTALLMENTS(DUE_DATE);
+CREATE INDEX RR_RM_INST_STAT_IX  ON RR_RM_INSTALLMENTS(STATUS);
+CREATE INDEX RR_RM_SPLIT_AGR_IX  ON RR_RM_MONTHLY_SPLITS(AGREEMENT_ID);
+CREATE INDEX RR_RM_SPLIT_PRD_IX  ON RR_RM_MONTHLY_SPLITS(PERIOD_YEAR, PERIOD_MONTH);
+CREATE INDEX RR_RM_EXP_PROP_IX   ON RR_RM_EXPENSES(PROPERTY_ID);
+CREATE INDEX RR_RM_EXP_DATE_IX   ON RR_RM_EXPENSES(EXPENSE_DATE);
+CREATE INDEX RR_RM_ADOC_AGR_IX   ON RR_RM_AGREEMENT_DOCUMENTS(AGREEMENT_ID);
+CREATE INDEX RR_RM_PROP_STAT_IX  ON RR_RM_PROPERTIES(STATUS);
+CREATE INDEX RR_RM_CUST_STAT_IX  ON RR_RM_CUSTOMERS(STATUS);
+/
+
+-- ============================================================
+-- Verify
+-- ============================================================
+SELECT TABLE_NAME FROM USER_TABLES
+WHERE  TABLE_NAME LIKE 'RR_RM%'
+ORDER  BY TABLE_NAME;

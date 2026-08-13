@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./icons/favicon.svg" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#C74634" />
+    <meta name="description" content="ReactERP - Oracle Fusion Cloud ERP Integration Platform" />
+    <link rel="manifest" href="./manifest.json" />
+    <title>ReactERP v2.4</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+    <script>
+      // ALWAYS unregister service workers to prevent stale cache issues
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          registrations.forEach(function(registration) {
+            registration.unregister();
+            console.log('SW unregistered:', registration.scope);
+          });
+        });
+        // Also clear all caches
+        if ('caches' in window) {
+          caches.keys().then(function(names) {
+            names.forEach(function(name) {
+              caches.delete(name);
+              console.log('Cache cleared:', name);
+            });
+          });
+        }
+      }
+    </script>
+  </body>
+</html>

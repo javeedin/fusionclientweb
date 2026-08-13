@@ -1,0 +1,93 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+    'Noto Color Emoji';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ant Design customizations */
+.ant-layout {
+  min-height: 100vh;
+}
+
+.ant-menu-inline .ant-menu-item,
+.ant-menu-inline .ant-menu-submenu-title {
+  margin-inline: 8px;
+  width: calc(100% - 16px);
+  border-radius: 6px;
+}
+
+.ant-card:hover {
+  cursor: pointer;
+}
+
+.ant-table-wrapper {
+  background: #fff;
+}
+
+/* Disabled form field styling — make read-only fields clearly visible */
+.ant-input[disabled],
+.ant-input-number-disabled .ant-input-number-input,
+.ant-picker-disabled .ant-picker-input > input,
+.ant-select-disabled .ant-select-selection-item,
+.ant-select-disabled .ant-select-selector,
+.ant-input-disabled,
+.ant-input-affix-wrapper-disabled {
+  background-color: #f0f0f0 !important;
+  color: #444 !important;
+  cursor: default !important;
+}
+
+.ant-select-disabled .ant-select-selector {
+  background-color: #f0f0f0 !important;
+  color: #444 !important;
+}
+
+/* Account Analysis — Opening / Closing Balance row styles */
+.opening-balance-row td {
+  background: #fffbe6 !important;
+  border-top: 2px solid #D4A800 !important;
+  border-bottom: 1px solid #ffe58f !important;
+  font-weight: 600;
+}
+.opening-balance-row:hover td { background: #fff3cd !important; }
+
+.closing-balance-row td {
+  background: #f6ffed !important;
+  border-top: 2px solid #1D7B4D !important;
+  border-bottom: 2px solid #1D7B4D !important;
+  font-weight: 600;
+}
+.closing-balance-row:hover td { background: #d9f7be !important; }
+
+/* PC Transactions table row styles */
+.pc-row-refill td { background: #e6f4ff !important; }
+.pc-row-group  td { background: #f0f5ff !important; font-weight: 600; border-top: 1px solid #adc6ff !important; }
+.pc-row-child  td { background: #fff !important; }
+.pc-row-group:hover td { background: #dbeafe !important; }
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
