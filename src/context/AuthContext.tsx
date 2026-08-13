@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import type { User, AuthContextType, LoginResult } from '../types';
 import { getCurrentCompany } from '../config/company.config';
+import { fusionSOAPLogin } from '../services/fusion-soap-login.service';
 
 
 const isElectron = !!(window as any).electronAPI?.isElectron;
@@ -33,13 +34,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginWithStatus = useCallback(async (username: string, password: string): Promise<LoginResult> => {
     try {
-      // Get company-specific APEX base URL from company config
       const currentCompany = getCurrentCompany();
       const APEX_AUTH_BASE = `${currentCompany.apexBaseUrl}/auth`;
       const APEX_ADMIN_BASE = `${currentCompany.apexBaseUrl}/admin`;
+      const fusionInstances = currentCompany.fusionInstances || [];
 
-      console.log('[Auth] Logging in with company:', currentCompany.code, 'APEX base:', APEX_AUTH_BASE);
+      console.log('[Auth] Logging in with company:', currentCompany.code);
+      console.log('[Auth] Fusion instances available:', fusionInstances.length);
 
+      // Check if Fusion instances are configured
+      if (fusionInstances.length > 0) {
+        console.log('[Auth] Attempting Fusion SOAP login...');
+
+        // Get the selected instance from sessionStorage (set by Login component)
+        const selectedInstanceUrl = sessionStorage.getItem('fusionInstanceUrl');
+        if (selectedInstanceUrl) {
+          const fusionResult = await fusionSOAPLogin(selectedInstanceUrl, username, password);
+          if (fusionResult.success && fusionResult.sessionId) {
+            console.log('[Auth] Fusion login SUCCESS - Session ID obtained');
+            const uname = username;
+            const userData: User = {
+              id: uname,
+              username: uname,
+              name: username,
+              email: username,
+              role: 'User',
+            };
+
+            setUser(userData);
+            localStorage.setItem('erp_user', JSON.stringify(userData));
+            localStorage.setItem('erp_token', fusionResult.sessionId);
+            localStorage.setItem('fusion_session_id', fusionResult.sessionId);
+            if (isElectron) {
+              (window as any).electronAPI.saveErpSession(userData, fusionResult.sessionId).catch(() => {});
+            }
+
+            return { status: 'SUCCESS', message: 'Logged in via Oracle Fusion' };
+          } else {
+            console.warn('[Auth] Fusion login failed:', fusionResult.error, '- Falling back to APEX');
+          }
+        }
+      }
+
+      // Fallback to APEX login
+      console.log('[Auth] Using APEX authentication - APEX base:', APEX_AUTH_BASE);
       const res = await fetch(`${APEX_AUTH_BASE}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -79,6 +117,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(userData);
         localStorage.setItem('erp_user', JSON.stringify(userData));
         localStorage.setItem('erp_token', data.token || '');
+        localStorage.removeItem('fusion_session_id');
         if (isElectron) {
           (window as any).electronAPI.saveErpSession(userData, data.token || '').catch(() => {});
         }
