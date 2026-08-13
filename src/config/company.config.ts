@@ -14,36 +14,36 @@ const COMPANIES: Record<CompanyCode, CompanyConfig> = {
   BUMERIC: {
     code: 'BUMERIC',
     name: 'BUMERIC',
-    apexBaseUrl: process.env.REACT_APP_BUMERIC_APEX_BASE_URL || '',
-    fusionBaseUrl: process.env.REACT_APP_BUMERIC_FUSION_BASE_URL || '',
-    hcmBaseUrl: process.env.REACT_APP_BUMERIC_HCM_BASE_URL || '',
-    fusionUser: process.env.REACT_APP_BUMERIC_FUSION_USER || '',
-    fusionPassword: process.env.REACT_APP_BUMERIC_FUSION_PASSWORD || '',
+    apexBaseUrl: import.meta.env.REACT_APP_BUMERIC_APEX_BASE_URL || '',
+    fusionBaseUrl: import.meta.env.REACT_APP_BUMERIC_FUSION_BASE_URL || '',
+    hcmBaseUrl: import.meta.env.REACT_APP_BUMERIC_HCM_BASE_URL || '',
+    fusionUser: import.meta.env.REACT_APP_BUMERIC_FUSION_USER || '',
+    fusionPassword: import.meta.env.REACT_APP_BUMERIC_FUSION_PASSWORD || '',
   },
   MITSUMI: {
     code: 'MITSUMI',
     name: 'MITSUMI',
-    apexBaseUrl: process.env.REACT_APP_MITSUMI_APEX_BASE_URL || '',
-    fusionBaseUrl: process.env.REACT_APP_MITSUMI_FUSION_BASE_URL || '',
-    hcmBaseUrl: process.env.REACT_APP_MITSUMI_HCM_BASE_URL || '',
-    fusionUser: process.env.REACT_APP_MITSUMI_FUSION_USER || '',
-    fusionPassword: process.env.REACT_APP_MITSUMI_FUSION_PASSWORD || '',
+    apexBaseUrl: import.meta.env.REACT_APP_MITSUMI_APEX_BASE_URL || '',
+    fusionBaseUrl: import.meta.env.REACT_APP_MITSUMI_FUSION_BASE_URL || '',
+    hcmBaseUrl: import.meta.env.REACT_APP_MITSUMI_HCM_BASE_URL || '',
+    fusionUser: import.meta.env.REACT_APP_MITSUMI_FUSION_USER || '',
+    fusionPassword: import.meta.env.REACT_APP_MITSUMI_FUSION_PASSWORD || '',
   },
   GRAYSINC: {
     code: 'GRAYSINC',
     name: 'GRAYS INC',
-    apexBaseUrl: process.env.REACT_APP_GRAYSINC_APEX_BASE_URL || '',
-    fusionBaseUrl: process.env.REACT_APP_GRAYSINC_FUSION_BASE_URL || '',
-    hcmBaseUrl: process.env.REACT_APP_GRAYSINC_HCM_BASE_URL || '',
-    fusionUser: process.env.REACT_APP_GRAYSINC_FUSION_USER || '',
-    fusionPassword: process.env.REACT_APP_GRAYSINC_FUSION_PASSWORD || '',
+    apexBaseUrl: import.meta.env.REACT_APP_GRAYSINC_APEX_BASE_URL || '',
+    fusionBaseUrl: import.meta.env.REACT_APP_GRAYSINC_FUSION_BASE_URL || '',
+    hcmBaseUrl: import.meta.env.REACT_APP_GRAYSINC_HCM_BASE_URL || '',
+    fusionUser: import.meta.env.REACT_APP_GRAYSINC_FUSION_USER || '',
+    fusionPassword: import.meta.env.REACT_APP_GRAYSINC_FUSION_PASSWORD || '',
   },
 };
 
 // Get current company from env or localStorage
 export function getCurrentCompany(): CompanyConfig {
   const storedCompany = localStorage.getItem('selectedCompany') as CompanyCode | null;
-  const companyCode = storedCompany || (process.env.REACT_APP_COMPANY as CompanyCode) || 'BUMERIC';
+  const companyCode = storedCompany || (import.meta.env.REACT_APP_COMPANY as CompanyCode) || 'BUMERIC';
   return COMPANIES[companyCode] || COMPANIES.BUMERIC;
 }
 
