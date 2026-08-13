@@ -5,24 +5,31 @@ import { getApexBaseUrl } from './company.config';
  * Use these functions instead of hardcoding APEX base URLs
  */
 
+function normalizeUrl(url: string): string {
+  return url.replace(/\/+/g, '/').replace('https:/', 'https://').replace(/\/$/, '');
+}
+
 export function buildApexUrl(endpoint: string): string {
   const baseUrl = getApexBaseUrl();
-  return `${baseUrl}/${endpoint}`.replace(/\/+/g, '/').replace('https:/', 'https://');
+  if (!endpoint) return normalizeUrl(baseUrl);
+  return normalizeUrl(`${baseUrl}/${endpoint}`);
 }
 
 export function buildApexAuthUrl(endpoint: string): string {
   const baseUrl = getApexBaseUrl();
-  return `${baseUrl}/auth/${endpoint}`.replace(/\/+/g, '/').replace('https:/', 'https://');
+  if (!endpoint) return normalizeUrl(`${baseUrl}/auth`);
+  return normalizeUrl(`${baseUrl}/auth/${endpoint}`);
 }
 
 export function buildApexAdminUrl(endpoint: string): string {
   const baseUrl = getApexBaseUrl();
-  return `${baseUrl}/admin/${endpoint}`.replace(/\/+/g, '/').replace('https:/', 'https://');
+  if (!endpoint) return normalizeUrl(`${baseUrl}/admin`);
+  return normalizeUrl(`${baseUrl}/admin/${endpoint}`);
 }
 
 /**
  * Get company-specific API base URL
  */
 export function getApiBaseUrl(): string {
-  return getApexBaseUrl();
+  return normalizeUrl(getApexBaseUrl());
 }
