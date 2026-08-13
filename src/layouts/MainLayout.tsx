@@ -199,10 +199,10 @@ const MainLayout: React.FC = () => {
             </svg>
             <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
               <Text strong style={{ color: '#fff', fontSize: 17, letterSpacing: 0.5 }}>
-                Re-<span style={{ fontWeight: 400 }}>ERP</span>
+                Fusion<span style={{ fontWeight: 400 }}>Client</span>
               </Text>
               <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, letterSpacing: 1 }}>
-                ENTERPRISE PLATFORM
+                V1.0.0
               </Text>
             </div>
           </Link>
