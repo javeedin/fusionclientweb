@@ -498,7 +498,7 @@ const PurchaseOrderLoading: React.FC = () => {
         <div style={{ padding: '12px 24px', background: REDWOOD.surface, borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
           <Breadcrumb items={[
             { title: <Link to="/home"><HomeOutlined /> Home</Link> },
-            { title: <Link to="/procurement">Procurement</Link> },
+            { title: <Link to="/procurement">Fusion Supply Chain</Link> },
             { title: 'Purchase Order Loading' },
           ]} />
           <Title level={4} style={{ margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -2116,7 +2116,7 @@ const ManagePurchaseOrders: React.FC = () => {
         <div style={{ padding: '12px 24px', background: REDWOOD.surface, borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
           <Breadcrumb items={[
             { title: <Link to="/home"><HomeOutlined /> Home</Link> },
-            { title: <Link to="/procurement">Procurement</Link> },
+            { title: <Link to="/procurement">Fusion Supply Chain</Link> },
             { title: 'Purchase Orders' },
           ]} />
         </div>

@@ -337,7 +337,7 @@ const BrowseData: React.FC = () => {
     <div style={{ padding: '8px 4px' }}>
       <Breadcrumb style={{ marginBottom: 12 }} items={[
         { title: <Link to="/home"><HomeOutlined /> Home</Link> },
-        { title: <Link to="/procurement">Procurement</Link> },
+        { title: <Link to="/procurement">Fusion Supply Chain</Link> },
         { title: <Link to="/procurement/setup-data">Setup Data</Link> },
         { title: 'Browse Data' },
       ]} />
