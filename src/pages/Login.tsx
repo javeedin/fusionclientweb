@@ -32,8 +32,8 @@ const ApiInspectorModal: React.FC<{
   selectedCompany: CompanyCode;
   selectedInstance: string;
   fusionInstances: any[];
-}> = ({ open, onClose, selectedCompany, selectedInstance, fusionInstances }) => {
-  const currentCompanyConfig = getAllCompanies().find(c => c.code === selectedCompany);
+  currentCompanyConfig: any;
+}> = ({ open, onClose, selectedCompany, selectedInstance, fusionInstances, currentCompanyConfig }) => {
   const instanceName = fusionInstances.find(i => i.url === selectedInstance)?.name || 'Unknown';
 
   const apiEndpoints = [
@@ -61,6 +61,8 @@ const ApiInspectorModal: React.FC<{
     navigator.clipboard.writeText(text);
   };
 
+  console.log('[API Inspector] Company:', selectedCompany, 'Config:', currentCompanyConfig);
+
   return (
     <Modal
       open={open}
@@ -74,7 +76,7 @@ const ApiInspectorModal: React.FC<{
       <div style={{ marginBottom: 24 }}>
         <div style={{ marginBottom: 16 }}>
           <Text strong>Company:</Text>
-          <Tag color="blue" style={{ marginLeft: 8 }}>{selectedCompany}</Tag>
+          <Tag color="blue" style={{ marginLeft: 8 }}>{selectedCompany} - {currentCompanyConfig?.name}</Tag>
         </div>
 
         {selectedInstance && (
@@ -645,6 +647,7 @@ const Login: React.FC = () => {
         selectedCompany={selectedCompany}
         selectedInstance={selectedInstance}
         fusionInstances={fusionInstances}
+        currentCompanyConfig={currentCompanyConfig}
       />
     </>
   );
