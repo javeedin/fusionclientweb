@@ -435,10 +435,10 @@ const Login: React.FC = () => {
             border: 'none',
             background: '#fff',
           }}
-          styles={{ body: { padding: '48px 40px' } }}
+          styles={{ body: { padding: '36px 36px' } }}
         >
           {/* Header */}
-          <div style={{ textAlign: 'center', marginBottom: 36 }}>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
             {/* Re-ERP Logo */}
             <div style={{
               width: 72,
@@ -471,8 +471,8 @@ const Login: React.FC = () => {
 
           {/* Company Selector - Hidden when company selection is disabled */}
           {!companySelectionDisabled && (
-            <div style={{ marginBottom: 28 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 8 }}>Company</label>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 6 }}>Company</label>
               <select
                 onChange={(e) => {
                   const code = e.target.value as CompanyCode;
@@ -503,8 +503,8 @@ const Login: React.FC = () => {
 
           {/* Company Display - Shown when company selection is disabled */}
           {companySelectionDisabled && (
-            <div style={{ marginBottom: 28 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 8 }}>Company</label>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 6 }}>Company</label>
               <div style={{
                 padding: '10px 12px',
                 fontSize: 14,
@@ -521,16 +521,16 @@ const Login: React.FC = () => {
 
           {/* Fusion Login Checkbox - Only show if instances available */}
           {fusionInstances.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
+            <div style={{ marginBottom: 14 }}>
               <div
                 onClick={() => setUseFusionLogin(!useFusionLogin)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 12,
+                  gap: 10,
                   cursor: 'pointer',
-                  padding: '12px',
-                  borderRadius: 8,
+                  padding: '10px',
+                  borderRadius: 6,
                   background: useFusionLogin ? 'rgba(199, 70, 52, 0.08)' : 'rgba(0, 0, 0, 0.02)',
                   border: `1.5px solid ${useFusionLogin ? 'rgba(199, 70, 52, 0.3)' : '#e0e0e0'}`,
                   userSelect: 'none',
@@ -562,8 +562,8 @@ const Login: React.FC = () => {
 
           {/* Fusion Instance Selector */}
           {useFusionLogin && fusionInstances.length > 0 && (
-            <div style={{ marginBottom: 28 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 8 }}>Fusion Instance</label>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 6 }}>Fusion Instance</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <select
                   onChange={(e) => setSelectedInstance(e.target.value)}
@@ -629,9 +629,9 @@ const Login: React.FC = () => {
           >
             <Form.Item
               name="username"
-              label={<span style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>Email Address</span>}
+              label={<span style={{ fontSize: 12, fontWeight: 600, color: '#1a1a2e' }}>Email Address</span>}
               rules={[{ required: true, message: 'Please enter your email' }]}
-              style={{ marginBottom: 16 }}
+              style={{ marginBottom: 12 }}
             >
               <Input
                 prefix={<MailOutlined style={{ color: '#999' }} />}
@@ -644,9 +644,9 @@ const Login: React.FC = () => {
 
             <Form.Item
               name="password"
-              label={<span style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>Password</span>}
+              label={<span style={{ fontSize: 12, fontWeight: 600, color: '#1a1a2e' }}>Password</span>}
               rules={[{ required: true, message: 'Please enter your password' }]}
-              style={{ marginBottom: 24 }}
+              style={{ marginBottom: 16 }}
             >
               <Input.Password
                 prefix={<LockOutlined style={{ color: '#999' }} />}
@@ -678,7 +678,7 @@ const Login: React.FC = () => {
             </Form.Item>
           </Form>
 
-          <Divider style={{ margin: '24px 0', borderColor: '#e8e8e8' }} />
+          <Divider style={{ margin: '16px 0', borderColor: '#e8e8e8' }} />
 
           <div style={{ textAlign: 'center', paddingTop: 4 }}>
             <Text style={{ fontSize: 13, color: '#666' }}>
