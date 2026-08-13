@@ -107,9 +107,9 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
   { key: 'pms-fees',              label: 'Fee Management',              module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/fees',                       description: 'Manage investment management fees' },
   { key: 'pms-benchmark',         label: 'Benchmark Comparison',        module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/benchmark',                  description: 'Compare portfolio against benchmarks' },
 
-  // ── Procurement / Suppliers ─────────────────────────────────────────────────
-  { key: 'proc-suppliers',        label: 'Manage Suppliers',            module: 'PROC', moduleLabel: 'Procurement',             path: '/procurement/suppliers',          description: 'Supplier master data management', keywords: 'vendor supplier party' },
-  { key: 'proc-tb-loading',      label: 'Trial Balance Loading',       module: 'PROC', moduleLabel: 'Procurement',             path: '/procurement/tb-loading',         description: 'Load trial balance from Excel, filter and review data', keywords: 'trial balance tb excel upload load procurement' },
+  // ── Fusion Supply Chain / Suppliers ──────────────────────────────────────────
+  { key: 'proc-suppliers',        label: 'Manage Suppliers',            module: 'PROC', moduleLabel: 'Fusion Supply Chain',     path: '/procurement/suppliers',          description: 'Supplier master data management', keywords: 'vendor supplier party' },
+  { key: 'proc-tb-loading',      label: 'Trial Balance Loading',       module: 'PROC', moduleLabel: 'Fusion Supply Chain',     path: '/procurement/tb-loading',         description: 'Load trial balance from Excel, filter and review data', keywords: 'trial balance tb excel upload load procurement' },
 
   // ── Setup Data ──────────────────────────────────────────
   { key: 'setup-data',            label: 'Setup Data Overview',         module: 'SETUP', moduleLabel: 'Setup Data',             path: '/procurement/setup-data',              description: 'Upload a Fusion Setup Data Export and review all setup tasks + a per-module dashboard', keywords: 'setup fsm export configuration dashboard tasks bu' },

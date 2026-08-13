@@ -42,7 +42,7 @@ const MODULES = [
   { id: 'fa',   label: 'Fixed Assets',        icon: <DatabaseOutlined />,    path: '/fa',            color: REDWOOD.purple,    desc: 'Assets · Depreciation · Retirements' },
   { id: 'rm',   label: 'Rental Management',   icon: <HomeOutlined />,        path: '/rm',            color: REDWOOD.teal,      desc: 'Agreements · Properties · Installments' },
   { id: 'pms',  label: 'Portfolio Mgmt',      icon: <FundOutlined />,        path: '/pms',           color: REDWOOD.success,   desc: 'Portfolio · Watchlist · Risk' },
-  { id: 'proc', label: 'Procurement',         icon: <ShopOutlined />,        path: '/procurement',   color: REDWOOD.warning,   desc: 'Suppliers · Purchase Orders' },
+  { id: 'proc', label: 'Fusion Supply Chain', icon: <ShopOutlined />,        path: '/procurement',   color: REDWOOD.warning,   desc: 'Suppliers · Purchase Orders' },
   { id: 'pc',   label: 'Petty Cash',          icon: <AuditOutlined />,       path: '/pc/registers',  color: REDWOOD.orange,    desc: 'Registers · Expenses' },
   { id: 'supp', label: 'Support',             icon: <SafetyCertificateOutlined />, path: '/support', color: REDWOOD.neutral600, desc: 'Tickets · Issues' },
   { id: 'admin',label: 'Administration',      icon: <SettingOutlined />,     path: '/admin',         color: REDWOOD.neutral800, desc: 'Users · Settings · AI' },
