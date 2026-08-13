@@ -18,6 +18,7 @@ export default defineConfig(() => {
   return {
     plugins: [react()],
     base: process.env.GITHUB_ACTIONS ? '/reacterp/' : './',
+    envPrefix: ['VITE_', 'REACT_APP_'], // Load both VITE_ and REACT_APP_ env vars
     server: {
       proxy: {
         // Proxy API calls to local proxy server (port 3001)
