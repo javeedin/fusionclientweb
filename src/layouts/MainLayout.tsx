@@ -207,12 +207,12 @@ const MainLayout: React.FC = () => {
               </Text>
             </div>
           </Link>
-          {/* Company Selector */}
-          <CompanySelector />
         </div>
 
         {/* Right side - Icons */}
         <Space size={4}>
+          {/* Company Selector */}
+          <CompanySelector />
           {/* Install App Button - shows on iOS, Android, and Desktop when installable */}
           {showInstallButton && !isInstalled && (
             <Tooltip title="Install App">

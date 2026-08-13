@@ -422,120 +422,138 @@ const Login: React.FC = () => {
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          padding: '20px',
         }}
       >
         <Card
           style={{
-            width: 420,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-            borderRadius: 12,
+            width: '100%',
+            maxWidth: 480,
+            boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+            borderRadius: 16,
             border: 'none',
+            background: '#fff',
           }}
-          styles={{ body: { padding: '40px' } }}
+          styles={{ body: { padding: '48px 40px' } }}
         >
           {/* Header */}
-          <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <div style={{ textAlign: 'center', marginBottom: 36 }}>
             {/* Re-ERP Logo */}
-            <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginBottom: 12 }}>
-              <rect width="64" height="64" rx="13" fill="#C74634"/>
-              <rect x="0" y="0" width="64" height="32" rx="13" fill="rgba(255,255,255,0.1)"/>
-              <rect x="7"  y="7"  width="21" height="21" rx="4" fill="rgba(255,255,255,0.92)"/>
-              <rect x="36" y="7"  width="21" height="21" rx="4" fill="rgba(255,255,255,0.60)"/>
-              <rect x="7"  y="36" width="21" height="21" rx="4" fill="rgba(255,255,255,0.60)"/>
-              <rect x="36" y="36" width="21" height="21" rx="4" fill="rgba(255,255,255,0.35)"/>
-              <rect x="28" y="15" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.55)"/>
-              <rect x="28" y="46" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.35)"/>
-              <rect x="15" y="28" width="3" height="8" rx="1.5" fill="rgba(255,255,255,0.55)"/>
-              <rect x="46" y="28" width="3" height="8" rx="1.5" fill="rgba(255,255,255,0.35)"/>
-              <text x="9" y="24" fontFamily="Arial Black, Arial, sans-serif" fontSize="14" fontWeight="900" fill="#C74634">Re</text>
-            </svg>
-            <Title level={2} style={{ margin: 0, color: '#1a1a2e' }}>
-              Fusion<span style={{ fontWeight: 400 }}>Client</span>
+            <div style={{
+              width: 72,
+              height: 72,
+              borderRadius: 16,
+              background: 'linear-gradient(135deg, #C74634 0%, #E85D4A 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 20px',
+              boxShadow: '0 8px 20px rgba(199, 70, 52, 0.3)',
+            }}>
+              <svg width="48" height="48" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="7"  y="7"  width="21" height="21" rx="4" fill="rgba(255,255,255,0.92)"/>
+                <rect x="36" y="7"  width="21" height="21" rx="4" fill="rgba(255,255,255,0.60)"/>
+                <rect x="7"  y="36" width="21" height="21" rx="4" fill="rgba(255,255,255,0.60)"/>
+                <rect x="36" y="36" width="21" height="21" rx="4" fill="rgba(255,255,255,0.35)"/>
+                <rect x="28" y="15" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.55)"/>
+                <rect x="28" y="46" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.35)"/>
+                <rect x="15" y="28" width="3" height="8" rx="1.5" fill="rgba(255,255,255,0.55)"/>
+                <rect x="46" y="28" width="3" height="8" rx="1.5" fill="rgba(255,255,255,0.35)"/>
+                <text x="9" y="24" fontFamily="Arial Black, Arial, sans-serif" fontSize="14" fontWeight="900" fill="#C74634">Re</text>
+              </svg>
+            </div>
+            <Title level={2} style={{ margin: '0 0 4px 0', color: '#1a1a2e', fontSize: 28, fontWeight: 700 }}>
+              FusionClient
             </Title>
-            <Text type="secondary">Multi-Tenant ERP Platform</Text>
+            <Text type="secondary" style={{ fontSize: 14, letterSpacing: 0.5 }}>Multi-Tenant ERP Platform</Text>
           </div>
 
           {/* Company Selector - Hidden when company selection is disabled */}
           {!companySelectionDisabled && (
-            <div style={{ marginBottom: 24, padding: '12px 16px', background: '#f5f5f5', borderRadius: 8, border: '1px solid #e8e8e8' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <label style={{ fontSize: 13, fontWeight: 500, color: '#262626', margin: 0 }}>Company:</label>
-                <select
-                  onChange={(e) => {
-                    const code = e.target.value as CompanyCode;
-                    setSelectedCompany(code);
-                    setCurrentCompany(code);
-                    setSelectedInstance('');
-                  }}
-                  value={selectedCompany}
-                  style={{
-                    flex: 1,
-                    padding: '6px 8px',
-                    border: '1px solid #d9d9d9',
-                    borderRadius: 4,
-                    fontSize: 13,
-                    background: '#fff',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {getAllCompanies().map((company) => (
-                    <option key={company.code} value={company.code}>
-                      {company.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div style={{ marginBottom: 28 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 8 }}>Company</label>
+              <select
+                onChange={(e) => {
+                  const code = e.target.value as CompanyCode;
+                  setSelectedCompany(code);
+                  setCurrentCompany(code);
+                  setSelectedInstance('');
+                }}
+                value={selectedCompany}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  border: '1px solid #e0e0e0',
+                  borderRadius: 8,
+                  fontSize: 14,
+                  background: '#fff',
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                }}
+              >
+                {getAllCompanies().map((company) => (
+                  <option key={company.code} value={company.code}>
+                    {company.name}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
           {/* Company Display - Shown when company selection is disabled */}
           {companySelectionDisabled && (
-            <div style={{ marginBottom: 24, padding: '12px 16px', background: '#f0f5ff', borderRadius: 8, border: '1px solid #b3d8ff' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <label style={{ fontSize: 13, fontWeight: 500, color: '#262626', margin: 0 }}>Company:</label>
-                <div style={{
-                  flex: 1,
-                  padding: '6px 8px',
-                  fontSize: 13,
-                  fontWeight: 500,
-                  color: '#1677ff',
-                }}>
-                  {currentCompanyConfig?.name || selectedCompany}
-                </div>
+            <div style={{ marginBottom: 28 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 8 }}>Company</label>
+              <div style={{
+                padding: '10px 12px',
+                fontSize: 14,
+                fontWeight: 600,
+                color: '#C74634',
+                background: 'rgba(199, 70, 52, 0.08)',
+                borderRadius: 8,
+                border: '1px solid rgba(199, 70, 52, 0.2)',
+              }}>
+                {currentCompanyConfig?.name || selectedCompany}
               </div>
             </div>
           )}
 
           {/* Fusion Login Checkbox - Only show if instances available */}
           {fusionInstances.length > 0 && (
-            <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #e8e8e8' }}>
+            <div style={{ marginBottom: 24 }}>
               <div
                 onClick={() => setUseFusionLogin(!useFusionLogin)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 10,
+                  gap: 12,
                   cursor: 'pointer',
-                  padding: '8px 0',
+                  padding: '12px',
+                  borderRadius: 8,
+                  background: useFusionLogin ? 'rgba(199, 70, 52, 0.08)' : 'rgba(0, 0, 0, 0.02)',
+                  border: `1.5px solid ${useFusionLogin ? 'rgba(199, 70, 52, 0.3)' : '#e0e0e0'}`,
                   userSelect: 'none',
+                  transition: 'all 0.2s ease',
                 }}
               >
                 <div style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: 3,
-                  border: '1.5px solid #1677ff',
-                  background: useFusionLogin ? '#1677ff' : '#fff',
+                  width: 20,
+                  height: 20,
+                  borderRadius: 4,
+                  border: `2px solid ${useFusionLogin ? '#C74634' : '#d9d9d9'}`,
+                  background: useFusionLogin ? '#C74634' : '#fff',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#fff',
-                  fontSize: 11,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  flexShrink: 0,
                 }}>
                   {useFusionLogin && '✓'}
                 </div>
-                <span style={{ fontSize: 13, fontWeight: 500, color: '#262626' }}>
+                <span style={{ fontSize: 14, fontWeight: 500, color: '#1a1a2e' }}>
                   Login using Oracle Fusion
                 </span>
               </div>
@@ -544,55 +562,62 @@ const Login: React.FC = () => {
 
           {/* Fusion Instance Selector */}
           {useFusionLogin && fusionInstances.length > 0 && (
-            <div style={{ marginBottom: 24, padding: '12px 16px', background: '#fffbe6', borderRadius: 8, border: '1px solid #ffe58f' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <label style={{ fontSize: 13, fontWeight: 500, color: '#262626', margin: 0 }}>Fusion Instance:</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-                  <select
-                    onChange={(e) => setSelectedInstance(e.target.value)}
-                    value={selectedInstance}
-                    style={{
-                      flex: 1,
-                      padding: '6px 8px',
-                      border: '1px solid #ffc069',
-                      borderRadius: 4,
-                      fontSize: 13,
-                      background: '#fff',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <option value="">-- Select Instance --</option>
-                    {fusionInstances.map((instance, idx) => (
-                      <option key={idx} value={instance.url}>
-                        {instance.name}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedInstance && (
-                    <Tooltip title="View API Endpoints">
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<BugOutlined />}
-                        onClick={() => setApiInspectorOpen(true)}
-                        style={{ color: '#1677ff' }}
-                      />
-                    </Tooltip>
-                  )}
-                </div>
+            <div style={{ marginBottom: 28 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 8 }}>Fusion Instance</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <select
+                  onChange={(e) => setSelectedInstance(e.target.value)}
+                  value={selectedInstance}
+                  style={{
+                    flex: 1,
+                    padding: '10px 12px',
+                    border: '1px solid #e0e0e0',
+                    borderRadius: 8,
+                    fontSize: 14,
+                    background: '#fff',
+                    cursor: 'pointer',
+                    fontWeight: 500,
+                  }}
+                >
+                  <option value="">-- Select Instance --</option>
+                  {fusionInstances.map((instance, idx) => (
+                    <option key={idx} value={instance.url}>
+                      {instance.name}
+                    </option>
+                  ))}
+                </select>
+                {selectedInstance && (
+                  <Tooltip title="View API Endpoints">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<BugOutlined />}
+                      onClick={() => setApiInspectorOpen(true)}
+                      style={{ color: '#C74634' }}
+                    />
+                  </Tooltip>
+                )}
               </div>
             </div>
           )}
 
           {useFusionLogin && fusionInstances.length === 0 && (
-            <div style={{ marginBottom: 24, padding: '12px 16px', background: '#fff2f0', borderRadius: 8, border: '1px solid #ffccc7' }}>
-              <Text type="danger" style={{ fontSize: 12 }}>No Fusion instances configured for this company</Text>
-            </div>
+            <Alert
+              message="No Fusion instances configured for this company"
+              type="warning"
+              showIcon
+              style={{ marginBottom: 24 }}
+            />
           )}
 
           {/* Error alert */}
           {error && (
-            <Alert title={error} type="error" showIcon style={{ marginBottom: 20 }} />
+            <Alert
+              message={error}
+              type="error"
+              showIcon
+              style={{ marginBottom: 24, borderRadius: 8 }}
+            />
           )}
 
           {/* Login form */}
@@ -604,56 +629,67 @@ const Login: React.FC = () => {
           >
             <Form.Item
               name="username"
+              label={<span style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>Email Address</span>}
               rules={[{ required: true, message: 'Please enter your email' }]}
+              style={{ marginBottom: 16 }}
             >
               <Input
-                prefix={<UserOutlined style={{ color: '#bfbfbf' }} />}
-                placeholder="Email address"
+                prefix={<MailOutlined style={{ color: '#999' }} />}
+                placeholder="you@example.com"
                 size="large"
-                style={{ borderRadius: 8 }}
+                style={{ borderRadius: 8, fontSize: 14 }}
                 autoComplete="username"
               />
             </Form.Item>
 
             <Form.Item
               name="password"
+              label={<span style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>Password</span>}
               rules={[{ required: true, message: 'Please enter your password' }]}
+              style={{ marginBottom: 24 }}
             >
               <Input.Password
-                prefix={<LockOutlined style={{ color: '#bfbfbf' }} />}
-                placeholder="Password"
+                prefix={<LockOutlined style={{ color: '#999' }} />}
+                placeholder="Enter your password"
                 size="large"
-                style={{ borderRadius: 8 }}
+                style={{ borderRadius: 8, fontSize: 14 }}
                 autoComplete="current-password"
               />
             </Form.Item>
 
-            <Form.Item style={{ marginBottom: 8 }}>
+            <Form.Item style={{ marginBottom: 16 }}>
               <Button
                 type="primary"
                 htmlType="submit"
                 loading={loading}
                 block
                 size="large"
-                style={{ borderRadius: 8, height: 48, fontSize: 16, fontWeight: 500 }}
+                style={{
+                  borderRadius: 8,
+                  height: 48,
+                  fontSize: 15,
+                  fontWeight: 600,
+                  background: '#C74634',
+                  border: 'none',
+                }}
               >
                 Sign In
               </Button>
             </Form.Item>
           </Form>
 
-          <Divider style={{ margin: '16px 0' }} />
+          <Divider style={{ margin: '24px 0', borderColor: '#e8e8e8' }} />
 
-          <div style={{ textAlign: 'center' }}>
-            <Text type="secondary" style={{ fontSize: 13 }}>
+          <div style={{ textAlign: 'center', paddingTop: 4 }}>
+            <Text style={{ fontSize: 13, color: '#666' }}>
               First time or forgot password?{' '}
+              <Link
+                style={{ fontSize: 13, fontWeight: 500, color: '#C74634' }}
+                onClick={() => { setError(''); setForgotOpen(true); }}
+              >
+                Reset / Set Password
+              </Link>
             </Text>
-            <Link
-              style={{ fontSize: 13 }}
-              onClick={() => { setError(''); setForgotOpen(true); }}
-            >
-              Reset / Set Password
-            </Link>
           </div>
         </Card>
       </div>
