@@ -241,7 +241,23 @@ const Login: React.FC = () => {
   const fusionInstances = currentCompanyConfig?.fusionInstances || [];
 
   const onFinish = async (values: { username: string; password: string }) => {
+    // Validate Fusion instance selection if Fusion login is selected
+    if (useFusionLogin && !selectedInstance) {
+      setError('Please select a Fusion instance');
+      return;
+    }
+
     setLoading(true); setError('');
+
+    // Store Fusion login settings in sessionStorage
+    if (useFusionLogin && selectedInstance) {
+      sessionStorage.setItem('fusionLoginEnabled', 'true');
+      sessionStorage.setItem('fusionInstanceUrl', selectedInstance);
+    } else {
+      sessionStorage.removeItem('fusionLoginEnabled');
+      sessionStorage.removeItem('fusionInstanceUrl');
+    }
+
     const result = await loginWithStatus(values.username, values.password);
     setLoading(false);
 

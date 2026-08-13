@@ -10,12 +10,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { method = 'GET', path = '', body, companyCode = 'BUMERIC' } = req.body;
+    const { method = 'GET', path = '', body, companyCode = 'BUMERIC', fusionInstanceUrl } = req.body;
 
-    // Get company-specific config from env
-    const baseUrl = process.env[`FUSION_BASE_URL_${companyCode}`]
-      || process.env.FUSION_BASE_URL
-      || 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/11.13.18.05';
+    // Use selected instance URL if provided, otherwise use env config
+    let baseUrl = fusionInstanceUrl;
+
+    if (!baseUrl) {
+      baseUrl = process.env[`FUSION_BASE_URL_${companyCode}`]
+        || process.env.FUSION_BASE_URL
+        || 'https://iacney-test.fa.ocs.oraclecloud.com';
+    }
+
+    // Ensure base URL doesn't include resource path (it will be added to path param)
+    if (baseUrl && baseUrl.includes('/fscmRestApi')) {
+      baseUrl = baseUrl.split('/fscmRestApi')[0];
+    }
 
     const username = process.env[`FUSION_USER_${companyCode}`]
       || process.env.FUSION_USER
@@ -25,7 +34,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       || process.env.FUSION_PASSWORD
       || '';
 
-    const url = `${baseUrl}${path}`;
+    const resourcePath = '/fscmRestApi/resources/11.13.18.05';
+    const url = `${baseUrl}${resourcePath}${path}`;
     const auth = Buffer.from(`${username}:${password}`).toString('base64');
 
     console.log(`[FUSION PROXY] ${companyCode} ${method} ${url}`);

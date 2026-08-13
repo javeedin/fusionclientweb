@@ -32,6 +32,11 @@ export async function callFusionApi(
   const baseUrl = getBaseUrl();
   const proxyUrl = `${baseUrl}/api/fusion`;
 
+  // Get selected Fusion instance URL if user logged in with Fusion
+  const fusionInstanceUrl = typeof window !== 'undefined'
+    ? sessionStorage.getItem('fusionInstanceUrl')
+    : null;
+
   try {
     const response = await fetch(proxyUrl, {
       method: 'POST',
@@ -41,6 +46,7 @@ export async function callFusionApi(
         path,
         body,
         companyCode: company.code,
+        fusionInstanceUrl, // Pass selected instance URL if available
       }),
     });
 
