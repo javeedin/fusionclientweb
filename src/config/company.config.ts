@@ -1,5 +1,10 @@
 export type CompanyCode = 'BUMERIC' | 'MITSUMI' | 'GRAYSINC';
 
+export interface FusionInstance {
+  name: string;
+  url: string;
+}
+
 export interface CompanyConfig {
   code: CompanyCode;
   name: string;
@@ -8,7 +13,16 @@ export interface CompanyConfig {
   hcmBaseUrl: string;
   fusionUser: string;
   fusionPassword: string;
+  fusionInstances: FusionInstance[];
 }
+
+const parseFusionInstances = (instancesJson: string): FusionInstance[] => {
+  try {
+    return JSON.parse(instancesJson || '[]');
+  } catch {
+    return [];
+  }
+};
 
 const COMPANIES: Record<CompanyCode, CompanyConfig> = {
   BUMERIC: {
@@ -19,6 +33,7 @@ const COMPANIES: Record<CompanyCode, CompanyConfig> = {
     hcmBaseUrl: import.meta.env.REACT_APP_BUMERIC_HCM_BASE_URL || '',
     fusionUser: import.meta.env.REACT_APP_BUMERIC_FUSION_USER || '',
     fusionPassword: import.meta.env.REACT_APP_BUMERIC_FUSION_PASSWORD || '',
+    fusionInstances: parseFusionInstances(import.meta.env.REACT_APP_BUMERIC_FUSION_INSTANCES || ''),
   },
   MITSUMI: {
     code: 'MITSUMI',
@@ -28,6 +43,7 @@ const COMPANIES: Record<CompanyCode, CompanyConfig> = {
     hcmBaseUrl: import.meta.env.REACT_APP_MITSUMI_HCM_BASE_URL || '',
     fusionUser: import.meta.env.REACT_APP_MITSUMI_FUSION_USER || '',
     fusionPassword: import.meta.env.REACT_APP_MITSUMI_FUSION_PASSWORD || '',
+    fusionInstances: parseFusionInstances(import.meta.env.REACT_APP_MITSUMI_FUSION_INSTANCES || ''),
   },
   GRAYSINC: {
     code: 'GRAYSINC',
@@ -37,6 +53,7 @@ const COMPANIES: Record<CompanyCode, CompanyConfig> = {
     hcmBaseUrl: import.meta.env.REACT_APP_GRAYSINC_HCM_BASE_URL || '',
     fusionUser: import.meta.env.REACT_APP_GRAYSINC_FUSION_USER || '',
     fusionPassword: import.meta.env.REACT_APP_GRAYSINC_FUSION_PASSWORD || '',
+    fusionInstances: parseFusionInstances(import.meta.env.REACT_APP_GRAYSINC_FUSION_INSTANCES || ''),
   },
 };
 

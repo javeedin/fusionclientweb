@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getCurrentCompany, getAllCompanies, setCurrentCompany } from '../config/company.config';
 import type { CompanyCode } from '../config/company.config';
+import { CheckboxOutlined, CheckSquareOutlined } from '@ant-design/icons';
 
 const { Title, Text, Link } = Typography;
 
@@ -230,8 +231,14 @@ const Login: React.FC = () => {
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState('');
   const [forgotOpen, setForgotOpen]     = useState(false);
+  const [useFusionLogin, setUseFusionLogin] = useState(false);
+  const [selectedInstance, setSelectedInstance] = useState('');
+  const [selectedCompany, setSelectedCompany] = useState<CompanyCode>(getCurrentCompany().code);
   const { loginWithStatus }             = useAuth();
   const navigate                        = useNavigate();
+
+  const currentCompanyConfig = getAllCompanies().find(c => c.code === selectedCompany);
+  const fusionInstances = currentCompanyConfig?.fusionInstances || [];
 
   const onFinish = async (values: { username: string; password: string }) => {
     setLoading(true); setError('');
@@ -300,9 +307,11 @@ const Login: React.FC = () => {
               <select
                 onChange={(e) => {
                   const code = e.target.value as CompanyCode;
+                  setSelectedCompany(code);
                   setCurrentCompany(code);
+                  setSelectedInstance('');
                 }}
-                defaultValue={getCurrentCompany().code}
+                value={selectedCompany}
                 style={{
                   flex: 1,
                   padding: '6px 8px',
@@ -321,6 +330,74 @@ const Login: React.FC = () => {
               </select>
             </div>
           </div>
+
+          {/* Fusion Login Checkbox */}
+          <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #e8e8e8' }}>
+            <div
+              onClick={() => setUseFusionLogin(!useFusionLogin)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                cursor: 'pointer',
+                padding: '8px 0',
+                userSelect: 'none',
+              }}
+            >
+              <div style={{
+                width: 18,
+                height: 18,
+                borderRadius: 3,
+                border: '1.5px solid #1677ff',
+                background: useFusionLogin ? '#1677ff' : '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#fff',
+                fontSize: 11,
+              }}>
+                {useFusionLogin && '✓'}
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 500, color: '#262626' }}>
+                Login using Oracle Fusion
+              </span>
+            </div>
+          </div>
+
+          {/* Fusion Instance Selector */}
+          {useFusionLogin && fusionInstances.length > 0 && (
+            <div style={{ marginBottom: 24, padding: '12px 16px', background: '#fffbe6', borderRadius: 8, border: '1px solid #ffe58f' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <label style={{ fontSize: 13, fontWeight: 500, color: '#262626', margin: 0 }}>Fusion Instance:</label>
+                <select
+                  onChange={(e) => setSelectedInstance(e.target.value)}
+                  value={selectedInstance}
+                  style={{
+                    flex: 1,
+                    padding: '6px 8px',
+                    border: '1px solid #ffc069',
+                    borderRadius: 4,
+                    fontSize: 13,
+                    background: '#fff',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <option value="">-- Select Instance --</option>
+                  {fusionInstances.map((instance, idx) => (
+                    <option key={idx} value={instance.url}>
+                      {instance.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {useFusionLogin && fusionInstances.length === 0 && (
+            <div style={{ marginBottom: 24, padding: '12px 16px', background: '#fff2f0', borderRadius: 8, border: '1px solid #ffccc7' }}>
+              <Text type="danger" style={{ fontSize: 12 }}>No Fusion instances configured for this company</Text>
+            </div>
+          )}
 
           {/* Error alert */}
           {error && (
