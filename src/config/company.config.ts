@@ -57,8 +57,29 @@ const COMPANIES: Record<CompanyCode, CompanyConfig> = {
   },
 };
 
+// Check if company selection is disabled
+export function isCompanySelectionDisabled(): boolean {
+  const disabled = import.meta.env.REACT_APP_DISABLE_COMPANY_SELECTION as string || 'no';
+  return disabled.toLowerCase() === 'yes';
+}
+
+// Get default company
+export function getDefaultCompany(): CompanyCode {
+  const defaultCompany = import.meta.env.REACT_APP_DEFAULT_COMPANY as CompanyCode;
+  if (defaultCompany && COMPANIES[defaultCompany]) {
+    return defaultCompany;
+  }
+  return 'BUMERIC';
+}
+
 // Get current company from env or localStorage
 export function getCurrentCompany(): CompanyConfig {
+  // If company selection is disabled, always use default company
+  if (isCompanySelectionDisabled()) {
+    const defaultCompany = getDefaultCompany();
+    return COMPANIES[defaultCompany];
+  }
+
   const storedCompany = localStorage.getItem('selectedCompany') as CompanyCode | null;
   const companyCode = storedCompany || (import.meta.env.REACT_APP_COMPANY as CompanyCode) || 'BUMERIC';
   return COMPANIES[companyCode] || COMPANIES.BUMERIC;

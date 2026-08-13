@@ -9,7 +9,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getCurrentCompany, getAllCompanies, setCurrentCompany } from '../config/company.config';
+import { getCurrentCompany, getAllCompanies, setCurrentCompany, isCompanySelectionDisabled, getDefaultCompany } from '../config/company.config';
 import type { CompanyCode } from '../config/company.config';
 import { CheckboxOutlined, CheckSquareOutlined } from '@ant-design/icons';
 
@@ -228,12 +228,17 @@ const ForgotPasswordModal: React.FC<{ open: boolean; onClose: () => void }> = ({
 
 // ─── Main Login page ─────────────────────────────────────────────────────────
 const Login: React.FC = () => {
+  const companySelectionDisabled = isCompanySelectionDisabled();
+  const defaultCompanyCode = getDefaultCompany();
+
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState('');
   const [forgotOpen, setForgotOpen]     = useState(false);
   const [useFusionLogin, setUseFusionLogin] = useState(false);
   const [selectedInstance, setSelectedInstance] = useState('');
-  const [selectedCompany, setSelectedCompany] = useState<CompanyCode>(getCurrentCompany().code);
+  const [selectedCompany, setSelectedCompany] = useState<CompanyCode>(
+    companySelectionDisabled ? defaultCompanyCode : getCurrentCompany().code
+  );
   const { loginWithStatus }             = useAuth();
   const navigate                        = useNavigate();
 
@@ -316,36 +321,56 @@ const Login: React.FC = () => {
             <Text type="secondary">Multi-Tenant ERP Platform</Text>
           </div>
 
-          {/* Company Selector */}
-          <div style={{ marginBottom: 24, padding: '12px 16px', background: '#f5f5f5', borderRadius: 8, border: '1px solid #e8e8e8' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-              <label style={{ fontSize: 13, fontWeight: 500, color: '#262626', margin: 0 }}>Company:</label>
-              <select
-                onChange={(e) => {
-                  const code = e.target.value as CompanyCode;
-                  setSelectedCompany(code);
-                  setCurrentCompany(code);
-                  setSelectedInstance('');
-                }}
-                value={selectedCompany}
-                style={{
+          {/* Company Selector - Hidden when company selection is disabled */}
+          {!companySelectionDisabled && (
+            <div style={{ marginBottom: 24, padding: '12px 16px', background: '#f5f5f5', borderRadius: 8, border: '1px solid #e8e8e8' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <label style={{ fontSize: 13, fontWeight: 500, color: '#262626', margin: 0 }}>Company:</label>
+                <select
+                  onChange={(e) => {
+                    const code = e.target.value as CompanyCode;
+                    setSelectedCompany(code);
+                    setCurrentCompany(code);
+                    setSelectedInstance('');
+                  }}
+                  value={selectedCompany}
+                  style={{
+                    flex: 1,
+                    padding: '6px 8px',
+                    border: '1px solid #d9d9d9',
+                    borderRadius: 4,
+                    fontSize: 13,
+                    background: '#fff',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {getAllCompanies().map((company) => (
+                    <option key={company.code} value={company.code}>
+                      {company.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Company Display - Shown when company selection is disabled */}
+          {companySelectionDisabled && (
+            <div style={{ marginBottom: 24, padding: '12px 16px', background: '#f0f5ff', borderRadius: 8, border: '1px solid #b3d8ff' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <label style={{ fontSize: 13, fontWeight: 500, color: '#262626', margin: 0 }}>Company:</label>
+                <div style={{
                   flex: 1,
                   padding: '6px 8px',
-                  border: '1px solid #d9d9d9',
-                  borderRadius: 4,
                   fontSize: 13,
-                  background: '#fff',
-                  cursor: 'pointer',
-                }}
-              >
-                {getAllCompanies().map((company) => (
-                  <option key={company.code} value={company.code}>
-                    {company.name}
-                  </option>
-                ))}
-              </select>
+                  fontWeight: 500,
+                  color: '#1677ff',
+                }}>
+                  {currentCompanyConfig?.name || selectedCompany}
+                </div>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Fusion Login Checkbox */}
           <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #e8e8e8' }}>
