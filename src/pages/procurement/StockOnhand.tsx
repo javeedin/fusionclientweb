@@ -756,7 +756,7 @@ const StockOnhand: React.FC = () => {
       <Content style={{ padding: '8px 4px' }}>
         <Breadcrumb style={{ marginBottom: 10 }} items={[
           { title: <Link to="/"><HomeOutlined /></Link> },
-          { title: <Link to="/procurement">Procurement</Link> },
+          { title: <Link to="/procurement">Fusion Supply Chain</Link> },
           { title: 'Stock Onhand' },
         ]} />
         <div style={{ marginBottom: 12 }}>

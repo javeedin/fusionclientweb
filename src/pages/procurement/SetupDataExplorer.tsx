@@ -282,7 +282,7 @@ const SetupDataExplorer: React.FC<{ defaultModule?: SetupModule }> = ({ defaultM
     <div style={{ padding: '8px 4px' }}>
       <Breadcrumb style={{ marginBottom: 12 }} items={[
         { title: <Link to="/home"><HomeOutlined /> Home</Link> },
-        { title: <Link to="/procurement">Procurement</Link> },
+        { title: <Link to="/procurement">Fusion Supply Chain</Link> },
         { title: <Link to="/procurement/setup-data">Setup Data</Link> },
         { title: defaultModule ?? 'Overview' },
       ]} />

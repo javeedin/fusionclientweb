@@ -2976,7 +2976,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
             <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: '12px 24px' }}>
               <Breadcrumb style={{ marginBottom: 6 }} items={[
                 { title: <Link to="/home"><HomeOutlined /> Home</Link> },
-                { title: <Link to="/procurement">Procurement</Link> },
+                { title: <Link to="/procurement">Fusion Supply Chain</Link> },
                 { title: <Link to="/procurement/purchase-orders">Purchase Orders</Link> },
               ]} />
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>

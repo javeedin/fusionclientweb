@@ -169,7 +169,7 @@ const SupplierReturns: React.FC = () => {
       <Content style={{ padding: '8px 4px' }}>
         <Breadcrumb style={{ marginBottom: 10 }} items={[
           { title: <Link to="/"><HomeOutlined /></Link> },
-          { title: <Link to="/procurement">Procurement</Link> },
+          { title: <Link to="/procurement">Fusion Supply Chain</Link> },
           { title: 'Supplier Returns' },
         ]} />
         <div style={{ marginBottom: 12 }}>

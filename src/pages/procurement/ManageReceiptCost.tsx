@@ -567,7 +567,7 @@ const ManageReceiptCost: React.FC = () => {
           <Space>
             <Link to="/home"><HomeOutlined /> Home</Link>
             <Text type="secondary">/</Text>
-            <Link to="/procurement">Procurement</Link>
+            <Link to="/procurement">Fusion Supply Chain</Link>
             <Text type="secondary">/</Text>
             <Text>Manage Receipt Cost</Text>
           </Space>
