@@ -37,12 +37,9 @@ export const CompanySelector: React.FC = () => {
   if (companySelectionDisabled) {
     return (
       <div className={styles.companySelectorContainer}>
-        <div className={styles.selectorWrapper}>
-          <label className={styles.label}>Company:</label>
-          <span className={styles.badge} title={currentCompany.name}>
-            {currentCompany.code}
-          </span>
-        </div>
+        <span className={styles.badge} title={currentCompany.name}>
+          {currentCompany.code}
+        </span>
       </div>
     );
   }
@@ -50,22 +47,16 @@ export const CompanySelector: React.FC = () => {
   return (
     <div className={styles.companySelectorContainer}>
       <Spin spinning={isLoading}>
-        <div className={styles.selectorWrapper}>
-          <label className={styles.label}>Company:</label>
-          <Select
-            value={currentCompany.code}
-            onChange={handleCompanyChange}
-            disabled={isLoading}
-            className={styles.select}
-            options={allCompanies.map((company) => ({
-              label: company.name,
-              value: company.code,
-            }))}
-          />
-          <span className={styles.badge} title={currentCompany.name}>
-            {currentCompany.code}
-          </span>
-        </div>
+        <Select
+          value={currentCompany.code}
+          onChange={handleCompanyChange}
+          disabled={isLoading}
+          className={styles.select}
+          options={allCompanies.map((company) => ({
+            label: company.code,
+            value: company.code,
+          }))}
+        />
       </Spin>
     </div>
   );

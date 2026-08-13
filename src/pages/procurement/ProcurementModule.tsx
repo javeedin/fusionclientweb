@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layout, Breadcrumb, Typography, Card, Row, Col, Input, Button, Form, Alert, Divider, message, Tag, Select, Tooltip, Checkbox } from 'antd';
 import { FUSION_INSTANCES, getFusionInstanceKey, setFusionInstanceKey, getFusionInstance } from '../../config/fusionInstance';
+import { useAuth } from '../../context/AuthContext';
 import {
   HomeOutlined, ShoppingCartOutlined, TeamOutlined, AppstoreOutlined,
   DatabaseOutlined, CheckCircleOutlined, LockOutlined, BugOutlined,
@@ -471,7 +472,7 @@ const PasswordGate: React.FC<{ onSuccess: () => void }> = ({ onSuccess }) => {
           }}>
             <LockOutlined style={{ fontSize: 28, color: '#fff' }} />
           </div>
-          <Title level={3} style={{ margin: 0, color: REDWOOD.neutral900 }}>Fusion Client</Title>
+          <Title level={3} style={{ margin: 0, color: REDWOOD.neutral900 }}>Fusion Supply Chain</Title>
           <Text type="secondary" style={{ fontSize: 13 }}>Enter your access password to continue</Text>
         </div>
 
@@ -525,7 +526,7 @@ const PasswordGate: React.FC<{ onSuccess: () => void }> = ({ onSuccess }) => {
               height: 44,
             }}
           >
-            Access Fusion Client
+            Access Fusion Supply Chain
           </Button>
         </Form>
 
@@ -572,7 +573,7 @@ const ProcurementHome: React.FC = () => {
         <div style={{ padding: '14px 24px', background: REDWOOD.surface, borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
           <Breadcrumb items={[
             { title: <Link to="/home"><HomeOutlined /> Home</Link> },
-            { title: 'Fusion Client' },
+            { title: 'Fusion Supply Chain' },
           ]} />
         </div>
 
@@ -589,7 +590,7 @@ const ProcurementHome: React.FC = () => {
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <Title level={2} style={{ margin: 0, color: REDWOOD.neutral900 }}>Fusion Client</Title>
+                <Title level={2} style={{ margin: 0, color: REDWOOD.neutral900 }}>Fusion Supply Chain</Title>
                 {fusionUser && (
                   <Tag icon={<CloudOutlined />} color="green" style={{ fontWeight: 600, fontSize: 12 }}>
                     {fusionUser}
@@ -597,30 +598,6 @@ const ProcurementHome: React.FC = () => {
                 )}
               </div>
               <Text type="secondary">Interface to query and perform transactions in Oracle Fusion</Text>
-            </div>
-
-            {/* Instance / POD selector — switches the Fusion base URL for every module below */}
-            <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-              <Text style={{ display: 'block', fontSize: 11, color: REDWOOD.neutral600, marginBottom: 4 }}>
-                <CloudOutlined /> Fusion Instance (POD)
-              </Text>
-              <Tooltip title={getFusionInstance().host}>
-                <Select
-                  value={getFusionInstanceKey()}
-                  style={{ minWidth: 140 }}
-                  onChange={(key) => {
-                    if (key === getFusionInstanceKey()) return;
-                    const inst = FUSION_INSTANCES.find(i => i.key === key);
-                    // Switching the POD only changes the base URL + credentials the
-                    // API calls use — endpoints are identical. Reload so the
-                    // module-level base/auth re-resolve for every group.
-                    setFusionInstanceKey(key);
-                    message.success(`Switched to ${inst?.label} — reloading…`);
-                    setTimeout(() => window.location.reload(), 600);
-                  }}
-                  options={FUSION_INSTANCES.map(i => ({ value: i.key, label: <b>{i.label}</b> }))}
-                />
-              </Tooltip>
             </div>
           </div>
 
@@ -679,9 +656,18 @@ const ProcurementHome: React.FC = () => {
 
 // ── Main Export with Password Gate ───────────────────────────────────────────
 const ProcurementModule: React.FC = () => {
+  const { isAuthenticated } = useAuth();
   const [authenticated, setAuthenticated] = useState(
     () => sessionStorage.getItem(SESSION_KEY) === 'true'
   );
+
+  // Auto-authenticate users already logged into ERP
+  useEffect(() => {
+    if (isAuthenticated && !authenticated) {
+      sessionStorage.setItem(SESSION_KEY, 'true');
+      setAuthenticated(true);
+    }
+  }, [isAuthenticated, authenticated]);
 
   if (!authenticated) {
     return <PasswordGate onSuccess={() => setAuthenticated(true)} />;
