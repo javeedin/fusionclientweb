@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Form, Input, Button, Card, Typography, Modal, Tag, Tooltip, Table, Space, Code,
   Steps, Alert, Divider,
@@ -363,6 +363,22 @@ const Login: React.FC = () => {
     console.log('[DEBUG] Company Config:', currentCompanyConfig);
     console.log('[DEBUG] Fusion Instances for', selectedCompany, ':', fusionInstances);
   }, [selectedCompany, currentCompanyConfig, fusionInstances]);
+
+  // Auto-enable Fusion login and select "Test" instance when instances are available
+  useEffect(() => {
+    if (fusionInstances.length > 0) {
+      setUseFusionLogin(true);
+      const testInstance = fusionInstances.find(inst => inst.name === 'Test');
+      if (testInstance) {
+        setSelectedInstance(testInstance.url);
+      } else if (fusionInstances.length > 0) {
+        setSelectedInstance(fusionInstances[0].url);
+      }
+    } else {
+      setUseFusionLogin(false);
+      setSelectedInstance('');
+    }
+  }, [fusionInstances]);
 
   const onFinish = async (values: { username: string; password: string }) => {
     // Validate Fusion instance selection if Fusion login is selected
