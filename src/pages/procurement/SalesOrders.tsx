@@ -4599,6 +4599,7 @@ const ItemSearchModal: React.FC<{ open: boolean; org?: string; subinv?: string; 
 
 // Register New Order dialog (collects the header, then opens the creation tab).
 const RegisterOrderModal: React.FC<{ open: boolean; onClose: () => void; onProceed: (h: OrderHeader) => void }> = ({ open, onClose, onProceed }) => {
+  const auth = useAuth();
   const [form] = Form.useForm();
   const bUnits = usePayablesBUs();
   const orgRows = useInvOrgs();
@@ -5584,6 +5585,7 @@ const ChargesModal: React.FC<{ open: boolean; onClose: () => void; orderKey: str
 };
 
 const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editOrder?: any; returnMode?: boolean; onCopy?: (order: any, lines: any[]) => void }> = ({ header, initialDraft, editOrder, returnMode, onCopy }) => {
+  const auth = useAuth();
   const editMode = !!editOrder;
   const [form] = Form.useForm();
   const [hdr, setHdr] = useState<OrderHeader>(initialDraft?.header ?? header);
