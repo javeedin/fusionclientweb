@@ -19,6 +19,13 @@ export const useFusionInitialization = () => {
           return;
         }
 
+        // Check if user is logged in (sessionId exists)
+        const sessionId = localStorage.getItem('fusion_session_id') || localStorage.getItem('erp_token');
+        if (!sessionId) {
+          console.log('[Fusion Init] No active session - skipping initialization until after login');
+          return;
+        }
+
         const fusionBaseUrl = company.fusionInstances[0].url;
         const url = `${fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/itemsV2?limit=1&offset=0&onlyData=true`;
         const authHeaders = getFusionAuthHeaders();

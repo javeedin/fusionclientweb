@@ -916,7 +916,7 @@ ${po.NoteToSupplier ? `<div class="sec">Notes</div><div class="fv">${po.NoteToSu
           <div>
             <Text style={{ fontSize: 11, fontWeight: 700, color: REDWOOD.neutral600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Headers Sent</Text>
             <div style={{ marginTop: 4, padding: '8px 12px', borderRadius: 6, background: REDWOOD.neutral100, border: `1px solid ${REDWOOD.neutral200}`, fontFamily: 'monospace', fontSize: 12 }}>
-              <div><span style={{ color: REDWOOD.neutral600 }}>Authorization: </span><span style={{ color: REDWOOD.success }}>Basic [{getFusionInstance().username}:{getFusionInstance().password}]</span></div>
+              <div><span style={{ color: REDWOOD.neutral600 }}>Authorization: </span><span style={{ color: REDWOOD.success }}>Session-based (from login)</span></div>
               <div><span style={{ color: REDWOOD.neutral600 }}>Accept: </span>application/json</div>
             </div>
           </div>
@@ -2024,7 +2024,7 @@ Content-Type: application/vnd.oracle.adf.action+json`}
           <div>
             <Text style={{ fontSize: 11, fontWeight: 700, color: REDWOOD.neutral600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Headers</Text>
             <div style={{ marginTop: 4, padding: '8px 12px', borderRadius: 6, background: REDWOOD.neutral100, border: `1px solid ${REDWOOD.neutral200}`, fontFamily: 'monospace', fontSize: 12 }}>
-              <div><span style={{ color: REDWOOD.neutral600 }}>Authorization: </span><span style={{ color: REDWOOD.success }}>Basic [{getFusionInstance().username}:{getFusionInstance().password}]</span></div>
+              <div><span style={{ color: REDWOOD.neutral600 }}>Authorization: </span><span style={{ color: REDWOOD.success }}>Session-based (from login)</span></div>
               <div><span style={{ color: REDWOOD.neutral600 }}>Accept: </span>application/json</div>
             </div>
           </div>
