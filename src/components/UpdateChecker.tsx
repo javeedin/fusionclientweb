@@ -36,12 +36,15 @@ export const UpdateChecker: React.FC<UpdateCheckerProps> = ({ open, onClose }) =
     }
 
     try {
-      const folder = await (window as any).electronAPI.selectFolder();
-      if (folder && updateInfo?.hasUpdate && updateInfo.downloadUrl && updateInfo.downloadName) {
-        downloadAndInstall(updateInfo.downloadUrl, updateInfo.downloadName, folder);
+      const result = await (window as any).electronAPI.selectFolder();
+      if (result && !result.cancelled && result.folderPath) {
+        if (updateInfo?.hasUpdate && updateInfo.downloadUrl && updateInfo.downloadName) {
+          downloadAndInstall(updateInfo.downloadUrl, updateInfo.downloadName, result.folderPath);
+        }
       }
     } catch (err) {
       message.error('Failed to select folder');
+      console.error(err);
     }
   };
 
