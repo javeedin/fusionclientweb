@@ -3434,14 +3434,10 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
     const data: typeof accountingAllData = [];
     const apiUrls: typeof accountingApiUrls = [];
 
-    // Build filtered list using same logic as search results
+    // Fetch accounting for ALL transactions (ignore main search filters)
+    // Only apply text search if gridSearch is set
     const q = gridSearch.trim().toLowerCase();
     let base = transactions;
-    if (reconStatusFilter === 'REC') base = base.filter(t => t.status === 'REC');
-    if (reconStatusFilter === 'UNR') base = base.filter(t => t.status !== 'REC');
-    if (acctStatusFilter === 'POSTED') base = base.filter(t => t.accountingFlag === 'Y');
-    if (acctStatusFilter === 'NOT_POSTED') base = base.filter(t => t.accountingFlag !== 'Y');
-    if (createdByFilter) base = base.filter(t => t.createdBy === createdByFilter);
     const filtered = !q ? base : base.filter(r =>
       [r.externalTransactionId, r.transactionId, r.bankAccountName, r.businessUnitName,
        r.referenceText, r.description, r.status, r.source, r.transactionType,
