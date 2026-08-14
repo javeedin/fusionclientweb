@@ -332,7 +332,7 @@ const ItemMaster: React.FC = () => {
     if (vals.attr3)       p.set('attr3', vals.attr3);
     if (vals.attr4)       p.set('attr4', vals.attr4);
     if (vals.attr5)       p.set('attr5', vals.attr5);
-    return `${ORDS_BASE}/inventory/itemmaster?${p.toString()}`;
+    return `${ORDS_BASE}?${p.toString()}`;
   }, [source]);
 
   // ── Search handler ───────────────────────────────────────────────────────────
