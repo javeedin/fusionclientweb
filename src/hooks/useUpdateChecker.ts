@@ -35,19 +35,16 @@ export const useUpdateChecker = () => {
     }
   }, []);
 
-  const downloadAndInstall = useCallback(async (downloadUrl: string, downloadName: string, customFolder: string | null) => {
+  const downloadAndInstall = useCallback(async (downloadUrl: string, downloadName: string) => {
     setInstalling(true);
     setError(null);
     try {
       const result = await (window as any).electronAPI.downloadAndInstallUpdate({
         downloadUrl,
         downloadName,
-        customFolder,
       });
       if (!result.success) {
         setError(result.error || 'Failed to install update');
-      } else if (result.message) {
-        setError(result.message); // Show info message (e.g., "Close app and restart")
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Unknown error';

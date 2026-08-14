@@ -1,6 +1,6 @@
 import React from 'react';
-import { Modal, Button, Space, Typography, Progress, Alert, Spin, Divider, message, Dropdown } from 'antd';
-import { DownloadOutlined, CheckCircleOutlined, FolderOutlined } from '@ant-design/icons';
+import { Modal, Button, Space, Typography, Progress, Alert, Spin, Divider, message } from 'antd';
+import { DownloadOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useUpdateChecker } from '../hooks/useUpdateChecker';
 
 const { Text, Paragraph } = Typography;
@@ -26,25 +26,6 @@ export const UpdateChecker: React.FC<UpdateCheckerProps> = ({ open, onClose }) =
   const handleDownloadAndInstall = () => {
     if (updateInfo?.hasUpdate && updateInfo.downloadUrl && updateInfo.downloadName) {
       downloadAndInstall(updateInfo.downloadUrl, updateInfo.downloadName, null);
-    }
-  };
-
-  const handleDownloadToFolder = async () => {
-    if (!(window as any).electronAPI?.selectFolder) {
-      message.error('Folder selection not available');
-      return;
-    }
-
-    try {
-      const result = await (window as any).electronAPI.selectFolder();
-      if (result && !result.cancelled && result.folderPath) {
-        if (updateInfo?.hasUpdate && updateInfo.downloadUrl && updateInfo.downloadName) {
-          downloadAndInstall(updateInfo.downloadUrl, updateInfo.downloadName, result.folderPath);
-        }
-      }
-    } catch (err) {
-      message.error('Failed to select folder');
-      console.error(err);
     }
   };
 
@@ -158,37 +139,19 @@ export const UpdateChecker: React.FC<UpdateCheckerProps> = ({ open, onClose }) =
                 </div>
               )}
 
-              <Space style={{ width: '100%', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
                 <Button onClick={onClose} disabled={installing}>
                   Cancel
                 </Button>
-                <Dropdown
-                  menu={{
-                    items: [
-                      {
-                        key: 'auto',
-                        label: 'Auto Install',
-                        icon: <DownloadOutlined />,
-                        onClick: handleDownloadAndInstall,
-                      },
-                      {
-                        key: 'folder',
-                        label: 'Download to Folder',
-                        icon: <FolderOutlined />,
-                        onClick: handleDownloadToFolder,
-                      },
-                    ],
-                  }}
+                <Button
+                  type="primary"
+                  icon={<DownloadOutlined />}
+                  onClick={handleDownloadAndInstall}
+                  loading={installing}
+                  disabled={installing}
                 >
-                  <Button
-                    type="primary"
-                    icon={<DownloadOutlined />}
-                    loading={installing}
-                    disabled={installing}
-                  >
-                    {installing ? 'Installing...' : 'Download & Install'}
-                  </Button>
-                </Dropdown>
+                  {installing ? 'Installing...' : 'Download & Install'}
+                </Button>
               </Space>
             </>
           )}
