@@ -444,7 +444,7 @@ const ItemMaster: React.FC = () => {
       const all: ItemRow[] = [];
       let offset = 0;
       let page = 1;
-      const pageSize = 50;
+      const pageSize = source === 'apex' ? 1000 : 50;
       while (true) {
         if (ctrl.signal.aborted) break;
         const pageUrl = buildUrl(vals, pageSize, offset);
@@ -956,6 +956,11 @@ ${error.message.includes('fetch') || error.message.includes('CORS') ? '⚠️ Li
                   >
                     Search
                   </Button>
+                  {searching && (
+                    <Button danger icon={<StopOutlined />} onClick={handleCancel}>
+                      Stop
+                    </Button>
+                  )}
                   <Button icon={<ReloadOutlined />} onClick={handleReset} disabled={searching}>
                     Clear
                   </Button>
