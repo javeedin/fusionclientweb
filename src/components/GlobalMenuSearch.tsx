@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Select, Tag, Typography, Switch, Tooltip } from 'antd';
-import { SearchOutlined, ExportOutlined, OpenOutlined } from '@ant-design/icons';
+import { SearchOutlined, ExportOutlined, ExternalLinkOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { getFilteredMenuItemsGrouped, type MenuSearchItem } from '../data/menuItems';
 import { getCurrentCompany } from '../config/company.config';
@@ -143,7 +143,7 @@ const GlobalMenuSearch: React.FC = () => {
           onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.25)')}
           onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
         >
-          <OpenOutlined style={{ fontSize: 14, color: '#fff' }} />
+          <ExternalLinkOutlined style={{ fontSize: 14, color: '#fff' }} />
         </div>
       </Tooltip>
 
