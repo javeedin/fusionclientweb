@@ -16,7 +16,7 @@ import {
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import { FUSION_POD_HOST, FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Header, Content, Sider } = Layout;
@@ -26,6 +26,13 @@ const getFusionBase = () => {
   const company = getCurrentCompany();
   return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
 };
+
+// Get Fusion host (without API path) from current company configuration
+const getFusionHost = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl || '';
+};
+
 const { Title, Text } = Typography;
 const { Option } = Select;
 
@@ -992,7 +999,7 @@ const COASegmentsPage: React.FC<{ activeSegKey: string }> = ({ activeSegKey }) =
 
 // ── Oracle BIP Reports helpers ────────────────────────────────────────────────
 
-const BIP_HOST      = FUSION_POD_HOST;
+const BIP_HOST      = getFusionHost();
 const BIP_BASE_PATH = '/Custom/UAT_disanostic_SCRIPTS/';
 
 const buildBipSoapEnvelope = (reportPath: string, username: string, password: string) =>
@@ -1063,7 +1070,7 @@ interface DrillState {
 const isIdColumn = (col: string) =>
   /(_ID|_NUMBER|_KEY|_BATCH|_HDR|_HEADER|_LINE|_SEQ|BATCH_ID|JE_BATCH|JE_HEADER|HEADER_ID|LINE_ID)$/i.test(col);
 
-const APEX_DEFAULT_URL = `${FUSION_POD_HOST}/ords/`;
+const APEX_DEFAULT_URL = `${getFusionHost()}/ords/`;
 
 const OracleBIPReports: React.FC = () => {
   const [tabs, setTabs]           = useState<BipTabState[]>([]);

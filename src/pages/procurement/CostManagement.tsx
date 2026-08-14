@@ -9,7 +9,7 @@ import {
   ThunderboltOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
-import { FUSION_POD_HOST, FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
@@ -19,6 +19,13 @@ const getFusionBase = () => {
   const company = getCurrentCompany();
   return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
 };
+
+// Get Fusion host (without API path) from current company configuration
+const getFusionHost = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl || '';
+};
+
 const { Title, Text } = Typography;
 
 // Direct in Electron (no CORS); Vite proxy in the browser. preload exposes electronAPI.
@@ -28,8 +35,7 @@ const HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
 const ERP_URL = `${FUSION_BASE}/erpintegrations`;
 
 // Scheduler REST lives under /ess/rest (NOT /fscmRestApi). Direct host in Electron.
-const FUSION_HOST = FUSION_POD_HOST;
-const SCHEDULER_URL = `${FUSION_HOST}/ess/rest/scheduler/v1/requests`;
+const SCHEDULER_URL = `${getFusionHost()}/ess/rest/scheduler/v1/requests`;
 
 const REDWOOD = {
   primary: '#C74634', info: '#0572CE', success: '#1D7B4D', warning: '#D4A800', error: '#D93025',

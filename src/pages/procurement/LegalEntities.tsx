@@ -5,7 +5,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { HomeOutlined, SafetyCertificateOutlined, SearchOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
-import { FUSION_POD_HOST, FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;

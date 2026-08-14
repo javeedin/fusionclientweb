@@ -13,7 +13,7 @@ import {
 import { Link } from 'react-router-dom';
 import dayjs, { type Dayjs } from 'dayjs';
 import { ShipConfirmModal, PickSlipDialog } from './ConfirmPicks';
-import { FUSION_POD_HOST, FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
+import { FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;

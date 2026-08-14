@@ -25,7 +25,7 @@ import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
-import { FUSION_POD_HOST, FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
+import { FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 import CustomerSearchBipModal from '../../components/CustomerSearchBipModal';
 import { convertBipCustomerToFill, type CustomerSearchResult } from '../../services/customerSearchBip.service';
@@ -38,6 +38,13 @@ const getFusionBase = () => {
   const company = getCurrentCompany();
   return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
 };
+
+// Get Fusion host (without API path) from current company configuration
+const getFusionHost = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl || '';
+};
+
 const { Title, Text } = Typography;
 
 const _isElectron = !!(window as unknown as { electron?: unknown; electronAPI?: unknown }).electron
@@ -3130,7 +3137,7 @@ const TotalLine: React.FC<{ label: string; value: React.ReactNode; strong?: bool
 
 // itemCosts lives on the "latest" resource version; org is inside ValuationUnit
 // "COSTORG-INVORG-SUBINV-LOT" (not directly filterable), so match client-side.
-const LATEST_URL = `${FUSION_POD_HOST}/fscmRestApi/resources/latest`;
+const LATEST_URL = `${getFusionHost()}/fscmRestApi/resources/latest`;
 const COST_FIELDS = ['TotalUnitCost', 'UnitCost', 'ItemCost', 'UnitAverageCost', 'AverageUnitCost'];
 const QTY_FIELDS = ['Quantity', 'OnhandQuantity', 'OnHandQuantity', 'TotalQuantity', 'ItemQuantity', 'CostQuantity'];
 const parseVU = (vu?: string) => { const p = String(vu ?? '').split('-'); return { costOrg: p[0], invOrg: p[1], subinv: p[2], lot: p[3] }; };

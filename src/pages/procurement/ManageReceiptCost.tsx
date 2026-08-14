@@ -16,7 +16,7 @@ import {
   Tooltip as RTooltip, Cell, LabelList, PieChart, Pie, Legend,
 } from 'recharts';
 import { Link } from 'react-router-dom';
-import { FUSION_POD_HOST, FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
