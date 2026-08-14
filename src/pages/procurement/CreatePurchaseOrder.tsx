@@ -2264,7 +2264,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
 
       let query = '';
       if (itemSearchType === 'number') {
-        query = `ItemNumber='${encodeURIComponent(searchTerm.trim())}';OrganizationCode=${org}`;
+        query = `ItemNumber LIKE '%${encodeURIComponent(searchTerm.trim())}%';OrganizationCode=${org}`;
       } else {
         query = `ItemDescription LIKE '%${encodeURIComponent(searchTerm.trim())}%';OrganizationCode=${org}`;
       }
