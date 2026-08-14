@@ -35,21 +35,28 @@ export const useUpdateChecker = () => {
     }
   }, []);
 
-  const downloadAndInstall = useCallback(async (downloadUrl: string, downloadName: string) => {
+  const downloadAndInstall = useCallback(async (downloadUrl: string, downloadName: string, customFolder: string | null = null) => {
     setInstalling(true);
     setError(null);
     try {
       const result = await (window as any).electronAPI.downloadAndInstallUpdate({
         downloadUrl,
         downloadName,
+        customFolder,
       });
       if (!result.success) {
-        setError(result.error || 'Failed to install update');
+        setError(result.error || 'Failed to download update');
+      } else {
+        // Show success message
+        const message = result.message || 'Update downloaded successfully';
+        console.log('[Update] Success:', message);
+        // Keep success message visible
+        setError(null);
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Unknown error';
       setError(errMsg);
-      console.error('[Update] Install error:', errMsg);
+      console.error('[Update] Download error:', errMsg);
     } finally {
       setInstalling(false);
     }
