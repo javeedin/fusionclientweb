@@ -156,6 +156,17 @@ const arTaskItems: MenuItemType[] = [
   { key: 'ar-customer-activities', icon: <BankOutlined />,     label: 'Customer Site Activities', description: 'Customer site-level AR summary',      color: '#722ed1',         path: '/ar/customer-site-activities' },
 ];
 
+const supplyChainItems: MenuItemType[] = [
+  { key: 'sc-purchase-orders', icon: <FileTextOutlined />, label: 'Manage Purchase Orders', description: 'Search and manage purchase orders', color: REDWOOD.info, path: '/sc/purchase-orders' },
+  { key: 'sc-purchase-requisitions', icon: <FileAddOutlined />, label: 'Purchase Requisitions', description: 'Create and manage requisitions', color: REDWOOD.taskBlue, path: '/sc/requisitions' },
+  { key: 'sc-receipts', icon: <CheckCircleOutlined />, label: 'Manage Receipts', description: 'Record and manage receipts', color: REDWOOD.success, path: '/sc/receipts' },
+  { key: 'sc-suppliers', icon: <FileTextOutlined />, label: 'Suppliers', description: 'Manage supplier master data', color: REDWOOD.primary, path: '/sc/suppliers' },
+  { key: 'sc-shipments', icon: <SendOutlined />, label: 'Manage Shipments', description: 'Track and manage shipments', color: REDWOOD.warning, path: '/sc/shipments' },
+  { key: 'sc-returns', icon: <SwapOutlined />, label: 'Manage Returns', description: 'Process returns and exchanges', color: REDWOOD.neutral600, path: '/sc/returns' },
+  { key: 'sc-inventory', icon: <PieChartOutlined />, label: 'Inventory Management', description: 'View and manage inventory levels', color: REDWOOD.info, path: '/sc/inventory' },
+  { key: 'sc-catalog', icon: <FolderOutlined />, label: 'Item Catalog', description: 'Manage product and item catalog', color: REDWOOD.success, path: '/sc/catalog' },
+];
+
 const taskSections = [
   { key: 'ar', label: 'Accounts Receivable', items: arTaskItems },
   { key: 'invoices', label: 'Invoices', items: invoiceTaskItems },
@@ -164,6 +175,7 @@ const taskSections = [
   { key: 'assets', label: 'Assets', items: assetsTaskItems },
   { key: 'periods', label: 'Payables Periods', items: periodsTaskItems },
   { key: 'payments', label: 'Payments', items: paymentTaskItems },
+  { key: 'supply-chain', label: 'Supply Chain', items: supplyChainItems },
   { key: 'setup', label: 'Setup & Maintenance', items: setupItems },
   { key: 'administration', label: 'Administration', items: administrationItems },
 ];
@@ -314,6 +326,10 @@ const FloatingMenu: React.FC = () => {
   const [qcSupplierLoading, setQcSupplierLoading] = useState(false);
   const [qcSupplierSearch, setQcSupplierSearch] = useState('');
 
+  // Global Search panel state
+  const [globalSearchTerm, setGlobalSearchTerm] = useState('');
+  const [openInNewTab, setOpenInNewTab] = useState(localStorage.getItem('floatingMenuOpenInNewTab') === 'true');
+
   // Fetch suppliers for quick-create
   const fetchQcSuppliers = async () => {
     setQcSupplierLoading(true);
@@ -404,8 +420,8 @@ const FloatingMenu: React.FC = () => {
   const getPanelWidth = () => {
     if (activePanel === 'match') return 360;
     if (activePanel === 'api') return 400;
+    if (activePanel === 'search') return 360;
     if (activePanel === 'tasks') return 320;
-    if (activePanel === 'search') return 320;
     if (activePanel === 'reports') return 320;
     return 0;
   };
@@ -455,7 +471,11 @@ const FloatingMenu: React.FC = () => {
     }
     closePanel();
     if (path) {
-      navigate(path);
+      if (openInNewTab) {
+        window.open(path, '_blank');
+      } else {
+        navigate(path);
+      }
     }
   };
 
@@ -527,36 +547,98 @@ const FloatingMenu: React.FC = () => {
     </div>
   );
 
+  // Get all searchable menu items
+  const getAllMenuItems = useMemo(() => {
+    const allItems: (MenuItemType & { section: string })[] = [];
+    taskSections.forEach(section => {
+      section.items.forEach(item => {
+        allItems.push({ ...item, section: section.label });
+      });
+    });
+    return allItems;
+  }, []);
+
+  // Filter menu items based on search term
+  const filteredMenuItems = useMemo(() => {
+    if (!globalSearchTerm.trim()) return getAllMenuItems;
+    const search = globalSearchTerm.toLowerCase();
+    return getAllMenuItems.filter(item =>
+      item.label.toLowerCase().includes(search) ||
+      item.description?.toLowerCase().includes(search) ||
+      item.section.toLowerCase().includes(search) ||
+      item.key.toLowerCase().includes(search)
+    );
+  }, [globalSearchTerm, getAllMenuItems]);
+
   // Search Slide Panel
   const SearchSlidePanel = () => (
-    <div style={{ ...panelBaseStyle, width: 320 }}>
+    <div style={{ ...panelBaseStyle, width: 360 }}>
       <div style={{ padding: '10px 14px', background: REDWOOD.searchPurple, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-        <Text strong style={{ color: '#fff', fontSize: 14 }}>Search</Text>
+        <Text strong style={{ color: '#fff', fontSize: 14 }}>Search Menu</Text>
         <CloseOutlined style={{ color: '#fff', cursor: 'pointer', fontSize: 14, padding: 4 }} onClick={closePanel} />
       </div>
-      <div style={{ padding: 16, flex: 1, overflowY: 'auto' }}>
-        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 16 }}>** At least one is required</Text>
-        <Form form={searchForm} layout="vertical" size="small">
-          <Form.Item label={<Text style={{ fontSize: 12 }}><span style={{ color: REDWOOD.primary }}>**</span> Invoice Number</Text>} name="invoiceNumber">
-            <Input placeholder="Enter invoice number" />
-          </Form.Item>
-          <Form.Item label={<Text style={{ fontSize: 12 }}><span style={{ color: REDWOOD.primary }}>**</span> Supplier or Party</Text>} name="supplier">
-            <Input placeholder="Search supplier" suffix={<SearchOutlined style={{ color: REDWOOD.neutral300 }} />} />
-          </Form.Item>
-          <Form.Item label={<Text style={{ fontSize: 12 }}>Supplier Site</Text>} name="supplierSite">
-            <Select placeholder="Select site" allowClear>
-              <Option value="site1">Site 1</Option>
-              <Option value="site2">Site 2</Option>
-              <Option value="site3">Site 3</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item style={{ marginTop: 24, marginBottom: 0 }}>
-            <Space>
-              <Button type="primary" style={{ background: REDWOOD.neutral600 }}>Search</Button>
-              <Button onClick={() => searchForm.resetFields()}>Reset</Button>
-            </Space>
-          </Form.Item>
-        </Form>
+      <div style={{ padding: '12px 14px', borderBottom: `1px solid ${REDWOOD.neutral200}`, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <Input
+          placeholder="Search menu items..."
+          prefix={<SearchOutlined style={{ color: REDWOOD.neutral300 }} />}
+          value={globalSearchTerm}
+          onChange={(e) => setGlobalSearchTerm(e.target.value)}
+          size="small"
+          style={{ flex: 1 }}
+        />
+      </div>
+      <div style={{ padding: '8px 14px', borderBottom: `1px solid ${REDWOOD.neutral200}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Checkbox
+          checked={openInNewTab}
+          onChange={(e) => {
+            const newValue = e.target.checked;
+            setOpenInNewTab(newValue);
+            localStorage.setItem('floatingMenuOpenInNewTab', String(newValue));
+          }}
+        />
+        <Text style={{ fontSize: 12 }}>Open in New Tab</Text>
+      </div>
+      <div style={{ padding: 8, flex: 1, overflowY: 'auto' }}>
+        {filteredMenuItems.length === 0 ? (
+          <div style={{ padding: 16, textAlign: 'center' }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>No menu items found</Text>
+          </div>
+        ) : (
+          <div>
+            <Text type="secondary" style={{ fontSize: 11, padding: '0 8px', display: 'block', marginBottom: 8 }}>
+              Found {filteredMenuItems.length} items
+            </Text>
+            {filteredMenuItems.map((item) => (
+              <div
+                key={item.key}
+                onClick={() => handleMenuItemClick(item.key, item.path)}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  cursor: item.path ? 'pointer' : 'default',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 8,
+                  transition: 'all 0.2s ease',
+                  marginBottom: 6,
+                  background: REDWOOD.surface,
+                  borderLeft: `3px solid ${item.color || REDWOOD.neutral300}`,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = REDWOOD.neutral100; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = REDWOOD.surface; }}
+              >
+                <div style={{ color: item.color || REDWOOD.neutral600, fontSize: 14, flexShrink: 0, marginTop: 2 }}>{item.icon}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontSize: 12, fontWeight: 500, color: REDWOOD.neutral900, display: 'block' }}>{item.label}</Text>
+                  {item.description && (
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>{item.description}</Text>
+                  )}
+                  <Text style={{ fontSize: 10, color: REDWOOD.neutral300, display: 'block', marginTop: 2 }}>{item.section}</Text>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
