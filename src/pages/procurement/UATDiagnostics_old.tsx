@@ -28,7 +28,6 @@ const { Option } = Select;
 
 const BASE_URL    = `${getFusionBase()}`;
 const getHeaders = () => getFusionAuthHeaders();
-const HDRS        = { Authorization: HEADERS, Accept: 'application/json' };
 
 const REDWOOD = {
   primary:    '#C74634',
@@ -99,7 +98,7 @@ const fetchAll = async (url: string): Promise<any[]> => {
   const items: any[] = [];
   let next: string | null = url;
   while (next) {
-    const r = await fetch(next, { headers: HDRS });
+    const r = await fetch(next, { headers: getHeaders() });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     (d.items || []).forEach((i: any) => items.push(i));
@@ -167,7 +166,7 @@ const ChildTab: React.FC<{ href: string; label: string }> = ({ href }) => {
   const doFetch = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const r = await fetch(href, { headers: HDRS });
+      const r = await fetch(href, { headers: getHeaders() });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const json = await r.json();
       setRaw(json);
@@ -303,7 +302,7 @@ const PO360Tracker: React.FC = () => {
     setApiUrl(url);
 
     try {
-      const res  = await fetch(url, { headers: HDRS });
+      const res  = await fetch(url, { headers: getHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
       const data = await res.json();
       const items: any[] = data.items || [];

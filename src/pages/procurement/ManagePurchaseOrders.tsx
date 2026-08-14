@@ -61,7 +61,7 @@ const fetchAllPages = async (baseUrl: string): Promise<any[]> => {
   while (true) {
     const sep = stripped.includes('?') ? '&' : '?';
     const url = `${stripped}${sep}limit=${CHILD_LIMIT}&offset=${offset}`;
-    const r = await fetch(url, { headers: { Authorization: HEADERS, Accept: 'application/json' } });
+    const r = await fetch(url, { headers: { ...getHeaders(), Accept: 'application/json' } });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -314,7 +314,7 @@ const PODetailPage: React.FC<{ po: RawPO; onClose?: () => void; onEdit?: (po: Ra
   const handleApiTest = async () => {
     setATL(true); setApiResult(null);
     try {
-      const r = await fetch(linesUrl, { headers: { Authorization: HEADERS, Accept: 'application/json' } });
+      const r = await fetch(linesUrl, { headers: { ...getHeaders(), Accept: 'application/json' } });
       const body = await r.text();
       let pretty = body;
       try { pretty = JSON.stringify(JSON.parse(body), null, 2); } catch { /* keep raw */ }
@@ -1048,7 +1048,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
     const resource = (describeResource || 'draftPurchaseOrders').trim();
     setDescribeLoading(true); setDescribeErr(''); setDescribeActions(null);
     try {
-      const r = await fetch(`${getFusionBase()}/${resource}/describe`, { headers: { Authorization: HEADERS, Accept: 'application/json' } });
+      const r = await fetch(`${getFusionBase()}/${resource}/describe`, { headers: { ...getHeaders(), Accept: 'application/json' } });
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
       const d = await r.json();
       let actions: any = d?.Resources?.[resource]?.actions ?? d?.actions ?? [];
@@ -1069,7 +1069,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
       try {
         const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${po.POHeaderId}`, {
           method: 'POST',
-          headers: { Authorization: HEADERS, Accept: 'application/json', 'Content-Type': 'application/vnd.oracle.adf.action+json' },
+          headers: { ...getHeaders(), Accept: 'application/json', 'Content-Type': 'application/vnd.oracle.adf.action+json' },
           body: JSON.stringify({ name: approveAction, parameters: [] }),
         });
         const raw = await r.text();
@@ -1113,7 +1113,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
           // schedule, the ship-to location (which lives on the schedule, not the header).
           const r = await fetch(
             `${getFusionBase()}/purchaseOrders/${po.POHeaderId}/child/lines?limit=1&totalResults=true&expand=schedules`,
-            { headers: { Authorization: HEADERS, Accept: 'application/json' } }
+            { headers: { ...getHeaders(), Accept: 'application/json' } }
           );
           if (!r.ok) return { id: po.POHeaderId, count: 0, shipTo: '' };
           const j = await r.json();
@@ -1138,7 +1138,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
   const fetchPOs = useCallback(async (params: SearchParams, pageNum: number): Promise<RawPO[]> => {
     setLoading(true);
     try {
-      const res = await fetch(buildUrl(params, pageNum), { headers: { Authorization: HEADERS, Accept: 'application/json' } });
+      const res = await fetch(buildUrl(params, pageNum), { headers: { ...getHeaders(), Accept: 'application/json' } });
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       const json = await res.json();
       const items: RawPO[] = (json.items ?? []).sort((a: RawPO, b: RawPO) =>
@@ -1192,7 +1192,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
     const fetchBusUnits = async () => {
       setBusUnitsLoading(true);
       try {
-        const res = await fetch(`${getFusionBase()}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`, { headers: { Authorization: HEADERS, Accept: 'application/json' } });
+        const res = await fetch(`${getFusionBase()}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`, { headers: { ...getHeaders(), Accept: 'application/json' } });
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         const json = await res.json();
         const items: BusinessUnit[] = (json.items ?? []);
@@ -1232,7 +1232,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
     const url = buildUrl(form.getFieldsValue(), page);
     setATL(true); setApiResult(null);
     try {
-      const res = await fetch(url, { headers: { Authorization: HEADERS, Accept: 'application/json' } });
+      const res = await fetch(url, { headers: { ...getHeaders(), Accept: 'application/json' } });
       const body = await res.text();
       let pretty = body;
       try { pretty = JSON.stringify(JSON.parse(body), null, 2); } catch { /* keep raw */ }
