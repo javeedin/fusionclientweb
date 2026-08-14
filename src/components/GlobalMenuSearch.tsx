@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Select, Tag, Typography, Switch, Tooltip, Button } from 'antd';
-import { SearchOutlined, ExportOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { SearchOutlined, ExportOutlined, DesktopOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { getFilteredMenuItemsGrouped, type MenuSearchItem } from '../data/menuItems';
 import { getCurrentCompany } from '../config/company.config';
@@ -130,7 +130,7 @@ const GlobalMenuSearch: React.FC = () => {
       <Tooltip title="New Window" placement="bottom">
         <Button
           type="text"
-          icon={<ClockCircleOutlined />}
+          icon={<DesktopOutlined />}
           onClick={handleOpenNewWindow}
           style={{
             fontSize: 13,
