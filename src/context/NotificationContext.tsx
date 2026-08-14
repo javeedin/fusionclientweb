@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
-import { APEX_DB_CONFIG } from '../config/api.config';
+import { buildApexUrl } from '../config/api.helper';
 import { useAuth } from './AuthContext';
 import { getApprovalRequests, updateApprovalStatus } from '../services/approvals.service';
 import type { ApprovalRequest } from '../services/approvals.service';
@@ -65,7 +65,7 @@ interface NotificationContextValue {
 const NotificationContext = createContext<NotificationContextValue | null>(null);
 
 const uid = () => `notif-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const APEX_PAYMENTS_URL = 'http://localhost:3001/api/apex/ap/payments';
+const APEX_PAYMENTS_URL = buildApexUrl('ap/payments');
 const APPROVAL_POLL_INTERVAL = 60_000; // 60 seconds
 
 function approvalToNotification(req: ApprovalRequest): AppNotification {

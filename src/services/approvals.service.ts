@@ -2,7 +2,9 @@
 // Approval Management Engine — Service Layer
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BASE = 'http://localhost:3001/api/apex/approvals';
+import { buildApexUrl } from '../config/api.helper';
+
+const BASE = buildApexUrl('approvals');
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 

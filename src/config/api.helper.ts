@@ -10,18 +10,51 @@ function normalizeUrl(url: string): string {
 }
 
 export function buildApexUrl(endpoint: string): string {
+  // In browser, route through proxy to bypass CORS; in Electron, use direct APEX URLs
+  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
+
+  if (typeof window !== 'undefined' && !isElectron) {
+    // Browser: use proxy
+    const proxyBase = 'http://localhost:3001/api/apex';
+    if (!endpoint) return proxyBase;
+    return normalizeUrl(`${proxyBase}/${endpoint}`);
+  }
+
+  // Electron or server-side: use direct APEX URL
   const baseUrl = getApexBaseUrl();
   if (!endpoint) return normalizeUrl(baseUrl);
   return normalizeUrl(`${baseUrl}/${endpoint}`);
 }
 
 export function buildApexAuthUrl(endpoint: string): string {
+  // In browser, route through proxy to bypass CORS; in Electron, use direct APEX URLs
+  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
+
+  if (typeof window !== 'undefined' && !isElectron) {
+    // Browser: use proxy
+    const proxyBase = 'http://localhost:3001/api/apex-auth';
+    if (!endpoint) return proxyBase;
+    return normalizeUrl(`${proxyBase}/${endpoint}`);
+  }
+
+  // Electron or server-side: use direct APEX URL
   const baseUrl = getApexBaseUrl();
   if (!endpoint) return normalizeUrl(`${baseUrl}/auth`);
   return normalizeUrl(`${baseUrl}/auth/${endpoint}`);
 }
 
 export function buildApexAdminUrl(endpoint: string): string {
+  // In browser, route through proxy to bypass CORS; in Electron, use direct APEX URLs
+  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
+
+  if (typeof window !== 'undefined' && !isElectron) {
+    // Browser: use proxy
+    const proxyBase = 'http://localhost:3001/api/apex-admin';
+    if (!endpoint) return proxyBase;
+    return normalizeUrl(`${proxyBase}/${endpoint}`);
+  }
+
+  // Electron or server-side: use direct APEX URL
   const baseUrl = getApexBaseUrl();
   if (!endpoint) return normalizeUrl(`${baseUrl}/admin`);
   return normalizeUrl(`${baseUrl}/admin/${endpoint}`);
