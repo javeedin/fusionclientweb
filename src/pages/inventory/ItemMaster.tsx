@@ -21,7 +21,19 @@ const { Title, Text } = Typography;
 
 const ORDS_BASE = `${getOrdsHostname()}/ords/test/FUSIONCLIENTERP/inventory/itemmaster`;
 const AUTH_HEADER  = 'Basic ' + btoa('emparun:Fusion@1234');
-const FUSION_HDRS  = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+
+// Get Fusion headers - don't include auth when using proxy (proxy adds it)
+const getFusionHeaders = () => {
+  const isElectron = (window as any).electronAPI?.isElectron === true;
+  if (isElectron) {
+    // Electron: direct Fusion API call, include auth
+    return { Authorization: AUTH_HEADER, Accept: 'application/json' };
+  } else {
+    // Browser: using proxy, proxy adds auth - don't include it here
+    return { Accept: 'application/json' };
+  }
+};
+const FUSION_HDRS  = getFusionHeaders();
 
 const REDWOOD = {
   primary: '#C74634', primaryDark: '#A33B2C',
@@ -272,10 +284,21 @@ const ItemMaster: React.FC = () => {
   const abortRef = useRef<AbortController | null>(null);
 
   // Get FUSION_BASE dynamically from selected instance
+  // In browser: route through local proxy server (has CORS); in Electron: direct call (webSecurity: false)
   const getFusionBase = useCallback(() => {
     if (!selectedFusionInstance || fusionInstances.length === 0) return '';
     const instance = fusionInstances.find(i => i.url === selectedFusionInstance);
-    return instance ? `${instance.url}/fscmRestApi/resources/11.13.18.05` : '';
+    if (!instance) return '';
+
+    const isElectron = (window as any).electronAPI?.isElectron === true;
+    if (isElectron) {
+      // Electron: direct Fusion API call (webSecurity disabled)
+      return `${instance.url}/fscmRestApi/resources/11.13.18.05`;
+    } else {
+      // Browser: route through local proxy server (has CORS)
+      // Proxy transforms /api/fusion/* to Fusion API calls internally
+      return 'http://localhost:3001/api/fusion';
+    }
   }, [selectedFusionInstance, fusionInstances]);
 
   // ── Load organizations from Fusion API (always, regardless of search mode) ───
