@@ -2280,9 +2280,9 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
 
       let query = '';
       if (itemSearchType === 'number') {
-        query = `ItemNumber LIKE '%${searchTerm.trim()}%';OrganizationCode=${org}`;
+        query = `ItemNumber LIKE ${searchTerm.trim()}%;OrganizationCode=${org}`;
       } else {
-        query = `ItemDescription LIKE '%${searchTerm.trim()}%';OrganizationCode=${org}`;
+        query = `ItemDescription LIKE %${searchTerm.trim()}%;OrganizationCode=${org}`;
       }
 
       const url = `${FUSION_BASE}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`;
