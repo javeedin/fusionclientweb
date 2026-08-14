@@ -2906,6 +2906,7 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
     isBalanced: boolean;
     hasMissingAccounts: boolean;
     hasAmountMismatch: boolean;
+    hasAccounting: boolean;
     reference1: string;
     reference2: string;
     reference3: string;
@@ -3456,7 +3457,7 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
         });
 
         const lines = glResult.items || (Array.isArray(glResult) ? glResult : []);
-        if (!lines || lines.length === 0) continue;
+        const hasAccounting = lines && lines.length > 0;
 
         let totalDebits = 0;
         let totalCredits = 0;
@@ -3471,35 +3472,37 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
         let reference4 = '';
         let reference5 = '';
 
-        lines.forEach((line: any, idx: number) => {
-          const dr = line.entered_dr || line.enteredDr || 0;
-          const cr = line.entered_cr || line.enteredCr || 0;
-          totalDebits += Number(dr) || 0;
-          totalCredits += Number(cr) || 0;
+        if (hasAccounting) {
+          lines.forEach((line: any, idx: number) => {
+            const dr = line.entered_dr || line.enteredDr || 0;
+            const cr = line.entered_cr || line.enteredCr || 0;
+            totalDebits += Number(dr) || 0;
+            totalCredits += Number(cr) || 0;
 
-          if (idx === 0) {
-            const account = line.account || line.accountCombination || '';
-            if (dr > 0) debitAccount = account;
-            if (cr > 0) creditAccount = account;
-            glBatchId = line.je_batch_id || line.gl_batch_id || line.glBatchId || null;
-            glHeaderId = line.je_header_id || line.gl_header_id || line.glHeaderId || null;
-            glStatus = line.je_status || line.gl_status || line.glStatus || '';
-            reference1 = line.reference1 || '';
-            reference2 = line.reference2 || '';
-            reference3 = line.reference3 || '';
-            reference4 = line.reference4 || '';
-            reference5 = line.reference5 || '';
-          } else {
-            const account = line.account || line.accountCombination || '';
-            if (dr > 0 && !debitAccount) debitAccount = account;
-            if (cr > 0 && !creditAccount) creditAccount = account;
-          }
-        });
+            if (idx === 0) {
+              const account = line.account || line.accountCombination || '';
+              if (dr > 0) debitAccount = account;
+              if (cr > 0) creditAccount = account;
+              glBatchId = line.je_batch_id || line.gl_batch_id || line.glBatchId || null;
+              glHeaderId = line.je_header_id || line.gl_header_id || line.glHeaderId || null;
+              glStatus = line.je_status || line.gl_status || line.glStatus || '';
+              reference1 = line.reference1 || '';
+              reference2 = line.reference2 || '';
+              reference3 = line.reference3 || '';
+              reference4 = line.reference4 || '';
+              reference5 = line.reference5 || '';
+            } else {
+              const account = line.account || line.accountCombination || '';
+              if (dr > 0 && !debitAccount) debitAccount = account;
+              if (cr > 0 && !creditAccount) creditAccount = account;
+            }
+          });
+        }
 
-        if (totalDebits > 0 || totalCredits > 0) {
-          // Fetch account descriptions
-          let debitAccountDesc = '';
-          let creditAccountDesc = '';
+        // Fetch account descriptions if accounting exists
+        let debitAccountDesc = '';
+        let creditAccountDesc = '';
+        if (hasAccounting) {
           try {
             if (debitAccount) {
               const drDesc = await fetchAccountDesc(debitAccount);
@@ -3512,41 +3515,68 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
           } catch (e) {
             console.error('Error fetching account descriptions:', e);
           }
-
-          // Calculate validation flags
-          const isBalanced = Math.abs(totalDebits - totalCredits) < 0.01;
-          const hasMissingAccounts = !debitAccount || !creditAccount;
-          const transactionAmount = Math.abs(txn.amount ?? 0);
-          const hasAmountMismatch = Math.abs(transactionAmount - totalDebits) > 0.01;
-
-          data.push({
-            transactionId: txn.transactionId,
-            transactionNumber: String(txn.transactionId),
-            transactionDate: txn.transactionDate,
-            transactionAmount,
-            debits: totalDebits,
-            credits: totalCredits,
-            debitAccount,
-            debitAccountDesc,
-            creditAccount,
-            creditAccountDesc,
-            glBatchId,
-            glHeaderId,
-            glStatus,
-            isBalanced,
-            hasMissingAccounts,
-            hasAmountMismatch,
-            reference1,
-            reference2,
-            reference3,
-            reference4,
-            reference5,
-            lines,
-          });
         }
+
+        // Calculate validation flags
+        const isBalanced = totalDebits > 0 ? Math.abs(totalDebits - totalCredits) < 0.01 : false;
+        const hasMissingAccounts = hasAccounting && (!debitAccount || !creditAccount);
+        const transactionAmount = Math.abs(txn.amount ?? 0);
+        const hasAmountMismatch = hasAccounting && Math.abs(transactionAmount - totalDebits) > 0.01;
+
+        data.push({
+          transactionId: txn.transactionId,
+          transactionNumber: String(txn.transactionId),
+          transactionDate: txn.transactionDate,
+          transactionAmount,
+          debits: totalDebits,
+          credits: totalCredits,
+          debitAccount,
+          debitAccountDesc,
+          creditAccount,
+          creditAccountDesc,
+          glBatchId,
+          glHeaderId,
+          glStatus,
+          isBalanced,
+          hasMissingAccounts,
+          hasAmountMismatch,
+          hasAccounting,
+          reference1,
+          reference2,
+          reference3,
+          reference4,
+          reference5,
+          lines: hasAccounting ? lines : [],
+        });
       } catch (err) {
         const glUrl = `${APEX_BASE}/gl/journals/lines?reference2=${txn.externalTransactionId}&reference5=BANK_EXTERNAL_TRANSACTIONS`;
         apiUrls.push({ url: glUrl, error: String(err) });
+        // Add transaction with error flag
+        data.push({
+          transactionId: txn.transactionId,
+          transactionNumber: String(txn.transactionId),
+          transactionDate: txn.transactionDate,
+          transactionAmount: Math.abs(txn.amount ?? 0),
+          debits: 0,
+          credits: 0,
+          debitAccount: '',
+          debitAccountDesc: '',
+          creditAccount: '',
+          creditAccountDesc: '',
+          glBatchId: null,
+          glHeaderId: null,
+          glStatus: 'ERROR',
+          isBalanced: false,
+          hasMissingAccounts: false,
+          hasAmountMismatch: false,
+          hasAccounting: false,
+          reference1: '',
+          reference2: '',
+          reference3: '',
+          reference4: '',
+          reference5: '',
+          lines: [],
+        });
         console.error(`Error fetching accounting for transaction ${txn.externalTransactionId}:`, err);
       }
     }
@@ -5399,8 +5429,10 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                 .some(v => String(v ?? '').toLowerCase().includes(q))
               );
 
-              const balanced = filtered.filter(r => r.isBalanced).length;
-              const unbalanced = filtered.filter(r => !r.isBalanced).length;
+              const withAccounting = filtered.filter(r => r.hasAccounting).length;
+              const noAccounting = filtered.filter(r => !r.hasAccounting).length;
+              const balanced = filtered.filter(r => r.hasAccounting && r.isBalanced).length;
+              const unbalanced = filtered.filter(r => r.hasAccounting && !r.isBalanced).length;
               const missingAccounts = filtered.filter(r => r.hasMissingAccounts).length;
               const amountMismatch = filtered.filter(r => r.hasAmountMismatch).length;
 
@@ -5428,8 +5460,14 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                   <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
                     <Col xs={12} sm={6}>
                       <Card size="small" style={{ textAlign: 'center', background: '#f6ffed', borderColor: REDWOOD.success }}>
-                        <div style={{ fontSize: 20, fontWeight: 600, color: REDWOOD.success }}>{balanced}</div>
-                        <div style={{ fontSize: 11, color: REDWOOD.neutral600 }}>Balanced</div>
+                        <div style={{ fontSize: 20, fontWeight: 600, color: REDWOOD.success }}>{withAccounting}</div>
+                        <div style={{ fontSize: 11, color: REDWOOD.neutral600 }}>With Accounting</div>
+                      </Card>
+                    </Col>
+                    <Col xs={12} sm={6}>
+                      <Card size="small" style={{ textAlign: 'center', background: '#f0f0f0', borderColor: REDWOOD.neutral600 }}>
+                        <div style={{ fontSize: 20, fontWeight: 600, color: REDWOOD.neutral600 }}>{noAccounting}</div>
+                        <div style={{ fontSize: 11, color: REDWOOD.neutral600 }}>No Accounting</div>
                       </Card>
                     </Col>
                     <Col xs={12} sm={6}>
@@ -5448,6 +5486,12 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                       <Card size="small" style={{ textAlign: 'center', background: '#e6f7ff', borderColor: REDWOOD.info }}>
                         <div style={{ fontSize: 20, fontWeight: 600, color: REDWOOD.info }}>{amountMismatch}</div>
                         <div style={{ fontSize: 11, color: REDWOOD.neutral600 }}>Amount Mismatch</div>
+                      </Card>
+                    </Col>
+                    <Col xs={12} sm={6}>
+                      <Card size="small" style={{ textAlign: 'center', background: '#f0f5ff', borderColor: REDWOOD.info }}>
+                        <div style={{ fontSize: 20, fontWeight: 600, color: REDWOOD.info }}>{balanced}</div>
+                        <div style={{ fontSize: 11, color: REDWOOD.neutral600 }}>Balanced (DR = CR)</div>
                       </Card>
                     </Col>
                   </Row>
@@ -5542,12 +5586,20 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                       {
                         title: 'Status',
                         dataIndex: 'glStatus',
-                        width: 100,
-                        render: v => (
-                          <Tag color={v === 'POSTED' ? 'green' : 'processing'} style={{ fontSize: 11 }}>
-                            {v || 'UNKNOWN'}
-                          </Tag>
-                        ),
+                        width: 120,
+                        render: (v, r) => {
+                          if (!r.hasAccounting) {
+                            return <Tag color="default" style={{ fontSize: 11 }}>No Accounting</Tag>;
+                          }
+                          if (v === 'ERROR') {
+                            return <Tag color="error" style={{ fontSize: 11 }}>ERROR</Tag>;
+                          }
+                          return (
+                            <Tag color={v === 'POSTED' ? 'green' : 'processing'} style={{ fontSize: 11 }}>
+                              {v || 'UNKNOWN'}
+                            </Tag>
+                          );
+                        },
                       },
                       {
                         title: 'GL Batch',
