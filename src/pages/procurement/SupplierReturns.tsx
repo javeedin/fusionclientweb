@@ -22,8 +22,8 @@ const getFusionBase = () => {
 const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
-const JSON_HDRS = { ...HEADERS, 'Content-Type': 'application/json' };
+const getHeaders = () => getFusionAuthHeaders();
+const JSON_HDRS = { ...getHeaders(), 'Content-Type': 'application/json' };
 const PO_URL = `${FUSION_BASE}/purchaseOrders`;
 const RECEIVE_URL = `${FUSION_BASE}/receivingReceiptRequests`;
 
@@ -60,7 +60,7 @@ const SupplierReturns: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500&fields=OrganizationCode,OrganizationName`, { headers: HEADERS });
+        const r = await fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500&fields=OrganizationCode,OrganizationName`, { headers: getHeaders() });
         const d = r.ok ? await r.json() : { items: [] };
         setOrgs((d.items ?? []).map((o: any) => ({ code: o.OrganizationCode, name: o.OrganizationName ?? '' })).filter((o: OrgOpt) => o.code).sort((a: OrgOpt, b: OrgOpt) => a.code.localeCompare(b.code)));
       } catch { setOrgs([]); }
@@ -69,7 +69,7 @@ const SupplierReturns: React.FC = () => {
 
   useEffect(() => {
     if (!org) { setSubinvs([]); return; }
-    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: HEADERS })
+    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : { items: [] })
       .then(d => setSubinvs(Array.from(new Set((d.items ?? []).map((i: any) => i.SecondaryInventoryName).filter(Boolean))) as string[]))
       .catch(() => setSubinvs([]));
@@ -84,7 +84,7 @@ const SupplierReturns: React.FC = () => {
     const url = `${PO_URL}?q=OrderNumber=${encodeURIComponent(poNum.trim())}&onlyData=true&limit=5&expand=lines.schedules`;
     setLastUrl(url);
     try {
-      const r = await fetch(url, { headers: HEADERS });
+      const r = await fetch(url, { headers: getHeaders() });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       const po = (d.items ?? [])[0];

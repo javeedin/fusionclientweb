@@ -26,7 +26,7 @@ const getFusionBase = () => {
 const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 const DRAFT_PO_URL = `${FUSION_BASE}/draftPurchaseOrders`;
 
 const REDWOOD = {
@@ -140,7 +140,7 @@ const ValidateDialog: React.FC<{
   const loadSubs = useCallback(async (org?: string) => {
     if (!org || subByOrg[org]) return;
     try {
-      const r = await fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: HEADERS });
+      const r = await fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: getHeaders() });
       const d = await r.json();
       const names = uniq((d.items ?? []).map((s: any) => s.SecondaryInventoryName).filter(Boolean)) as string[];
       setSubByOrg(p => ({ ...p, [org]: names.sort() }));
@@ -169,7 +169,7 @@ const ValidateDialog: React.FC<{
       const supOk: Record<string, boolean> = {};
       await mapLimit(supCodes, 5, async (code) => {
         try {
-          const r = await fetch(`${FUSION_BASE}/suppliers?q=${encodeURIComponent(`SupplierNumber='${code}'`)}&limit=1&onlyData=true`, { headers: HEADERS });
+          const r = await fetch(`${FUSION_BASE}/suppliers?q=${encodeURIComponent(`SupplierNumber='${code}'`)}&limit=1&onlyData=true`, { headers: getHeaders() });
           const d = await r.json(); supOk[code] = ((d.items ?? []).length > 0);
         } catch { supOk[code] = false; }
       });
@@ -178,7 +178,7 @@ const ValidateDialog: React.FC<{
       const itemOk: Record<string, boolean> = {};
       await mapLimit(itemCodes, 6, async (code) => {
         try {
-          const r = await fetch(`${FUSION_BASE}/itemsV2?q=${encodeURIComponent(`ItemNumber='${code}'`)}&limit=1&onlyData=true`, { headers: HEADERS });
+          const r = await fetch(`${FUSION_BASE}/itemsV2?q=${encodeURIComponent(`ItemNumber='${code}'`)}&limit=1&onlyData=true`, { headers: getHeaders() });
           const d = await r.json(); itemOk[code] = ((d.items ?? []).length > 0);
         } catch { itemOk[code] = false; }
       });
@@ -187,7 +187,7 @@ const ValidateDialog: React.FC<{
       const subMap: Record<string, string[]> = { ...subByOrg };
       await mapLimit(usedOrgs.filter(o => !subMap[o]), 4, async (org) => {
         try {
-          const r = await fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: HEADERS });
+          const r = await fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: getHeaders() });
           const d = await r.json();
           subMap[org] = uniq((d.items ?? []).map((s: any) => s.SecondaryInventoryName).filter(Boolean)) as string[];
         } catch { subMap[org] = []; }
@@ -258,7 +258,7 @@ const ValidateDialog: React.FC<{
       const payload = buildPoPayload(pls);
       const payloadStr = JSON.stringify(payload, null, 2);
       try {
-        const r = await fetch(DRAFT_PO_URL, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const r = await fetch(DRAFT_PO_URL, { method: 'POST', headers: { ...getHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const text = await r.text();
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep raw */ }
         out.push({ po, ok: r.ok, status: r.status, body: parsed ? JSON.stringify(parsed, null, 2) : text, orderNumber: parsed?.OrderNumber, payload: payloadStr });
@@ -389,11 +389,11 @@ const PurchaseOrderLoading: React.FC = () => {
 
   // Reference lists for the validation dialog.
   useEffect(() => {
-    fetch(`${FUSION_BASE}/finBusinessUnitsLOV?onlyData=true&limit=500&fields=BusinessUnitName`, { headers: HEADERS })
+    fetch(`${FUSION_BASE}/finBusinessUnitsLOV?onlyData=true&limit=500&fields=BusinessUnitName`, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => setBUnits(uniq((d.items ?? []).map((b: any) => b.BusinessUnitName).filter(Boolean)).map((name: any) => ({ name }))))
       .catch(() => { /* fall back to distinct values from the file */ });
-    fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500&fields=OrganizationCode,OrganizationName`, { headers: HEADERS })
+    fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500&fields=OrganizationCode,OrganizationName`, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => setOrgs((d.items ?? []).map((o: any) => ({ code: o.OrganizationCode, name: o.OrganizationName })).filter((o: any) => o.code)))
       .catch(() => { /* org validation will fail closed */ });

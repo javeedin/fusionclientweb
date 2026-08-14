@@ -36,7 +36,7 @@ const REDWOOD = {
 // In Electron the request goes directly (no CORS). In a browser (dev) it routes
 // through the Vite proxy. Mirrors ManageExpectedReceipts.
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 
 // ASN request source code. This pod uses 'VENDOR' (same value the receiving flow
 // in ManageExpectedReceipts posts). Older pods use 'SUPPLIER'.
@@ -89,14 +89,14 @@ const proxied = (href: string) =>
 async function fetchProcessingErrors(headerId: string | number): Promise<string[]> {
   const out: string[] = [];
   try {
-    const r = await fetch(`${ASN_ENDPOINT}/${headerId}?expand=lines`, { headers: HEADERS });
+    const r = await fetch(`${ASN_ENDPOINT}/${headerId}?expand=lines`, { headers: getHeaders() });
     const d = await r.json();
     const lines: any[] = d?.lines?.items ?? d?.lines ?? [];
     for (const ln of lines) {
       const link = (ln?.links ?? []).find((l: any) => l?.name === 'processingErrors');
       if (!link?.href) continue;
       try {
-        const pr = await fetch(proxied(link.href), { headers: HEADERS });
+        const pr = await fetch(proxied(link.href), { headers: getHeaders() });
         const pd = await pr.json();
         (pd?.items ?? []).forEach((it: any) => {
           const msg = it?.ErrorMessage ?? it?.Message ?? it?.ErrorMessageText ?? it?.ErrorMessageName;
@@ -115,7 +115,7 @@ async function fetchLinesToReceive(q: string): Promise<POLine[]> {
   let offset = 0;
   while (true) {
     const url = `${FUSION_BASE}/linesToReceive?${qParam}limit=500&offset=${offset}`;
-    const res = await fetch(url, { headers: HEADERS });
+    const res = await fetch(url, { headers: getHeaders() });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     const data = await res.json();
     const items: POLine[] = data.items ?? [];
@@ -276,7 +276,7 @@ const CreateASN: React.FC = () => {
     try {
       const res = await fetch(ASN_ENDPOINT, {
         method: 'POST',
-        headers: { ...HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...getHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(asnBody),
       });
       const text = await res.text();
@@ -301,7 +301,7 @@ const CreateASN: React.FC = () => {
         for (let i = 0; i < 8 && pStatus === 'PENDING'; i++) {
           await new Promise(r => setTimeout(r, 2000));
           try {
-            const pr = await fetch(`${ASN_ENDPOINT}/${headerId}`, { headers: HEADERS });
+            const pr = await fetch(`${ASN_ENDPOINT}/${headerId}`, { headers: getHeaders() });
             const pd = await pr.json();
             pStatus = String(pd?.ProcessingStatusCode ?? pStatus).toUpperCase();
             retMsg  = pd?.ReturnMessage ?? retMsg;

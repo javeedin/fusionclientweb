@@ -37,7 +37,7 @@ const { Title, Text } = Typography;
 const FUSION_BASE = `${getFusionBase()}`;
 // itemCosts is exposed on the "latest" resource version (same as Manage Item Cost).
 const LATEST_URL = `${getFusionHost()}/fscmRestApi/resources/latest`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 const CHILD_LIMIT = 500;
 
 const REDWOOD = {
@@ -91,7 +91,7 @@ const fetchAllPages = async (baseUrl: string): Promise<any[]> => {
   while (true) {
     const sep = stripped.includes('?') ? '&' : '?';
     const url = `${stripped}${sep}limit=${CHILD_LIMIT}&offset=${offset}`;
-    const r = await fetch(url, { headers: HEADERS });
+    const r = await fetch(url, { headers: getHeaders() });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -121,7 +121,7 @@ const useOrgs = () => {
   const url = `${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500`;
   const load = useCallback(() => {
     setLoading(true); setError('');
-    fetch(url, { headers: HEADERS })
+    fetch(url, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status} ${r.statusText}`)))
       .then(d => {
         const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -299,7 +299,7 @@ const SearchTab: React.FC<{ orgsLoading: boolean; orgsUrl: string; reloadOrgs: (
     await mapLimit(items, 6, async (o) => {
       const url = `${FUSION_BASE}/transferOrders/${o.HeaderId}/child/transferOrderLines?onlyData=true&limit=1&totalResults=true`;
       try {
-        const r = await fetch(url, { headers: HEADERS });
+        const r = await fetch(url, { headers: getHeaders() });
         const d = await r.json();
         counts[o.HeaderId] = d.totalResults ?? (Array.isArray(d.items) ? d.items.length : 0);
       } catch { /* leave undefined */ }
@@ -580,7 +580,7 @@ const NewOrderTab: React.FC<{ orgs: Org[]; orgsLoading: boolean; seed?: NewSeed 
   // Sum PrimaryQuantity for an item in one org. Throws on HTTP error so the
   // caller can distinguish "0 on hand" (returns 0) from "lookup failed".
   const fetchQoh = async (org: string, item: string): Promise<number> => {
-    const r = await fetch(onhandUrl(org, item), { headers: HEADERS });
+    const r = await fetch(onhandUrl(org, item), { headers: getHeaders() });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d.items) ? d.items : [];
@@ -595,7 +595,7 @@ const NewOrderTab: React.FC<{ orgs: Org[]; orgsLoading: boolean; seed?: NewSeed 
     if (!it) { setInfo(p => ({ ...p, [key]: {} })); return; }
     setInfo(p => ({ ...p, [key]: { ...p[key], loading: true } }));
     const [descR, srcR, dstR] = await Promise.allSettled([
-      fetch(itemDescUrl(it), { headers: HEADERS }).then(r => r.json()),
+      fetch(itemDescUrl(it), { headers: getHeaders() }).then(r => r.json()),
       srcOrg ? fetchQoh(srcOrg, it) : Promise.resolve(null),
       dstOrg ? fetchQoh(dstOrg, it) : Promise.resolve(null),
     ]);
@@ -619,7 +619,7 @@ const NewOrderTab: React.FC<{ orgs: Org[]; orgsLoading: boolean; seed?: NewSeed 
   }, [srcOrg, dstOrg]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchOnhandRows = async (org: string, item: string): Promise<any[]> => {
-    const r = await fetch(onhandUrl(org, item), { headers: HEADERS });
+    const r = await fetch(onhandUrl(org, item), { headers: getHeaders() });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     return Array.isArray(d.items) ? d.items : [];
@@ -659,7 +659,7 @@ const NewOrderTab: React.FC<{ orgs: Org[]; orgsLoading: boolean; seed?: NewSeed 
     try {
       // itemCosts isn't filterable by inventory org (org lives in ValuationUnit),
       // so pull all cost rows for the item and split by org on the client.
-      const r = await fetch(itemCostUrl(it), { headers: HEADERS });
+      const r = await fetch(itemCostUrl(it), { headers: getHeaders() });
       const d = await r.json();
       const rows: any[] = Array.isArray(d.items) ? d.items : [];
       setCostData({
@@ -681,7 +681,7 @@ const NewOrderTab: React.FC<{ orgs: Org[]; orgsLoading: boolean; seed?: NewSeed 
     if (!url || costDetailCache[url] || costDetailLoading[url]) return;
     setCostDetailLoading(p => ({ ...p, [url]: true }));
     try {
-      const r = await fetch(url, { headers: HEADERS });
+      const r = await fetch(url, { headers: getHeaders() });
       const d = await r.json();
       setCostDetailCache(p => ({ ...p, [url]: Array.isArray(d.items) ? d.items : [] }));
     } catch { setCostDetailCache(p => ({ ...p, [url]: [] })); }
@@ -703,7 +703,7 @@ const NewOrderTab: React.FC<{ orgs: Org[]; orgsLoading: boolean; seed?: NewSeed 
   };
 
   const runItemQueries = async (urls: string[]) => {
-    const res = await Promise.allSettled(urls.map(u => fetch(u, { headers: HEADERS }).then(async r => {
+    const res = await Promise.allSettled(urls.map(u => fetch(u, { headers: getHeaders() }).then(async r => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     })));
@@ -751,7 +751,7 @@ const NewOrderTab: React.FC<{ orgs: Org[]; orgsLoading: boolean; seed?: NewSeed 
 
   const loadSubs = (org: string | undefined, set: (v: string[]) => void) => {
     if (!org) { set([]); return; }
-    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: HEADERS })
+    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(d => {
         const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -870,7 +870,7 @@ const NewOrderTab: React.FC<{ orgs: Org[]; orgsLoading: boolean; seed?: NewSeed 
           const body = buildPayload(`RE${stamp}`, Number(String(stamp).slice(-9)));   // unique batch/ref per submission
           const r = await fetch(postUrl, {
             method: 'POST',
-            headers: { ...HEADERS, 'Content-Type': 'application/json' },
+            headers: { ...getHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
           const raw = await r.text();
@@ -1464,7 +1464,7 @@ const EditOrderTab: React.FC<{ headerId: number; headerNumber: string; onClose: 
     setLoading(true); setError(''); setEdits({}); setResult('');
     try {
       const [h, l] = await Promise.all([
-        fetch(headerUrl, { headers: HEADERS }).then(r => r.ok ? r.json() : Promise.reject(new Error(`Header HTTP ${r.status}`))),
+        fetch(headerUrl, { headers: getHeaders() }).then(r => r.ok ? r.json() : Promise.reject(new Error(`Header HTTP ${r.status}`))),
         fetchAllPages(linesUrl),
       ]);
       setHeader(h); setLines(l);
@@ -1500,7 +1500,7 @@ const EditOrderTab: React.FC<{ headerId: number; headerNumber: string; onClose: 
       try {
         const r = await fetch(`${linesUrl}/${lineId}`, {
           method: 'PATCH',
-          headers: { ...HEADERS, 'Content-Type': 'application/json' },
+          headers: { ...getHeaders(), 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
         const raw = await r.text();

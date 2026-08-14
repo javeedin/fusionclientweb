@@ -23,8 +23,8 @@ const getFusionBase = () => {
 const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
-const JSON_HDRS = { ...HEADERS, 'Content-Type': 'application/json' };
+const getHeaders = () => getFusionAuthHeaders();
+const JSON_HDRS = { ...getHeaders(), 'Content-Type': 'application/json' };
 const ONHAND_URL = `${FUSION_BASE}/inventoryOnhandBalances`;
 const ITEMS_URL = `${FUSION_BASE}/itemsV2`;
 const STAGED_TXN_URL = `${FUSION_BASE}/inventoryStagedTransactions`;
@@ -62,7 +62,7 @@ const mapLimit = async <T, R>(items: T[], limit: number, fn: (t: T, i: number) =
   await Promise.all(Array.from({ length: Math.min(limit, Math.max(1, items.length)) }, worker));
   return out;
 };
-const fetchJson = async (url: string) => { const r = await fetch(url, { headers: HEADERS }); return r.ok ? r.json() : null; };
+const fetchJson = async (url: string) => { const r = await fetch(url, { headers: getHeaders() }); return r.ok ? r.json() : null; };
 const getItemMeta = async (item: string, org: string) =>
   (await fetchJson(`${ITEMS_URL}?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(item)}&limit=1&onlyData=true`))?.items?.[0] ?? null;
 
@@ -87,7 +87,7 @@ const pollStagedBySource = async (srcHeader: number, srcLine: number, attempts =
   for (let i = 0; i < attempts; i++) {
     await new Promise(res => setTimeout(res, delayMs));
     try {
-      const r = await fetch(url, { headers: HEADERS });
+      const r = await fetch(url, { headers: getHeaders() });
       if (!r.ok) continue;
       const d = await r.json();
       const row = (d?.items ?? [])[0];
@@ -111,7 +111,7 @@ const pollStagedBySource = async (srcHeader: number, srcLine: number, attempts =
 // gone = posted into inventory, still present with an error = failed, else pending.
 const checkStagedOnce = async (srcHeader: number, srcLine: number): Promise<{ state: 'processed' | 'error' | 'pending'; message?: string }> => {
   try {
-    const r = await fetch(stagedQuery(srcHeader, srcLine), { headers: HEADERS });
+    const r = await fetch(stagedQuery(srcHeader, srcLine), { headers: getHeaders() });
     if (r.ok) { const d = await r.json(); const row = (d?.items ?? [])[0]; if (!row) return { state: 'processed' }; const e = rowError(row); if (e) return { state: 'error', message: e }; }
   } catch { /* ignore */ }
   return { state: 'pending' };
@@ -433,14 +433,14 @@ const SearchOnhand: React.FC<{ orgs: OrgOpt[] }> = ({ orgs }) => {
       if (!nums.length) {
         const url = `${ONHAND_URL}?q=${orgClause}&limit=500&onlyData=true`;
         setLastUrl(url);
-        const r = await fetch(url, { headers: HEADERS });
+        const r = await fetch(url, { headers: getHeaders() });
         if (r.ok) { const d = await r.json(); (d.items ?? []).forEach((b: any) => out.push(b)); if (d.hasMore) setTruncated(true); }
         else { const t = await r.text(); let j: any = null; try { j = JSON.parse(t); } catch { /* raw */ } setErr(errOf(j, t)); }
       } else {
         await mapLimit(nums, 6, async (n) => {
           const url = `${ONHAND_URL}?q=${orgClause ? orgClause + ';' : ''}ItemNumber=${encodeURIComponent(n)}&limit=500&onlyData=true`;
           setLastUrl(url);
-          try { const r = await fetch(url, { headers: HEADERS }); if (r.ok) { const d = await r.json(); (d.items ?? []).forEach((b: any) => out.push(b)); } } catch { /* skip */ }
+          try { const r = await fetch(url, { headers: getHeaders() }); if (r.ok) { const d = await r.json(); (d.items ?? []).forEach((b: any) => out.push(b)); } } catch { /* skip */ }
         });
       }
       out.sort((a, b) => String(pf(a, ['ItemNumber'])).localeCompare(String(pf(b, ['ItemNumber']))));

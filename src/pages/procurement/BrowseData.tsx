@@ -30,7 +30,7 @@ const getFusionBase = () => {
 const _isElectron = typeof navigator !== 'undefined' && /electron/i.test(navigator.userAgent)
   || !!(window as unknown as { electronAPI?: unknown }).electronAPI;
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 
 const RW = {
   primary: '#C74634', info: '#0572CE', success: '#1D7B4D', warn: '#D4A800', error: '#C74634',
@@ -63,7 +63,7 @@ const runService = async (svc: FusionService): Promise<ServiceResult> => {
   let sample: any[] = [];
   try {
     while (scanned < BU_SCAN_MAX) {
-      const r = await fetch(`${base}?onlyData=true&totalResults=true&limit=${PAGE}&offset=${offset}`, { headers: HEADERS });
+      const r = await fetch(`${base}?onlyData=true&totalResults=true&limit=${PAGE}&offset=${offset}`, { headers: getHeaders() });
       if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText || ''}`.trim());
       const d = await r.json();
       const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -146,7 +146,7 @@ const BrowseData: React.FC = () => {
     const full = /[?&]limit=/.test(url) ? url : `${url}${url.includes('?') ? '&' : '?'}onlyData=true&limit=100`;
     setCustomRunning(true); setCustomResult(null);
     try {
-      const r = await fetch(full, { headers: HEADERS });
+      const r = await fetch(full, { headers: getHeaders() });
       let data: any; try { data = await r.json(); } catch { data = await r.text(); }
       setCustomResult({ ok: r.ok, status: r.status, data, url: full });
     } catch (e: any) { setCustomResult({ ok: false, status: 0, error: e?.message ?? String(e), url: full }); }

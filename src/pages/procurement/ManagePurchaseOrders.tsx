@@ -49,7 +49,7 @@ const getFusionBase = () => {
 };
 
 // ── Oracle Fusion API config ─────────────────────────────────────────────────
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 const PAGE_SIZE = 25;
 const CHILD_LIMIT = 500;
 

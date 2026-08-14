@@ -27,7 +27,7 @@ const { Title, Text } = Typography;
 
 // Electron goes direct (no CORS); browser dev routes via the Vite proxy.
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 const PAGE_LIMIT = 500;
 
 const REDWOOD = {
@@ -54,7 +54,7 @@ const fetchAllPages = async (baseUrl: string): Promise<any[]> => {
   while (true) {
     const sep = stripped.includes('?') ? '&' : '?';
     const url = `${stripped}${sep}limit=${PAGE_LIMIT}&offset=${offset}`;
-    const r = await fetch(url, { headers: HEADERS });
+    const r = await fetch(url, { headers: getHeaders() });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -237,7 +237,7 @@ const ShipmentOrderDialog: React.FC<{ row: any | null; onClose: () => void }> = 
         try {
           const r = await fetch(pickUrl, {
             method: 'POST',
-            headers: { ...HEADERS, 'Content-Type': 'application/json' },
+            headers: { ...getHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify(pickPayload),
           });
           const raw = await r.text();

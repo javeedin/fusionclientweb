@@ -37,7 +37,7 @@ const ORDS_DIRECT = buildApexUrl('test/FUSIONCLIENTERP');
 // In dev (localhost) use Vite proxy to avoid CORS; in Electron/production use direct URL.
 const ORDS_BASE   = window.location.hostname === 'localhost' ? '/ords-mitsu' : ORDS_DIRECT;
 const GL_ORDS_BASE = buildApexUrl('');
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 
 const C = {
   red: '#C74634', redDark: '#A33B2C',
@@ -54,7 +54,7 @@ const fetchLOV = async (url: string, auth = true): Promise<any[]> => {
   let offset = 0;
   while (true) {
     const sep = url.includes('?') ? '&' : '?';
-    const r = await fetch(`${url}${sep}limit=500&offset=${offset}`, auth ? { headers: HEADERS } : {});
+    const r = await fetch(`${url}${sep}limit=500&offset=${offset}`, auth ? { headers: getHeaders() } : {});
     if (!r.ok) {
       const body = await r.text().catch(() => '');
       throw new Error(`HTTP ${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`);
@@ -354,7 +354,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     setLovLoading(true);
     try {
       const [buRes, ccyRes, orgRes, subRes] = await Promise.allSettled([
-        fetch(`${getFusionBase()}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`, { headers: HEADERS })
+        fetch(`${getFusionBase()}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`, { headers: getHeaders() })
           .then(r => r.json())
           .then(d => {
             // Deduplicate business units by name and map to expected format
@@ -377,7 +377,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
               }));
           }),
         fetch(`${buildCurrencyUrl('currencies')}`).then(r => r.json()).then(d => d.items ?? d.data ?? (Array.isArray(d) ? d : [])),
-        fetch(`${getFusionBase()}/inventoryOrganizations?onlyData=true&limit=500`, { headers: HEADERS }).then(r => r.ok ? r.json() : Promise.reject()).then(d => d.items ?? []),
+        fetch(`${getFusionBase()}/inventoryOrganizations?onlyData=true&limit=500`, { headers: getHeaders() }).then(r => r.ok ? r.json() : Promise.reject()).then(d => d.items ?? []),
       ]);
       if (buRes.status === 'fulfilled') {
         setBusUnits(buRes.value);
@@ -466,7 +466,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     setSupplierApiUrl(url);
     setSuppliersLoading(true);
     try {
-      const r = await fetch(url, { headers: HEADERS });
+      const r = await fetch(url, { headers: getHeaders() });
       const d = await r.json();
       setSupplierResults(d.items ?? []);
     } catch { /* ignore */ } finally { setSuppliersLoading(false); }
@@ -478,7 +478,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     if (!supplierId) return;
     setSitesLoading(true);
     try {
-      const r = await fetch(`${getFusionBase()}/suppliers/${supplierId}/child/sites?limit=100`, { headers: HEADERS });
+      const r = await fetch(`${getFusionBase()}/suppliers/${supplierId}/child/sites?limit=100`, { headers: getHeaders() });
       const d = await r.json();
       setSupplierSites(d.items ?? []);
     } catch { /* ignore */ } finally { setSitesLoading(false); }
@@ -501,7 +501,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     if (!orgCode) return;
 
     // Fetch subinventories for the selected organization from Fusion API
-    fetch(`${getFusionBase()}/subinventories?q=OrganizationCode=${encodeURIComponent(orgCode)}&onlyData=true&limit=500`, { headers: HEADERS })
+    fetch(`${getFusionBase()}/subinventories?q=OrganizationCode=${encodeURIComponent(orgCode)}&onlyData=true&limit=500`, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => {
         const subs = Array.from(new Set((d.items ?? []).map((s: any) => s.SecondaryInventoryName).filter(Boolean))).sort() as string[];
@@ -562,7 +562,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     try {
       const q = `OrderNumber LIKE '${docType}%'`;
       const url = `${getFusionBase()}/purchaseOrders?q=${encodeURIComponent(q)}&orderBy=CreationDate:desc&limit=1`;
-      const r = await fetch(url, { headers: HEADERS });
+      const r = await fetch(url, { headers: getHeaders() });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       const items: any[] = d.items ?? [];
@@ -611,7 +611,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         if (header.subinventory) qParts.push(`SubinventoryCode=${header.subinventory}`);
         const urlParams = new URLSearchParams({ q: qParts.join(';'), limit: '50' });
         const url = `${getFusionBase()}/inventoryOnhandBalances?${urlParams}`;
-        const r = await fetch(url, { headers: HEADERS });
+        const r = await fetch(url, { headers: getHeaders() });
         const d = await r.json();
         const items: any[] = d.items ?? [];
         // PrimaryQuantity is the correct field name (verified from ManageOnhandInventory)
@@ -691,7 +691,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         ),
         onOk: async () => {
           try {
-            const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${line.poLineId}`, { method: 'DELETE', headers: HEADERS });
+            const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${line.poLineId}`, { method: 'DELETE', headers: getHeaders() });
             if (!r.ok && r.status !== 204) {
               const t = await r.text();
               Modal.error({ title: 'Delete line failed', width: 620, content: <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 260, overflow: 'auto' }}>{t}</pre> });
@@ -741,7 +741,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       const q = `ItemNumber='${itemNumber}'${org ? `;OrganizationCode=${org}` : ''}`;
       const url = `${getFusionBase()}/itemsV2?q=${encodeURIComponent(q)}&limit=50&onlyData=true`;
       setItemDetailApiUrl(`GET itemsV2?q=${q}`);
-      const r = await fetch(url, { headers: HEADERS });
+      const r = await fetch(url, { headers: getHeaders() });
       const d = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(d?.detail ?? d?.message ?? `HTTP ${r.status}`);
       const items: any[] = d.items ?? [];
@@ -774,7 +774,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
   const fetchMasterItem = async (itemNumber: string): Promise<Record<string, any> | null> => {
     try {
       const url = `${getFusionBase()}/itemsV2?q=ItemNumber='${encodeURIComponent(itemNumber)}'&limit=50&onlyData=true`;
-      const r = await fetch(url, { headers: HEADERS });
+      const r = await fetch(url, { headers: getHeaders() });
       if (!r.ok) return null;
       const d = await r.json().catch(() => ({} as any));
       const items: any[] = d.items ?? [];
@@ -827,7 +827,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
   const getItemSelfHref = async (itemNumber: string, org: string): Promise<string | null> => {
     try {
       const url = `${getFusionBase()}/itemsV2?q=ItemNumber='${itemNumber}';OrganizationCode=${org}&limit=1`;
-      const r = await fetch(url, { headers: HEADERS });
+      const r = await fetch(url, { headers: getHeaders() });
       if (!r.ok) return null;
       const d = await r.json().catch(() => ({} as any));
       const row = d.items?.[0];
@@ -858,9 +858,9 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       return true;
     }
     const errOf = (data: any, r: Response) => data?.detail || data?.message || (Array.isArray(data?.['o:errorDetails']) ? data['o:errorDetails'][0]?.detail : '') || `HTTP ${r.status}`;
-    const doPatch = () => fetch(selfHref!, { method: 'PATCH', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(copied) });
-    const doUpsert = () => fetch(`${getFusionBase()}/itemsV2`, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json', 'Upsert-Mode': 'true' }, body: JSON.stringify(buildAssignBody(org, line, master)) });
-    const doPost = () => fetch(`${getFusionBase()}/itemsV2`, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(buildAssignBody(org, line, master)) });
+    const doPatch = () => fetch(selfHref!, { method: 'PATCH', headers: { ...getHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(copied) });
+    const doUpsert = () => fetch(`${getFusionBase()}/itemsV2`, { method: 'POST', headers: { ...getHeaders(), 'Content-Type': 'application/json', 'Upsert-Mode': 'true' }, body: JSON.stringify(buildAssignBody(org, line, master)) });
+    const doPost = () => fetch(`${getFusionBase()}/itemsV2`, { method: 'POST', headers: { ...getHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(buildAssignBody(org, line, master)) });
     try {
       let r = await (isUpdate ? doPatch() : doPost());
       let data = await r.json().catch(() => ({} as any));
@@ -983,7 +983,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     setEditLoading(true);
     try {
       const url = `${getFusionBase()}/draftPurchaseOrders/${id}`;
-      const r = await fetch(url, { headers: HEADERS });
+      const r = await fetch(url, { headers: getHeaders() });
       const d = await r.json();
       if (!r.ok) throw new Error(d?.title ?? d?.detail ?? `HTTP ${r.status}`);
 
@@ -1014,7 +1014,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       let offset = 0;
       const PAGE = 500;
       for (let guard = 0; guard < 200; guard++) {
-        const lr = await fetch(`${getFusionBase()}/draftPurchaseOrders/${id}/child/lines?expand=schedules&limit=${PAGE}&offset=${offset}`, { headers: HEADERS });
+        const lr = await fetch(`${getFusionBase()}/draftPurchaseOrders/${id}/child/lines?expand=schedules&limit=${PAGE}&offset=${offset}`, { headers: getHeaders() });
         const ld = await lr.json();
         if (!lr.ok) throw new Error(ld?.title ?? ld?.detail ?? `HTTP ${lr.status}`);
         const items: any[] = ld?.items ?? [];
@@ -1272,7 +1272,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     try {
       const r = await fetch(fusionUrl, {
         method: 'POST',
-        headers: { ...HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...getHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(fusionPreparedBody),
       });
       const rawText = await r.text();
@@ -1290,7 +1290,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     const testUrl = `${getFusionBase()}/draftPurchaseOrders?limit=1`;
     setFusionTestLoading(true);
     try {
-      const r = await fetch(testUrl, { headers: HEADERS });
+      const r = await fetch(testUrl, { headers: getHeaders() });
       const rawText = await r.text();
       let data: any = null;
       try { data = JSON.parse(rawText); } catch { data = null; }
@@ -1357,7 +1357,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     try {
       const r = await fetch(`${getFusionBase()}/draftPurchaseOrders`, {
         method: 'POST',
-        headers: { ...HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...getHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const rawText = await r.text();
@@ -1425,7 +1425,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     try {
       const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${id}`, {
         method: 'POST',
-        headers: { ...HEADERS, 'Content-Type': 'application/vnd.oracle.adf.action+json' },
+        headers: { ...getHeaders(), 'Content-Type': 'application/vnd.oracle.adf.action+json' },
         body: JSON.stringify({ name: 'submit', parameters: [] }),
       });
       const rawText = await r.text();
@@ -1472,7 +1472,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         nextNum += 1;
         const body = buildLineBody(l, nextNum);   // full schedule + LineNumber
         const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines`, {
-          method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          method: 'POST', headers: { ...getHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
         if (r.ok) {
           added++;
@@ -1485,14 +1485,14 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       for (const l of lines.filter(x => x.poLineId != null)) {
         const body = { Quantity: l.qty, Price: l.price, Description: l.description };
         const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}`, {
-          method: 'PATCH', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          method: 'PATCH', headers: { ...getHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
         if (r.ok) updated++; else { const t = await r.text(); errors.push(`Update line ${l.lineNum}: ${t.slice(0, 300)}`); }
         // Need-by lives on the schedule — PATCH it (and the schedule qty) so it saves.
         if (l.scheduleId != null && l.needBy) {
           const schBody = { RequestedDeliveryDate: l.needBy.format('YYYY-MM-DD'), Quantity: l.qty };
           const sr = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}/child/schedules/${l.scheduleId}`, {
-            method: 'PATCH', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(schBody),
+            method: 'PATCH', headers: { ...getHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(schBody),
           });
           if (!sr.ok) { const t = await sr.text(); errors.push(`Need-by line ${l.lineNum}: ${t.slice(0, 200)}`); }
         }
@@ -1544,7 +1544,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     if (!op) return;
     setEditOpResults(prev => ({ ...prev, [idx]: { loading: true, status: 0, body: '' } }));
     try {
-      const r = await fetch(op.url, { method: op.method, headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(op.body) });
+      const r = await fetch(op.url, { method: op.method, headers: { ...getHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(op.body) });
       const text = await r.text();
       let data: any = null, pretty = text;
       try { data = JSON.parse(text); pretty = JSON.stringify(data, null, 2); } catch { /* not json */ }
@@ -1575,7 +1575,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       ),
       onOk: async () => {
         try {
-          const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}`, { method: 'DELETE', headers: HEADERS });
+          const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}`, { method: 'DELETE', headers: getHeaders() });
           if (!r.ok && r.status !== 204) {
             const t = await r.text();
             Modal.error({ title: 'Delete PO failed', width: 620, content: <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 260, overflow: 'auto' }}>{t}</pre> });
@@ -1620,7 +1620,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         // Delete highest line number first so re-sequencing never clashes.
         for (const l of [...fusionLines].sort((a, b) => (b.lineNum ?? 0) - (a.lineNum ?? 0))) {
           try {
-            const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}`, { method: 'DELETE', headers: HEADERS });
+            const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}`, { method: 'DELETE', headers: getHeaders() });
             if (r.ok || r.status === 204) deleted++;
             else { const t = await r.text(); errors.push(`Line ${l.lineNum} (${l.itemNumber}): ${t.slice(0, 200)}`); }
           } catch (e: any) { errors.push(`Line ${l.lineNum} (${l.itemNumber}): ${e.message}`); }
@@ -1648,7 +1648,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       const url = `${getFusionBase()}/${resource}/${poHeaderId}`;
       const r = await fetch(url, {
         method: 'POST',
-        headers: { ...HEADERS, 'Content-Type': 'application/vnd.oracle.adf.action+json' },
+        headers: { ...getHeaders(), 'Content-Type': 'application/vnd.oracle.adf.action+json' },
         body: JSON.stringify({ name: actionName, parameters: params }),
       });
       const rawText = await r.text();
@@ -2292,7 +2292,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
       const url = `${getFusionBase()}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`;
       setAddItemApiUrl(`${getFusionBase()}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`);
 
-      const res = await fetch(url, { headers: HEADERS });
+      const res = await fetch(url, { headers: getHeaders() });
       if (!res.ok) throw new Error(`API returned ${res.status}`);
 
       const data = await res.json();
@@ -2456,7 +2456,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
         const url = `${getFusionBase()}/itemsV2?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(num)}&limit=1&onlyData=true`;
         setAddItemApiUrl(`${getFusionBase()}/itemsV2?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(num)}&limit=1&onlyData=true`);
         try {
-          const r = await fetch(url, { headers: HEADERS });
+          const r = await fetch(url, { headers: getHeaders() });
           if (r.ok) {
             const d = await r.json();
             const it = (d.items ?? [])[0];

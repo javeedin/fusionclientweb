@@ -24,7 +24,7 @@ const getFusionBase = () => {
 const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 const PAGE_LIMIT = 500;
 
 const REDWOOD = {
@@ -53,7 +53,7 @@ const fetchAllPages = async (baseUrl: string): Promise<any[]> => {
   while (true) {
     const sep = stripped.includes('?') ? '&' : '?';
     const url = `${stripped}${sep}limit=${PAGE_LIMIT}&offset=${offset}`;
-    const r = await fetch(url, { headers: HEADERS });
+    const r = await fetch(url, { headers: getHeaders() });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -352,7 +352,7 @@ const ConfirmPickModal: React.FC<{ open: boolean; payload: any | null; onClose: 
     try {
       const r = await fetch(CONFIRM_URL, {
         method: 'POST',
-        headers: { ...HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...getHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const text = await r.text();
@@ -422,7 +422,7 @@ export const ShipConfirmModal: React.FC<{
     try {
       const r = await fetch(SHIP_CONFIRM_URL, {
         method: 'POST',
-        headers: { ...HEADERS, 'Content-Type': 'application/json' },
+        headers: { ...getHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const text = await r.text();
@@ -653,7 +653,7 @@ const ConfirmPicks: React.FC = () => {
 
   // Organization dropdown from inventoryOrganizations.
   useEffect(() => {
-    fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500&fields=OrganizationCode`, { headers: HEADERS })
+    fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500&fields=OrganizationCode`, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => setOrgs(Array.from(new Set((d.items ?? []).map((o: any) => o.OrganizationCode).filter(Boolean))).sort() as string[]))
       .catch(() => { /* free-type fallback via the select's search */ });

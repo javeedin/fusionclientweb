@@ -37,7 +37,7 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const BASE_URL    = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 const HDRS        = { Authorization: HEADERS, Accept: 'application/json' };
 
 const REDWOOD = {
