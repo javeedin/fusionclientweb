@@ -157,14 +157,21 @@ const arTaskItems: MenuItemType[] = [
 ];
 
 const supplyChainItems: MenuItemType[] = [
-  { key: 'sc-purchase-orders', icon: <FileTextOutlined />, label: 'Manage Purchase Orders', description: 'Search and manage purchase orders', color: REDWOOD.info, path: '/sc/purchase-orders' },
-  { key: 'sc-purchase-requisitions', icon: <FileAddOutlined />, label: 'Purchase Requisitions', description: 'Create and manage requisitions', color: REDWOOD.taskBlue, path: '/sc/requisitions' },
-  { key: 'sc-receipts', icon: <CheckCircleOutlined />, label: 'Manage Receipts', description: 'Record and manage receipts', color: REDWOOD.success, path: '/sc/receipts' },
-  { key: 'sc-suppliers', icon: <FileTextOutlined />, label: 'Suppliers', description: 'Manage supplier master data', color: REDWOOD.primary, path: '/sc/suppliers' },
-  { key: 'sc-shipments', icon: <SendOutlined />, label: 'Manage Shipments', description: 'Track and manage shipments', color: REDWOOD.warning, path: '/sc/shipments' },
-  { key: 'sc-returns', icon: <SwapOutlined />, label: 'Manage Returns', description: 'Process returns and exchanges', color: REDWOOD.neutral600, path: '/sc/returns' },
-  { key: 'sc-inventory', icon: <PieChartOutlined />, label: 'Inventory Management', description: 'View and manage inventory levels', color: REDWOOD.info, path: '/sc/inventory' },
-  { key: 'sc-catalog', icon: <FolderOutlined />, label: 'Item Catalog', description: 'Manage product and item catalog', color: REDWOOD.success, path: '/sc/catalog' },
+  // Purchasing
+  { key: 'sc-purchase-orders', icon: <CheckSquareOutlined />, label: 'Purchase Orders', description: 'Search, view and manage purchase orders', color: REDWOOD.primary, path: '/procurement/purchase-orders' },
+  { key: 'sc-suppliers', icon: <FileTextOutlined />, label: 'Suppliers', description: 'Manage supplier records, sites and contacts', color: REDWOOD.info, path: '/procurement/suppliers' },
+  // Order Management
+  { key: 'sc-sales-orders', icon: <CheckCircleOutlined />, label: 'Sales Orders', description: 'Search sales orders and drill into details', color: REDWOOD.primary, path: '/procurement/sales-orders' },
+  { key: 'sc-price-list', icon: <FileTextOutlined />, label: 'Price List', description: 'Manage and review price lists', color: '#7245A6', path: '/procurement/price-list' },
+  // Inventory
+  { key: 'sc-item-master', icon: <FolderOutlined />, label: 'Item Master', description: 'Item catalog with attributes and pricing', color: REDWOOD.success, path: '/inventory/items' },
+  { key: 'sc-subinventories', icon: <FileTextOutlined />, label: 'Subinventories', description: 'Warehouse and subinventory hierarchy', color: '#00918A', path: '/inventory/subinventories' },
+  { key: 'sc-onhand', icon: <PieChartOutlined />, label: 'On-Hand Inventory', description: 'View current on-hand stock levels', color: REDWOOD.success, path: '/inventory/onhand' },
+  { key: 'sc-expected-receipts', icon: <SendOutlined />, label: 'Expected PO Receipts', description: 'View purchase order lines pending receipt', color: '#00918A', path: '/procurement/expected-receipts' },
+  { key: 'sc-transfer-orders', icon: <SwapOutlined />, label: 'Transfer Orders', description: 'Transfer stock between inventory organizations', color: REDWOOD.info, path: '/procurement/transfer-orders' },
+  // Costing
+  { key: 'sc-item-costs', icon: <DollarOutlined />, label: 'Item Cost', description: 'Search item costs from Oracle Fusion', color: REDWOOD.primary, path: '/procurement/item-costs' },
+  { key: 'sc-receipt-costs', icon: <ReconciliationOutlined />, label: 'Receipt Cost', description: 'Search receipt costs from Oracle Fusion', color: '#00918A', path: '/procurement/receipt-costs' },
 ];
 
 const taskSections = [
