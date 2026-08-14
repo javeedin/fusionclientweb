@@ -1,4 +1,4 @@
-import { getOrdsHostname } from '../../config/company.config';
+import { getOrdsHostname, getCurrentCompany } from '../../config/company.config';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Input, Row, Col,
@@ -19,7 +19,6 @@ const { Content } = Layout;
 const { Title, Text } = Typography;
 
 const ORDS_BASE = `${getOrdsHostname()}/ords/test/FUSIONCLIENTERP/inventory/itemmaster`;
-const FUSION_BASE  = 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/11.13.18.05';
 const AUTH_HEADER  = 'Basic ' + btoa('emparun:Fusion@1234');
 const FUSION_HDRS  = { Authorization: AUTH_HEADER, Accept: 'application/json' };
 
@@ -260,17 +259,44 @@ const ItemMaster: React.FC = () => {
   // Data source: APEX (ORDS) — default — or Fusion (itemsV2).
   const [source, setSource] = useState<'apex' | 'fusion'>('apex');
 
+  // Fusion instances
+  const [fusionInstances, setFusionInstances] = useState<{ name: string; url: string }[]>([]);
+  const [selectedFusionInstance, setSelectedFusionInstance] = useState<string>('');
+
   const abortRef = useRef<AbortController | null>(null);
+
+  // Get FUSION_BASE dynamically from selected instance
+  const getFusionBase = useCallback(() => {
+    if (!selectedFusionInstance || fusionInstances.length === 0) return '';
+    const instance = fusionInstances.find(i => i.url === selectedFusionInstance);
+    return instance ? `${instance.url}/fscmRestApi/resources/11.13.18.05` : '';
+  }, [selectedFusionInstance, fusionInstances]);
+
+  // ── Load Fusion instances on mount ──────────────────────────────────────────
+  useEffect(() => {
+    const company = getCurrentCompany();
+    const instances = company.fusionInstances ?? [];
+    setFusionInstances(instances);
+    if (instances.length > 0) {
+      setSelectedFusionInstance(instances[0].url);
+    }
+  }, []);
 
   // ── Load organizations on mount ──────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
       try {
+        const fusionBase = getFusionBase();
+        if (!fusionBase) {
+          setOrgsError('No Fusion instance selected');
+          setOrgsLoading(false);
+          return;
+        }
         const all: any[] = [];
         let offset = 0;
         while (true) {
           const r = await fetch(
-            `${FUSION_BASE}/inventoryOrganizations?limit=500&offset=${offset}`,
+            `${fusionBase}/inventoryOrganizations?limit=500&offset=${offset}`,
             { headers: FUSION_HDRS },
           );
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -297,11 +323,13 @@ const ItemMaster: React.FC = () => {
       }
     };
     load();
-  }, []);
+  }, [getFusionBase]);
 
   // ── Build search URL from form values ────────────────────────────────────────
-  const buildUrl = useCallback((vals: any, limit = 500, offset = 0): string => {
+  const buildUrl = useCallback((vals: any, limit = 50, offset = 0): string => {
     if (source === 'fusion') {
+      const fusionBase = getFusionBase();
+      if (!fusionBase) throw new Error('No Fusion instance selected');
       // Fusion itemsV2 — filter by org + item/description/status via the q parameter.
       // Fusion itemsV2 q syntax: unquoted values, LIKE with a trailing % (prefix match),
       // and no function calls (upper() etc. are rejected).
@@ -316,7 +344,7 @@ const ItemMaster: React.FC = () => {
       p.set('onlyData', 'true');
       p.set('totalResults', 'true');
       if (q.length) p.set('q', q.join(';'));
-      return `${FUSION_BASE}/itemsV2?${p.toString()}`;
+      return `${fusionBase}/itemsV2?${p.toString()}`;
     }
     const p = new URLSearchParams();
     p.set('limit', String(limit));
@@ -333,7 +361,7 @@ const ItemMaster: React.FC = () => {
     if (vals.attr4)       p.set('attr4', vals.attr4);
     if (vals.attr5)       p.set('attr5', vals.attr5);
     return `${ORDS_BASE}?${p.toString()}`;
-  }, [source]);
+  }, [source, getFusionBase]);
 
   // ── Search handler ───────────────────────────────────────────────────────────
   const handleSearch = useCallback(async () => {
@@ -360,9 +388,10 @@ const ItemMaster: React.FC = () => {
       const all: ItemRow[] = [];
       let offset = 0;
       let page = 1;
+      const pageSize = 50;
       while (true) {
         if (ctrl.signal.aborted) break;
-        const pageUrl = buildUrl(vals, 500, offset);
+        const pageUrl = buildUrl(vals, pageSize, offset);
         const r = await fetch(pageUrl, { signal: ctrl.signal, ...(source === 'fusion' ? { headers: FUSION_HDRS } : {}) });
         if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
         const d = await r.json();
@@ -372,8 +401,8 @@ const ItemMaster: React.FC = () => {
         if (d.count != null) setTotalCount(d.count);
         setFetchPage(page);
         setFetchCount(all.length);
-        if (!d.hasMore || items.length < 500) break;
-        offset += 500;
+        if (!d.hasMore || items.length < pageSize) break;
+        offset += pageSize;
         page++;
       }
       setResults(all);
@@ -692,6 +721,27 @@ const ItemMaster: React.FC = () => {
                       />
                     </Form.Item>
                   </Col>
+                  {source === 'fusion' && (
+                    <Col xs={24} sm={12} md={6}>
+                      <Form.Item
+                        label={
+                          <Space size={4}>
+                            <Text style={{ fontSize: 12 }}>Fusion Instance</Text>
+                            <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>Fusion</Tag>
+                          </Space>
+                        }
+                        style={{ marginBottom: 12 }}
+                      >
+                        <Select
+                          value={selectedFusionInstance}
+                          onChange={setSelectedFusionInstance}
+                          options={fusionInstances.map(i => ({ label: i.name, value: i.url }))}
+                          placeholder="Select Fusion instance"
+                          style={{ width: '100%' }}
+                        />
+                      </Form.Item>
+                    </Col>
+                  )}
                   <Col xs={24} sm={12} md={6}>
                     <Form.Item name="itemNumber" label={<Text style={{ fontSize: 12 }}>Item Number</Text>} style={{ marginBottom: 12 }}>
                       <Input placeholder="Partial match" allowClear />
