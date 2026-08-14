@@ -8,6 +8,7 @@ export interface User {
   isAdmin?: boolean;
   modules?: string[];  // module codes assigned
   bus?: Array<{ id: number; name: string }>;
+  company?: string; // company code (e.g., MITSUMI, GRAYSINC)
 }
 
 export type LoginStatus =

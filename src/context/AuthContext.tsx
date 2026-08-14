@@ -62,6 +62,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             name: username,
             email: username,
             role: 'User',
+            company: currentCompany.code,
           };
 
           setUser(userData);
@@ -96,6 +97,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             name: data.user?.name || username,
             email: data.user?.email || username,
             role: 'User',
+            company: currentCompany.code,
           };
           // Load profile photo
           try {
