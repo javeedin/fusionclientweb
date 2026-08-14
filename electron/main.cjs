@@ -98,7 +98,8 @@ ipcMain.handle('send-otp-email', async (_event, { to, otp }) => {
 });
 
 // Open new window (for "New Window" feature)
-ipcMain.handle('openNewWindow', async () => {
+// Optional path parameter: if provided, navigate to that path in the new window
+ipcMain.handle('openNewWindow', async (event, path) => {
   try {
     const newWindow = new BrowserWindow({
       width: 1400,
@@ -116,18 +117,28 @@ ipcMain.handle('openNewWindow', async () => {
       show: false, // Don't show until ready
     });
 
-    // Load the same URL as main window
+    // Load the same URL as main window, optionally with a path hash
     if (mainWindow) {
       const currentUrl = mainWindow.webContents.getURL();
-      newWindow.loadURL(currentUrl);
+      const baseUrl = currentUrl.replace(/#.*$/, ''); // Remove any existing hash
+      const urlToLoad = path ? `${baseUrl}#${path}` : currentUrl;
+      newWindow.loadURL(urlToLoad);
     } else {
       // Fallback: use app root
       const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+      const baseUrl = isDev ? 'http://localhost:5173' : `file://${path.join(app.getAppPath(), 'dist', 'index.html')}`;
+      const urlToLoad = path ? `${baseUrl}#${path}` : baseUrl;
+
       if (isDev) {
-        newWindow.loadURL('http://localhost:5173');
+        newWindow.loadURL(urlToLoad);
       } else {
-        const indexPath = path.join(app.getAppPath(), 'dist', 'index.html');
-        newWindow.loadFile(indexPath);
+        newWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'));
+        // If path provided, use URL hash navigation after load
+        if (path) {
+          newWindow.webContents.once('did-finish-load', () => {
+            newWindow.webContents.executeJavaScript(`window.location.hash = '${path}'`);
+          });
+        }
       }
     }
 
@@ -138,7 +149,7 @@ ipcMain.handle('openNewWindow', async () => {
       newWindow.focus();
     });
 
-    console.log('[New Window] Opened successfully');
+    console.log('[New Window] Opened successfully', path ? `(path: ${path})` : '');
     return true;
   } catch (err) {
     console.error('[New Window] Error:', err.message);

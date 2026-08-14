@@ -67,7 +67,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fusionLogin: (url) => ipcRenderer.invoke('fusion-login', { url }),
 
   // Open a new Electron window (for "New Window" feature)
-  openNewWindow: () => ipcRenderer.invoke('openNewWindow'),
+  // Optional path parameter: navigates to that path in the new window
+  openNewWindow: (path) => ipcRenderer.invoke('openNewWindow', path),
 
   // Check if running in Electron
   isElectron: true,

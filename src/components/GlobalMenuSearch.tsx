@@ -39,22 +39,25 @@ const GlobalMenuSearch: React.FC = () => {
     if (selectRef.current) selectRef.current.blur();
 
     if (newWindow) {
-      // Build the full URL for the HashRouter route and open in a new tab/window
-      const base = window.location.href.replace(/#.*$/, '');
-      // Open maximized: width and height are ignored by most browsers for security,
-      // but we set them anyway. User can maximize manually if needed.
-      const newWin = window.open(
-        `${base}#${path}`,
-        '_blank',
-        'width=1400,height=900,left=0,top=0,noopener,noreferrer'
-      );
-      // Try to maximize (works in some browsers)
-      if (newWin) {
-        try {
-          newWin.moveTo(0, 0);
-          newWin.resizeTo(screen.width, screen.height);
-        } catch (e) {
-          // Browsers may block this for security reasons - that's ok
+      // For Electron: use IPC to open new window with path
+      if ((window as any).electronAPI?.openNewWindow) {
+        (window as any).electronAPI.openNewWindow(path);
+      } else {
+        // Browser: use window.open with path in hash
+        const base = window.location.href.replace(/#.*$/, '');
+        const newWin = window.open(
+          `${base}#${path}`,
+          '_blank',
+          'width=1400,height=900,left=0,top=0,noopener,noreferrer'
+        );
+        // Try to maximize (works in some browsers)
+        if (newWin) {
+          try {
+            newWin.moveTo(0, 0);
+            newWin.resizeTo(screen.width, screen.height);
+          } catch (e) {
+            // Browsers may block this for security reasons - that's ok
+          }
         }
       }
     } else {
