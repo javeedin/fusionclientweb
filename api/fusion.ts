@@ -10,7 +10,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { method = 'GET', path = '', body, companyCode = 'BUMERIC', fusionInstanceUrl } = req.body;
+    const { method = 'GET', path = '', body, companyCode = 'BUIMERC', fusionInstanceUrl } = req.body;
 
     // Use selected instance URL if provided, otherwise use env config
     let baseUrl = fusionInstanceUrl;

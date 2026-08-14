@@ -141,7 +141,7 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
 // Get filtered menu items based on current company
 export const getFilteredMenuItems = (): MenuSearchItem[] => {
   const company = getCurrentCompany();
-  const isBumeric = company.code === 'BUMERIC';
+  const isBumeric = company.code === 'BUIMERC';
 
   if (isBumeric) {
     return ALL_MENU_ITEMS;
@@ -175,7 +175,7 @@ export const MENU_ITEMS_GROUPED = (() => {
 // Get grouped menu items filtered by company
 export const getFilteredMenuItemsGrouped = () => {
   const company = getCurrentCompany();
-  const isBumeric = company.code === 'BUMERIC';
+  const isBumeric = company.code === 'BUIMERC';
 
   const map = new Map<string, { moduleLabel: string; items: MenuSearchItem[] }>();
   const items = isBumeric ? ALL_MENU_ITEMS : ALL_MENU_ITEMS.filter(

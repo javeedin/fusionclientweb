@@ -10,12 +10,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { method = 'GET', path = '', body, companyCode = 'BUMERIC' } = req.body;
+    const { method = 'GET', path = '', body, companyCode = 'BUIMERC' } = req.body;
 
     // Get company-specific config from env
     // Env var format: REACT_APP_<COMPANY>_APEX_BASE_URL
     const baseUrl = process.env[`REACT_APP_${companyCode}_APEX_BASE_URL`]
-      || process.env.REACT_APP_BUMERIC_APEX_BASE_URL;
+      || process.env.REACT_APP_BUIMERC_APEX_BASE_URL;
 
     const url = `${baseUrl}${path}`;
 

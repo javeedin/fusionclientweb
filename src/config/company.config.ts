@@ -1,4 +1,4 @@
-export type CompanyCode = 'BUMERIC' | 'MITSUMI' | 'GRAYSINC';
+export type CompanyCode = 'BUIMERC' | 'MITSUMI' | 'GRAYSINC';
 
 export interface FusionInstance {
   name: string;
@@ -30,20 +30,20 @@ const parseFusionInstances = (instancesJson: string, companyCode: string): Fusio
 
 // Debug: Log all env variables
 console.log('[DEBUG] Environment Variables:');
-console.log('BUMERIC_INSTANCES:', import.meta.env.REACT_APP_BUMERIC_FUSION_INSTANCES);
+console.log('BUIMERC_INSTANCES:', import.meta.env.REACT_APP_BUIMERC_FUSION_INSTANCES);
 console.log('MITSUMI_INSTANCES:', import.meta.env.REACT_APP_MITSUMI_FUSION_INSTANCES);
 console.log('GRAYSINC_INSTANCES:', import.meta.env.REACT_APP_GRAYSINC_FUSION_INSTANCES);
 
 const COMPANIES: Record<CompanyCode, CompanyConfig> = {
-  BUMERIC: {
-    code: 'BUMERIC',
-    name: 'BUMERIC',
-    apexBaseUrl: import.meta.env.REACT_APP_BUMERIC_APEX_BASE_URL || '',
-    fusionBaseUrl: import.meta.env.REACT_APP_BUMERIC_FUSION_BASE_URL || '',
-    hcmBaseUrl: import.meta.env.REACT_APP_BUMERIC_HCM_BASE_URL || '',
-    fusionUser: import.meta.env.REACT_APP_BUMERIC_FUSION_USER || '',
-    fusionPassword: import.meta.env.REACT_APP_BUMERIC_FUSION_PASSWORD || '',
-    fusionInstances: parseFusionInstances(import.meta.env.REACT_APP_BUMERIC_FUSION_INSTANCES || '', 'BUMERIC'),
+  BUIMERC: {
+    code: 'BUIMERC',
+    name: 'BUIMERC',
+    apexBaseUrl: import.meta.env.REACT_APP_BUIMERC_APEX_BASE_URL || '',
+    fusionBaseUrl: import.meta.env.REACT_APP_BUIMERC_FUSION_BASE_URL || '',
+    hcmBaseUrl: import.meta.env.REACT_APP_BUIMERC_HCM_BASE_URL || '',
+    fusionUser: import.meta.env.REACT_APP_BUIMERC_FUSION_USER || '',
+    fusionPassword: import.meta.env.REACT_APP_BUIMERC_FUSION_PASSWORD || '',
+    fusionInstances: parseFusionInstances(import.meta.env.REACT_APP_BUIMERC_FUSION_INSTANCES || '', 'BUIMERC'),
   },
   MITSUMI: {
     code: 'MITSUMI',
@@ -79,7 +79,7 @@ export function getDefaultCompany(): CompanyCode {
   if (defaultCompany && COMPANIES[defaultCompany]) {
     return defaultCompany;
   }
-  return 'BUMERIC';
+  return 'BUIMERC';
 }
 
 // Get current company from env or localStorage
@@ -91,8 +91,8 @@ export function getCurrentCompany(): CompanyConfig {
   }
 
   const storedCompany = localStorage.getItem('selectedCompany') as CompanyCode | null;
-  const companyCode = storedCompany || (import.meta.env.REACT_APP_COMPANY as CompanyCode) || 'BUMERIC';
-  return COMPANIES[companyCode] || COMPANIES.BUMERIC;
+  const companyCode = storedCompany || (import.meta.env.REACT_APP_COMPANY as CompanyCode) || 'BUIMERC';
+  return COMPANIES[companyCode] || COMPANIES.BUIMERC;
 }
 
 export function getCompany(code: CompanyCode): CompanyConfig {

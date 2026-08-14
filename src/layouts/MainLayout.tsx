@@ -201,7 +201,7 @@ const MainLayout: React.FC = () => {
             </svg>
             <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
               <Text strong style={{ color: '#fff', fontSize: 17, letterSpacing: 0.5 }}>
-                {getCurrentCompany().code === 'BUMERIC' ? 'Re-ERP' : 'FusionClient'}
+                {getCurrentCompany().code === 'BUIMERC' ? 'Re-ERP' : 'FusionClient'}
               </Text>
               <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, letterSpacing: 1 }}>
                 V1.0.0

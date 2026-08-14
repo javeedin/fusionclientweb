@@ -129,7 +129,7 @@ const Home: React.FC = () => {
   const [loading,    setLoading]    = useState(true);
 
   const currentCompany = getCurrentCompany();
-  const isBumeric = currentCompany.code === 'BUMERIC';
+  const isBumeric = currentCompany.code === 'BUIMERC';
 
   const filteredModules = useMemo(
     () => isBumeric ? MODULES : MODULES.filter(m => m.id !== 'rm' && m.id !== 'pms'),

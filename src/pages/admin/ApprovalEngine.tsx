@@ -2530,7 +2530,7 @@ END;`;
             }}
           >
             <div style={{ fontSize: 11, letterSpacing: 2, opacity: 0.8, marginBottom: 4 }}>
-              BUMERIC BUSINESS SOLUTIONS
+              BUIMERC BUSINESS SOLUTIONS
             </div>
             <div style={{ fontSize: 20, fontWeight: 700 }}>Approval Required</div>
             <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>
