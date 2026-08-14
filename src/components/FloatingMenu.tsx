@@ -182,7 +182,7 @@ const taskSections = [
   { key: 'assets', label: 'Assets', items: assetsTaskItems },
   { key: 'periods', label: 'Payables Periods', items: periodsTaskItems },
   { key: 'payments', label: 'Payments', items: paymentTaskItems },
-  { key: 'supply-chain', label: 'Supply Chain', items: supplyChainItems },
+  { key: 'supply-chain', label: 'Fusion Supply Chain', items: supplyChainItems },
   { key: 'setup', label: 'Setup & Maintenance', items: setupItems },
   { key: 'administration', label: 'Administration', items: administrationItems },
 ];
