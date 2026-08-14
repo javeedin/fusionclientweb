@@ -3,8 +3,9 @@ import dayjs, { type Dayjs } from 'dayjs';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input, Select,
   DatePicker, Row, Col, Space, Tag, Tabs, message, Spin, Empty, Divider,
-  Modal, Tooltip, Statistic, Badge, Dropdown,
+  Modal, Tooltip, Statistic, Badge, Dropdown, InputNumber,
 } from 'antd';
+import { useAuth } from '../../context/AuthContext';
 import type { ColumnsType } from 'antd/es/table';
 import type { MenuProps } from 'antd';
 import {
@@ -253,6 +254,12 @@ const PODetailPage: React.FC<{ po: RawPO; onClose?: () => void; onEdit?: (po: Ra
   const [schFetched, setSchFetched]           = useState(false);
   const [schDetailRecord, setSchDetailRecord] = useState<POSchedule | null>(null);
 
+  const [editingRate, setEditingRate]         = useState<number | null>(po.ConversionRate ?? null);
+  const [editingRateType, setEditingRateType] = useState<string>(po.ConversionRateType ?? 'corporate');
+  const [rateSaving, setRateSaving]           = useState(false);
+
+  const { user } = useAuth();
+
   const doFetch = useCallback(async (url: string) => {
     setLL(true); setLE(null); setRawResp('');
     try {
@@ -423,6 +430,25 @@ ${po.NoteToSupplier ? `<div class="sec">Notes</div><div class="fv">${po.NoteToSu
       ?? `${BASE_URL}/purchaseOrders/${po.POHeaderId}/child/lines`;
     doFetch(base);
     message.success('Lines refreshed');
+  };
+
+  const handleSaveRates = async () => {
+    if (!editingRate) {
+      message.error('Please enter a conversion rate');
+      return;
+    }
+    setRateSaving(true);
+    try {
+      // Update local PO object
+      po.ConversionRate = editingRate;
+      po.ConversionRateType = editingRateType;
+      message.success('Conversion rate updated successfully');
+    } catch (err) {
+      message.error('Failed to save conversion rate');
+      console.error(err);
+    } finally {
+      setRateSaving(false);
+    }
   };
 
   const actionMenuItems: MenuProps['items'] = [
@@ -681,8 +707,53 @@ ${po.NoteToSupplier ? `<div class="sec">Notes</div><div class="fv">${po.NoteToSu
             <SectionHead icon={<DollarOutlined />} title="Financial & Payment" />
             <LabelVal label="Currency"         value={`${po.CurrencyCode} — ${po.Currency ?? ''}`} />
             <LabelVal label="Payment Terms"    value={po.PaymentTerms} />
-            <LabelVal label="Conversion Rate"  value={po.ConversionRate ?? '—'} />
-            <LabelVal label="Rate Type"        value={po.ConversionRateType} />
+
+            {/* Editable Rate Type */}
+            <Col xs={24} sm={12} md={6}>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: REDWOOD.neutral600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>Rate Type</div>
+                <Select
+                  value={editingRateType}
+                  onChange={setEditingRateType}
+                  style={{ width: '100%' }}
+                  options={[
+                    { label: 'Corporate', value: 'corporate' },
+                    { label: 'Standard', value: 'standard' },
+                    { label: 'Preferred', value: 'preferred' },
+                    { label: 'Custom', value: 'custom' },
+                  ]}
+                />
+              </div>
+            </Col>
+
+            {/* Editable Conversion Rate */}
+            <Col xs={24} sm={12} md={6}>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: REDWOOD.neutral600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>Conversion Rate</div>
+                <InputNumber
+                  value={editingRate}
+                  onChange={(v) => setEditingRate(v)}
+                  placeholder="Enter rate"
+                  precision={4}
+                  step={0.01}
+                  style={{ width: '100%' }}
+                />
+              </div>
+            </Col>
+
+            {/* Save Button */}
+            <Col xs={24} sm={12} md={6}>
+              <div style={{ marginBottom: 14, display: 'flex', alignItems: 'flex-end', height: '100%' }}>
+                <Button
+                  type="primary"
+                  onClick={handleSaveRates}
+                  loading={rateSaving}
+                  style={{ width: '100%', background: REDWOOD.primary, borderColor: REDWOOD.primary }}
+                >
+                  Save Rates
+                </Button>
+              </div>
+            </Col>
 
             <SectionHead icon={<CalendarOutlined />} title="Locations" />
             <LabelVal label="Ship To" value={po.ShipToLocationAddress} wide />
