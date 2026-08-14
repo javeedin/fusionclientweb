@@ -52,7 +52,7 @@ const fetchAllPages = async (baseUrl: string): Promise<any[]> => {
   while (true) {
     const sep = stripped.includes('?') ? '&' : '?';
     const url = `${stripped}${sep}limit=${CHILD_LIMIT}&offset=${offset}`;
-    const r = await fetch(url, { headers: { Authorization: HEADERS, Accept: 'application/json' } });
+    const r = await fetch(url, { headers: { ...getHeaders(), Accept: 'application/json' } });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d) ? d : (d.items ?? []);

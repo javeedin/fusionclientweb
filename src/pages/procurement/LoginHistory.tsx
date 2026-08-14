@@ -72,7 +72,7 @@ const LoginHistory: React.FC = () => {
     localStorage.setItem(BASE_KEY, idcsBase.trim());
     try {
       const res = await fetch(requestUrl, {
-        headers: { Authorization: HEADERS, Accept: 'application/json' },
+        headers: { ...getHeaders(), Accept: 'application/json' },
       });
       const text = await res.text();
       setRaw(text);

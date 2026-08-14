@@ -187,7 +187,7 @@ const buildTxnSoap = (r: SoapTxnRow, tableType: number, validationLevel: number)
 const callTxnManager = async (r: SoapTxnRow, tableType: number, validationLevel: number): Promise<{ ok: boolean; code: string | null; result: string; raw: string; envelope: string; httpStatus: number }> => {
   const envelope = buildTxnSoap(r, tableType, validationLevel);
   try {
-    const resp = await fetch(SOAP_TXN_URL, { method: 'POST', headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: SOAP_ACTION, Authorization: HEADERS }, body: envelope });
+    const resp = await fetch(SOAP_TXN_URL, { method: 'POST', headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: SOAP_ACTION, ...getHeaders() }, body: envelope });
     const raw = await resp.text();
     const fault = raw.match(/<faultstring>([\s\S]*?)<\/faultstring>/i)?.[1]?.trim();
     const code = raw.match(/<(?:\w+:)?result>([\s\S]*?)<\/(?:\w+:)?result>/i)?.[1]?.trim() ?? null;

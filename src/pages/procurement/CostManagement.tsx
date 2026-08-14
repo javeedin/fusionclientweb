@@ -31,7 +31,7 @@ const { Title, Text } = Typography;
 // Direct in Electron (no CORS); Vite proxy in the browser. preload exposes electronAPI.
 const FUSION_BASE = `${getFusionBase()}`;
 const getHeaders = () => getFusionAuthHeaders();
-const HDRS = { Authorization: HEADERS, Accept: 'application/json' };
+const HDRS = { ...getHeaders(), Accept: 'application/json' };
 const ERP_URL = `${FUSION_BASE}/erpintegrations`;
 
 // Scheduler REST lives under /ess/rest (NOT /fscmRestApi). Direct host in Electron.
