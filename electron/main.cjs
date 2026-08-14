@@ -97,6 +97,55 @@ ipcMain.handle('send-otp-email', async (_event, { to, otp }) => {
   }
 });
 
+// Open new window (for "New Window" feature)
+ipcMain.handle('openNewWindow', async () => {
+  try {
+    const newWindow = new BrowserWindow({
+      width: 1400,
+      height: 900,
+      minWidth: 1024,
+      minHeight: 768,
+      icon: path.join(__dirname, '../public/icons/icon-512.png'),
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, 'preload.cjs'),
+        webSecurity: false, // Allow cross-origin requests to Oracle Fusion API
+        webviewTag: true,   // Enable <webview> tag for Oracle Fusion embedded browser
+      },
+      show: false, // Don't show until ready
+    });
+
+    // Load the same URL as main window
+    if (mainWindow) {
+      const currentUrl = mainWindow.webContents.getURL();
+      newWindow.loadURL(currentUrl);
+    } else {
+      // Fallback: use app root
+      const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+      if (isDev) {
+        newWindow.loadURL('http://localhost:5173');
+      } else {
+        const indexPath = path.join(app.getAppPath(), 'dist', 'index.html');
+        newWindow.loadFile(indexPath);
+      }
+    }
+
+    // Show and maximize window once ready
+    newWindow.once('ready-to-show', () => {
+      newWindow.show();
+      newWindow.maximize();
+      newWindow.focus();
+    });
+
+    console.log('[New Window] Opened successfully');
+    return true;
+  } catch (err) {
+    console.error('[New Window] Error:', err.message);
+    return false;
+  }
+});
+
 let mainWindow;
 let tray = null;
 let isQuitting = false;

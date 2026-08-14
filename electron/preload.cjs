@@ -66,6 +66,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Native Oracle Fusion (IDCS) login — opens the real sign-in window
   fusionLogin: (url) => ipcRenderer.invoke('fusion-login', { url }),
 
+  // Open a new Electron window (for "New Window" feature)
+  openNewWindow: () => ipcRenderer.invoke('openNewWindow'),
+
   // Check if running in Electron
   isElectron: true,
 
