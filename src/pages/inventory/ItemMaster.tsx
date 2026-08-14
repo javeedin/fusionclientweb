@@ -259,9 +259,12 @@ const ItemMaster: React.FC = () => {
   // Data source: APEX (ORDS) — default — or Fusion (itemsV2).
   const [source, setSource] = useState<'apex' | 'fusion'>('apex');
 
-  // Fusion instances
-  const [fusionInstances, setFusionInstances] = useState<{ name: string; url: string }[]>([]);
-  const [selectedFusionInstance, setSelectedFusionInstance] = useState<string>('');
+  // Initialize Fusion instances and selected instance from company config
+  const company = getCurrentCompany();
+  const fusionInstances = company.fusionInstances ?? [];
+  const [selectedFusionInstance, setSelectedFusionInstance] = useState<string>(
+    fusionInstances.length > 0 ? fusionInstances[0].url : ''
+  );
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -271,16 +274,6 @@ const ItemMaster: React.FC = () => {
     const instance = fusionInstances.find(i => i.url === selectedFusionInstance);
     return instance ? `${instance.url}/fscmRestApi/resources/11.13.18.05` : '';
   }, [selectedFusionInstance, fusionInstances]);
-
-  // ── Load Fusion instances on mount ──────────────────────────────────────────
-  useEffect(() => {
-    const company = getCurrentCompany();
-    const instances = company.fusionInstances ?? [];
-    setFusionInstances(instances);
-    if (instances.length > 0) {
-      setSelectedFusionInstance(instances[0].url);
-    }
-  }, []);
 
   // ── Load organizations from Fusion API (only when Fusion mode is active) ──────
   useEffect(() => {
