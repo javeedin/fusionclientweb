@@ -2893,13 +2893,19 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
     transactionId: number;
     transactionNumber: string;
     transactionDate: string;
+    transactionAmount: number;
     debits: number;
     credits: number;
     debitAccount: string;
+    debitAccountDesc: string;
     creditAccount: string;
+    creditAccountDesc: string;
     glBatchId: number | null;
     glHeaderId: number | null;
     glStatus: string;
+    isBalanced: boolean;
+    hasMissingAccounts: boolean;
+    hasAmountMismatch: boolean;
     reference1: string;
     reference2: string;
     reference3: string;
@@ -3486,17 +3492,45 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
         });
 
         if (totalDebits > 0 || totalCredits > 0) {
+          // Fetch account descriptions
+          let debitAccountDesc = '';
+          let creditAccountDesc = '';
+          try {
+            if (debitAccount) {
+              const drDesc = await fetchAccountDesc(debitAccount);
+              debitAccountDesc = drDesc;
+            }
+            if (creditAccount) {
+              const crDesc = await fetchAccountDesc(creditAccount);
+              creditAccountDesc = crDesc;
+            }
+          } catch (e) {
+            console.error('Error fetching account descriptions:', e);
+          }
+
+          // Calculate validation flags
+          const isBalanced = Math.abs(totalDebits - totalCredits) < 0.01;
+          const hasMissingAccounts = !debitAccount || !creditAccount;
+          const transactionAmount = Math.abs(txn.amount ?? 0);
+          const hasAmountMismatch = Math.abs(transactionAmount - totalDebits) > 0.01;
+
           data.push({
             transactionId: txn.transactionId,
             transactionNumber: String(txn.transactionId),
             transactionDate: txn.transactionDate,
+            transactionAmount,
             debits: totalDebits,
             credits: totalCredits,
             debitAccount,
+            debitAccountDesc,
             creditAccount,
+            creditAccountDesc,
             glBatchId,
             glHeaderId,
             glStatus,
+            isBalanced,
+            hasMissingAccounts,
+            hasAmountMismatch,
             reference1,
             reference2,
             reference3,
@@ -5326,74 +5360,143 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
           open={accountingAllModalOpen}
           onCancel={() => setAccountingAllModalOpen(false)}
           footer={<Button onClick={() => setAccountingAllModalOpen(false)}>Close</Button>}
-          width={1000}
+          width={1200}
           destroyOnClose
         >
           <Spin spinning={accountingAllLoading}>
             {accountingAllData.length === 0 ? (
               <Empty description="No accounting records found" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            ) : (
-              <Table<typeof accountingAllData[number]>
-                dataSource={accountingAllData}
-                rowKey="transactionId"
-                size="small"
-                pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
-                columns={[
-                  {
-                    title: 'Txn ID',
-                    dataIndex: 'transactionId',
-                    width: 90,
-                    render: v => <Text style={{ fontWeight: 600 }}>{v}</Text>,
-                  },
-                  {
-                    title: 'Date',
-                    dataIndex: 'transactionDate',
-                    width: 110,
-                    render: v => <Text>{dayjs(v).format('DD MMM YYYY')}</Text>,
-                  },
-                  {
-                    title: 'Debits',
-                    dataIndex: 'debits',
-                    width: 120,
-                    align: 'right' as const,
-                    render: v => <Text style={{ color: REDWOOD.info, fontWeight: 600 }}>{fmtAmount(v, 'AED')}</Text>,
-                  },
-                  {
-                    title: 'Credits',
-                    dataIndex: 'credits',
-                    width: 120,
-                    align: 'right' as const,
-                    render: v => <Text style={{ color: REDWOOD.success, fontWeight: 600 }}>{fmtAmount(v, 'AED')}</Text>,
-                  },
-                  {
-                    title: 'DR Account',
-                    dataIndex: 'debitAccount',
-                    render: v => <Text style={{ fontSize: 11, fontFamily: 'monospace', color: REDWOOD.info }}>{v || '—'}</Text>,
-                  },
-                  {
-                    title: 'CR Account',
-                    dataIndex: 'creditAccount',
-                    render: v => <Text style={{ fontSize: 11, fontFamily: 'monospace', color: REDWOOD.success }}>{v || '—'}</Text>,
-                  },
-                  {
-                    title: 'GL Batch',
-                    dataIndex: 'glBatchId',
-                    width: 100,
-                    render: v => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
-                  },
-                  {
-                    title: 'Status',
-                    dataIndex: 'glStatus',
-                    width: 100,
-                    render: v => (
-                      <Tag color={v === 'POSTED' ? 'green' : 'processing'} style={{ fontSize: 11 }}>
-                        {v || 'UNKNOWN'}
-                      </Tag>
-                    ),
-                  },
-                ]}
-              />
-            )}
+            ) : (() => {
+              const balanced = accountingAllData.filter(r => r.isBalanced).length;
+              const unbalanced = accountingAllData.filter(r => !r.isBalanced).length;
+              const missingAccounts = accountingAllData.filter(r => r.hasMissingAccounts).length;
+              const amountMismatch = accountingAllData.filter(r => r.hasAmountMismatch).length;
+              return (
+                <>
+                  {/* KPI Summary */}
+                  <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+                    <Col xs={12} sm={6}>
+                      <Card size="small" style={{ textAlign: 'center', background: '#f6ffed', borderColor: REDWOOD.success }}>
+                        <div style={{ fontSize: 20, fontWeight: 600, color: REDWOOD.success }}>{balanced}</div>
+                        <div style={{ fontSize: 11, color: REDWOOD.neutral600 }}>Balanced</div>
+                      </Card>
+                    </Col>
+                    <Col xs={12} sm={6}>
+                      <Card size="small" style={{ textAlign: 'center', background: '#fff1f0', borderColor: REDWOOD.error }}>
+                        <div style={{ fontSize: 20, fontWeight: 600, color: REDWOOD.error }}>{unbalanced}</div>
+                        <div style={{ fontSize: 11, color: REDWOOD.neutral600 }}>Unbalanced (DR ≠ CR)</div>
+                      </Card>
+                    </Col>
+                    <Col xs={12} sm={6}>
+                      <Card size="small" style={{ textAlign: 'center', background: '#fff7e6', borderColor: REDWOOD.warning }}>
+                        <div style={{ fontSize: 20, fontWeight: 600, color: REDWOOD.warning }}>{missingAccounts}</div>
+                        <div style={{ fontSize: 11, color: REDWOOD.neutral600 }}>Missing Accounts</div>
+                      </Card>
+                    </Col>
+                    <Col xs={12} sm={6}>
+                      <Card size="small" style={{ textAlign: 'center', background: '#e6f7ff', borderColor: REDWOOD.info }}>
+                        <div style={{ fontSize: 20, fontWeight: 600, color: REDWOOD.info }}>{amountMismatch}</div>
+                        <div style={{ fontSize: 11, color: REDWOOD.neutral600 }}>Amount Mismatch</div>
+                      </Card>
+                    </Col>
+                  </Row>
+
+                  {/* Data Table */}
+                  <Table<typeof accountingAllData[number]>
+                    dataSource={accountingAllData}
+                    rowKey="transactionId"
+                    size="small"
+                    pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
+                    columns={[
+                      {
+                        title: 'Txn ID',
+                        dataIndex: 'transactionId',
+                        width: 80,
+                        render: v => <Text style={{ fontWeight: 600 }}>{v}</Text>,
+                      },
+                      {
+                        title: 'Date',
+                        dataIndex: 'transactionDate',
+                        width: 100,
+                        render: v => <Text>{dayjs(v).format('DD MMM YYYY')}</Text>,
+                      },
+                      {
+                        title: 'Txn Amount',
+                        dataIndex: 'transactionAmount',
+                        width: 110,
+                        align: 'right' as const,
+                        render: v => <Text style={{ fontWeight: 600, color: REDWOOD.primary }}>{fmtAmount(v, 'AED')}</Text>,
+                      },
+                      {
+                        title: 'Debits',
+                        dataIndex: 'debits',
+                        width: 110,
+                        align: 'right' as const,
+                        render: (v, r) => (
+                          <div>
+                            <Text style={{ color: REDWOOD.info, fontWeight: 600 }}>{fmtAmount(v, 'AED')}</Text>
+                            {r.hasAmountMismatch && <div style={{ fontSize: 10, color: REDWOOD.error, marginTop: 2 }}>✗ Mismatch</div>}
+                          </div>
+                        ),
+                      },
+                      {
+                        title: 'Credits',
+                        dataIndex: 'credits',
+                        width: 110,
+                        align: 'right' as const,
+                        render: (v, r) => (
+                          <div>
+                            <Text style={{ color: REDWOOD.success, fontWeight: 600 }}>{fmtAmount(v, 'AED')}</Text>
+                            {!r.isBalanced && <div style={{ fontSize: 10, color: REDWOOD.error, marginTop: 2 }}>✗ Unbalanced</div>}
+                          </div>
+                        ),
+                      },
+                      {
+                        title: 'DR Account',
+                        dataIndex: 'debitAccount',
+                        width: 140,
+                        render: (v, r) => (
+                          <div>
+                            <Text style={{ fontSize: 11, fontFamily: 'monospace', color: REDWOOD.info, fontWeight: 600 }}>{v || '—'}</Text>
+                            {!v && <div style={{ fontSize: 10, color: REDWOOD.error, marginTop: 2 }}>✗ Missing</div>}
+                            {v && r.debitAccountDesc && <div style={{ fontSize: 10, color: REDWOOD.neutral600, marginTop: 2 }}>{r.debitAccountDesc}</div>}
+                          </div>
+                        ),
+                      },
+                      {
+                        title: 'CR Account',
+                        dataIndex: 'creditAccount',
+                        width: 140,
+                        render: (v, r) => (
+                          <div>
+                            <Text style={{ fontSize: 11, fontFamily: 'monospace', color: REDWOOD.success, fontWeight: 600 }}>{v || '—'}</Text>
+                            {!v && <div style={{ fontSize: 10, color: REDWOOD.error, marginTop: 2 }}>✗ Missing</div>}
+                            {v && r.creditAccountDesc && <div style={{ fontSize: 10, color: REDWOOD.neutral600, marginTop: 2 }}>{r.creditAccountDesc}</div>}
+                          </div>
+                        ),
+                      },
+                      {
+                        title: 'GL Batch',
+                        dataIndex: 'glBatchId',
+                        width: 100,
+                        render: v => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
+                      },
+                      {
+                        title: 'Status',
+                        dataIndex: 'glStatus',
+                        width: 100,
+                        render: v => (
+                          <Tag color={v === 'POSTED' ? 'green' : 'processing'} style={{ fontSize: 11 }}>
+                            {v || 'UNKNOWN'}
+                          </Tag>
+                        ),
+                      },
+                    ]}
+                    scroll={{ x: 1400 }}
+                  />
+                </>
+              );
+            })()}
           </Spin>
         </Modal>
 
