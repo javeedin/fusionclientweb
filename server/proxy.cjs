@@ -936,7 +936,7 @@ app.all(/^\/api\/apex-auth\/(.+)$/, async (req, res) => {
     };
 
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
-      (fetchOptions as any).body = JSON.stringify(req.body);
+      fetchOptions.body = JSON.stringify(req.body);
     }
 
     const response = await fetch(`${url}${queryString}`, fetchOptions);
@@ -980,7 +980,7 @@ app.all(/^\/api\/apex-admin\/(.+)$/, async (req, res) => {
     };
 
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
-      (fetchOptions as any).body = JSON.stringify(req.body);
+      fetchOptions.body = JSON.stringify(req.body);
     }
 
     const response = await fetch(`${url}${queryString}`, fetchOptions);
