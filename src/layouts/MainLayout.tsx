@@ -27,6 +27,7 @@ import { useAuth } from '../context/AuthContext';
 import { useGlValidation } from '../context/GlValidationContext';
 import { useNotifications } from '../context/NotificationContext';
 import { getFusionInstanceKey, getFusionInstance } from '../config/fusionInstance';
+import { getCurrentCompany } from '../config/company.config';
 import ProfileModal from '../components/ProfileModal';
 import SupportTicketButton from '../components/SupportTicketButton';
 import ScreenRecorder from '../components/ScreenRecorder';
@@ -200,7 +201,7 @@ const MainLayout: React.FC = () => {
             </svg>
             <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
               <Text strong style={{ color: '#fff', fontSize: 17, letterSpacing: 0.5 }}>
-                Fusion<span style={{ fontWeight: 400 }}>Client</span>
+                {getCurrentCompany().code === 'BUMERIC' ? 'Re-ERP' : 'FusionClient'}
               </Text>
               <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, letterSpacing: 1 }}>
                 V1.0.0
