@@ -275,14 +275,8 @@ const ItemMaster: React.FC = () => {
     return instance ? `${instance.url}/fscmRestApi/resources/11.13.18.05` : '';
   }, [selectedFusionInstance, fusionInstances]);
 
-  // ── Load organizations from Fusion API (only when Fusion mode is active) ──────
+  // ── Load organizations from Fusion API (always, regardless of search mode) ───
   useEffect(() => {
-    if (source !== 'fusion') {
-      setOrgs([]);
-      setOrgsLoading(false);
-      return;
-    }
-
     const load = async () => {
       try {
         const fusionBase = getFusionBase();
@@ -323,7 +317,7 @@ const ItemMaster: React.FC = () => {
       }
     };
     load();
-  }, [source, selectedFusionInstance, getFusionBase]);
+  }, [selectedFusionInstance, getFusionBase]);
 
   // ── Build search URL from form values ────────────────────────────────────────
   const buildUrl = useCallback((vals: any, limit = 50, offset = 0): string => {
