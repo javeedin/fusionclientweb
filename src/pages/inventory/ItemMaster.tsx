@@ -282,13 +282,19 @@ const ItemMaster: React.FC = () => {
     }
   }, []);
 
-  // ── Load organizations on mount ──────────────────────────────────────────────
+  // ── Load organizations from Fusion API (only when Fusion mode is active) ──────
   useEffect(() => {
+    if (source !== 'fusion') {
+      setOrgs([]);
+      setOrgsLoading(false);
+      return;
+    }
+
     const load = async () => {
       try {
         const fusionBase = getFusionBase();
         if (!fusionBase) {
-          setOrgsError('No Fusion instance selected');
+          setOrgsError('Please select a Fusion instance');
           setOrgsLoading(false);
           return;
         }
@@ -316,6 +322,7 @@ const ItemMaster: React.FC = () => {
           .filter(o => o.value)
           .sort((a, b) => a.value.localeCompare(b.value));
         setOrgs(opts);
+        setOrgsError('');
       } catch (e: any) {
         setOrgsError(e.message);
       } finally {
@@ -323,7 +330,7 @@ const ItemMaster: React.FC = () => {
       }
     };
     load();
-  }, [getFusionBase]);
+  }, [source, selectedFusionInstance, getFusionBase]);
 
   // ── Build search URL from form values ────────────────────────────────────────
   const buildUrl = useCallback((vals: any, limit = 50, offset = 0): string => {
