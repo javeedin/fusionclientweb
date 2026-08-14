@@ -18,14 +18,6 @@ export const ORACLE_FUSION_CONFIG = {
   singleRecordLimit: 1, // Limit for single record debugging
 };
 
-// ORDS Inventory Configuration
-export const ORDS_INVENTORY_CONFIG = {
-  baseUrl: buildApexUrl(''),
-  endpoints: {
-    itemmaster: 'inventory/itemmaster',
-  },
-};
-
 // APEX Database Configuration
 export const APEX_DB_CONFIG = {
   baseUrl: buildApexUrl(''),

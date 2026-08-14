@@ -1,5 +1,4 @@
-import { buildApexUrl } from '../../config/api.helper';
-import { ORDS_INVENTORY_CONFIG } from '../../config/api.config';
+import { getApexBaseUrl } from '../../config/company.config';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Input, Row, Col,
@@ -19,7 +18,7 @@ import { saveAs } from 'file-saver';
 const { Content } = Layout;
 const { Title, Text } = Typography;
 
-const ORDS_BASE = `${ORDS_INVENTORY_CONFIG.baseUrl}/${ORDS_INVENTORY_CONFIG.endpoints.itemmaster}`;
+const ORDS_BASE = `${getApexBaseUrl()}/inventory/itemmaster`;
 const FUSION_BASE  = 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/11.13.18.05';
 const AUTH_HEADER  = 'Basic ' + btoa('emparun:Fusion@1234');
 const FUSION_HDRS  = { Authorization: AUTH_HEADER, Accept: 'application/json' };
