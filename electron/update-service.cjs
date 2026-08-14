@@ -159,18 +159,34 @@ async function installUpdate(newExePath) {
     // Create backup
     if (fs.existsSync(exePath)) {
       if (fs.existsSync(backupPath)) {
-        fs.unlinkSync(backupPath);
+        try { fs.unlinkSync(backupPath); } catch (_) {}
       }
-      fs.copyFileSync(exePath, backupPath);
-      console.log('[Update] Backup created');
+      try {
+        fs.copyFileSync(exePath, backupPath);
+        console.log('[Update] Backup created');
+      } catch (e) {
+        console.warn('[Update] Could not create backup:', e.message);
+      }
     }
 
-    // Copy new exe to app location
-    fs.copyFileSync(newExePath, exePath);
-    console.log('[Update] Exe replaced');
+    // Try to copy new exe to app location
+    try {
+      fs.copyFileSync(newExePath, exePath);
+      console.log('[Update] Exe replaced');
+    } catch (e) {
+      // If file is locked, try to schedule replacement for next restart
+      if (e.code === 'EBUSY' || e.code === 'EPERM') {
+        console.log('[Update] Exe is locked, scheduling replacement for next restart');
+        // Create a temp marker file to indicate update pending
+        const updateMarker = path.join(path.dirname(exePath), '.update-pending');
+        fs.writeFileSync(updateMarker, newExePath);
+        throw new Error(`Update downloaded. Close the app completely and restart to apply the update. File: ${newExePath}`);
+      }
+      throw e;
+    }
 
     // Clean up downloaded file
-    fs.unlinkSync(newExePath);
+    try { fs.unlinkSync(newExePath); } catch (_) {}
 
     // Restart app
     app.relaunch();

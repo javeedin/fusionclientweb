@@ -1438,17 +1438,31 @@ ipcMain.handle('check-for-updates', async () => {
   }
 });
 
-ipcMain.handle('download-and-install-update', async (_event, { downloadUrl, downloadName }) => {
+ipcMain.handle('download-and-install-update', async (_event, { downloadUrl, downloadName, customFolder }) => {
   try {
     console.log('[Update] Starting download and install...');
-    const tempDir = app.getPath('temp');
-    const destPath = path.join(tempDir, downloadName || 'FusionClient-Update.exe');
+
+    // Use custom folder if provided, otherwise use temp directory
+    const destDir = customFolder || app.getPath('temp');
+    const destPath = path.join(destDir, downloadName || 'FusionClient-Update.exe');
+
+    console.log('[Update] Destination:', destPath);
 
     // Download
     await updateService.downloadFile(downloadUrl, destPath);
-    console.log('[Update] Download complete, installing...');
+    console.log('[Update] Download complete');
+
+    // If custom folder was selected, just save the file there
+    if (customFolder) {
+      console.log('[Update] Update saved to custom folder:', destPath);
+      return {
+        success: true,
+        message: `Update downloaded to: ${destPath}\n\nTo install:\n1. Close this application completely\n2. Replace the app exe with the downloaded file\n3. Restart the application`
+      };
+    }
 
     // Install (replaces exe and restarts)
+    console.log('[Update] Installing update...');
     await updateService.installUpdate(destPath);
     return { success: true, message: 'Update installed, restarting app...' };
   } catch (err) {

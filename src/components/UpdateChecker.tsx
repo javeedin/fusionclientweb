@@ -1,6 +1,6 @@
 import React from 'react';
-import { Modal, Button, Space, Typography, Progress, Alert, Spin, Divider } from 'antd';
-import { DownloadOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Modal, Button, Space, Typography, Progress, Alert, Spin, Divider, message, Dropdown } from 'antd';
+import { DownloadOutlined, CheckCircleOutlined, FolderOutlined } from '@ant-design/icons';
 import { useUpdateChecker } from '../hooks/useUpdateChecker';
 
 const { Text, Paragraph } = Typography;
@@ -25,7 +25,23 @@ export const UpdateChecker: React.FC<UpdateCheckerProps> = ({ open, onClose }) =
 
   const handleDownloadAndInstall = () => {
     if (updateInfo?.hasUpdate && updateInfo.downloadUrl && updateInfo.downloadName) {
-      downloadAndInstall(updateInfo.downloadUrl, updateInfo.downloadName);
+      downloadAndInstall(updateInfo.downloadUrl, updateInfo.downloadName, null);
+    }
+  };
+
+  const handleDownloadToFolder = async () => {
+    if (!(window as any).electronAPI?.selectFolder) {
+      message.error('Folder selection not available');
+      return;
+    }
+
+    try {
+      const folder = await (window as any).electronAPI.selectFolder();
+      if (folder && updateInfo?.hasUpdate && updateInfo.downloadUrl && updateInfo.downloadName) {
+        downloadAndInstall(updateInfo.downloadUrl, updateInfo.downloadName, folder);
+      }
+    } catch (err) {
+      message.error('Failed to select folder');
     }
   };
 
@@ -47,15 +63,29 @@ export const UpdateChecker: React.FC<UpdateCheckerProps> = ({ open, onClose }) =
       {!loading && error && (
         <div>
           <Alert
-            message="Error Checking Updates"
+            message="Error"
             description={error}
             type="error"
             showIcon
             style={{ marginBottom: 16 }}
           />
-          <Button type="primary" block onClick={handleRetry}>
-            Retry
-          </Button>
+          {error.includes('Close the app') && (
+            <Alert
+              message="Installation Pending"
+              description="The update has been downloaded. Close this app completely (exit from taskbar/tray) and restart it to apply the update."
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          )}
+          <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+            <Button onClick={handleRetry}>
+              Retry
+            </Button>
+            <Button type="primary" onClick={onClose}>
+              Close
+            </Button>
+          </Space>
         </div>
       )}
 
@@ -125,19 +155,37 @@ export const UpdateChecker: React.FC<UpdateCheckerProps> = ({ open, onClose }) =
                 </div>
               )}
 
-              <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Space style={{ width: '100%', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                 <Button onClick={onClose} disabled={installing}>
                   Cancel
                 </Button>
-                <Button
-                  type="primary"
-                  icon={<DownloadOutlined />}
-                  onClick={handleDownloadAndInstall}
-                  loading={installing}
-                  disabled={installing}
+                <Dropdown
+                  menu={{
+                    items: [
+                      {
+                        key: 'auto',
+                        label: 'Auto Install',
+                        icon: <DownloadOutlined />,
+                        onClick: handleDownloadAndInstall,
+                      },
+                      {
+                        key: 'folder',
+                        label: 'Download to Folder',
+                        icon: <FolderOutlined />,
+                        onClick: handleDownloadToFolder,
+                      },
+                    ],
+                  }}
                 >
-                  {installing ? 'Installing...' : 'Download & Install'}
-                </Button>
+                  <Button
+                    type="primary"
+                    icon={<DownloadOutlined />}
+                    loading={installing}
+                    disabled={installing}
+                  >
+                    {installing ? 'Installing...' : 'Download & Install'}
+                  </Button>
+                </Dropdown>
               </Space>
             </>
           )}
