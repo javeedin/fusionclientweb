@@ -70,26 +70,37 @@ export const fusionSOAPLogin = async (
   password: string
 ): Promise<FusionLoginResult> => {
   try {
-    console.log('[Fusion Login] Authenticating via proxy...');
+    const isElectron = !!(window as any).electronAPI?.isElectron;
+    const soapUrl = `${fusionInstanceUrl}/webservices/soap/xmlpserver/`;
+    const soapBody = buildSOAPEnvelope(username, password);
 
-    const response = await fetch('http://localhost:3001/api/fusion/soap-login', {
+    console.log('[Fusion Login] Authenticating...', { isElectron, soapUrl });
+
+    const response = await fetch(soapUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        instanceUrl: fusionInstanceUrl,
-        username,
-        password,
-      }),
+      headers: {
+        'Content-Type': 'text/xml; charset=UTF-8',
+        'SOAPAction': '',
+      },
+      body: soapBody,
     });
 
-    const data = await response.json();
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('[Fusion Login] HTTP Error:', response.status, text);
+      return { success: false, error: `HTTP ${response.status}: ${response.statusText}` };
+    }
 
-    if (data.success && data.sessionId) {
-      console.log('[Fusion Login] SUCCESS - Session ID obtained via proxy');
-      return { success: true, sessionId: data.sessionId };
+    const soapResponse = await response.text();
+    console.log('[Fusion Login] SOAP Response received');
+
+    const sessionId = extractSessionId(soapResponse);
+    if (sessionId) {
+      console.log('[Fusion Login] SUCCESS - Session ID obtained');
+      return { success: true, sessionId };
     } else {
-      console.warn('[Fusion Login] Failed:', data.error);
-      return { success: false, error: data.error || 'Login failed' };
+      console.warn('[Fusion Login] Failed - No session ID in response');
+      return { success: false, error: 'No session ID in SOAP response' };
     }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
