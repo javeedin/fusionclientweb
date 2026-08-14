@@ -37,7 +37,6 @@ const REDWOOD = {
 // through the Vite proxy. Mirrors ManageExpectedReceipts.
 const FUSION_BASE = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 
 // ASN request source code. This pod uses 'VENDOR' (same value the receiving flow
 // in ManageExpectedReceipts posts). Older pods use 'SUPPLIER'.

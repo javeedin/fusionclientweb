@@ -24,7 +24,6 @@ const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const JSON_HDRS = { ...HEADERS, 'Content-Type': 'application/json' };
 const ONHAND_URL = `${FUSION_BASE}/inventoryOnhandBalances`;
 const ITEMS_URL = `${FUSION_BASE}/itemsV2`;

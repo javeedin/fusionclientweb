@@ -27,7 +27,6 @@ const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const DRAFT_PO_URL = `${FUSION_BASE}/draftPurchaseOrders`;
 
 const REDWOOD = {

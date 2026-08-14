@@ -50,7 +50,6 @@ const _isElectron = !!(window as unknown as { electron?: unknown; electronAPI?: 
   || !!(window as unknown as { electronAPI?: unknown }).electronAPI;
 const FUSION_BASE = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const APEX_BASE = buildApexUrl('');
 const PAGE_LIMIT = 500;
 

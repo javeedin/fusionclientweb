@@ -32,7 +32,6 @@ const REDWOOD = {
 // ── API ───────────────────────────────────────────────────────────────────────
 const BASE_URL = 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/11.13.18.05';
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const PAGE_SIZE = 25;
 const CHILD_LIMIT = 500;
 

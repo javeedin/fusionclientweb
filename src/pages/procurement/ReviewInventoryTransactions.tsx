@@ -24,7 +24,6 @@ const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const PAGE_LIMIT = 500;
 
 const REDWOOD = {

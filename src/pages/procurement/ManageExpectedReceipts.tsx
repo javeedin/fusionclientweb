@@ -33,7 +33,6 @@ const { RangePicker } = DatePicker;
 // exposes window.electronAPI (not window.electron), so detect via that.
 const FUSION_BASE = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 
 const REDWOOD = {
   primary: '#C74634',

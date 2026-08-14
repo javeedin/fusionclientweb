@@ -25,7 +25,6 @@ const { Title, Text, Paragraph } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const JSON_HDRS = { ...HEADERS, 'Content-Type': 'application/json' };
 const ITEMS_URL = `${FUSION_BASE}/itemsV2`;
 

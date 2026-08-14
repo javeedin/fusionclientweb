@@ -28,7 +28,6 @@ const { Title, Text } = Typography;
 // Electron goes direct (no CORS); browser dev routes via the Vite proxy.
 const FUSION_BASE = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const PAGE_LIMIT = 500;
 
 const REDWOOD = {

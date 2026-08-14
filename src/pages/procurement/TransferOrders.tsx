@@ -38,7 +38,6 @@ const FUSION_BASE = `${getFusionBase()}`;
 // itemCosts is exposed on the "latest" resource version (same as Manage Item Cost).
 const LATEST_URL = `${getFusionHost()}/fscmRestApi/resources/latest`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const CHILD_LIMIT = 500;
 
 const REDWOOD = {

@@ -23,7 +23,6 @@ const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const JSON_HDRS = { ...HEADERS, 'Content-Type': 'application/json' };
 const PO_URL = `${FUSION_BASE}/purchaseOrders`;
 const RECEIVE_URL = `${FUSION_BASE}/receivingReceiptRequests`;
