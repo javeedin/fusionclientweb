@@ -89,6 +89,7 @@ interface POHeader {
   paymentTerms: string; shippingMethod: string; freightTerms: string; fob: string;
   payOnReceipt: boolean; confirmingOrder: boolean;
   noteToSupplier: string; noteToReceiver: string;
+  conversionRateType: string; conversionRate: number | null;
 }
 
 interface POLine {
@@ -540,6 +541,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         paymentTerms: '', shippingMethod: '', freightTerms: '', fob: '',
         payOnReceipt: false, confirmingOrder: false,
         noteToSupplier: v.noteToSupplier ?? '', noteToReceiver: '',
+        conversionRateType: 'corporate', conversionRate: null,
       });
       setShowInitModal(false);
     } catch { /* validation */ } finally { setInitConfirmLoading(false); }
@@ -995,6 +997,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         paymentTerms: d.PaymentTerms ?? '', shippingMethod: d.ModeOfTransportCode ?? '', freightTerms: d.FreightTerms ?? '', fob: d.FOB ?? '',
         payOnReceipt: d.PayOnReceiptFlag === 'Y', confirmingOrder: false,
         noteToSupplier: d.NoteToSupplier ?? '', noteToReceiver: '',
+        conversionRateType: d.ConversionRateType ?? 'corporate', conversionRate: d.ConversionRate ?? null,
       });
       headerForm.setFieldsValue({ poNumber: orderNum, docType: String(orderNum).replace(/\d.*$/, '') || 'STD' });
       setPoHeaderId(Number(d.POHeaderId ?? id));
@@ -2911,6 +2914,27 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                         <Col span={12}>
                           <Form.Item name="fob" label="FOB">
                             <Input placeholder="Optional" disabled={!selectedBuCompanyCode} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item name="conversionRateType" label="Rate Type" initialValue="corporate">
+                            <Select placeholder="Select rate type" disabled={!selectedBuCompanyCode}>
+                              <Option value="corporate">Corporate</Option>
+                              <Option value="standard">Standard</Option>
+                              <Option value="preferred">Preferred</Option>
+                              <Option value="custom">Custom</Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item name="conversionRate" label="Conversion Rate">
+                            <InputNumber
+                              placeholder="Enter rate"
+                              precision={4}
+                              step={0.01}
+                              style={{ width: '100%' }}
+                              disabled={!selectedBuCompanyCode}
+                            />
                           </Form.Item>
                         </Col>
                       </Row>
