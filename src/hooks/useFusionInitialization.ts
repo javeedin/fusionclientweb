@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { getCurrentCompany } from '../config/company.config';
-import { getFusionAuthHeaders } from '../config/api.helper';
+import { getFusionAuthHeaders, getFusionInstanceUrl } from '../config/api.helper';
 
 export const useFusionInitialization = () => {
   const initializingRef = useRef(false);
@@ -26,8 +26,10 @@ export const useFusionInitialization = () => {
           return;
         }
 
-        const fusionBaseUrl = company.fusionInstances[0].url;
-        const url = `${fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/itemsV2?limit=1&offset=0&onlyData=true`;
+        // Use the actual instance URL logged into (stored after login), or fall back to default config
+        const actualInstanceUrl = getFusionInstanceUrl() || company.fusionInstances[0].url;
+        const fusionBaseUrl = `${actualInstanceUrl}/fscmRestApi/resources/11.13.18.05`;
+        const url = `${fusionBaseUrl}/itemsV2?limit=1&offset=0&onlyData=true`;
         const authHeaders = getFusionAuthHeaders();
 
         console.log(`[Fusion Init] Starting initialization for ${fusionBaseUrl}`);
