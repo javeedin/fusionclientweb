@@ -566,7 +566,7 @@ const SupplierBalance: React.FC = () => {
         <div style={{ padding: '16px 24px', background: REDWOOD.surface, borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
           <Breadcrumb items={[
             { title: <Link to="/home"><HomeOutlined /> Home</Link> },
-            { title: <Link to="/procurement">Procurement</Link> },
+            { title: <Link to="/procurement">Fusion Supply Chain</Link> },
             { title: <Link to="/suppliers/manage">Suppliers</Link> },
             { title: `Balance — ${supplierNumber}` },
           ]} />
