@@ -55,7 +55,7 @@ export function buildCurrencyUrl(endpoint: string): string {
 export function getFusionAuthHeaders(): Record<string, string> {
   try {
     const username = localStorage.getItem('fusion_username');
-    const password = sessionStorage.getItem('fusion_password');
+    const password = localStorage.getItem('fusion_password');
 
     if (username && password) {
       // Build Basic Auth header: "Basic base64(username:password)"
@@ -70,4 +70,15 @@ export function getFusionAuthHeaders(): Record<string, string> {
     console.warn('[API] Failed to get fusion credentials from storage:', error);
   }
   return { 'Accept': 'application/json' };
+}
+
+/**
+ * Get the actual Fusion instance URL used for login
+ */
+export function getFusionInstanceUrl(): string {
+  try {
+    return localStorage.getItem('fusion_instance_url') || '';
+  } catch {
+    return '';
+  }
 }
