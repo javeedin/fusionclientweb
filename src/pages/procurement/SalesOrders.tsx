@@ -1,4 +1,6 @@
 import { buildApexUrl, buildCurrencyUrl, getFusionAuthHeaders } from '../../config/api.helper';
+import { getFusionInstance } from '../../config/fusionInstance';
+import { useAuth } from '../../context/AuthContext';
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Form, Input, Select, DatePicker, Button,
@@ -1842,6 +1844,7 @@ const STATUS_CODES = [
 ];
 
 const SearchTab: React.FC<{ onOpen: (order: any) => void; onEdit: (order: any) => void }> = ({ onOpen, onEdit }) => {
+  const auth = useAuth();
   const [form] = Form.useForm();
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -2851,7 +2854,7 @@ const SearchTab: React.FC<{ onOpen: (order: any) => void; onEdit: (order: any) =
             </div>
           )}
           <Text type="secondary" style={{ fontSize: 11 }}>
-            Instance: <b>{getFusionInstance().label}</b> ({getFusionInstance().host.replace(/^https?:\/\//, '')}) · Auth: Basic [{getFusionInstance().username}] ·
+            Instance: <b>{getFusionInstance().label}</b> ({getFusionInstance().host.replace(/^https?:\/\//, '')}) · Auth: Basic [{auth.user?.username}] ·
             Dates unquoted; text uses SQL LIKE; codes exact ('value').
           </Text>
         </div>
