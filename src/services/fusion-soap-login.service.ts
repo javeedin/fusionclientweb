@@ -71,7 +71,7 @@ export const fusionSOAPLogin = async (
 ): Promise<FusionLoginResult> => {
   try {
     const isElectron = !!(window as any).electronAPI?.isElectron;
-    const soapUrl = `${fusionInstanceUrl}/webservices/soap/xmlpserver/`;
+    const soapUrl = `${fusionInstanceUrl.replace(/\/$/, '')}/xmlpserver/services/v2/SecurityService`;
     const soapBody = buildSOAPEnvelope(username, password);
 
     console.log('[Fusion Login] Authenticating...', { isElectron, soapUrl });
