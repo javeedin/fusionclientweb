@@ -1,4 +1,6 @@
 import { buildApexUrl, buildCurrencyUrl, getFusionAuthHeaders } from '../../config/api.helper';
+import { getFusionInstance } from '../../config/fusionInstance';
+import { useAuth } from '../../context/AuthContext';
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Form, Input, Select, DatePicker, Button,
@@ -1435,6 +1437,7 @@ const LineEffView: React.FC<{ lines: any[] }> = ({ lines }) => {
 
 // ── Order view (header + lines) shown in its own tab ─────────────────────────
 const OrderView: React.FC<{ order: any; onCopy?: (order: any, lines: any[]) => void; onReturn?: (order: any, lines: any[]) => void }> = ({ order, onCopy, onReturn }) => {
+  const auth = useAuth();
   const linesHref = order?.links?.find((l: any) => l.name === 'lines')?.href
     ?? (order?.OrderKey ? `${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(order.OrderKey)}/child/lines` : '');
 
@@ -1842,6 +1845,7 @@ const STATUS_CODES = [
 ];
 
 const SearchTab: React.FC<{ onOpen: (order: any) => void; onEdit: (order: any) => void }> = ({ onOpen, onEdit }) => {
+  const auth = useAuth();
   const [form] = Form.useForm();
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -2851,7 +2855,7 @@ const SearchTab: React.FC<{ onOpen: (order: any) => void; onEdit: (order: any) =
             </div>
           )}
           <Text type="secondary" style={{ fontSize: 11 }}>
-            Instance: <b>{getFusionInstance().label}</b> ({getFusionInstance().host.replace(/^https?:\/\//, '')}) · Auth: Basic [{getFusionInstance().username}] ·
+            Instance: <b>{getFusionInstance().label}</b> ({getFusionInstance().host.replace(/^https?:\/\//, '')}) · Auth: Basic [{auth.user?.username}] ·
             Dates unquoted; text uses SQL LIKE; codes exact ('value').
           </Text>
         </div>
@@ -8640,7 +8644,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
             </div>
           )}
           <Text type="secondary" style={{ fontSize: 11 }}>
-            Instance: <b>{getFusionInstance().label}</b> ({getFusionInstance().host.replace(/^https?:\/\//, '')}) · Auth: Basic [{getFusionInstance().username}] · Warehouse (OrganizationCode) &amp; Item drive the query; empty results = no on-hand for that org/subinventory.
+            Instance: <b>{getFusionInstance().label}</b> ({getFusionInstance().host.replace(/^https?:\/\//, '')}) · Auth: Basic [{auth.user?.username}] · Warehouse (OrganizationCode) &amp; Item drive the query; empty results = no on-hand for that org/subinventory.
           </Text>
         </div>
       </Modal>
@@ -9468,8 +9472,8 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
         businessUnitId={hdr.businessUnitId?.toString()}
         businessUnitName={hdr.businessUnit}
         soapBaseUrl={`${getFusionInstance().host}/xmlpserver/services/v2/ReportService`}
-        username={getFusionInstance().username}
-        password={getFusionInstance().password}
+        username={auth.user?.username}
+        password={sessionStorage.getItem('fusion_password')}
       />
       <ARInvoiceDialog txn={arTxn} onClose={() => setArTxn(null)} />
     </div>

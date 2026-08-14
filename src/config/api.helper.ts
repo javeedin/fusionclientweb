@@ -49,20 +49,25 @@ export function buildCurrencyUrl(endpoint: string): string {
 }
 
 /**
- * Get Fusion API authorization headers using logged-in session
- * Returns headers with sessionId from login, not hardcoded credentials
+ * Get Fusion API authorization headers using Basic Auth (username:password)
+ * Builds Basic Authentication header for REST API calls to Oracle Fusion
  */
 export function getFusionAuthHeaders(): Record<string, string> {
   try {
-    const sessionId = localStorage.getItem('fusion_session_id') || localStorage.getItem('erp_token');
-    if (sessionId) {
+    const username = localStorage.getItem('fusion_username');
+    const password = sessionStorage.getItem('fusion_password');
+
+    if (username && password) {
+      // Build Basic Auth header: "Basic base64(username:password)"
+      const credentials = `${username}:${password}`;
+      const encodedCredentials = btoa(credentials);
       return {
-        'Authorization': sessionId,
+        'Authorization': `Basic ${encodedCredentials}`,
         'Accept': 'application/json',
       };
     }
   } catch (error) {
-    console.warn('[API] Failed to get fusion session from localStorage:', error);
+    console.warn('[API] Failed to get fusion credentials from storage:', error);
   }
   return { 'Accept': 'application/json' };
 }
