@@ -1,4 +1,4 @@
-import { buildApexUrl, buildCurrencyUrl, getFusionAuthHeaders } from '../../config/api.helper'; import { getFusionAuthHeaders };
+import { buildApexUrl, buildCurrencyUrl, getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Form, Input, Select, DatePicker, Button,
