@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Select, Tag, Typography, Switch, Tooltip } from 'antd';
-import { SearchOutlined, ExportOutlined, ExternalLinkOutlined } from '@ant-design/icons';
+import { SearchOutlined, ExportOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { getFilteredMenuItemsGrouped, type MenuSearchItem } from '../data/menuItems';
 import { getCurrentCompany } from '../config/company.config';
@@ -112,40 +112,6 @@ const GlobalMenuSearch: React.FC = () => {
           <div style={{ padding: '8px 12px', color: '#999', fontSize: 13 }}>No pages found</div>
         }
       />
-
-      {/* Open new instance button */}
-      <Tooltip title="Open new instance of the application" placement="bottom">
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 32,
-            height: 32,
-            background: 'rgba(255,255,255,0.12)',
-            border: '1px solid rgba(255,255,255,0.3)',
-            borderRadius: 5,
-            cursor: 'pointer',
-            transition: 'background 0.2s',
-          }}
-          onClick={() => {
-            const base = window.location.href.replace(/#.*$/, '');
-            const newWin = window.open(base, '_blank', 'width=1400,height=900,left=0,top=0,noopener,noreferrer');
-            if (newWin) {
-              try {
-                newWin.moveTo(0, 0);
-                newWin.resizeTo(screen.width, screen.height);
-              } catch (e) {
-                // Graceful fallback
-              }
-            }
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.25)')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
-        >
-          <ExternalLinkOutlined style={{ fontSize: 14, color: '#fff' }} />
-        </div>
-      </Tooltip>
 
       {/* New-window toggle */}
       <Tooltip
