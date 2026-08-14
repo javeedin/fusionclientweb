@@ -71,7 +71,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openNewWindow: (path) => ipcRenderer.invoke('openNewWindow', path),
 
   // Update checker
-  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  checkForUpdates: (companyName) => ipcRenderer.invoke('check-for-updates', companyName),
   downloadAndInstallUpdate: (params) => ipcRenderer.invoke('download-and-install-update', params),
   onOpenUpdateChecker: (callback) => ipcRenderer.on('open-update-checker', callback),
   removeOpenUpdateCheckerListener: () => ipcRenderer.removeAllListeners('open-update-checker'),
