@@ -403,7 +403,30 @@ const ItemMaster: React.FC = () => {
       while (true) {
         if (ctrl.signal.aborted) break;
         const pageUrl = buildUrl(vals, pageSize, offset);
-        const r = await fetch(pageUrl, { signal: ctrl.signal, ...(source === 'fusion' ? { headers: FUSION_HDRS } : {}) });
+
+        // Retry logic for transient network failures
+        let retries = 0;
+        const maxRetries = 2;
+        let lastError: any = null;
+        let r: Response | null = null;
+
+        while (retries < maxRetries && !r) {
+          try {
+            r = await fetch(pageUrl, { signal: ctrl.signal, ...(source === 'fusion' ? { headers: FUSION_HDRS } : {}) });
+            break;
+          } catch (e: any) {
+            lastError = e;
+            retries++;
+            if (retries < maxRetries && e.name !== 'AbortError') {
+              // Wait before retry: 500ms, 1s
+              await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries - 1) * 500));
+            } else {
+              throw e;
+            }
+          }
+        }
+
+        if (!r) throw lastError || new Error('Failed to fetch');
         if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
         const d = await r.json();
         const raw: any[] = d.items ?? (Array.isArray(d) ? d : []);
