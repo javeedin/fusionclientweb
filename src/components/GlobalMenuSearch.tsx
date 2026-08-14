@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
-import { Select, Tag, Typography, Switch, Tooltip } from 'antd';
-import { SearchOutlined, ExportOutlined } from '@ant-design/icons';
+import { Select, Tag, Typography, Switch, Tooltip, Button } from 'antd';
+import { SearchOutlined, ExportOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { getFilteredMenuItemsGrouped, type MenuSearchItem } from '../data/menuItems';
 import { getCurrentCompany } from '../config/company.config';
@@ -62,6 +62,19 @@ const GlobalMenuSearch: React.FC = () => {
     }
   };
 
+  const handleOpenNewWindow = () => {
+    const base = window.location.href.replace(/#.*$/, '');
+    const newWin = window.open(base, '_blank', 'width=1400,height=900,left=0,top=0');
+    if (newWin) {
+      try {
+        newWin.moveTo(0, 0);
+        newWin.resizeTo(screen.width, screen.height);
+      } catch (e) {
+        // Browsers may block this for security reasons - that's ok
+      }
+    }
+  };
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <Select
@@ -112,6 +125,22 @@ const GlobalMenuSearch: React.FC = () => {
           <div style={{ padding: '8px 12px', color: '#999', fontSize: 13 }}>No pages found</div>
         }
       />
+
+      {/* Open new window button */}
+      <Tooltip title="New Window" placement="bottom">
+        <Button
+          type="text"
+          icon={<ClockCircleOutlined />}
+          onClick={handleOpenNewWindow}
+          style={{
+            fontSize: 13,
+            color: 'rgba(255,255,255,0.7)',
+            padding: '4px 8px',
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        />
+      </Tooltip>
 
       {/* New-window toggle */}
       <Tooltip
