@@ -21,20 +21,19 @@ const { Content } = Layout;
 const { Title, Text } = Typography;
 
 const ORDS_BASE = `${getOrdsHostname()}/ords/test/FUSIONCLIENTERP/inventory/itemmaster`;
-const HEADERS = getFusionAuthHeaders();
 
-// Get Fusion headers - don't include auth when using proxy (proxy adds it)
+// Get Fusion headers dynamically - don't include auth when using proxy (proxy adds it)
 const getFusionHeaders = () => {
   const isElectron = (window as any).electronAPI?.isElectron === true;
   if (isElectron) {
     // Electron: direct Fusion API call, include auth
-    return { Authorization: HEADERS, Accept: 'application/json' };
+    const headers = getFusionAuthHeaders();
+    return { ...headers, Accept: 'application/json' };
   } else {
     // Browser: using proxy, proxy adds auth - don't include it here
     return { Accept: 'application/json' };
   }
 };
-const FUSION_HDRS  = getFusionHeaders();
 
 const REDWOOD = {
   primary: '#C74634', primaryDark: '#A33B2C',
@@ -325,7 +324,7 @@ const ItemMaster: React.FC = () => {
             const r = await fetch(
               `${fusionBase}/inventoryOrganizations?limit=500&offset=${offset}`,
               {
-                headers: FUSION_HDRS,
+                headers: getFusionHeaders(),
                 mode: 'cors', // Explicit CORS mode for proper preflight
               },
             );
@@ -461,7 +460,7 @@ const ItemMaster: React.FC = () => {
             r = await fetch(pageUrl, {
               signal: ctrl.signal,
               ...(source === 'fusion' ? {
-                headers: FUSION_HDRS,
+                headers: getFusionHeaders(),
                 mode: 'cors', // Explicit CORS mode
               } : {}),
             });
@@ -522,7 +521,7 @@ const ItemMaster: React.FC = () => {
       setDebugTestResult(`Testing connection to: ${url}`);
 
       const response = await fetch(url, {
-        headers: FUSION_HDRS,
+        headers: getFusionHeaders(),
         mode: 'cors', // Explicit CORS mode
       });
 
@@ -1116,7 +1115,7 @@ ${error.message.includes('fetch') || error.message.includes('CORS') ? '⚠️ Li
                 setApiLoading(true); setApiResponse(null); setApiError('');
                 const testUrl = buildUrl(form.getFieldsValue(), 5, 0);
                 try {
-                  const res = await fetch(testUrl, { headers: source === 'fusion' ? FUSION_HDRS : { Accept: 'application/json' } });
+                  const res = await fetch(testUrl, { headers: source === 'fusion' ? getFusionHeaders() : { Accept: 'application/json' } });
                   const text = await res.text();
                   let parsed: any;
                   try { parsed = JSON.parse(text); } catch { parsed = text; }
