@@ -22,10 +22,13 @@ export const useFusionInitialization = () => {
         const auth = 'Basic ' + btoa('emparun:Fusion@1234');
         const url = `${fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/itemsV2?limit=1&offset=0&onlyData=true`;
 
+        console.log(`[Fusion Init] Starting initialization for ${fusionBaseUrl}`);
+        console.log(`[Fusion Init] Window is ${window.opener ? 'child (opened from parent)' : 'parent/standalone'}`);
+
         // Retry logic to establish Fusion connection
         let lastError: Error | null = null;
-        const maxRetries = 4;
-        const delays = [500, 1000, 2000, 4000];
+        const maxRetries = 5;
+        const delays = [500, 1000, 2000, 4000, 8000];
 
         for (let attempt = 0; attempt < maxRetries; attempt++) {
           try {
@@ -37,15 +40,26 @@ export const useFusionInitialization = () => {
                 'Authorization': auth,
                 'Content-Type': 'application/json',
               },
-              credentials: 'include',
+              credentials: 'include', // Important: include cookies for session persistence
             });
 
+            console.log(`[Fusion Init] Response status: ${response.status}`);
+
             if (response.ok) {
-              console.log('✓ [Fusion Init] Connection established successfully');
+              const data = await response.json();
+              console.log('✓ [Fusion Init] Connection established successfully', {
+                itemsReturned: data?.items?.length || 0,
+                totalItems: data?.totalItems || 0,
+              });
               return;
             } else {
-              console.warn(`[Fusion Init] Status ${response.status}, retrying...`);
-              lastError = new Error(`Status ${response.status}`);
+              const errorText = await response.text();
+              console.warn(`[Fusion Init] Status ${response.status}, retrying...`, {
+                status: response.status,
+                statusText: response.statusText,
+                errorPreview: errorText.substring(0, 200),
+              });
+              lastError = new Error(`Status ${response.status}: ${response.statusText}`);
             }
           } catch (error) {
             console.warn(`[Fusion Init] Attempt ${attempt + 1} failed:`, error);
@@ -54,11 +68,16 @@ export const useFusionInitialization = () => {
 
           // Wait before retry
           if (attempt < maxRetries - 1) {
-            await sleep(delays[attempt]);
+            const delay = delays[attempt];
+            console.log(`[Fusion Init] Waiting ${delay}ms before next attempt...`);
+            await sleep(delay);
           }
         }
 
-        console.error('[Fusion Init] Failed to establish connection after retries:', lastError?.message);
+        console.error('[Fusion Init] Failed to establish connection after all retries:', {
+          message: lastError?.message,
+          totalAttempts: maxRetries,
+        });
       } catch (error) {
         console.error('[Fusion Init] Unexpected error:', error);
       }
