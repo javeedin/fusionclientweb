@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Button, Tag, Typography, Space, Tooltip, Spin,
@@ -11,7 +12,6 @@ import {
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
@@ -24,9 +24,9 @@ const getFusionBase = () => {
 const { Title, Text, Paragraph } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
-const JSON_HDRS = { ...FUSION_HDRS, 'Content-Type': 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
+const JSON_HDRS = { ...HEADERS, 'Content-Type': 'application/json' };
 const ITEMS_URL = `${FUSION_BASE}/itemsV2`;
 
 // Master item organization — items are created here first, then assigned to child orgs.
@@ -59,8 +59,8 @@ const mapLimit = async <T, R>(items: T[], limit: number, fn: (t: T, i: number) =
 const pfv = (o: any, keys: string[]) => { for (const k of keys) { if (o?.[k] != null && o[k] !== '') return o[k]; } return undefined; };
 // Rewrite an absolute Fusion self href onto the proxy base (web) or keep it (electron).
 const fusionHref = (href: string) => href;
-const RESITEM_HDRS = { ...FUSION_HDRS, 'Content-Type': 'application/vnd.oracle.adf.resourceitem+json' };
-const fetchJson = async (url: string): Promise<any> => { const r = await fetch(url, { headers: FUSION_HDRS }); return r.ok ? r.json() : null; };
+const RESITEM_HDRS = { ...HEADERS, 'Content-Type': 'application/vnd.oracle.adf.resourceitem+json' };
+const fetchJson = async (url: string): Promise<any> => { const r = await fetch(url, { headers: HEADERS }); return r.ok ? r.json() : null; };
 // Exact-match GET of one item in an org.
 const getItem = async (itemNumber: string, org: string) =>
   (await fetchJson(`${ITEMS_URL}?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(itemNumber)}&limit=1&onlyData=true`))?.items?.[0] ?? null;
@@ -133,7 +133,7 @@ const EditItemModal: React.FC<{ item: any | null; onClose: () => void; onSaved: 
     (async () => {
       setLoading(true);
       try {
-        const r = await fetch(`${ITEMS_URL}?q=OrganizationCode=${item.OrganizationCode};ItemNumber=${encodeURIComponent(item.ItemNumber)}&onlyData=false&limit=1`, { headers: FUSION_HDRS });
+        const r = await fetch(`${ITEMS_URL}?q=OrganizationCode=${item.OrganizationCode};ItemNumber=${encodeURIComponent(item.ItemNumber)}&onlyData=false&limit=1`, { headers: HEADERS });
         const d = await r.json();
         const it = (d.items ?? [])[0];
         setFull(it ?? null);
@@ -303,7 +303,7 @@ const SearchTab: React.FC<{ orgs: OrgOpt[]; onRowsChange?: (rows: any[]) => void
             const n = nums[idx++];
             const url = `${ITEMS_URL}?q=${orgClause}ItemNumber=${encodeURIComponent(n)}&limit=500`;
             setLastUrl(url);
-            try { const r = await fetch(url, { headers: FUSION_HDRS }); if (r.ok) { const d = await r.json(); (d.items ?? []).forEach((it: any) => out.push(it)); } } catch { /* skip */ }
+            try { const r = await fetch(url, { headers: HEADERS }); if (r.ok) { const d = await r.json(); (d.items ?? []).forEach((it: any) => out.push(it)); } } catch { /* skip */ }
           }
         };
         await Promise.all(Array.from({ length: Math.min(6, nums.length) }, worker));
@@ -313,7 +313,7 @@ const SearchTab: React.FC<{ orgs: OrgOpt[]; onRowsChange?: (rows: any[]) => void
         if (selectedOrgs.length === 0) { message.warning('Select at least one organization to search by description'); setLoading(false); return; }
         const url = `${ITEMS_URL}?q=${orgClause}ItemDescription LIKE ${description.trim()}%&limit=500`;
         setLastUrl(url);
-        const r = await fetch(url, { headers: FUSION_HDRS });
+        const r = await fetch(url, { headers: HEADERS });
         const d = r.ok ? await r.json() : { items: [] };
         updateRows(d.items ?? []);
       } else {
@@ -395,7 +395,7 @@ const DFFTab: React.FC<{ rows: any[] }> = ({ rows }) => {
         try {
           const dffLink = (item.links ?? []).find((l: any) => l.name === 'ItemDFF')?.href;
           if (dffLink) {
-            const r = await fetch(dffLink, { headers: FUSION_HDRS });
+            const r = await fetch(dffLink, { headers: HEADERS });
             if (r.ok) {
               const d = await r.json();
               const items = d.items ?? [];
@@ -432,7 +432,7 @@ const DFFTab: React.FC<{ rows: any[] }> = ({ rows }) => {
       }
       console.log('Fetching DFF from:', dffLink);
       setDffUrl(dffLink);
-      const r = await fetch(dffLink, { headers: FUSION_HDRS });
+      const r = await fetch(dffLink, { headers: HEADERS });
       if (r.ok) {
         const d = await r.json();
         console.log('DFF Response:', d);
@@ -689,7 +689,7 @@ const EFFTab: React.FC<{ rows: any[] }> = ({ rows }) => {
         try {
           const effLink = (item.links ?? []).find((l: any) => l.name === 'ItemEffCategory')?.href;
           if (effLink) {
-            const r = await fetch(effLink, { headers: FUSION_HDRS });
+            const r = await fetch(effLink, { headers: HEADERS });
             if (r.ok) {
               const d = await r.json();
               const items = d.items ?? [];
@@ -726,7 +726,7 @@ const EFFTab: React.FC<{ rows: any[] }> = ({ rows }) => {
       }
       console.log('Fetching EFF from:', effLink);
       setEffUrl(effLink);
-      const r = await fetch(effLink, { headers: FUSION_HDRS });
+      const r = await fetch(effLink, { headers: HEADERS });
       if (r.ok) {
         const d = await r.json();
         console.log('EFF Response:', d);

@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useMemo, useState } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Input, Button, Space, Tag, Alert,
@@ -7,7 +8,6 @@ import type { ColumnsType } from 'antd/es/table';
 import { HomeOutlined, HistoryOutlined, ApiOutlined, ReloadOutlined, CloudOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs, { Dayjs } from 'dayjs';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -23,7 +23,7 @@ const DEFAULT_IDCS_BASE = 'https://idcs-08ec9f6c9fe6485ca2a776ed49559d01.identit
 const BASE_KEY  = 'idcs_audit_base';
 
 // Same Basic-auth credentials the rest of the Fusion Client uses.
-const AUTH_HEADER = FUSION_POD_AUTH;
+const HEADERS = getFusionAuthHeaders();
 
 // Common IDCS audit event ids for sign-in activity.
 const EVENT_OPTIONS = [
@@ -72,7 +72,7 @@ const LoginHistory: React.FC = () => {
     localStorage.setItem(BASE_KEY, idcsBase.trim());
     try {
       const res = await fetch(requestUrl, {
-        headers: { Authorization: AUTH_HEADER, Accept: 'application/json' },
+        headers: { Authorization: HEADERS, Accept: 'application/json' },
       });
       const text = await res.text();
       setRaw(text);

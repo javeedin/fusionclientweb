@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Form, Input, Select, DatePicker, Button,
@@ -13,7 +14,6 @@ import {
 import { Link } from 'react-router-dom';
 import dayjs, { type Dayjs } from 'dayjs';
 import { ShipConfirmModal, PickSlipDialog } from './ConfirmPicks';
-import { FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
@@ -27,8 +27,8 @@ const { Title, Text } = Typography;
 
 // Electron goes direct (no CORS); browser dev routes via the Vite proxy.
 const FUSION_BASE = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const PAGE_LIMIT = 500;
 
 const REDWOOD = {
@@ -55,7 +55,7 @@ const fetchAllPages = async (baseUrl: string): Promise<any[]> => {
   while (true) {
     const sep = stripped.includes('?') ? '&' : '?';
     const url = `${stripped}${sep}limit=${PAGE_LIMIT}&offset=${offset}`;
-    const r = await fetch(url, { headers: FUSION_HDRS });
+    const r = await fetch(url, { headers: HEADERS });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -238,7 +238,7 @@ const ShipmentOrderDialog: React.FC<{ row: any | null; onClose: () => void }> = 
         try {
           const r = await fetch(pickUrl, {
             method: 'POST',
-            headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' },
+            headers: { ...HEADERS, 'Content-Type': 'application/json' },
             body: JSON.stringify(pickPayload),
           });
           const raw = await r.text();

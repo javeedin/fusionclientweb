@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { getCurrentCompany } from '../config/company.config';
+import { getFusionAuthHeaders } from '../config/api.helper';
 
 export const useFusionInitialization = () => {
   const initializingRef = useRef(false);
@@ -19,8 +20,8 @@ export const useFusionInitialization = () => {
         }
 
         const fusionBaseUrl = company.fusionInstances[0].url;
-        const auth = 'Basic ' + btoa('emparun:Fusion@1234');
         const url = `${fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/itemsV2?limit=1&offset=0&onlyData=true`;
+        const authHeaders = getFusionAuthHeaders();
 
         console.log(`[Fusion Init] Starting initialization for ${fusionBaseUrl}`);
         console.log(`[Fusion Init] Window is ${window.opener ? 'child (opened from parent)' : 'parent/standalone'}`);
@@ -37,7 +38,7 @@ export const useFusionInitialization = () => {
             const response = await fetch(url, {
               method: 'GET',
               headers: {
-                'Authorization': auth,
+                ...authHeaders,
                 'Content-Type': 'application/json',
               },
               mode: 'cors', // Explicit CORS mode for preflight negotiation

@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input,
@@ -29,8 +30,8 @@ const REDWOOD = {
 // ── API ───────────────────────────────────────────────────────────────────────
 const BASE_URL = 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/11.13.18.05';
 const LATEST_URL = 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/latest';
-const AUTH_HEADER = 'Basic ' + btoa('emparun:Fusion@1234');
-const HEADERS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const PAGE_SIZE = 50;
 const CHILD_LIMIT = 500;
 

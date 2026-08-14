@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Button, Tag, Typography, Space, Tooltip, Spin,
@@ -10,7 +11,6 @@ import {
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs, { Dayjs } from 'dayjs';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
@@ -23,9 +23,9 @@ const getFusionBase = () => {
 const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
-const JSON_HDRS = { ...FUSION_HDRS, 'Content-Type': 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
+const JSON_HDRS = { ...HEADERS, 'Content-Type': 'application/json' };
 const ONHAND_URL = `${FUSION_BASE}/inventoryOnhandBalances`;
 const ITEMS_URL = `${FUSION_BASE}/itemsV2`;
 const STAGED_TXN_URL = `${FUSION_BASE}/inventoryStagedTransactions`;
@@ -63,7 +63,7 @@ const mapLimit = async <T, R>(items: T[], limit: number, fn: (t: T, i: number) =
   await Promise.all(Array.from({ length: Math.min(limit, Math.max(1, items.length)) }, worker));
   return out;
 };
-const fetchJson = async (url: string) => { const r = await fetch(url, { headers: FUSION_HDRS }); return r.ok ? r.json() : null; };
+const fetchJson = async (url: string) => { const r = await fetch(url, { headers: HEADERS }); return r.ok ? r.json() : null; };
 const getItemMeta = async (item: string, org: string) =>
   (await fetchJson(`${ITEMS_URL}?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(item)}&limit=1&onlyData=true`))?.items?.[0] ?? null;
 
@@ -88,7 +88,7 @@ const pollStagedBySource = async (srcHeader: number, srcLine: number, attempts =
   for (let i = 0; i < attempts; i++) {
     await new Promise(res => setTimeout(res, delayMs));
     try {
-      const r = await fetch(url, { headers: FUSION_HDRS });
+      const r = await fetch(url, { headers: HEADERS });
       if (!r.ok) continue;
       const d = await r.json();
       const row = (d?.items ?? [])[0];
@@ -112,7 +112,7 @@ const pollStagedBySource = async (srcHeader: number, srcLine: number, attempts =
 // gone = posted into inventory, still present with an error = failed, else pending.
 const checkStagedOnce = async (srcHeader: number, srcLine: number): Promise<{ state: 'processed' | 'error' | 'pending'; message?: string }> => {
   try {
-    const r = await fetch(stagedQuery(srcHeader, srcLine), { headers: FUSION_HDRS });
+    const r = await fetch(stagedQuery(srcHeader, srcLine), { headers: HEADERS });
     if (r.ok) { const d = await r.json(); const row = (d?.items ?? [])[0]; if (!row) return { state: 'processed' }; const e = rowError(row); if (e) return { state: 'error', message: e }; }
   } catch { /* ignore */ }
   return { state: 'pending' };
@@ -188,7 +188,7 @@ const buildTxnSoap = (r: SoapTxnRow, tableType: number, validationLevel: number)
 const callTxnManager = async (r: SoapTxnRow, tableType: number, validationLevel: number): Promise<{ ok: boolean; code: string | null; result: string; raw: string; envelope: string; httpStatus: number }> => {
   const envelope = buildTxnSoap(r, tableType, validationLevel);
   try {
-    const resp = await fetch(SOAP_TXN_URL, { method: 'POST', headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: SOAP_ACTION, Authorization: AUTH_HEADER }, body: envelope });
+    const resp = await fetch(SOAP_TXN_URL, { method: 'POST', headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: SOAP_ACTION, Authorization: HEADERS }, body: envelope });
     const raw = await resp.text();
     const fault = raw.match(/<faultstring>([\s\S]*?)<\/faultstring>/i)?.[1]?.trim();
     const code = raw.match(/<(?:\w+:)?result>([\s\S]*?)<\/(?:\w+:)?result>/i)?.[1]?.trim() ?? null;
@@ -434,14 +434,14 @@ const SearchOnhand: React.FC<{ orgs: OrgOpt[] }> = ({ orgs }) => {
       if (!nums.length) {
         const url = `${ONHAND_URL}?q=${orgClause}&limit=500&onlyData=true`;
         setLastUrl(url);
-        const r = await fetch(url, { headers: FUSION_HDRS });
+        const r = await fetch(url, { headers: HEADERS });
         if (r.ok) { const d = await r.json(); (d.items ?? []).forEach((b: any) => out.push(b)); if (d.hasMore) setTruncated(true); }
         else { const t = await r.text(); let j: any = null; try { j = JSON.parse(t); } catch { /* raw */ } setErr(errOf(j, t)); }
       } else {
         await mapLimit(nums, 6, async (n) => {
           const url = `${ONHAND_URL}?q=${orgClause ? orgClause + ';' : ''}ItemNumber=${encodeURIComponent(n)}&limit=500&onlyData=true`;
           setLastUrl(url);
-          try { const r = await fetch(url, { headers: FUSION_HDRS }); if (r.ok) { const d = await r.json(); (d.items ?? []).forEach((b: any) => out.push(b)); } } catch { /* skip */ }
+          try { const r = await fetch(url, { headers: HEADERS }); if (r.ok) { const d = await r.json(); (d.items ?? []).forEach((b: any) => out.push(b)); } } catch { /* skip */ }
         });
       }
       out.sort((a, b) => String(pf(a, ['ItemNumber'])).localeCompare(String(pf(b, ['ItemNumber']))));

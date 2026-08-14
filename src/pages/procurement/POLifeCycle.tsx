@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import dayjs from 'dayjs';
 import {
@@ -5,7 +6,6 @@ import {
   Button, Tooltip, Segmented, message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 import {
   HistoryOutlined, FolderOpenOutlined, FileTextOutlined,
@@ -39,7 +39,7 @@ const CHART_COLORS = ['#C74634', '#0572CE', '#1D7B4D', '#B07700', '#7245A6', '#0
 
 // ── Fusion config ────────────────────────────────────────────────────────────
 const BASE_URL = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
+const HEADERS = getFusionAuthHeaders();
 const CHILD_LIMIT = 500;
 // Fusion's canonical resource capitalises the C (LifeCycle); some versions use
 // a lowercase c — try the canonical form first, fall back on 404.
@@ -52,7 +52,7 @@ const fetchAllPages = async (baseUrl: string): Promise<any[]> => {
   while (true) {
     const sep = stripped.includes('?') ? '&' : '?';
     const url = `${stripped}${sep}limit=${CHILD_LIMIT}&offset=${offset}`;
-    const r = await fetch(url, { headers: { Authorization: AUTH_HEADER, Accept: 'application/json' } });
+    const r = await fetch(url, { headers: { Authorization: HEADERS, Accept: 'application/json' } });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d) ? d : (d.items ?? []);

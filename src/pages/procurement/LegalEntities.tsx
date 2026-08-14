@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Input, Row, Col, Spin, Alert,
@@ -5,7 +6,6 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { HomeOutlined, SafetyCertificateOutlined, SearchOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
@@ -18,8 +18,8 @@ const getFusionBase = () => {
 const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const HEADERS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HEADERS = getFusionAuthHeaders();
 
 const REDWOOD = {
   primary: '#C74634', primaryDark: '#A33B2C', primaryLight: '#E85D4A',

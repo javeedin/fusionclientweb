@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useRef, useCallback } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Input, Select,
@@ -12,7 +13,6 @@ import {
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
@@ -32,11 +32,7 @@ const REDWOOD = {
 };
 
 const COA_BASE = `${getFusionBase()}/valueSets`;
-const HDRS = {
-  'Content-Type': 'application/json',
-  Accept: 'application/json',
-  Authorization: FUSION_POD_AUTH,
-};
+const HDRS = { 'Content-Type': 'application/json', ...getFusionAuthHeaders() };
 
 const COA_SEGMENTS = [
   { key: 'coa-company',          label: 'Company',          valueSet: 'Company_VS'          },

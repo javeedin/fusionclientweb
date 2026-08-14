@@ -1,4 +1,4 @@
-import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
+import { buildApexUrl, buildCurrencyUrl, getFusionAuthHeaders } from '../../config/api.helper'; import { getFusionAuthHeaders };
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Form, Input, Select, DatePicker, Button,
@@ -17,19 +17,18 @@ import {
   ThunderboltOutlined, CarOutlined, InboxOutlined, WarningFilled, AppstoreOutlined,
   PaperClipOutlined, FileTextOutlined, LinkOutlined, FileOutlined, FileImageOutlined,
 } from '@ant-design/icons';
-import { Link } from 'react-router-dom';
-import { ShipConfirmModal, PickSlipDialog } from './ConfirmPicks';
+import { Link, getFusionAuthHeaders } from 'react-router-dom';
+import { ShipConfirmModal, PickSlipDialog, getFusionAuthHeaders } from './ConfirmPicks';
 import dayjs, { type Dayjs } from 'dayjs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
-import { FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
-import { getCurrentCompany } from '../../config/company.config';
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, getFusionAuthHeaders } from 'recharts';
+import { getCurrentCompany, getFusionAuthHeaders } from '../../config/company.config';
 import CustomerSearchBipModal from '../../components/CustomerSearchBipModal';
-import { convertBipCustomerToFill, type CustomerSearchResult } from '../../services/customerSearchBip.service';
-import { ORACLE_SOAP_CONFIG } from '../../config/api.config';
+import { convertBipCustomerToFill, type CustomerSearchResult, getFusionAuthHeaders } from '../../services/customerSearchBip.service';
+import { ORACLE_SOAP_CONFIG, getFusionAuthHeaders } from '../../config/api.config';
 
 const { Content } = Layout;
 
@@ -50,8 +49,8 @@ const { Title, Text } = Typography;
 const _isElectron = !!(window as unknown as { electron?: unknown; electronAPI?: unknown }).electron
   || !!(window as unknown as { electronAPI?: unknown }).electronAPI;
 const FUSION_BASE = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 const APEX_BASE = buildApexUrl('');
 const PAGE_LIMIT = 500;
 
@@ -121,7 +120,7 @@ const fetchAllPages = async (baseUrl: string, maxRows = Infinity): Promise<any[]
   while (true) {
     const sep = stripped.includes('?') ? '&' : '?';
     const url = `${stripped}${sep}limit=${PAGE_LIMIT}&offset=${offset}`;
-    const r = await fetchWithTimeout(url, { headers: FUSION_HDRS });
+    const r = await fetchWithTimeout(url, { headers: HEADERS });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -540,7 +539,7 @@ const ARInvoiceDialog: React.FC<{ txn: string | null; onClose: () => void }> = (
     if (!url) return;
     setLoading(true); setError(''); setInv(null); setLines([]); setDists([]);
     try {
-      const r = await fetch(url, { headers: FUSION_HDRS });
+      const r = await fetch(url, { headers: HEADERS });
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
       const d = await r.json();
       const h = (d.items ?? [])[0];
@@ -745,7 +744,7 @@ async function fetchReservations(demandName: string, items: string[]): Promise<a
   await mapLimit(uniq, 4, async (item) => {
     const q = `ItemNumber=${item};DemandSourceName=${demandName}`;
     try {
-      const r = await fetch(`${RESV_URL}?q=${encodeURIComponent(q)}&onlyData=true&limit=500`, { headers: FUSION_HDRS });
+      const r = await fetch(`${RESV_URL}?q=${encodeURIComponent(q)}&onlyData=true&limit=500`, { headers: HEADERS });
       if (!r.ok) return;
       const d = await r.json();
       (d.items ?? []).forEach((it: any) => { const id = String(pf(it, ['ReservationId']) ?? ''); if (id && !seen.has(id)) { seen.add(id); out.push(it); } });
@@ -846,7 +845,7 @@ const AutoShipConfirmModal: React.FC<{ orderNo?: string; org?: string; open: boo
     setReleasing(true);
     try {
       const body = { SourceSystemName: 'OPS', BatchPrefix: `PR-${orderNo}`, ShipFromOrganizationCode: orgCode, ReleaseStatus: 'All', OrderNumber: String(orderNo), PickReleaseFlag: 'true', AutoPickConfirmFlag: 'false', ShipConfirmRule: '002_Ship_Confirm_Rule', CreateShipmentsFlag: 'true', ShipmentCreationCriteria: 'Across orders' };
-      const r = await fetch(PICKWAVES_URL, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(PICKWAVES_URL, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const text = await r.text(); let data: any = null; try { data = JSON.parse(text); } catch { /* raw */ }
       const ret = String(data?.ReturnStatus ?? data?.returnStatus ?? '').toUpperCase();
       if (r.ok && ret !== 'E') { message.success('Pick Release Success'); load(); }
@@ -873,7 +872,7 @@ const AutoShipConfirmModal: React.FC<{ orderNo?: string; org?: string; open: boo
     const fails: string[] = [];
     for (const l of noShipLines) {
       try {
-        const r = await fetch(SHIPASSIGN_URL, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/vnd.oracle.adf.action+json' }, body: JSON.stringify(assignBody(l)) });
+        const r = await fetch(SHIPASSIGN_URL, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/vnd.oracle.adf.action+json' }, body: JSON.stringify(assignBody(l)) });
         const text = await r.text(); let data: any = null; try { data = JSON.parse(text); } catch { /* raw */ }
         if (!r.ok || String(data?.ReturnStatus ?? '').toUpperCase() === 'E') fails.push(`${pf(l, ['Item'])} (line ${pf(l, ['OrderLine'])}): ${data?.ReturnMessage ?? (collectOrderErrors(data, text, true)[0] || 'HTTP ' + r.status)}`);
       } catch (e: any) { fails.push(`${pf(l, ['Item'])}: ${e?.message}`); }
@@ -894,7 +893,7 @@ const AutoShipConfirmModal: React.FC<{ orderNo?: string; org?: string; open: boo
     try {
       // STEP 1: Pick Release
       const body = { SourceSystemName: 'OPS', BatchPrefix: `PR-${orderNo}`, ShipFromOrganizationCode: orgCode, ReleaseStatus: 'All', OrderNumber: String(orderNo), PickReleaseFlag: 'true', AutoPickConfirmFlag: 'false', ShipConfirmRule: '002_Ship_Confirm_Rule', CreateShipmentsFlag: 'true', ShipmentCreationCriteria: 'Across orders' };
-      const r1 = await fetch(PICKWAVES_URL, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r1 = await fetch(PICKWAVES_URL, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const text1 = await r1.text(); let data1: any = null; try { data1 = JSON.parse(text1); } catch { /* raw */ }
       const ret1 = String(data1?.ReturnStatus ?? data1?.returnStatus ?? '').toUpperCase();
       if (!r1.ok || ret1 === 'E') { message.error('Pick Release failed'); setAutoRunning(false); setAutoStep('idle'); return; }
@@ -1000,7 +999,7 @@ const AutoShipConfirmModal: React.FC<{ orderNo?: string; org?: string; open: boo
 
           const r2 = await fetch(`${FUSION_BASE}/pickTransactions`, {
             method: 'POST',
-            headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' },
+            headers: { ...HEADERS, 'Content-Type': 'application/json' },
             body: JSON.stringify(confirmPayload),
           });
           if (!r2.ok) { message.error(`Pick confirm failed for slip ${slip.PickSlip}`); }
@@ -1015,7 +1014,7 @@ const AutoShipConfirmModal: React.FC<{ orderNo?: string; org?: string; open: boo
       const shipPayload = { ShipmentName: shipName, Action: 'CONFIRM', Organization: orgCode };
       const r3 = await fetch(`${FUSION_BASE}/shipConfirmations`, {
         method: 'POST',
-        headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' },
+        headers: { ...HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify(shipPayload),
       });
 
@@ -1153,7 +1152,7 @@ const AutoInvoiceModal: React.FC<{ orderNo?: string; buId?: string | number; ope
     if (!vals[AI_IX.source] || vals[AI_IX.source].trim() === '') { message.warning('Transaction Source (batch-source id, e.g. 5) is required'); return; }
     setSubmitting(true); setStatus(''); setResp('');
     try {
-      const r = await fetch(ERP_INT_URL, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(ERP_INT_URL, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const text = await r.text(); let data: any = null; try { data = JSON.parse(text); } catch { /* raw */ }
       setResp(text);
       const id = data?.ReqstId ?? data?.reqstId ?? data?.RequestId ?? data?.DocumentId ?? '';
@@ -1166,7 +1165,7 @@ const AutoInvoiceModal: React.FC<{ orderNo?: string; buId?: string | number; ope
   };
   const pollStatus = async (id: string) => {
     try {
-      const r = await fetch(`${ERP_INT_URL}?finder=ESSJobStatusRF;requestId=${encodeURIComponent(id)}`, { headers: FUSION_HDRS });
+      const r = await fetch(`${ERP_INT_URL}?finder=ESSJobStatusRF;requestId=${encodeURIComponent(id)}`, { headers: HEADERS });
       const text = await r.text(); let data: any = null; try { data = JSON.parse(text); } catch { /* raw */ }
       const st = data?.items?.[0]?.RequestStatus ?? data?.RequestStatus ?? data?.requestStatus ?? (r.ok ? 'UNKNOWN' : `HTTP ${r.status}`);
       setStatus(String(st));
@@ -1266,7 +1265,7 @@ const effContextFor = (ctx: { category: string; contextCode: string }) => EFF_CA
 interface EffRow { context: string; category?: string; segs: { k: string; v: any }[]; href: string }
 const fetchEffRows = async (baseHref: string): Promise<EffRow[]> => {
   const aiUrl = `${baseHref}/child/additionalInformation`;
-  const r = await fetch(`${aiUrl}?onlyData=false&limit=200`, { headers: FUSION_HDRS });
+  const r = await fetch(`${aiUrl}?onlyData=false&limit=200`, { headers: HEADERS });
   if (!r.ok) throw new Error(`HTTP ${r.status} on additionalInformation`);
   const d = await r.json();
   const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -1275,7 +1274,7 @@ const fetchEffRows = async (baseHref: string): Promise<EffRow[]> => {
     const link = (it.links ?? []).find((x: any) => /EffB.+privateVO$/i.test(x.name || x.rel || ''));
     if (!link?.href) continue;
     const voName = (link.name || '').match(/EffB.+privateVO$/i)?.[0] ?? link.name;
-    const cr = await fetch(`${fusionHref(link.href)}?onlyData=true&limit=200`, { headers: FUSION_HDRS });
+    const cr = await fetch(`${fusionHref(link.href)}?onlyData=true&limit=200`, { headers: HEADERS });
     if (!cr.ok) continue;
     const cd = await cr.json();
     const segRows: any[] = Array.isArray(cd) ? cd : (cd.items ?? []);
@@ -1296,17 +1295,17 @@ const fetchEffRows = async (baseHref: string): Promise<EffRow[]> => {
 // Write EFF segment values onto a record (order header or a line) — PATCH the
 // existing nested VO row in place, else create the additionalInformation row +
 // nested segment row. baseHref is the record self href.
-const EFF_JSON_HDRS = { ...FUSION_HDRS, 'Content-Type': 'application/vnd.oracle.adf.resourceitem+json' };
+const EFF_JSON_HDRS = { ...HEADERS, 'Content-Type': 'application/vnd.oracle.adf.resourceitem+json' };
 const writeEffToRecord = async (baseHref: string, ctx: EffCtx, vals: Record<string, any>): Promise<void> => {
   let aiHref = '', voHref = '';
-  const r = await fetch(`${baseHref}/child/additionalInformation?onlyData=false&limit=200`, { headers: FUSION_HDRS });
+  const r = await fetch(`${baseHref}/child/additionalInformation?onlyData=false&limit=200`, { headers: HEADERS });
   if (r.ok) {
     const d = await r.json();
     for (const it of (d.items ?? [])) {
       const link = (it.links ?? []).find((x: any) => /EffB.+privateVO$/i.test(x.name || x.rel || ''));
       if (!link?.href) continue;
       aiHref = fusionHref((it.links ?? []).find((x: any) => x.rel === 'self')?.href ?? '');
-      const cr = await fetch(`${fusionHref(link.href)}?onlyData=false&limit=200`, { headers: FUSION_HDRS });
+      const cr = await fetch(`${fusionHref(link.href)}?onlyData=false&limit=200`, { headers: HEADERS });
       if (cr.ok) { const seg = ((await cr.json()).items ?? [])[0]; if (seg) voHref = fusionHref((seg.links ?? []).find((x: any) => x.rel === 'self')?.href ?? ''); }
       break;
     }
@@ -1866,7 +1865,7 @@ const SearchTab: React.FC<{ onOpen: (order: any) => void; onEdit: (order: any) =
     setApiRun({ running: true });
     const started = Date.now();
     try {
-      const r = await fetchWithTimeout(url, { headers: FUSION_HDRS });
+      const r = await fetchWithTimeout(url, { headers: HEADERS });
       const text = await r.text();
       setApiRun({ running: false, ok: r.ok, status: `HTTP ${r.status} ${r.statusText} · ${text.length} bytes · ${Date.now() - started}ms`, body: text.slice(0, 4000) });
     } catch (e: any) {
@@ -1894,7 +1893,7 @@ const SearchTab: React.FC<{ onOpen: (order: any) => void; onEdit: (order: any) =
       setBusUnitsLoading(true);
       try {
         const url = `${FUSION_BASE}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`;
-        const r = await fetchWithTimeout(url, { headers: FUSION_HDRS });
+        const r = await fetchWithTimeout(url, { headers: HEADERS });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
         const items = d.items ?? [];
@@ -1919,7 +1918,7 @@ const SearchTab: React.FC<{ onOpen: (order: any) => void; onEdit: (order: any) =
 
   // Load order types from standardLookups
   useEffect(() => {
-    fetch(`${FUSION_BASE}/standardLookups?q=LookupType LIKE 'ORA_DOO_ORDER_TYPES%'&expand=lookupCodes&onlyData=true&limit=500`, { headers: FUSION_HDRS })
+    fetch(`${FUSION_BASE}/standardLookups?q=LookupType LIKE 'ORA_DOO_ORDER_TYPES%'&expand=lookupCodes&onlyData=true&limit=500`, { headers: HEADERS })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => {
         const items = d.items ?? [];
@@ -1965,7 +1964,7 @@ const SearchTab: React.FC<{ onOpen: (order: any) => void; onEdit: (order: any) =
     try {
       const stripped = searchUrl.replace(/[?&]limit=\d+/gi, '').replace(/[?&]offset=\d+/gi, '').replace(/\?&/, '?').replace(/&&/g, '&');
       const sep = stripped.includes('?') ? '&' : '?';
-      const r = await fetchWithTimeout(`${stripped}${sep}limit=${SEARCH_LIMIT}&offset=${off}`, { headers: FUSION_HDRS });
+      const r = await fetchWithTimeout(`${stripped}${sep}limit=${SEARCH_LIMIT}&offset=${off}`, { headers: HEADERS });
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
       const d = await r.json();
       const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -3062,7 +3061,7 @@ const INV_ORGS_URL = `${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=
 const usePayablesBUs = (): any[] => {
   const [bUnits, setBUnits] = useState<any[]>([]);
   useEffect(() => {
-    fetch(`${FUSION_BASE}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`, { headers: FUSION_HDRS })
+    fetch(`${FUSION_BASE}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`, { headers: HEADERS })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => { const seen = new Set<string>(); setBUnits((d.items ?? []).filter((b: any) => { const n = b.businessUnitName; if (!n || seen.has(n)) return false; seen.add(n); return true; })); })
       .catch(() => { /* manual */ });
@@ -3073,7 +3072,7 @@ const usePayablesBUs = (): any[] => {
 const useInvOrgs = (): any[] => {
   const [orgRows, setOrgRows] = useState<any[]>([]);
   useEffect(() => {
-    fetch(INV_ORGS_URL, { headers: FUSION_HDRS })
+    fetch(INV_ORGS_URL, { headers: HEADERS })
       .then(r => r.ok ? r.json() : Promise.reject()).then(d => setOrgRows(d.items ?? [])).catch(() => { /* manual */ });
   }, []);
   return orgRows;
@@ -3188,7 +3187,7 @@ const fetchOrderCustomerRefs = async (order: any, providedLines?: any[]): Promis
     if (!h) return null;
     try {
       const url = h + (h.includes('?') ? '&' : '?') + 'onlyData=true&limit=1';
-      const r = await fetch(url, { headers: FUSION_HDRS });
+      const r = await fetch(url, { headers: HEADERS });
       if (!r.ok) return null;
       const d = await r.json();
       return (d.items && d.items[0]) ?? null;
@@ -3223,14 +3222,14 @@ const LOT_PAGE = 25;
 export const itemCostsUrlFor = (item: string, offset = 0) =>
   `${LATEST_URL}/itemCosts?q=${encodeURIComponent(`ItemNumber=${item}`)}&onlyData=true&limit=${LOT_PAGE}&offset=${offset}`;
 async function fetchItemCostRows(item: string, org?: string, offset = 0): Promise<{ rows: any[]; hasMore: boolean }> {
-  const r = await fetch(itemCostsUrlFor(item, offset), { headers: FUSION_HDRS });
+  const r = await fetch(itemCostsUrlFor(item, offset), { headers: HEADERS });
   const d = await r.json();
   const rows = ((d.items ?? []) as any[]).filter(x => rowOrgMatches(x, org));
   return { rows, hasMore: !!d.hasMore };
 }
 async function fetchOnhand(item: string, invOrg: string, subinv?: string, lot?: string): Promise<{ qty: number; lots: string[] }> {
   let q = `OrganizationCode=${invOrg};ItemNumber=${item}`; if (subinv) q += `;SubinventoryCode=${subinv}`;
-  const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&limit=${LOT_PAGE}`, { headers: FUSION_HDRS });
+  const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&limit=${LOT_PAGE}`, { headers: HEADERS });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const d = await r.json();
   const lotRows: any[] = [];
@@ -3238,7 +3237,7 @@ async function fetchOnhand(item: string, invOrg: string, subinv?: string, lot?: 
     if (pf(b, ['LotNumber']) != null) { lotRows.push(b); continue; }
     const child = (b.links ?? []).find((l: any) => l.rel === 'child' && /lot/i.test(l.href || l.name || ''));
     if (child?.href) {
-      try { const cr = await fetch(`${fusionHref(child.href)}${child.href.includes('?') ? '&' : '?'}limit=500`, { headers: FUSION_HDRS }); const cd = await cr.json(); (cd.items ?? []).forEach((x: any) => lotRows.push(x)); }
+      try { const cr = await fetch(`${fusionHref(child.href)}${child.href.includes('?') ? '&' : '?'}limit=500`, { headers: HEADERS }); const cd = await cr.json(); (cd.items ?? []).forEach((x: any) => lotRows.push(x)); }
       catch { /* skip this balance's lot detail */ }
     } else { lotRows.push(b); }
   }
@@ -3261,7 +3260,7 @@ async function fetchReserveOptions(item: string, invOrg: string, subinv?: string
   };
   let q = `OrganizationCode=${invOrg};ItemNumber=${item}`; if (subinv) q += `;SubinventoryCode=${subinv}`;
   try {
-    const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&limit=${LOT_PAGE}`, { headers: FUSION_HDRS });
+    const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&limit=${LOT_PAGE}`, { headers: HEADERS });
     if (r.ok) {
       const d = await r.json();
       for (const b of (d.items ?? [])) {
@@ -3273,7 +3272,7 @@ async function fetchReserveOptions(item: string, invOrg: string, subinv?: string
         const child = (b.links ?? []).find((l: any) => l.rel === 'child' && /lot/i.test(l.href || l.name || ''));
         if (child?.href) {
           try {
-            const cr = await fetch(`${fusionHref(child.href)}${child.href.includes('?') ? '&' : '?'}limit=500`, { headers: FUSION_HDRS });
+            const cr = await fetch(`${fusionHref(child.href)}${child.href.includes('?') ? '&' : '?'}limit=500`, { headers: HEADERS });
             const cd = await cr.json();
             const lrows: any[] = cd.items ?? [];
             if (lrows.length) lrows.forEach(x => push(pf(x, ['LotNumber']), pf(x, ['SubinventoryCode']) ?? sub, onhQtyOf(x)));
@@ -3327,7 +3326,7 @@ async function fetchShippedLotSerials(item: string, org: string, orderNumbers: (
     const q = `OrganizationCode=${org};ItemNumber=${item};TransactionType=Sales order issue;TransactionSourceName=${srcName}`;
     const url = `${FUSION_BASE}/inventoryCompletedTransactions?q=${encodeURIComponent(q)}&expand=lots,lots.lotSerials,serials&onlyData=true&limit=200`;
     try {
-      const r = await fetch(url, { headers: FUSION_HDRS });
+      const r = await fetch(url, { headers: HEADERS });
       if (!r.ok) return;
       const d = await r.json();
       for (const t of (d.items ?? [])) {
@@ -3353,7 +3352,7 @@ async function fetchShippedLotSerials(item: string, org: string, orderNumbers: (
 async function searchItems(text: string, org?: string): Promise<any[]> {
   const t = text.trim(); if (!t) return [];
   const esc = t.replace(/'/g, "''");
-  const one = async (q: string) => { try { const r = await fetch(`${FUSION_BASE}/itemsV2?q=${encodeURIComponent(q)}&limit=25&onlyData=true`, { headers: FUSION_HDRS }); const d = await r.json(); return (d.items ?? []) as any[]; } catch { return []; } };
+  const one = async (q: string) => { try { const r = await fetch(`${FUSION_BASE}/itemsV2?q=${encodeURIComponent(q)}&limit=25&onlyData=true`, { headers: HEADERS }); const d = await r.json(); return (d.items ?? []) as any[]; } catch { return []; } };
   const orgQ = org ? `;OrganizationCode=${org}` : '';
   const [a, b] = await Promise.all([one(`ItemNumber LIKE '${esc}%'${orgQ}`), one(`ItemDescription LIKE '%${esc}%'${orgQ}`)]);
   const map = new Map<string, any>();
@@ -3871,7 +3870,7 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
       const item = it.ItemNumber;
       try {
         // itemCosts is queryable directly by ItemNumber; org lives in ValuationUnit.
-        const r = await fetch(`${LATEST_URL}/itemCosts?q=${encodeURIComponent(`ItemNumber=${item}`)}&onlyData=true&limit=500`, { headers: FUSION_HDRS });
+        const r = await fetch(`${LATEST_URL}/itemCosts?q=${encodeURIComponent(`ItemNumber=${item}`)}&onlyData=true&limit=500`, { headers: HEADERS });
         const d = await r.json();
         const matched = (d.items ?? []).filter((x: any) => rowOrgMatches(x, org));
         const row = matched[0];
@@ -3906,7 +3905,7 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
     setOnh(p => ({ ...p, [item]: { loading: true } }));
     try {
       let q = `OrganizationCode=${invOrg};ItemNumber=${item}`; if (subinv) q += `;SubinventoryCode=${subinv}`;
-      const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&limit=500`, { headers: FUSION_HDRS });
+      const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&limit=500`, { headers: HEADERS });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       const balances: any[] = d.items ?? [];
@@ -3918,7 +3917,7 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
         const child = (b.links ?? []).find((l: any) => l.rel === 'child' && /lot/i.test(l.href || l.name || ''));
         if (child?.href) {
           try {
-            const cr = await fetch(`${fusionHref(child.href)}${child.href.includes('?') ? '&' : '?'}limit=500`, { headers: FUSION_HDRS });
+            const cr = await fetch(`${fusionHref(child.href)}${child.href.includes('?') ? '&' : '?'}limit=500`, { headers: HEADERS });
             const cd = await cr.json();
             (cd.items ?? []).forEach((x: any) => lotRows.push(x));
           } catch { /* skip this balance's lot detail */ }
@@ -4069,7 +4068,7 @@ const PriceListPanel: React.FC<{ org?: string; ccy?: string; onAdd: (items: any[
       const priceListsUrl = `${FUSION_BASE}/priceLists?q=${encodeURIComponent(q)}&onlyData=true&limit=500`;
       setApiDetails({ priceListsUrl });
 
-      const r = await fetch(priceListsUrl, { headers: FUSION_HDRS });
+      const r = await fetch(priceListsUrl, { headers: HEADERS });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       setPriceLists(d.items ?? []);
@@ -4086,7 +4085,7 @@ const PriceListPanel: React.FC<{ org?: string; ccy?: string; onAdd: (items: any[
 
       const all: any[] = []; let offset = 0;
       for (let i = 0; i < 15; i++) {
-        const r = await fetch(`${FUSION_BASE}/priceLists/${encodeURIComponent(id)}/child/items?expand=charges&onlyData=true&limit=100&offset=${offset}`, { headers: FUSION_HDRS });
+        const r = await fetch(`${FUSION_BASE}/priceLists/${encodeURIComponent(id)}/child/items?expand=charges&onlyData=true&limit=100&offset=${offset}`, { headers: HEADERS });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json(); all.push(...(d.items ?? []));
         if (!d.hasMore) break; offset += 100;
@@ -4317,7 +4316,7 @@ const OnhandPanel: React.FC<{ org?: string; subinv?: string; ccy?: string; onAdd
         capturedUrl = `${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&onlyData=true&limit=100`;
       } else {
         // For description search, we'll fetch items by description from itemCosts first
-        const itemRes = await fetch(`${LATEST_URL}/itemCosts?q=${encodeURIComponent(`ItemDescription=${query.trim()}`)}&onlyData=true&limit=100`, { headers: FUSION_HDRS });
+        const itemRes = await fetch(`${LATEST_URL}/itemCosts?q=${encodeURIComponent(`ItemDescription=${query.trim()}`)}&onlyData=true&limit=100`, { headers: HEADERS });
         if (!itemRes.ok) throw new Error(`HTTP ${itemRes.status} searching items`);
         const itemData = await itemRes.json();
         const itemNumbers = (itemData.items ?? []).map((i: any) => pf(i, ['ItemNumber', 'Item'])).filter(Boolean);
@@ -4340,7 +4339,7 @@ const OnhandPanel: React.FC<{ org?: string; subinv?: string; ccy?: string; onAdd
         await Promise.all(itemNumbers.map(async (itemNum: string) => {
           for (let i = 0; i < 5; i++) {
             const qry = `OrganizationCode=${org}${subinv ? `;SubinventoryCode=${subinv}` : ''};ItemNumber=${itemNum}`;
-            const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(qry)}&onlyData=true&limit=100&offset=${i * 100}`, { headers: FUSION_HDRS });
+            const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(qry)}&onlyData=true&limit=100&offset=${i * 100}`, { headers: HEADERS });
             if (!r.ok) return;
             const d = await r.json();
             balances.push(...(d.items ?? []));
@@ -4351,7 +4350,7 @@ const OnhandPanel: React.FC<{ org?: string; subinv?: string; ccy?: string; onAdd
 
       if (type === 'itemNumber') {
         for (let i = 0; i < 5; i++) {
-          const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&onlyData=true&limit=100&offset=${i * 100}`, { headers: FUSION_HDRS });
+          const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&onlyData=true&limit=100&offset=${i * 100}`, { headers: HEADERS });
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const d = await r.json();
           balances.push(...(d.items ?? []));
@@ -4378,7 +4377,7 @@ const OnhandPanel: React.FC<{ org?: string; subinv?: string; ccy?: string; onAdd
       const uomData: Record<string, { uom?: string; desc?: string }> = {};
       await Promise.all(itemsArray.map(async (item) => {
         try {
-          const r = await fetch(`${LATEST_URL}/itemCosts?q=${encodeURIComponent(`ItemNumber=${item.item}`)}&onlyData=true&limit=1`, { headers: FUSION_HDRS });
+          const r = await fetch(`${LATEST_URL}/itemCosts?q=${encodeURIComponent(`ItemNumber=${item.item}`)}&onlyData=true&limit=1`, { headers: HEADERS });
           if (r.ok) {
             const d = await r.json();
             const row = d.items?.[0];
@@ -4639,7 +4638,7 @@ const RegisterOrderModal: React.FC<{ open: boolean; onClose: () => void; onProce
     const url = `${FUSION_BASE}/standardLookups/ORA_DOO_ORDER_TYPES/child/lookupCodes/${lookupCode}/child/lookupsDFF`;
     trackApiCall(`Branch PO Code (${lookupCode})`, url);
     try {
-      const res = await fetch(url, { headers: FUSION_HDRS });
+      const res = await fetch(url, { headers: HEADERS });
       if (res.ok) {
         const data = await res.json();
         return data.items?.[0]?.branchPoCode || '';
@@ -4655,7 +4654,7 @@ const RegisterOrderModal: React.FC<{ open: boolean; onClose: () => void; onProce
     setOrderTypeOpts([]);
     const url = `${FUSION_BASE}/standardLookups?q=LookupType LIKE 'ORA_DOO_ORDER_TYPES%'&expand=lookupCodes&onlyData=true&limit=500`;
     trackApiCall('Order Types (standardLookups)', url);
-    fetch(url, { headers: FUSION_HDRS })
+    fetch(url, { headers: HEADERS })
       .then(r => {
         if (!r.ok) {
           return r.text().then(text => {
@@ -4738,7 +4737,7 @@ const RegisterOrderModal: React.FC<{ open: boolean; onClose: () => void; onProce
     form.setFieldsValue({ subinventory: undefined }); setSubs([]);
     const url = `${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(code)}&onlyData=true&limit=500`;
     trackApiCall(`Subinventories (${code})`, url);
-    fetch(url, { headers: FUSION_HDRS })
+    fetch(url, { headers: HEADERS })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => setSubs(Array.from(new Set((d.items ?? []).map((s: any) => s.SecondaryInventoryName).filter(Boolean))).sort() as string[])).catch(() => setSubs([]));
   };
@@ -5108,7 +5107,7 @@ const useSalesCredits = (orderKey?: string) => {
     if (!orderKey) { setRows([]); return; }
     setLoading(true);
     try {
-      const r = await fetch(`${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(orderKey)}/child/salesCredits?limit=100`, { headers: FUSION_HDRS });
+      const r = await fetch(`${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(orderKey)}/child/salesCredits?limit=100`, { headers: HEADERS });
       const d = await r.json().catch(() => ({} as any));
       setRows(d.items ?? []);
     } catch { setRows([]); } finally { setLoading(false); }
@@ -5134,7 +5133,7 @@ const SalesCreditEditModal: React.FC<{ editing: ScEdit; orderKey: string; salesR
     const url = edit ? local.href! : base;
     setBusy(true); setErr('');
     try {
-      const r = await fetch(url, { method: edit ? 'PATCH' : 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(url, { method: edit ? 'PATCH' : 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const t = await r.text();
       if (!r.ok) throw new Error([`${edit ? 'PATCH' : 'POST'} ${url}`, `HTTP ${r.status}`, ...collectOrderErrors(null, t, true)].join('\n'));
       message.success(edit ? 'Sales credit updated' : 'Sales credit added'); onSaved();
@@ -5203,13 +5202,13 @@ const NotesAttachmentsPanel: React.FC<{ orderKey: string }> = ({ orderKey }) => 
     : null;
   const loadNotes = useCallback(async () => {
     setNotesLoading(true);
-    try { const r = await fetch(`${NOTES}?limit=100`, { headers: FUSION_HDRS }); const d = await r.json().catch(() => ({} as any)); setNotes(d.items ?? []); }
+    try { const r = await fetch(`${NOTES}?limit=100`, { headers: HEADERS }); const d = await r.json().catch(() => ({} as any)); setNotes(d.items ?? []); }
     catch { setNotes([]); } finally { setNotesLoading(false); }
   }, [NOTES]);
   const saveNote = async () => {
     if (!noteReq) return; setNoteBusy(true); setNoteErr('');
     try {
-      const r = await fetch(noteReq.url, { method: noteReq.method, headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(noteReq.body) });
+      const r = await fetch(noteReq.url, { method: noteReq.method, headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(noteReq.body) });
       const t = await r.text();
       if (!r.ok) throw new Error([`${noteReq.method} ${noteReq.url}`, `HTTP ${r.status}`, ...collectOrderErrors(null, t, true)].join('\n'));
       message.success(noteReq.method === 'PATCH' ? 'Note updated' : 'Note added'); setNoteEdit(null); loadNotes();
@@ -5219,7 +5218,7 @@ const NotesAttachmentsPanel: React.FC<{ orderKey: string }> = ({ orderKey }) => 
     title: 'Delete this note?', okText: 'Delete', okButtonProps: { danger: true },
     onOk: async () => {
       try {
-        const r = await fetch(selfHref(row), { method: 'DELETE', headers: FUSION_HDRS });
+        const r = await fetch(selfHref(row), { method: 'DELETE', headers: HEADERS });
         if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`);
         message.success('Note deleted'); loadNotes();
       } catch (e: any) { message.error(e?.message || 'Delete failed'); }
@@ -5234,7 +5233,7 @@ const NotesAttachmentsPanel: React.FC<{ orderKey: string }> = ({ orderKey }) => 
   const [preview, setPreview] = useState<{ title: string; kind: 'image' | 'pdf' | 'text' | 'other'; src?: string; text?: string } | null>(null);
   const loadAtts = useCallback(async () => {
     setAttLoading(true);
-    try { const r = await fetch(`${ATTS}?limit=100`, { headers: FUSION_HDRS }); const d = await r.json().catch(() => ({} as any)); setAtts(d.items ?? []); }
+    try { const r = await fetch(`${ATTS}?limit=100`, { headers: HEADERS }); const d = await r.json().catch(() => ({} as any)); setAtts(d.items ?? []); }
     catch { setAtts([]); } finally { setAttLoading(false); }
   }, [ATTS]);
   useEffect(() => { loadNotes(); loadAtts(); }, [loadNotes, loadAtts]);
@@ -5253,7 +5252,7 @@ const NotesAttachmentsPanel: React.FC<{ orderKey: string }> = ({ orderKey }) => 
       } else {
         body = { DatatypeCode: 'WEB_PAGE', Title: attAdd.title || attAdd.url, CategoryName: 'MISC', Url: attAdd.url };
       }
-      const r = await fetch(ATTS, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(ATTS, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!r.ok) { const t = await r.text(); throw new Error(collectOrderErrors(null, t, true)[0] || `HTTP ${r.status}`); }
       message.success('Attachment added'); setAttAdd(null); loadAtts();
     } catch (e: any) { message.error(e?.message || 'Upload failed'); } finally { setAttBusy(false); }
@@ -5262,7 +5261,7 @@ const NotesAttachmentsPanel: React.FC<{ orderKey: string }> = ({ orderKey }) => 
     title: 'Delete this attachment?', okText: 'Delete', okButtonProps: { danger: true },
     onOk: async () => {
       try {
-        const r = await fetch(selfHref(row), { method: 'DELETE', headers: FUSION_HDRS });
+        const r = await fetch(selfHref(row), { method: 'DELETE', headers: HEADERS });
         if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`);
         message.success('Attachment deleted'); loadAtts();
       } catch (e: any) { message.error(e?.message || 'Delete failed'); }
@@ -5282,7 +5281,7 @@ const NotesAttachmentsPanel: React.FC<{ orderKey: string }> = ({ orderKey }) => 
     const isImg = /image\//i.test(ctype) || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fname);
     const isPdf = /pdf/i.test(ctype) || /\.pdf$/i.test(fname);
     try {
-      const r = await fetch(href, { headers: FUSION_HDRS });
+      const r = await fetch(href, { headers: HEADERS });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const blob = await r.blob();
       const src = URL.createObjectURL(blob);
@@ -5450,7 +5449,7 @@ const ChargesModal: React.FC<{ open: boolean; onClose: () => void; orderKey: str
   const loadExisting = useCallback(async () => {
     const url = chargesUrl(line); if (!url) { setExisting([]); return; }
     setExLoading(true);
-    try { const r = await fetch(`${url}${url.includes('?') ? '&' : '?'}expand=chargeComponents&limit=50`, { headers: FUSION_HDRS }); const d = await r.json().catch(() => ({} as any)); setExisting(d.items ?? []); }
+    try { const r = await fetch(`${url}${url.includes('?') ? '&' : '?'}expand=chargeComponents&limit=50`, { headers: HEADERS }); const d = await r.json().catch(() => ({} as any)); setExisting(d.items ?? []); }
     catch { setExisting([]); } finally { setExLoading(false); }
   }, [line?.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (open && line) loadExisting(); }, [open, line?.key, loadExisting]);
@@ -5493,14 +5492,14 @@ const ChargesModal: React.FC<{ open: boolean; onClose: () => void; orderKey: str
         const fails: string[] = [];
         for (const { line: l, share } of shares) {
           const u = chargesUrl(l); const b = makeBody(l, share, 1);
-          try { const r = await fetch(u, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); if (!r.ok) { const t = await r.text(); fails.push(`${l.itemNumber}: ${collectOrderErrors(null, t, true)[0] || 'HTTP ' + r.status}`); } }
+          try { const r = await fetch(u, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); if (!r.ok) { const t = await r.text(); fails.push(`${l.itemNumber}: ${collectOrderErrors(null, t, true)[0] || 'HTTP ' + r.status}`); } }
           catch (e: any) { fails.push(`${l.itemNumber}: ${e?.message}`); }
         }
         if (fails.length) { setErr(fails.join('\n')); message.error(`${fails.length} of ${shares.length} charges failed`); }
         else { message.success(`Charge of ${fmtAmount(num(amount), ccy)} split across ${shares.length} line(s)`); setAmount(0); loadExisting(); onChanged?.(); }
       } else {
         if (!url) { message.error('No line selected'); return; }
-        const r = await fetch(url, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const r = await fetch(url, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const t = await r.text();
         if (!r.ok) throw new Error([`POST ${url}`, `HTTP ${r.status}`, ...collectOrderErrors(null, t, true)].join('\n'));
         message.success(`Charge of ${fmtAmount(num(amount), ccy)} added`); setAmount(0); loadExisting(); onChanged?.();
@@ -5510,7 +5509,7 @@ const ChargesModal: React.FC<{ open: boolean; onClose: () => void; orderKey: str
   const delCharge = (row: any) => Modal.confirm({
     title: 'Delete this charge?', okText: 'Delete', okButtonProps: { danger: true },
     content: <div style={{ fontSize: 12, fontFamily: 'monospace', wordBreak: 'break-all' }}>DELETE {selfHref(row)}</div>,
-    onOk: async () => { try { const r = await fetch(selfHref(row), { method: 'DELETE', headers: FUSION_HDRS }); if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`); message.success('Charge deleted'); loadExisting(); onChanged?.(); } catch (e: any) { message.error(e?.message || 'Delete failed'); } },
+    onOk: async () => { try { const r = await fetch(selfHref(row), { method: 'DELETE', headers: HEADERS }); if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`); message.success('Charge deleted'); loadExisting(); onChanged?.(); } catch (e: any) { message.error(e?.message || 'Delete failed'); } },
   });
   const chargeAmt = (c: any) => { const comps = c.chargeComponents?.items ?? c.chargeComponents ?? []; const net = comps.find((x: any) => x.PriceElementCode === 'QP_NET_PRICE') ?? comps.find((x: any) => x.PriceElementCode === 'QP_LIST_PRICE'); return num(pf(net ?? {}, ['HeaderCurrencyExtendedAmount', 'HeaderCurrencyUnitPrice'])) || num(pf(c, ['GSAUnitPrice'])); };
 
@@ -5624,7 +5623,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     setLotApi(s => ({ ...s, running: true, status: undefined, body: undefined }));
     const started = Date.now();
     try {
-      const r = await fetchWithTimeout(lotApi.url, { headers: FUSION_HDRS });
+      const r = await fetchWithTimeout(lotApi.url, { headers: HEADERS });
       const text = await r.text();
       setLotApi(s => ({ ...s, running: false, ok: r.ok, status: `HTTP ${r.status} ${r.statusText} · ${text.length} bytes · ${Date.now() - started}ms`, body: text.slice(0, 4000) }));
     } catch (e: any) {
@@ -5820,7 +5819,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
   const [returnReasonOpts, setReturnReasonOpts] = useState(RETURN_REASONS);
   useEffect(() => {
     if (!returnMode) return;
-    fetch(RETURN_REASON_LOV, { headers: FUSION_HDRS })
+    fetch(RETURN_REASON_LOV, { headers: HEADERS })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(d => {
         const opts = (d.items ?? []).map((it: any) => ({ value: it.LookupCode, label: it.Meaning ?? it.LookupCode })).filter((o: any) => o.value);
@@ -5846,11 +5845,11 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
   const [isBranchBUDisabled, setIsBranchBUDisabled] = useState(false);  // disable branchBU field if it has a stored value
   useEffect(() => {
     const desc = (poly: string) => `${FUSION_BASE}/salesOrdersForOrderHub/describe?polymorphicType=${encodeURIComponent(poly)}`;
-    fetch(desc('salesOrdersForOrderHub.lines.additionalInformation:DOO_FULFILL_LINES_ADD_INFO'), { headers: FUSION_HDRS })
+    fetch(desc('salesOrdersForOrderHub.lines.additionalInformation:DOO_FULFILL_LINES_ADD_INFO'), { headers: HEADERS })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(d => { setEffDescribe(p => ({ ...p, line: d })); const ctx = parseEffContexts(d, 'DOO_FULFILL_LINES_ADD_INFO'); setEffMeta(parseEffDescribe(d) ?? FALLBACK_LINE_EFF_META); setLineEffCtxs(ctx.length ? ctx : FALLBACK_LINE_EFF); })
       .catch(() => { setEffMeta(FALLBACK_LINE_EFF_META); setLineEffCtxs(FALLBACK_LINE_EFF); });
-    fetch(desc('salesOrdersForOrderHub.additionalInformation:DOO_HEADERS_ADD_INFO'), { headers: FUSION_HDRS })
+    fetch(desc('salesOrdersForOrderHub.additionalInformation:DOO_HEADERS_ADD_INFO'), { headers: HEADERS })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(d => { setEffDescribe(p => ({ ...p, header: d })); const ctx = parseEffContexts(d, 'DOO_HEADERS_ADD_INFO'); const use = ctx.length ? ctx : FALLBACK_HDR_EFF; setHdrEffCtxs(use); setHdrEffCtxSel(prev => prev ?? use[0]?.voName); })
       .catch(() => { setHdrEffCtxs(FALLBACK_HDR_EFF); setHdrEffCtxSel(prev => prev ?? FALLBACK_HDR_EFF[0]?.voName); });
@@ -5877,13 +5876,13 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       let r: Response;
       if (hdrEffVoHref) {
         // Update the existing segment row in place.
-        r = await fetch(hdrEffVoHref, { method: 'PATCH', headers: { ...FUSION_HDRS, 'Content-Type': 'application/vnd.oracle.adf.resourceitem+json' }, body: JSON.stringify(segVals) });
+        r = await fetch(hdrEffVoHref, { method: 'PATCH', headers: { ...HEADERS, 'Content-Type': 'application/vnd.oracle.adf.resourceitem+json' }, body: JSON.stringify(segVals) });
       } else if (hdrEffAiHref) {
         // Category row exists but no segment row yet — create the nested VO row.
-        r = await fetch(`${hdrEffAiHref}/child/${hdrEffActive.voName}`, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/vnd.oracle.adf.resourceitem+json' }, body: JSON.stringify({ ContextCode: effContextFor(hdrEffActive), ...segVals }) });
+        r = await fetch(`${hdrEffAiHref}/child/${hdrEffActive.voName}`, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/vnd.oracle.adf.resourceitem+json' }, body: JSON.stringify({ ContextCode: effContextFor(hdrEffActive), ...segVals }) });
       } else if (base) {
         // Nothing yet — create the category row with the nested segment row inline.
-        r = await fetch(`${base}/child/additionalInformation`, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/vnd.oracle.adf.resourceitem+json' }, body: JSON.stringify({ Category: effCategoryFor(hdrEffActive), [hdrEffActive.voName]: [{ ContextCode: effContextFor(hdrEffActive), ...segVals }] }) });
+        r = await fetch(`${base}/child/additionalInformation`, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/vnd.oracle.adf.resourceitem+json' }, body: JSON.stringify({ Category: effCategoryFor(hdrEffActive), [hdrEffActive.voName]: [{ ContextCode: effContextFor(hdrEffActive), ...segVals }] }) });
       } else { message.error('No order reference to save against'); setHdrEffSaving(false); return; }
       const txt = await r.text();
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${txt.slice(0, 300)}`);
@@ -6190,7 +6189,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch(`${FUSION_BASE}/standardLookups?q=LookupType LIKE 'ORA_DOO_ORDER_TYPES%'&expand=lookupCodes&onlyData=true&limit=500`, { headers: FUSION_HDRS });
+        const r = await fetch(`${FUSION_BASE}/standardLookups?q=LookupType LIKE 'ORA_DOO_ORDER_TYPES%'&expand=lookupCodes&onlyData=true&limit=500`, { headers: HEADERS });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
         const items = d.items ?? [];
@@ -6209,7 +6208,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
             if (lc.EnabledFlag === 'Y' && lc.Tag === 'BRANCH SALES') {
               try {
                 const url = `${FUSION_BASE}/standardLookups/ORA_DOO_ORDER_TYPES/child/lookupCodes/${lc.LookupCode}/child/lookupsDFF`;
-                const res = await fetch(url, { headers: FUSION_HDRS });
+                const res = await fetch(url, { headers: HEADERS });
                 if (res.ok) {
                   const data = await res.json();
                   const branchPoCode = data.items?.[0]?.branchPoCode;
@@ -6241,7 +6240,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     if (!base) return;
     (async () => {
       try {
-        const r = await fetch(`${base}/child/additionalInformation?onlyData=false&limit=200`, { headers: FUSION_HDRS });
+        const r = await fetch(`${base}/child/additionalInformation?onlyData=false&limit=200`, { headers: HEADERS });
         if (!r.ok) return;
         const d = await r.json();
         const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -6251,7 +6250,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
           const aiSelf = (it.links ?? []).find((x: any) => x.rel === 'self')?.href;
           if (aiSelf) setHdrEffAiHref(fusionHref(aiSelf));
           learnEff('DOO_HEADERS_ADD_INFO', it.Category ?? it.CategoryCode);   // real discriminator for writes
-          const cr = await fetch(`${fusionHref(link.href)}?onlyData=false&limit=200`, { headers: FUSION_HDRS });
+          const cr = await fetch(`${fusionHref(link.href)}?onlyData=false&limit=200`, { headers: HEADERS });
           if (!cr.ok) continue;
           const cd = await cr.json();
           const seg = (Array.isArray(cd) ? cd : (cd.items ?? []))[0];
@@ -6420,7 +6419,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
   const syncHdr = () => setHdr(prev => ({ ...prev, ...form.getFieldsValue() }));
   const loadSubs = useCallback((org?: string) => {
     if (!org) { setSubs([]); return; }
-    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: FUSION_HDRS })
+    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: HEADERS })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => setSubs(Array.from(new Set((d.items ?? []).map((s: any) => s.SecondaryInventoryName).filter(Boolean))).sort() as string[])).catch(() => setSubs([]));
   }, []);
@@ -6455,8 +6454,8 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       const filterQuery = `ManagementBusinessUnitName=${buName}`;
       const url = `${FUSION_BASE}/inventoryOrganizations?q=${filterQuery}&onlyData=true&limit=500`;
 
-      console.log('Fetching inventory organizations:', { buName, url, headers: FUSION_HDRS });
-      fetch(url, { headers: FUSION_HDRS })
+      console.log('Fetching inventory organizations:', { buName, url, headers: HEADERS });
+      fetch(url, { headers: HEADERS })
         .then(r => {
           console.log('Ship-To Locations Response Status:', r.status, r.statusText);
           return r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}: ${r.statusText}`));
@@ -6489,7 +6488,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     try {
       const url = `${FUSION_BASE}/suppliers?q=Supplier LIKE '*${term}*' OR SupplierNumber LIKE '*${term}*'&limit=20&expand=sites&onlyData=true`;
       console.log('Fetching suppliers with URL:', url);
-      const r = await fetch(url, { headers: FUSION_HDRS });
+      const r = await fetch(url, { headers: HEADERS });
       if (r.ok) {
         const data = await r.json();
         console.log('Supplier search response:', data);
@@ -6568,7 +6567,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     const { href, draft, method, body } = lineRemoveRequest(l);
     if (!href) { message.error('No line id available to remove'); return; }
     try {
-      const r = await fetch(href, { method, headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(href, { method, headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const text = await r.text(); let data: any = null, pretty = text;
       try { data = JSON.parse(text); pretty = JSON.stringify(data, null, 2); } catch { /* raw */ }
       setLastResponse(`${method} ${href}\n${JSON.stringify(body)}\nHTTP ${r.status}\n\n${pretty}`);
@@ -6622,7 +6621,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     const url = `${base}${base.includes('?') ? '&' : '?'}expand=chargeComponents`;
     setChargeDrill({ line: l, loading: true, url, charges: [] });
     try {
-      const r = await fetch(url, { headers: FUSION_HDRS });
+      const r = await fetch(url, { headers: HEADERS });
       const d = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setChargeDrill({ line: l, loading: false, url, charges: d.items ?? [] });
@@ -6640,7 +6639,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       const url = l.chargesHref ?? (l.lineHref ? `${fusionHref(l.lineHref)}/child/charges` : (l.fulfillLineId != null ? `${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(childOrderKey)}/child/lines/${l.fulfillLineId}/child/charges` : ''));
       if (!url) return null;
       try {
-        const r = await fetch(`${url}${url.includes('?') ? '&' : '?'}expand=chargeComponents&limit=50`, { headers: FUSION_HDRS });
+        const r = await fetch(`${url}${url.includes('?') ? '&' : '?'}expand=chargeComponents&limit=50`, { headers: HEADERS });
         const d = await r.json().catch(() => ({} as any));
         const charges = d.items ?? [];
         const saleCharge = charges.find((c: any) => String(pf(c, ['ChargeDefinitionCode'])) === 'QP_SALE_PRICE')
@@ -6666,7 +6665,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     const url = `${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(childOrderKey)}/child/totals?limit=200`;
     setTotals({ open: true, loading: true, url, rows: [] });
     try {
-      const r = await fetch(url, { headers: FUSION_HDRS });
+      const r = await fetch(url, { headers: HEADERS });
       const d = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setTotals({ open: true, loading: false, url, rows: d.items ?? [] });
@@ -6682,7 +6681,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     title: 'Delete this sales credit?', okText: 'Delete', okButtonProps: { danger: true },
     content: <div style={{ fontSize: 12, fontFamily: 'monospace', wordBreak: 'break-all' }}>DELETE {scSelfHref(row)}</div>,
     onOk: async () => {
-      try { const r = await fetch(scSelfHref(row), { method: 'DELETE', headers: FUSION_HDRS }); if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`); message.success('Sales credit deleted'); salesCredits.reload(); }
+      try { const r = await fetch(scSelfHref(row), { method: 'DELETE', headers: HEADERS }); if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`); message.success('Sales credit deleted'); salesCredits.reload(); }
       catch (e: any) { message.error(e?.message || 'Delete failed'); }
     },
   });
@@ -6702,7 +6701,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     };
     const url = `${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(childOrderKey)}`;
     try {
-      const r = await fetch(url, { method: 'PATCH', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(url, { method: 'PATCH', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const t = await r.text(); let data: any = null; try { data = JSON.parse(t); } catch { /* raw */ }
       setLastResponse(`PATCH ${url}\n${JSON.stringify(body)}\nHTTP ${r.status}\n\n${t}`);
       if (!r.ok) throw new Error(collectOrderErrors(data, t, true)[0] || `HTTP ${r.status}`);
@@ -6736,7 +6735,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     const body = { PackingInstructions: shipPack.packing || null, ShippingInstructions: shipPack.shipping || null, FOBPointCode: shipPack.fob || null };
     const url = `${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(childOrderKey)}`;
     try {
-      const r = await fetch(url, { method: 'PATCH', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(url, { method: 'PATCH', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const t = await r.text(); let data: any = null; try { data = JSON.parse(t); } catch { /* raw */ }
       setLastResponse(`PATCH ${url}\n${JSON.stringify(body)}\nHTTP ${r.status}\n\n${t}`);
       if (!r.ok) throw new Error(collectOrderErrors(data, t, true)[0] || `HTTP ${r.status}`);
@@ -6756,7 +6755,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       setOrderActionBusy(true);
       const url = `${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(childOrderKey)}`;
       try {
-        const r = await fetch(url, { method: 'DELETE', headers: FUSION_HDRS });
+        const r = await fetch(url, { method: 'DELETE', headers: HEADERS });
         setLastResponse(`DELETE ${url}\nHTTP ${r.status}`);
         if (!r.ok && r.status !== 204) { const t = await r.text(); throw new Error(collectOrderErrors(null, t, true)[0] || `HTTP ${r.status}`); }
         message.success('Draft order discarded'); setLines([]); setConfirmed(false);
@@ -6778,7 +6777,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
           const href = l.lineHref ? fusionHref(l.lineHref) : (l.fulfillLineId != null ? `${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(String(orderKey))}/child/lines/${l.fulfillLineId}` : '');
           if (!href) { failed++; continue; }
           try {
-            const r = await fetch(href, { method: 'PATCH', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify({ CanceledFlag: true, CancelReasonCode: 'CUSTOMER_REQUEST' }) });
+            const r = await fetch(href, { method: 'PATCH', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify({ CanceledFlag: true, CancelReasonCode: 'CUSTOMER_REQUEST' }) });
             if (r.ok) upd(l.key, { canceled: true, cancelSaved: true, status: 'Canceled' }); else failed++;
           } catch { failed++; }
         }
@@ -6902,7 +6901,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     const taxChanged = round2(taxPct) !== round2(num(l.taxPct)) || (updTaxCode ?? '') !== (l.taxCode ?? '');
     const logs: string[] = [];
     const doPatch = async (url: string, body: any) => {
-      const r = await fetch(url, { method: 'PATCH', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(url, { method: 'PATCH', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const text = await r.text(); let data: any = null;
       try { data = JSON.parse(text); } catch { /* raw */ }
       logs.push(`PATCH ${url}\n${JSON.stringify(body)}\nHTTP ${r.status}`);
@@ -6929,7 +6928,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       // 2. Reprice via charges whenever qty, price, or tax moved (extended amounts
       //    depend on qty, so a qty change alone still rewrites the totals).
       if (qtyChanged || priceChanged || taxChanged) {
-        const chRes = await fetch(`${href}/child/charges?expand=chargeComponents&limit=50`, { headers: FUSION_HDRS });
+        const chRes = await fetch(`${href}/child/charges?expand=chargeComponents&limit=50`, { headers: HEADERS });
         const chJson = await chRes.json().catch(() => ({} as any));
         const charges = chJson.items ?? [];
         const primary = charges.find((c: any) => String(c.PrimaryFlag) === 'true') ?? charges[0];
@@ -7186,7 +7185,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     setStatusLoading(true);
     try {
       const url = `${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(key)}/child/lines?onlyData=true&limit=500`;
-      const r = await fetch(url, { headers: FUSION_HDRS });
+      const r = await fetch(url, { headers: HEADERS });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       const items: any[] = d.items ?? [];
@@ -7232,7 +7231,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     let effSkipped = false;
     try {
       const doPost = async (body: string) => {
-        const rr = await fetch(SO_CREATE_URL, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body });
+        const rr = await fetch(SO_CREATE_URL, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body });
         const t = await rr.text(); let dd: any = null, pp = t;
         try { dd = JSON.parse(t); pp = JSON.stringify(dd, null, 2); } catch { /* raw */ }
         return { r: rr, text: t, data: dd, pretty: pp };
@@ -7329,8 +7328,8 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       try {
         // DELETE carries no body; PATCH/POST send JSON.
         const init: RequestInit = op.method === 'DELETE'
-          ? { method: 'DELETE', headers: { ...FUSION_HDRS } }
-          : { method: op.method, headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(op.body) };
+          ? { method: 'DELETE', headers: { ...HEADERS } }
+          : { method: op.method, headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(op.body) };
         const r = await fetch(op.url, init);
         const text = await r.text(); let data: any = null, pretty = text;
         try { data = JSON.parse(text); pretty = JSON.stringify(data, null, 2); } catch { /* raw */ }
@@ -7500,7 +7499,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       const url = `${FUSION_BASE}/draftPurchaseOrders`;
       const r = await fetch(url, {
         method: 'POST',
-        headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' },
+        headers: { ...HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify(poPayload),
       });
 
@@ -7538,7 +7537,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     setWorkBusy('confirm');
     try {
       const url = `${FUSION_BASE}/salesOrdersForOrderHub/${encodeURIComponent(key)}`;
-      const r = await fetch(url, { method: 'PATCH', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify({ SubmittedFlag: 'true' }) });
+      const r = await fetch(url, { method: 'PATCH', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify({ SubmittedFlag: 'true' }) });
       const text = await r.text(); let data: any = null, pretty = text;
       try { data = JSON.parse(text); pretty = JSON.stringify(data, null, 2); } catch { /* raw */ }
       setLastResponse(`PATCH ${url}\nHTTP ${r.status}\n\n${pretty}`);
@@ -7657,7 +7656,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     for (const row of reserveRows) {
       const body = reserveRowBody(row, orderNo);
       try {
-        const r = await fetch(RESERVE_URL, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const r = await fetch(RESERVE_URL, { method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const text = await r.text(); let data: any = null, pretty = text;
         try { data = JSON.parse(text); pretty = JSON.stringify(data, null, 2); } catch { /* raw */ }
         out.push({ ...row, status: r.status, ok: r.ok, response: pretty,
@@ -7683,7 +7682,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       const rid = pf(it, ['ReservationId']);
       if (rid == null) continue;
       try {
-        const dr = await fetch(`${RESERVE_URL}/${encodeURIComponent(String(rid))}`, { method: 'DELETE', headers: FUSION_HDRS });
+        const dr = await fetch(`${RESERVE_URL}/${encodeURIComponent(String(rid))}`, { method: 'DELETE', headers: HEADERS });
         results.push({ reservationId: rid, item: pf(it, ['ItemNumber']), status: dr.status, ok: dr.ok });
       } catch (e: any) { results.push({ reservationId: rid, status: 0, ok: false, error: e?.message }); }
     }
@@ -9280,7 +9279,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
                   const payload = JSON.parse(branchPoPayload);
                   const r = await fetch(`${FUSION_BASE}/draftPurchaseOrders`, {
                     method: 'POST',
-                    headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' },
+                    headers: { ...HEADERS, 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
                   });
                   const data = await r.json();

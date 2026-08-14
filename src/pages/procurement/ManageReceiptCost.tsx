@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   Layout, Typography, Card, Table, Button, Form, Input, Space, Tabs,
@@ -16,7 +17,6 @@ import {
   Tooltip as RTooltip, Cell, LabelList, PieChart, Pie, Legend,
 } from 'recharts';
 import { Link } from 'react-router-dom';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
@@ -39,8 +39,8 @@ const REDWOOD = {
 
 // ── API ───────────────────────────────────────────────────────────────────────
 const BASE_URL = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const HEADERS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HEADERS = getFusionAuthHeaders();
 // Small pages fetched in parallel are far faster than one large sequential page:
 // Fusion computes a 500-row page slowly, whereas ten 50-row pages return quickly
 // and can run concurrently. CONCURRENCY caps how many are in flight at once.

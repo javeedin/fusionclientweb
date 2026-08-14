@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   Layout, Typography, Card, Button, Input, Space, Tag, Spin,
@@ -16,7 +17,6 @@ import {
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Header, Content, Sider } = Layout;
@@ -37,8 +37,8 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const BASE_URL    = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const HDRS        = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HDRS        = { Authorization: HEADERS, Accept: 'application/json' };
 
 const REDWOOD = {
   primary:    '#C74634',
@@ -1201,7 +1201,7 @@ const OracleBIPReports: React.FC = () => {
     try {
       const res = await fetch(apexUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': AUTH_HEADER },
+        headers: { 'Content-Type': 'application/json', 'Authorization': HEADERS },
         body: JSON.stringify({ reportPath: tab.path, reportName: tab.name, rows: tab.rows }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1512,7 +1512,6 @@ const OracleBIPReports: React.FC = () => {
           form={form}
           layout="vertical"
           size="small"
-          initialValues={{ username: 'emparun', password: 'Fusion@1234' }}
         >
           <Form.Item
             name="reportName"

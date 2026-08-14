@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Button, Tag, Typography, Space, Tooltip, Spin,
@@ -9,7 +10,6 @@ import {
   CheckCircleTwoTone, CloseCircleTwoTone,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
@@ -22,9 +22,9 @@ const getFusionBase = () => {
 const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
-const JSON_HDRS = { ...FUSION_HDRS, 'Content-Type': 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
+const JSON_HDRS = { ...HEADERS, 'Content-Type': 'application/json' };
 const PO_URL = `${FUSION_BASE}/purchaseOrders`;
 const RECEIVE_URL = `${FUSION_BASE}/receivingReceiptRequests`;
 
@@ -61,7 +61,7 @@ const SupplierReturns: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500&fields=OrganizationCode,OrganizationName`, { headers: FUSION_HDRS });
+        const r = await fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500&fields=OrganizationCode,OrganizationName`, { headers: HEADERS });
         const d = r.ok ? await r.json() : { items: [] };
         setOrgs((d.items ?? []).map((o: any) => ({ code: o.OrganizationCode, name: o.OrganizationName ?? '' })).filter((o: OrgOpt) => o.code).sort((a: OrgOpt, b: OrgOpt) => a.code.localeCompare(b.code)));
       } catch { setOrgs([]); }
@@ -70,7 +70,7 @@ const SupplierReturns: React.FC = () => {
 
   useEffect(() => {
     if (!org) { setSubinvs([]); return; }
-    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: FUSION_HDRS })
+    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: HEADERS })
       .then(r => r.ok ? r.json() : { items: [] })
       .then(d => setSubinvs(Array.from(new Set((d.items ?? []).map((i: any) => i.SecondaryInventoryName).filter(Boolean))) as string[]))
       .catch(() => setSubinvs([]));
@@ -85,7 +85,7 @@ const SupplierReturns: React.FC = () => {
     const url = `${PO_URL}?q=OrderNumber=${encodeURIComponent(poNum.trim())}&onlyData=true&limit=5&expand=lines.schedules`;
     setLastUrl(url);
     try {
-      const r = await fetch(url, { headers: FUSION_HDRS });
+      const r = await fetch(url, { headers: HEADERS });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       const po = (d.items ?? [])[0];

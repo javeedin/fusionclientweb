@@ -47,3 +47,22 @@ export function buildCurrencyUrl(endpoint: string): string {
   if (!endpoint) return normalizeUrl(baseUrl);
   return normalizeUrl(`${baseUrl}/${endpoint}`);
 }
+
+/**
+ * Get Fusion API authorization headers using logged-in session
+ * Returns headers with sessionId from login, not hardcoded credentials
+ */
+export function getFusionAuthHeaders(): Record<string, string> {
+  try {
+    const sessionId = localStorage.getItem('fusion_session_id') || localStorage.getItem('erp_token');
+    if (sessionId) {
+      return {
+        'Authorization': sessionId,
+        'Accept': 'application/json',
+      };
+    }
+  } catch (error) {
+    console.warn('[API] Failed to get fusion session from localStorage:', error);
+  }
+  return { 'Accept': 'application/json' };
+}

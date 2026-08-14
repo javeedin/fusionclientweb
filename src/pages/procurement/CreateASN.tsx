@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   Layout, Typography, Card, Table, Button, Form, Input, Space, Tag,
@@ -11,7 +12,6 @@ import {
   ClockCircleOutlined, InboxOutlined,
 } from '@ant-design/icons';
 import { Link, useSearchParams } from 'react-router-dom';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
@@ -36,8 +36,8 @@ const REDWOOD = {
 // In Electron the request goes directly (no CORS). In a browser (dev) it routes
 // through the Vite proxy. Mirrors ManageExpectedReceipts.
 const FUSION_BASE = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HEADERS = { Authorization: HEADERS, Accept: 'application/json' };
 
 // ASN request source code. This pod uses 'VENDOR' (same value the receiving flow
 // in ManageExpectedReceipts posts). Older pods use 'SUPPLIER'.
@@ -90,14 +90,14 @@ const proxied = (href: string) =>
 async function fetchProcessingErrors(headerId: string | number): Promise<string[]> {
   const out: string[] = [];
   try {
-    const r = await fetch(`${ASN_ENDPOINT}/${headerId}?expand=lines`, { headers: FUSION_HDRS });
+    const r = await fetch(`${ASN_ENDPOINT}/${headerId}?expand=lines`, { headers: HEADERS });
     const d = await r.json();
     const lines: any[] = d?.lines?.items ?? d?.lines ?? [];
     for (const ln of lines) {
       const link = (ln?.links ?? []).find((l: any) => l?.name === 'processingErrors');
       if (!link?.href) continue;
       try {
-        const pr = await fetch(proxied(link.href), { headers: FUSION_HDRS });
+        const pr = await fetch(proxied(link.href), { headers: HEADERS });
         const pd = await pr.json();
         (pd?.items ?? []).forEach((it: any) => {
           const msg = it?.ErrorMessage ?? it?.Message ?? it?.ErrorMessageText ?? it?.ErrorMessageName;
@@ -116,7 +116,7 @@ async function fetchLinesToReceive(q: string): Promise<POLine[]> {
   let offset = 0;
   while (true) {
     const url = `${FUSION_BASE}/linesToReceive?${qParam}limit=500&offset=${offset}`;
-    const res = await fetch(url, { headers: FUSION_HDRS });
+    const res = await fetch(url, { headers: HEADERS });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     const data = await res.json();
     const items: POLine[] = data.items ?? [];
@@ -277,7 +277,7 @@ const CreateASN: React.FC = () => {
     try {
       const res = await fetch(ASN_ENDPOINT, {
         method: 'POST',
-        headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' },
+        headers: { ...HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify(asnBody),
       });
       const text = await res.text();
@@ -302,7 +302,7 @@ const CreateASN: React.FC = () => {
         for (let i = 0; i < 8 && pStatus === 'PENDING'; i++) {
           await new Promise(r => setTimeout(r, 2000));
           try {
-            const pr = await fetch(`${ASN_ENDPOINT}/${headerId}`, { headers: FUSION_HDRS });
+            const pr = await fetch(`${ASN_ENDPOINT}/${headerId}`, { headers: HEADERS });
             const pd = await pr.json();
             pStatus = String(pd?.ProcessingStatusCode ?? pStatus).toUpperCase();
             retMsg  = pd?.ReturnMessage ?? retMsg;

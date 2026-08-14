@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect } from 'react';
 import dayjs from 'dayjs';
 import {
@@ -26,9 +27,9 @@ const REDWOOD = {
 };
 
 const BASE_URL   = 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/11.13.18.05';
-const AUTH_HEADER = 'Basic ' + btoa('emparun:Fusion@1234');
+const HEADERS = getFusionAuthHeaders();
 const PAGE_SIZE  = 25;
-const HEADERS    = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+const HEADERS    = { Authorization: HEADERS, Accept: 'application/json' };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface OraLink { rel: string; href: string; name: string; kind: string }

@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Tabs, Tag, Button, Input, Space,
@@ -9,7 +10,6 @@ import {
   ThunderboltOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
@@ -30,8 +30,8 @@ const { Title, Text } = Typography;
 
 // Direct in Electron (no CORS); Vite proxy in the browser. preload exposes electronAPI.
 const FUSION_BASE = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HDRS = { Authorization: HEADERS, Accept: 'application/json' };
 const ERP_URL = `${FUSION_BASE}/erpintegrations`;
 
 // Scheduler REST lives under /ess/rest (NOT /fscmRestApi). Direct host in Electron.

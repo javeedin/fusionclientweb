@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useMemo, useState } from 'react';
 import {
   Card, Row, Col, Button, Table, Tag, Progress, Statistic, Modal, Tabs, Space,
@@ -5,7 +6,6 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { Link } from 'react-router-dom';
-import { FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 import {
   DatabaseOutlined, ApiOutlined, PlayCircleOutlined, ReloadOutlined, CheckCircleTwoTone,
@@ -30,7 +30,7 @@ const getFusionBase = () => {
 const _isElectron = typeof navigator !== 'undefined' && /electron/i.test(navigator.userAgent)
   || !!(window as unknown as { electronAPI?: unknown }).electronAPI;
 const FUSION_BASE = `${getFusionBase()}`;
-const FUSION_HDRS = { Authorization: FUSION_POD_AUTH, Accept: 'application/json' };
+const HEADERS = getFusionAuthHeaders();
 
 const RW = {
   primary: '#C74634', info: '#0572CE', success: '#1D7B4D', warn: '#D4A800', error: '#C74634',
@@ -63,7 +63,7 @@ const runService = async (svc: FusionService): Promise<ServiceResult> => {
   let sample: any[] = [];
   try {
     while (scanned < BU_SCAN_MAX) {
-      const r = await fetch(`${base}?onlyData=true&totalResults=true&limit=${PAGE}&offset=${offset}`, { headers: FUSION_HDRS });
+      const r = await fetch(`${base}?onlyData=true&totalResults=true&limit=${PAGE}&offset=${offset}`, { headers: HEADERS });
       if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText || ''}`.trim());
       const d = await r.json();
       const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -146,7 +146,7 @@ const BrowseData: React.FC = () => {
     const full = /[?&]limit=/.test(url) ? url : `${url}${url.includes('?') ? '&' : '?'}onlyData=true&limit=100`;
     setCustomRunning(true); setCustomResult(null);
     try {
-      const r = await fetch(full, { headers: FUSION_HDRS });
+      const r = await fetch(full, { headers: HEADERS });
       let data: any; try { data = await r.json(); } catch { data = await r.text(); }
       setCustomResult({ ok: r.ok, status: r.status, data, url: full });
     } catch (e: any) { setCustomResult({ ok: false, status: 0, error: e?.message ?? String(e), url: full }); }

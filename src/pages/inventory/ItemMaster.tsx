@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import { getOrdsHostname, getCurrentCompany } from '../../config/company.config';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -20,14 +21,14 @@ const { Content } = Layout;
 const { Title, Text } = Typography;
 
 const ORDS_BASE = `${getOrdsHostname()}/ords/test/FUSIONCLIENTERP/inventory/itemmaster`;
-const AUTH_HEADER  = 'Basic ' + btoa('emparun:Fusion@1234');
+const HEADERS = getFusionAuthHeaders();
 
 // Get Fusion headers - don't include auth when using proxy (proxy adds it)
 const getFusionHeaders = () => {
   const isElectron = (window as any).electronAPI?.isElectron === true;
   if (isElectron) {
     // Electron: direct Fusion API call, include auth
-    return { Authorization: AUTH_HEADER, Accept: 'application/json' };
+    return { Authorization: HEADERS, Accept: 'application/json' };
   } else {
     // Browser: using proxy, proxy adds auth - don't include it here
     return { Accept: 'application/json' };

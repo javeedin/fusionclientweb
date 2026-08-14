@@ -1,3 +1,4 @@
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   Layout, Typography, Card, Button, Input, Space, Tag, Spin,
@@ -13,7 +14,6 @@ import {
   ExclamationCircleOutlined, MinusCircleOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
-import { FUSION_POD_AUTH } from '../../config/fusionInstance';
 import { getCurrentCompany } from '../../config/company.config';
 
 const { Header, Content, Sider } = Layout;
@@ -27,8 +27,8 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const BASE_URL    = `${getFusionBase()}`;
-const AUTH_HEADER = FUSION_POD_AUTH;
-const HDRS        = { Authorization: AUTH_HEADER, Accept: 'application/json' };
+const HEADERS = getFusionAuthHeaders();
+const HDRS        = { Authorization: HEADERS, Accept: 'application/json' };
 
 const REDWOOD = {
   primary:    '#C74634',
