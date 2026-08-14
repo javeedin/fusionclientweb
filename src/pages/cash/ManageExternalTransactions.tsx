@@ -5476,12 +5476,6 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                         ),
                       },
                       {
-                        title: 'GL Batch',
-                        dataIndex: 'glBatchId',
-                        width: 100,
-                        render: v => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
-                      },
-                      {
                         title: 'Status',
                         dataIndex: 'glStatus',
                         width: 100,
@@ -5490,6 +5484,12 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                             {v || 'UNKNOWN'}
                           </Tag>
                         ),
+                      },
+                      {
+                        title: 'GL Batch',
+                        dataIndex: 'glBatchId',
+                        width: 100,
+                        render: v => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
                       },
                     ]}
                     scroll={{ x: 1400 }}
