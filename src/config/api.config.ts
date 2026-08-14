@@ -20,9 +20,9 @@ export const ORACLE_FUSION_CONFIG = {
 
 // ORDS Inventory Configuration
 export const ORDS_INVENTORY_CONFIG = {
-  baseUrl: buildApexUrl('inventory'),
+  baseUrl: buildApexUrl(''),
   endpoints: {
-    itemmaster: 'itemmaster',
+    itemmaster: 'inventory/itemmaster',
   },
 };
 
