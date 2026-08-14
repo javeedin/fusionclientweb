@@ -193,7 +193,6 @@ function App() {
   return (
     <>
       {!splashDone && <SplashScreen onDone={handleSplashDone} />}
-      <UpdateChecker open={updateCheckerOpen} onClose={() => setUpdateCheckerOpen(false)} />
     <ConfigProvider
       theme={{
         token: {
@@ -207,6 +206,7 @@ function App() {
         <GlValidationProvider>
         <HashRouter>
           <ShowAndTellProvider>
+          <UpdateChecker open={updateCheckerOpen} onClose={() => setUpdateCheckerOpen(false)} />
           <ShowAndTellOverlay />
           <Suspense fallback={
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
