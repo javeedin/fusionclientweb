@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import type { User, AuthContextType, LoginResult } from '../types';
 import { getCurrentCompany } from '../config/company.config';
 import { fusionSOAPLogin } from '../services/fusion-soap-login.service';
+import { buildApexUrl, buildApexAuthUrl, buildApexAdminUrl } from '../config/api.helper';
 
 
 const isElectron = !!(window as any).electronAPI?.isElectron;
@@ -76,9 +77,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // Fallback to APEX login
-      console.log('[Auth] Using APEX authentication via proxy');
-      const res = await fetch('http://localhost:3001/api/apex-auth/login', {
+      // Fallback to APEX login (direct URLs, no proxy needed)
+      console.log('[Auth] Using APEX authentication (direct URL)');
+      const loginUrl = buildApexAuthUrl('login');
+      const res = await fetch(loginUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
@@ -96,7 +98,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
         // Load profile photo
         try {
-          const photoRes = await fetch(`http://localhost:3001/api/apex-auth/profile-photo/${encodeURIComponent(uname)}`);
+          const photoUrl = buildApexAuthUrl(`profile-photo/${encodeURIComponent(uname)}`);
+          const photoRes = await fetch(photoUrl);
           const photoData = await photoRes.json();
           if (photoData.status === 'OK' && photoData.photo) {
             userData.photo = `data:${photoData.mime_type};base64,${photoData.photo}`;
@@ -105,7 +108,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Load user access (isAdmin, modules, bus)
         try {
-          const accessRes = await fetch(`http://localhost:3001/api/apex-admin/user-access/${encodeURIComponent(uname)}`);
+          const accessUrl = buildApexAdminUrl(`user-access/${encodeURIComponent(uname)}`);
+          const accessRes = await fetch(accessUrl);
           const accessData = await accessRes.json();
           if (accessData.status === 'SUCCESS') {
             userData.isAdmin  = accessData.data?.is_admin === 'Y';
@@ -150,7 +154,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const sendOtp = useCallback(async (username: string) => {
     try {
       // Step 1: Ask APEX to generate & store OTP — returns the OTP value
-      const res = await fetch('http://localhost:3001/api/apex-auth/send-otp', {
+      const otpUrl = buildApexAuthUrl('send-otp');
+      const res = await fetch(otpUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
@@ -184,7 +189,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const setPassword = useCallback(async (username: string, otp: string, newPassword: string) => {
     try {
-      const res = await fetch('http://localhost:3001/api/apex-auth/set-password', {
+      const pwdUrl = buildApexAuthUrl('set-password');
+      const res = await fetch(pwdUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, otp, new_password: newPassword }),
