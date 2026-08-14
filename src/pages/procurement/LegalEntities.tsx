@@ -19,7 +19,6 @@ const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = getFusionAuthHeaders();
 
 const REDWOOD = {
   primary: '#C74634', primaryDark: '#A33B2C', primaryLight: '#E85D4A',

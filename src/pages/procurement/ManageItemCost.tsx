@@ -46,7 +46,6 @@ const REDWOOD = {
 // ── API ───────────────────────────────────────────────────────────────────────
 const LATEST_URL = `${getFusionHost()}/fscmRestApi/resources/latest`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = getFusionAuthHeaders();
 const PAGE_LIMIT = 500;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

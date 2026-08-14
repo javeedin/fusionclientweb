@@ -40,7 +40,6 @@ const REDWOOD = {
 // ── API ───────────────────────────────────────────────────────────────────────
 const BASE_URL = `${getFusionBase()}`;
 const HEADERS = getFusionAuthHeaders();
-const HEADERS = getFusionAuthHeaders();
 // Small pages fetched in parallel are far faster than one large sequential page:
 // Fusion computes a 500-row page slowly, whereas ten 50-row pages return quickly
 // and can run concurrently. CONCURRENCY caps how many are in flight at once.
