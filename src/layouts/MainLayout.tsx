@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Dropdown, Avatar, Space, Typography, Tooltip, Badge, Button, Modal, Tag } from 'antd';
+import { useFusionInitialization } from '../hooks/useFusionInitialization';
 import {
   UserOutlined,
   LogoutOutlined,
@@ -64,6 +65,7 @@ const { Text } = Typography;
 const REDWOOD_PRIMARY = '#C74634';
 
 const MainLayout: React.FC = () => {
+  useFusionInitialization();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { sessionErrors, openDrawer: openValidationDrawer } = useGlValidation();
