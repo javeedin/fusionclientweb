@@ -70,35 +70,26 @@ export const fusionSOAPLogin = async (
   password: string
 ): Promise<FusionLoginResult> => {
   try {
-    const soapUrl = `${fusionInstanceUrl.replace(/\/$/, '')}/xmlpserver/services/v2/SecurityService`;
-    const soapEnvelope = buildSOAPEnvelope(username, password);
+    console.log('[Fusion Login] Authenticating via proxy...');
 
-    console.log('[Fusion Login] Authenticating with:', soapUrl);
-
-    const response = await fetch(soapUrl, {
+    const response = await fetch('http://localhost:3001/api/fusion/soap-login', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'text/xml; charset=UTF-8',
-        'Accept': 'text/xml',
-        'SOAPAction': '',
-      },
-      body: soapEnvelope,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instanceUrl: fusionInstanceUrl,
+        username,
+        password,
+      }),
     });
 
-    const responseText = await response.text();
+    const data = await response.json();
 
-    if (!response.ok) {
-      console.error('[Fusion Login] HTTP Error:', response.status, responseText.substring(0, 200));
-      return { success: false, error: `HTTP ${response.status}` };
-    }
-
-    const sessionId = extractSessionId(responseText);
-    if (sessionId) {
-      console.log('[Fusion Login] SUCCESS - Session ID obtained');
-      return { success: true, sessionId };
+    if (data.success && data.sessionId) {
+      console.log('[Fusion Login] SUCCESS - Session ID obtained via proxy');
+      return { success: true, sessionId: data.sessionId };
     } else {
-      console.warn('[Fusion Login] Failed - No session ID in response');
-      return { success: false, error: 'Invalid credentials or no session returned' };
+      console.warn('[Fusion Login] Failed:', data.error);
+      return { success: false, error: data.error || 'Login failed' };
     }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

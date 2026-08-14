@@ -851,6 +851,156 @@ app.post('/api/send-email', async (req, res) => {
   }
 });
 
+// ─── Fusion SOAP Login Proxy ─────────────────────────────────────────────────
+// POST /api/fusion/soap-login { "instanceUrl": "...", "username": "...", "password": "..." }
+app.post('/api/fusion/soap-login', async (req, res) => {
+  const { instanceUrl, username, password } = req.body || {};
+
+  if (!instanceUrl || !username || !password) {
+    return res.status(400).json({ success: false, error: 'instanceUrl, username, and password are required' });
+  }
+
+  const soapUrl = `${instanceUrl.replace(/\/$/, '')}/xmlpserver/services/v2/SecurityService`;
+  const soapEnvelope = `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:v2="http://xmlns.oracle.com/oxp/service/v2">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <v2:login>
+      <v2:userID>${username.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</v2:userID>
+      <v2:password>${password.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</v2:password>
+    </v2:login>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+
+  if (VERBOSE) {
+    console.log('[Fusion SOAP Login] URL:', soapUrl);
+    console.log('[Fusion SOAP Login] Username:', username);
+  }
+
+  try {
+    const response = await fetch(soapUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml; charset=UTF-8',
+        'Accept': 'text/xml',
+        'SOAPAction': '',
+      },
+      body: soapEnvelope,
+    });
+
+    const responseText = await response.text();
+
+    if (!response.ok) {
+      if (VERBOSE) console.error('[Fusion SOAP Login] HTTP Error:', response.status);
+      return res.status(response.status).json({ success: false, error: `HTTP ${response.status}` });
+    }
+
+    // Extract session ID from SOAP response
+    const loginReturnMatch = responseText.match(/<loginReturn>([^<]+)<\/loginReturn>/);
+    const sessionId = loginReturnMatch ? loginReturnMatch[1].trim() : null;
+
+    if (sessionId) {
+      console.log('[Fusion SOAP Login] SUCCESS');
+      res.json({ success: true, sessionId });
+    } else {
+      console.warn('[Fusion SOAP Login] No session ID in response');
+      res.json({ success: false, error: 'Invalid credentials or no session returned' });
+    }
+  } catch (error) {
+    console.error('[Fusion SOAP Login] Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─── APEX Auth Proxy ─────────────────────────────────────────────────────────
+// Routes all APEX auth endpoints through the proxy to avoid CORS issues
+// POST /api/apex-auth/login, /api/apex-auth/send-otp, etc.
+app.all(/^\/api\/apex-auth\/(.+)$/, async (req, res) => {
+  const path = req.params[0]; // Gets everything after /api/apex-auth/
+  const apexBase = APEX_CONFIG.baseUrl;
+  const url = `${apexBase}/auth/${path}`;
+  const queryString = Object.keys(req.query).length > 0
+    ? '?' + new URLSearchParams(req.query).toString()
+    : '';
+
+  if (VERBOSE) {
+    console.log(`[APEX Auth ${req.method}] Path: ${path}`);
+    console.log(`[APEX Auth ${req.method}] URL: ${url}${queryString}`);
+    if (req.body) console.log(`[APEX Auth ${req.method}] Body:`, JSON.stringify(req.body).substring(0, 200));
+  }
+
+  try {
+    const fetchOptions = {
+      method: req.method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
+      (fetchOptions as any).body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(`${url}${queryString}`, fetchOptions);
+    const data = await response.text();
+
+    if (VERBOSE) console.log(`[APEX Auth ${req.method}] Response Status: ${response.status}`);
+
+    // Try to parse as JSON, otherwise return as text
+    try {
+      const jsonData = JSON.parse(data);
+      res.json(jsonData);
+    } catch {
+      res.send(data);
+    }
+  } catch (error) {
+    console.error(`[APEX Auth ${req.method}] Error:`, error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─── APEX Admin Proxy ────────────────────────────────────────────────────────
+// Routes all APEX admin endpoints through the proxy to avoid CORS issues
+// GET /api/apex-admin/user-access/:username, etc.
+app.all(/^\/api\/apex-admin\/(.+)$/, async (req, res) => {
+  const path = req.params[0]; // Gets everything after /api/apex-admin/
+  const apexBase = APEX_CONFIG.baseUrl;
+  const url = `${apexBase}/admin/${path}`;
+  const queryString = Object.keys(req.query).length > 0
+    ? '?' + new URLSearchParams(req.query).toString()
+    : '';
+
+  if (VERBOSE) {
+    console.log(`[APEX Admin ${req.method}] Path: ${path}`);
+    console.log(`[APEX Admin ${req.method}] URL: ${url}${queryString}`);
+  }
+
+  try {
+    const fetchOptions = {
+      method: req.method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
+      (fetchOptions as any).body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(`${url}${queryString}`, fetchOptions);
+    const data = await response.text();
+
+    if (VERBOSE) console.log(`[APEX Admin ${req.method}] Response Status: ${response.status}`);
+
+    // Try to parse as JSON, otherwise return as text
+    try {
+      const jsonData = JSON.parse(data);
+      res.json(jsonData);
+    } catch {
+      res.send(data);
+    }
+  } catch (error) {
+    console.error(`[APEX Admin ${req.method}] Error:`, error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log('='.repeat(50));

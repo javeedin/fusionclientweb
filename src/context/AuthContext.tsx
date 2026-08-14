@@ -77,8 +77,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Fallback to APEX login
-      console.log('[Auth] Using APEX authentication - APEX base:', APEX_AUTH_BASE);
-      const res = await fetch(`${APEX_AUTH_BASE}/login`, {
+      console.log('[Auth] Using APEX authentication via proxy');
+      const res = await fetch('http://localhost:3001/api/apex-auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
@@ -96,7 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
         // Load profile photo
         try {
-          const photoRes = await fetch(`${APEX_AUTH_BASE}/profile-photo/${encodeURIComponent(uname)}`);
+          const photoRes = await fetch(`http://localhost:3001/api/apex-auth/profile-photo/${encodeURIComponent(uname)}`);
           const photoData = await photoRes.json();
           if (photoData.status === 'OK' && photoData.photo) {
             userData.photo = `data:${photoData.mime_type};base64,${photoData.photo}`;
@@ -105,7 +105,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Load user access (isAdmin, modules, bus)
         try {
-          const accessRes = await fetch(`${APEX_ADMIN_BASE}/user-access/${encodeURIComponent(uname)}`);
+          const accessRes = await fetch(`http://localhost:3001/api/apex-admin/user-access/${encodeURIComponent(uname)}`);
           const accessData = await accessRes.json();
           if (accessData.status === 'SUCCESS') {
             userData.isAdmin  = accessData.data?.is_admin === 'Y';
@@ -149,11 +149,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const sendOtp = useCallback(async (username: string) => {
     try {
-      const currentCompany = getCurrentCompany();
-      const APEX_AUTH_BASE = `${currentCompany.apexBaseUrl}/auth`;
-
       // Step 1: Ask APEX to generate & store OTP — returns the OTP value
-      const res = await fetch(`${APEX_AUTH_BASE}/send-otp`, {
+      const res = await fetch('http://localhost:3001/api/apex-auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
@@ -187,10 +184,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const setPassword = useCallback(async (username: string, otp: string, newPassword: string) => {
     try {
-      const currentCompany = getCurrentCompany();
-      const APEX_AUTH_BASE = `${currentCompany.apexBaseUrl}/auth`;
-
-      const res = await fetch(`${APEX_AUTH_BASE}/set-password`, {
+      const res = await fetch('http://localhost:3001/api/apex-auth/set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, otp, new_password: newPassword }),
