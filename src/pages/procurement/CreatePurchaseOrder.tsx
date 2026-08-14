@@ -2268,6 +2268,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
       return;
     }
 
+    const offsetNum = Number(offset) || 0;
     setItemSearchLoading(true);
     try {
       const org = header.shipToOrg;
@@ -2284,8 +2285,8 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
         query = `ItemDescription LIKE '%${searchTerm.trim()}%';OrganizationCode=${org}`;
       }
 
-      const url = `${FUSION_BASE}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offset}&onlyData=true`;
-      setAddItemApiUrl(`GET itemsV2?q=${query}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offset}&onlyData=true`);
+      const url = `${FUSION_BASE}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`;
+      setAddItemApiUrl(`GET itemsV2?q=${query}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`);
 
       const res = await fetch(url, { headers: FUSION_HDRS });
       if (!res.ok) throw new Error(`API returned ${res.status}`);
@@ -2294,7 +2295,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
       const results = data.items ?? data.data ?? [];
       const hasMore = data.hasMore ?? results.length === 50;
 
-      if (offset === 0) {
+      if (offsetNum === 0) {
         // First page - replace items
         if (results.length === 0) {
           message.info(`No items found matching "${searchTerm}" in organization ${org}`);
@@ -2324,7 +2325,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
           ...item
         }));
         setItems(prev => [...prev, ...mapped]);
-        setItemOffset(offset + 50);
+        setItemOffset(offsetNum + 50);
         setItemHasMore(hasMore);
       }
     } catch (e: any) {
