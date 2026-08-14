@@ -266,6 +266,8 @@ const ItemMaster: React.FC = () => {
   const [selectedFusionInstance, setSelectedFusionInstance] = useState<string>(
     fusionInstances.length > 0 ? fusionInstances[0].url : ''
   );
+  const [debugTestRunning, setDebugTestRunning] = useState(false);
+  const [debugTestResult, setDebugTestResult] = useState<string>('');
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -329,8 +331,25 @@ const ItemMaster: React.FC = () => {
           }
         }
       }
-      // All retries failed
-      setOrgsError(`${lastError.message} (retried ${maxRetries} times)`);
+      // All retries failed - capture detailed error info
+      const errorDetails = {
+        message: lastError?.message || 'Unknown error',
+        type: lastError?.name || 'Error',
+        isCORSError: lastError?.message?.includes('fetch') || lastError?.message?.includes('CORS'),
+        timestamp: new Date().toLocaleTimeString(),
+        fusionBase: getFusionBase(),
+        windowType: window.opener ? 'child window' : 'main/standalone',
+      };
+
+      console.error('[ItemMaster] Organizations load failed:', errorDetails);
+
+      const detailedError = `
+        ${errorDetails.message} (retried ${maxRetries} times)
+        Window: ${errorDetails.windowType} | Type: ${errorDetails.type} | Time: ${errorDetails.timestamp}
+        ${errorDetails.isCORSError ? '⚠️ CORS Issue Detected' : ''}
+      `.trim();
+
+      setOrgsError(detailedError);
       setOrgsLoading(false);
     };
     load();
@@ -449,6 +468,53 @@ const ItemMaster: React.FC = () => {
   }, [form, buildUrl, source]);
 
   const handleCancel = () => abortRef.current?.abort();
+
+  // Test Fusion connection (debug)
+  const testFusionConnection = useCallback(async () => {
+    setDebugTestRunning(true);
+    setDebugTestResult('Testing...');
+
+    try {
+      const fusionBase = getFusionBase();
+      if (!fusionBase) {
+        setDebugTestResult('❌ No Fusion instance configured');
+        setDebugTestRunning(false);
+        return;
+      }
+
+      const url = `${fusionBase}/inventoryOrganizations?limit=1&offset=0`;
+      const windowInfo = `Window: ${window.opener ? 'child' : 'parent'} | URL: ${url}`;
+
+      console.log('[Debug Test] Starting Fusion connection test:', windowInfo);
+      setDebugTestResult(`Testing connection to: ${url}`);
+
+      const response = await fetch(url, {
+        headers: FUSION_HDRS,
+      });
+
+      const result = `✓ Connected! HTTP ${response.status}
+Window Type: ${window.opener ? 'child window' : 'parent/main'}
+URL: ${url}
+Status: ${response.statusText}
+Content-Type: ${response.headers.get('content-type')}
+Date: ${new Date().toLocaleTimeString()}`;
+
+      console.log('[Debug Test] Success:', result);
+      setDebugTestResult(result);
+    } catch (error: any) {
+      const errorResult = `❌ Connection Failed
+Window Type: ${window.opener ? 'child window' : 'parent/main'}
+Error: ${error.message}
+Type: ${error.name}
+Time: ${new Date().toLocaleTimeString()}
+${error.message.includes('fetch') || error.message.includes('CORS') ? '⚠️ Likely CORS issue' : ''}`;
+
+      console.error('[Debug Test] Failed:', errorResult);
+      setDebugTestResult(errorResult);
+    } finally {
+      setDebugTestRunning(false);
+    }
+  }, [getFusionBase]);
 
   const handleReset = () => {
     form.resetFields();
@@ -718,14 +784,49 @@ const ItemMaster: React.FC = () => {
                     API
                   </Button>
                 </Tooltip>
+                <Tooltip title="Test Fusion connection (debug)">
+                  <Button
+                    size="small"
+                    loading={debugTestRunning}
+                    onClick={testFusionConnection}
+                    style={{ fontSize: 11, color: REDWOOD.warning, borderColor: REDWOOD.warning }}>
+                    🔍 Test
+                  </Button>
+                </Tooltip>
               </Space>
             </div>
           ),
           children: (
             <>
               {orgsError && (
-                <Alert type="warning" message={`Could not load organizations: ${orgsError}`}
-                  style={{ marginBottom: 12 }} closable />
+                <Alert
+                  type="error"
+                  message="Could not load organizations"
+                  description={
+                    <div style={{ fontSize: 12, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+                      {orgsError}
+                      <div style={{ marginTop: 8, fontSize: 11, color: '#666' }}>
+                        <button
+                          onClick={() => {
+                            console.log('Error details:', orgsError);
+                            message.info('Error details logged to console');
+                          }}
+                          style={{
+                            cursor: 'pointer',
+                            padding: '4px 8px',
+                            background: '#f0f0f0',
+                            border: '1px solid #ddd',
+                            borderRadius: 4,
+                            fontSize: 11,
+                          }}>
+                          📋 Copy error to console
+                        </button>
+                      </div>
+                    </div>
+                  }
+                  style={{ marginBottom: 12 }}
+                  closable
+                />
               )}
               <Form form={form} layout="vertical">
                 <Row gutter={[16, 0]}>
@@ -1107,6 +1208,33 @@ const ItemMaster: React.FC = () => {
           />
         </div>
       </Content>
+
+      {/* Debug Test Result Modal */}
+      <Modal
+        title="🔍 Fusion Connection Test"
+        open={!!debugTestResult}
+        onCancel={() => setDebugTestResult('')}
+        onOk={() => setDebugTestResult('')}
+        width={600}
+      >
+        <div style={{
+          backgroundColor: '#f5f5f5',
+          padding: 12,
+          borderRadius: 6,
+          fontFamily: 'monospace',
+          fontSize: 12,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          maxHeight: '400px',
+          overflow: 'auto',
+        }}>
+          {debugTestResult}
+        </div>
+        <div style={{ marginTop: 12, fontSize: 11, color: '#666' }}>
+          <p>✓ If you see "Connected! HTTP 200", the Fusion API is reachable</p>
+          <p>✗ If you see "Connection Failed" with CORS error, there's a network/CORS issue</p>
+        </div>
+      </Modal>
     </Layout>
   );
 };
