@@ -8,6 +8,8 @@ export const useFusionInitialization = () => {
     if (initializingRef.current) return;
     initializingRef.current = true;
 
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
     const initializeFusion = async () => {
       try {
         const company = getCurrentCompany();
@@ -18,26 +20,47 @@ export const useFusionInitialization = () => {
 
         const fusionBaseUrl = company.fusionInstances[0].url;
         const auth = 'Basic ' + btoa('emparun:Fusion@1234');
+        const url = `${fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/itemsV2?limit=1&offset=0&onlyData=true`;
 
-        // Perform a simple HEAD request to establish CORS preflight cache
-        // This gives the browser time to negotiate CORS before actual data requests
-        const response = await fetch(`${fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/itemsV2?limit=1&offset=0&onlyData=true`, {
-          method: 'GET',
-          headers: {
-            'Authorization': auth,
-            'Content-Type': 'application/json',
-          },
-          credentials: 'include',
-        });
+        // Retry logic to establish Fusion connection
+        let lastError: Error | null = null;
+        const maxRetries = 4;
+        const delays = [500, 1000, 2000, 4000];
 
-        if (response.ok) {
-          console.log('✓ Fusion API connection established');
-        } else {
-          console.warn(`Fusion connection returned status ${response.status}`);
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            console.log(`[Fusion Init] Attempt ${attempt + 1}/${maxRetries}...`);
+
+            const response = await fetch(url, {
+              method: 'GET',
+              headers: {
+                'Authorization': auth,
+                'Content-Type': 'application/json',
+              },
+              credentials: 'include',
+            });
+
+            if (response.ok) {
+              console.log('✓ [Fusion Init] Connection established successfully');
+              return;
+            } else {
+              console.warn(`[Fusion Init] Status ${response.status}, retrying...`);
+              lastError = new Error(`Status ${response.status}`);
+            }
+          } catch (error) {
+            console.warn(`[Fusion Init] Attempt ${attempt + 1} failed:`, error);
+            lastError = error as Error;
+          }
+
+          // Wait before retry
+          if (attempt < maxRetries - 1) {
+            await sleep(delays[attempt]);
+          }
         }
+
+        console.error('[Fusion Init] Failed to establish connection after retries:', lastError?.message);
       } catch (error) {
-        console.warn('Fusion initialization preflight failed, retries will handle connection:', error);
-        // Retries in ItemMaster will handle the actual connection
+        console.error('[Fusion Init] Unexpected error:', error);
       }
     };
 
