@@ -40,7 +40,7 @@ export const useFusionInitialization = () => {
                 'Authorization': auth,
                 'Content-Type': 'application/json',
               },
-              credentials: 'include', // Important: include cookies for session persistence
+              mode: 'cors', // Explicit CORS mode for preflight negotiation
             });
 
             console.log(`[Fusion Init] Response status: ${response.status}`);

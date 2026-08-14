@@ -302,7 +302,7 @@ const ItemMaster: React.FC = () => {
               `${fusionBase}/inventoryOrganizations?limit=500&offset=${offset}`,
               {
                 headers: FUSION_HDRS,
-                credentials: 'include', // Critical: include cookies for session/auth
+                mode: 'cors', // Explicit CORS mode for proper preflight
               },
             );
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -438,7 +438,7 @@ const ItemMaster: React.FC = () => {
               signal: ctrl.signal,
               ...(source === 'fusion' ? {
                 headers: FUSION_HDRS,
-                credentials: 'include', // Critical: include cookies for Fusion API
+                mode: 'cors', // Explicit CORS mode
               } : {}),
             });
             break;
@@ -499,7 +499,7 @@ const ItemMaster: React.FC = () => {
 
       const response = await fetch(url, {
         headers: FUSION_HDRS,
-        credentials: 'include', // Critical: include cookies for session
+        mode: 'cors', // Explicit CORS mode
       });
 
       const result = `✓ Connected! HTTP ${response.status}
