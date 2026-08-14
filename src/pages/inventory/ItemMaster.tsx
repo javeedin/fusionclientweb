@@ -10,6 +10,7 @@ import {
   HomeOutlined, AppstoreOutlined, SearchOutlined, CloseOutlined,
   EditOutlined, ReloadOutlined, TagsOutlined, StopOutlined,
   ApiOutlined, CopyOutlined, DownloadOutlined, DownOutlined, UpOutlined,
+  FileSearchOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
