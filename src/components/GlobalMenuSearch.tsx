@@ -34,16 +34,28 @@ const GlobalMenuSearch: React.FC = () => {
   const filteredMenuItems = useMemo(() => getFilteredMenuItemsGrouped(), [currentCompany.code]);
 
   const handleSelect = (path: string | null) => {
-    if (!path) return;
+    if (!path) {
+      console.warn('[GlobalMenuSearch] No path selected');
+      return;
+    }
+
+    console.log('[GlobalMenuSearch] Selected:', { path, newWindow, isElectron: (window as any).electronAPI?.isElectron });
+
     setOpen(false);
     if (selectRef.current) selectRef.current.blur();
 
     if (newWindow) {
       // For Electron: use IPC to open new window with path
       if ((window as any).electronAPI?.openNewWindow) {
-        (window as any).electronAPI.openNewWindow(path);
+        console.log('[GlobalMenuSearch] Opening new Electron window with path:', path);
+        (window as any).electronAPI.openNewWindow(path).then((result: any) => {
+          console.log('[GlobalMenuSearch] IPC result:', result);
+        }).catch((err: any) => {
+          console.error('[GlobalMenuSearch] IPC error:', err);
+        });
       } else {
         // Browser: use window.open with path in hash
+        console.log('[GlobalMenuSearch] Opening browser window with path:', path);
         const base = window.location.href.replace(/#.*$/, '');
         const newWin = window.open(
           `${base}#${path}`,
@@ -61,6 +73,7 @@ const GlobalMenuSearch: React.FC = () => {
         }
       }
     } else {
+      console.log('[GlobalMenuSearch] Navigating in current window:', path);
       navigate(path);
     }
   };
