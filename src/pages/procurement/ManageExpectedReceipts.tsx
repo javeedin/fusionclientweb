@@ -32,7 +32,7 @@ const { RangePicker } = DatePicker;
 // we route through the Vite proxy to avoid CORS blocking. NOTE: the preload
 // exposes window.electronAPI (not window.electron), so detect via that.
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 
 const REDWOOD = {
   primary: '#C74634',
@@ -197,7 +197,7 @@ async function fetchLinesToReceive(q: string): Promise<ReceiptLine[]> {
   let hasMore = true;
   while (hasMore) {
     const url = `${FUSION_BASE}/linesToReceive?${qParam}limit=500&offset=${offset}`;
-    const res = await fetch(url, { headers: HEADERS });
+    const res = await fetch(url, { headers: getHeaders() });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     const data = await res.json();
     const items: ReceiptLine[] = (data.items ?? []).map((item: ReceiptLine) => ({
@@ -313,7 +313,7 @@ const PODetailTab: React.FC<{ poNumber: string; asn?: string; initialLines: Rece
   useEffect(() => {
     const org = initialLines[0]?.ToOrganizationCode;
     if (!org) return;
-    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: HEADERS })
+    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(org)}&onlyData=true&limit=500`, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(d => {
         const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -348,7 +348,7 @@ const PODetailTab: React.FC<{ poNumber: string; asn?: string; initialLines: Rece
         while (idx < nums.length) {
           const n = nums[idx++];
           try {
-            const r = await fetch(`${FUSION_BASE}/itemsV2?q=OrganizationCode=${encodeURIComponent(org)};ItemNumber=${encodeURIComponent(n)}&limit=1&onlyData=true`, { headers: HEADERS });
+            const r = await fetch(`${FUSION_BASE}/itemsV2?q=OrganizationCode=${encodeURIComponent(org)};ItemNumber=${encodeURIComponent(n)}&limit=1&onlyData=true`, { headers: getHeaders() });
             if (r.ok) {
               const it = ((await r.json()).items ?? [])[0];
               if (it) {
@@ -521,7 +521,7 @@ const PODetailTab: React.FC<{ poNumber: string; asn?: string; initialLines: Rece
       setReceiveRows(prev => prev.map(r => r.key === row.key ? { ...r, status: 'processing', message: '' } : r));
       try {
         const res = await fetch(RECEIVE_URL, {
-          method: 'POST', headers: { ...HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify(row.body),
+          method: 'POST', headers: { ...getHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(row.body),
         });
         const text = await res.text();
         let data: any = null, pretty = text;
@@ -1007,7 +1007,7 @@ const SearchTabContent: React.FC<{ onOpenPO: (group: POGroup) => void }> = ({ on
   const orgsUrl = `${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500`;
   const loadOrgs = useCallback(() => {
     setOrgsLoading(true); setOrgError('');
-    fetch(orgsUrl, { headers: HEADERS })
+    fetch(orgsUrl, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status} ${r.statusText}`)))
       .then(d => {
         const items: any[] = Array.isArray(d) ? d : (d.items ?? []);

@@ -45,7 +45,7 @@ const REDWOOD = {
 
 // ── API ───────────────────────────────────────────────────────────────────────
 const LATEST_URL = `${getFusionHost()}/fscmRestApi/resources/latest`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 const PAGE_LIMIT = 500;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -147,7 +147,7 @@ const SearchTab: React.FC = () => {
     const vals = form.getFieldsValue() as SearchVals;
     const url = buildUrl(vals);
     setLoading(true); setErr(''); setRan(true);
-    fetch(url, { headers: HEADERS })
+    fetch(url, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}: ${r.statusText}`)))
       .then(d => setRows(Array.isArray(d) ? d : (d.items ?? [])))
       .catch(e => { setErr(e.message); setRows([]); })
@@ -241,7 +241,7 @@ const fetchAllItemCosts = async (baseUrl: string, cap = 5000): Promise<any[]> =>
   const step = 500;
   while (all.length < cap) {
     const sep = stripped.includes('?') ? '&' : '?';
-    const r = await fetch(`${stripped}${sep}limit=${step}&offset=${offset}`, { headers: HEADERS });
+    const r = await fetch(`${stripped}${sep}limit=${step}&offset=${offset}`, { headers: getHeaders() });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d) ? d : (d.items ?? []);

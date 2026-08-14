@@ -30,7 +30,7 @@ const { Title, Text } = Typography;
 
 // Direct in Electron (no CORS); Vite proxy in the browser. preload exposes electronAPI.
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 const HDRS = { Authorization: HEADERS, Accept: 'application/json' };
 const ERP_URL = `${FUSION_BASE}/erpintegrations`;
 

@@ -23,7 +23,7 @@ const DEFAULT_IDCS_BASE = 'https://idcs-08ec9f6c9fe6485ca2a776ed49559d01.identit
 const BASE_KEY  = 'idcs_audit_base';
 
 // Same Basic-auth credentials the rest of the Fusion Client uses.
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 
 // Common IDCS audit event ids for sign-in activity.
 const EVENT_OPTIONS = [

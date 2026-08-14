@@ -39,7 +39,7 @@ const CHART_COLORS = ['#C74634', '#0572CE', '#1D7B4D', '#B07700', '#7245A6', '#0
 
 // ── Fusion config ────────────────────────────────────────────────────────────
 const BASE_URL = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 const CHILD_LIMIT = 500;
 // Fusion's canonical resource capitalises the C (LifeCycle); some versions use
 // a lowercase c — try the canonical form first, fall back on 404.

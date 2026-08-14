@@ -23,7 +23,7 @@ const getFusionBase = () => {
 const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 const PAGE_LIMIT = 500;
 
 const REDWOOD = {
@@ -45,7 +45,7 @@ const fetchAllPages = async (baseUrl: string): Promise<any[]> => {
   while (true) {
     const sep = stripped.includes('?') ? '&' : '?';
     const url = `${stripped}${sep}limit=${PAGE_LIMIT}&offset=${offset}`;
-    const r = await fetch(url, { headers: HEADERS });
+    const r = await fetch(url, { headers: getHeaders() });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const d = await r.json();
     const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -72,7 +72,7 @@ const ReviewInventoryTransactions: React.FC = () => {
   const [filters, setFilters] = useState<Filters>({ dateOp: '>', date: dayjs().subtract(7, 'day') });
 
   useEffect(() => {
-    fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500&fields=OrganizationCode`, { headers: HEADERS })
+    fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500&fields=OrganizationCode`, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => setOrgs(Array.from(new Set((d.items ?? []).map((o: any) => o.OrganizationCode).filter(Boolean))).sort() as string[]))
       .catch(() => { /* free-type fallback */ });

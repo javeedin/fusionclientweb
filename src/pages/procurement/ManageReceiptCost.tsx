@@ -39,7 +39,7 @@ const REDWOOD = {
 
 // ── API ───────────────────────────────────────────────────────────────────────
 const BASE_URL = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 // Small pages fetched in parallel are far faster than one large sequential page:
 // Fusion computes a 500-row page slowly, whereas ten 50-row pages return quickly
 // and can run concurrently. CONCURRENCY caps how many are in flight at once.
@@ -137,7 +137,7 @@ const fetchAllReceiptCosts = async (
   const pageUrl = (offset: number) => `${stripped}${sep}limit=${PAGE_LIMIT}&offset=${offset}`;
 
   // First page also asks Fusion for the total count.
-  const r0 = await fetch(`${pageUrl(0)}&totalResults=true`, { headers: HEADERS });
+  const r0 = await fetch(`${pageUrl(0)}&totalResults=true`, { headers: getHeaders() });
   if (!r0.ok) throw new Error(`HTTP ${r0.status}: ${r0.statusText}`);
   const d0 = await r0.json();
   const first: any[] = Array.isArray(d0) ? d0 : (d0.items ?? []);
@@ -160,7 +160,7 @@ const fetchAllReceiptCosts = async (
     while (true) {
       const my = next++;
       if (my >= offsets.length) return;
-      const r = await fetch(pageUrl(offsets[my]), { headers: HEADERS });
+      const r = await fetch(pageUrl(offsets[my]), { headers: getHeaders() });
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
       const d = await r.json();
       const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
@@ -537,7 +537,7 @@ const ManageReceiptCost: React.FC = () => {
   // Inventory Organization options — from inventoryOrganizations.
   const [orgs, setOrgs] = useState<{ name: string; code: string }[]>([]);
   useEffect(() => {
-    fetch(`${BASE_URL}/inventoryOrganizations?limit=500&onlyData=true&fields=OrganizationCode,OrganizationName`, { headers: HEADERS })
+    fetch(`${BASE_URL}/inventoryOrganizations?limit=500&onlyData=true&fields=OrganizationCode,OrganizationName`, { headers: getHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(d => {
         const items: any[] = Array.isArray(d) ? d : (d.items ?? []);

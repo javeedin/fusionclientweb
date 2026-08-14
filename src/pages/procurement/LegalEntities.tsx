@@ -18,7 +18,7 @@ const getFusionBase = () => {
 const { Title, Text } = Typography;
 
 const FUSION_BASE = `${getFusionBase()}`;
-const HEADERS = getFusionAuthHeaders();
+const getHeaders = () => getFusionAuthHeaders();
 
 const REDWOOD = {
   primary: '#C74634', primaryDark: '#A33B2C', primaryLight: '#E85D4A',
@@ -48,7 +48,7 @@ const LegalEntities: React.FC = () => {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    fetch(`${FUSION_BASE}/legalEntitiesLOV?limit=500`, { headers: HEADERS })
+    fetch(`${FUSION_BASE}/legalEntitiesLOV?limit=500`, { headers: getHeaders() })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(d => setData(Array.isArray(d) ? d : (d.items ?? [])))
       .catch(e => setError(e.message))
