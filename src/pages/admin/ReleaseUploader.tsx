@@ -139,10 +139,11 @@ const ReleaseUploader: React.FC = () => {
       console.log('[Release] Release created:', release.id);
       setUploadProgress(40);
 
-      // Step 2: Upload exe asset
+      // Step 2: Upload exe asset with company name prefix
       console.log('[Release] Uploading exe asset...');
+      const assetFileName = `${user?.company}-${exeFile.name}`;
       const uploadAssetResponse = await fetch(
-        `${uploadUrl}?name=${exeFile.name}`,
+        `${uploadUrl}?name=${assetFileName}`,
         {
           method: 'POST',
           headers: {
