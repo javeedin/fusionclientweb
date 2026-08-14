@@ -16,6 +16,7 @@ const MODULE_COLORS: Record<string, string> = {
   RM:   '#c41d7f',
   PMS:  '#1d39c4',
   PROC: '#d48806',
+  FSC:  '#13c2c2',
   ADMIN:'#cf1322',
   SYNC: '#531dab',
   SUPP: '#0958d9',

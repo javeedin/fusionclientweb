@@ -109,9 +109,26 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
   { key: 'pms-fees',              label: 'Fee Management',              module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/fees',                       description: 'Manage investment management fees' },
   { key: 'pms-benchmark',         label: 'Benchmark Comparison',        module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/benchmark',                  description: 'Compare portfolio against benchmarks' },
 
-  // ── Fusion Supply Chain / Suppliers ──────────────────────────────────────────
-  { key: 'proc-suppliers',        label: 'Manage Suppliers',            module: 'PROC', moduleLabel: 'Fusion Supply Chain',     path: '/procurement/suppliers',          description: 'Supplier master data management', keywords: 'vendor supplier party' },
-  { key: 'proc-tb-loading',      label: 'Trial Balance Loading',       module: 'PROC', moduleLabel: 'Fusion Supply Chain',     path: '/procurement/tb-loading',         description: 'Load trial balance from Excel, filter and review data', keywords: 'trial balance tb excel upload load procurement' },
+  // ── Fusion Supply Chain / Inventory ─────────────────────────────────────────
+  { key: 'fsc-item-master',       label: 'Item Master',                module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/fusion-supply-chain/inventory/item-master',       description: 'Item catalog with attributes, pricing and flags', keywords: 'item master inventory product' },
+  { key: 'fsc-subinventories',    label: 'Subinventories',             module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/fusion-supply-chain/inventory/subinventories',    description: 'Warehouse and subinventory hierarchy by business unit', keywords: 'subinventory warehouse inventory location' },
+  { key: 'fsc-on-hand',           label: 'On-Hand',                    module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/fusion-supply-chain/inventory/on-hand',           description: 'View current on-hand stock levels by item and location', keywords: 'on-hand stock inventory level quantity' },
+
+  // ── Fusion Supply Chain / Purchasing ─────────────────────────────────────────
+  { key: 'fsc-purchase-orders',   label: 'Purchase Orders',            module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/fusion-supply-chain/purchasing/purchase-orders',  description: 'Search sales orders and drill into header & lines (Fusion salesOrdersForOrderHub)', keywords: 'purchase order po requisition supplier' },
+  { key: 'fsc-suppliers',         label: 'Suppliers',                  module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/fusion-supply-chain/purchasing/suppliers',        description: 'Supplier master data management', keywords: 'vendor supplier party contact' },
+
+  // ── Fusion Supply Chain / Sales & Order Management ────────────────────────────
+  { key: 'fsc-sales-orders',      label: 'Sales Orders',               module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/fusion-supply-chain/sales/sales-orders',          description: 'Search sales orders and drill into header & lines (Fusion salesOrdersForOrderHub)', keywords: 'sales order so customer' },
+  { key: 'fsc-price-list',        label: 'Price List',                 module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/fusion-supply-chain/sales/price-list',            description: 'Manage and review price lists', keywords: 'price list pricing discount' },
+
+  // ── Fusion Supply Chain / Receiving & Fulfillment ─────────────────────────────
+  { key: 'fsc-expected-po-receipts', label: 'Expected PO Receipts',     module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/fusion-supply-chain/receiving/expected-po-receipts', description: 'View and manage purchase order lines pending receipt in Oracle Fusion', keywords: 'po receipts expected purchase order pending receipt' },
+  { key: 'fsc-create-asn',        label: 'Create ASN',                 module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/fusion-supply-chain/receiving/create-asn',        description: 'Query a purchase order and create an Advance Shipment Notice (ASN) in Oracle Fusion', keywords: 'asn advance shipment notice po' },
+  { key: 'fsc-transfer-orders',   label: 'Transfer Orders',            module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/fusion-supply-chain/receiving/transfer-orders',   description: 'Transfer stock between inventory organizations (search & create via SCO)', keywords: 'transfer order stock movement organization inventory' },
+
+  // ── Procurement (Legacy) ─────────────────────────────────────────────────────
+  { key: 'proc-tb-loading',      label: 'Trial Balance Loading',       module: 'PROC', moduleLabel: 'Procurement (Legacy)',    path: '/procurement/tb-loading',         description: 'Load trial balance from Excel, filter and review data', keywords: 'trial balance tb excel upload load procurement' },
 
   // ── Setup Data ──────────────────────────────────────────
   { key: 'setup-data',            label: 'Setup Data Overview',         module: 'SETUP', moduleLabel: 'Setup Data',             path: '/procurement/setup-data',              description: 'Upload a Fusion Setup Data Export and review all setup tasks + a per-module dashboard', keywords: 'setup fsm export configuration dashboard tasks bu' },
