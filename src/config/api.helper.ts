@@ -14,10 +14,16 @@ export function buildApexUrl(endpoint: string): string {
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
 
   if (typeof window !== 'undefined' && !isElectron) {
-    // Browser: use proxy
+    // Browser: use proxy with company-specific APEX base URL
+    const apexBase = encodeURIComponent(getApexBaseUrl());
     const proxyBase = 'http://localhost:3001/api/apex';
-    if (!endpoint) return proxyBase;
-    return normalizeUrl(`${proxyBase}/${endpoint}`);
+    if (!endpoint) return `${proxyBase}?base=${apexBase}`;
+
+    // Check if endpoint already has query params
+    if (endpoint.includes('?')) {
+      return normalizeUrl(`${proxyBase}/${endpoint}&base=${apexBase}`);
+    }
+    return normalizeUrl(`${proxyBase}/${endpoint}?base=${apexBase}`);
   }
 
   // Electron or server-side: use direct APEX URL
@@ -31,7 +37,7 @@ export function buildApexAuthUrl(endpoint: string): string {
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
 
   if (typeof window !== 'undefined' && !isElectron) {
-    // Browser: use proxy
+    // Browser: use proxy (auth routes are direct APEX auth, not proxied through /api/apex/auth)
     const proxyBase = 'http://localhost:3001/api/apex-auth';
     if (!endpoint) return proxyBase;
     return normalizeUrl(`${proxyBase}/${endpoint}`);
@@ -48,7 +54,7 @@ export function buildApexAdminUrl(endpoint: string): string {
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
 
   if (typeof window !== 'undefined' && !isElectron) {
-    // Browser: use proxy
+    // Browser: use proxy (admin routes are direct APEX admin, not proxied through /api/apex/admin)
     const proxyBase = 'http://localhost:3001/api/apex-admin';
     if (!endpoint) return proxyBase;
     return normalizeUrl(`${proxyBase}/${endpoint}`);

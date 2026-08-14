@@ -1003,17 +1003,24 @@ app.all(/^\/api\/apex-admin\/(.+)$/, async (req, res) => {
 
 // ─── Generic APEX API Proxy ──────────────────────────────────────────────────
 // Routes all APEX API calls through the proxy to avoid CORS issues
-// GET /api/apex/*  (e.g., /api/apex/ap/payments, /api/apex/approvals/requests)
+// GET /api/apex/*?base=<APEX_BASE_URL>  (e.g., /api/apex/ap/payments?base=https://...)
+// If base parameter is not provided, falls back to APEX_CONFIG.baseUrl
 app.all(/^\/api\/apex\/(.+)$/, async (req, res) => {
   const path = req.params[0]; // Gets everything after /api/apex/
-  const apexBase = APEX_CONFIG.baseUrl;
+
+  // Get APEX base URL from query parameter or use default
+  let apexBase = req.query.base ? String(req.query.base) : APEX_CONFIG.baseUrl;
+
+  // Remove base parameter from query string to avoid passing it upstream
+  const queryParams = new URLSearchParams(req.query);
+  queryParams.delete('base');
+  const queryString = queryParams.toString() ? '?' + queryParams.toString() : '';
+
   const url = `${apexBase}/${path}`;
-  const queryString = Object.keys(req.query).length > 0
-    ? '?' + new URLSearchParams(req.query).toString()
-    : '';
 
   if (VERBOSE) {
     console.log(`[APEX API ${req.method}] Path: ${path}`);
+    console.log(`[APEX API ${req.method}] Base: ${apexBase}`);
     console.log(`[APEX API ${req.method}] URL: ${url}${queryString}`);
     if (req.body) console.log(`[APEX API ${req.method}] Body:`, JSON.stringify(req.body).substring(0, 200));
   }
