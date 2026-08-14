@@ -26,16 +26,23 @@ import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 import { FUSION_POD_HOST, FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 import CustomerSearchBipModal from '../../components/CustomerSearchBipModal';
 import { convertBipCustomerToFill, type CustomerSearchResult } from '../../services/customerSearchBip.service';
 import { ORACLE_SOAP_CONFIG } from '../../config/api.config';
 
 const { Content } = Layout;
+
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
 const { Title, Text } = Typography;
 
 const _isElectron = !!(window as unknown as { electron?: unknown; electronAPI?: unknown }).electron
   || !!(window as unknown as { electronAPI?: unknown }).electronAPI;
-const FUSION_BASE = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
+const FUSION_BASE = `${getFusionBase()}`;
 const AUTH_HEADER = FUSION_POD_AUTH;
 const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
 const APEX_BASE = buildApexUrl('');

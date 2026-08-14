@@ -17,12 +17,19 @@ import {
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import { FUSION_POD_HOST, FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Header, Content, Sider } = Layout;
+
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const BASE_URL    = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
+const BASE_URL    = `${getFusionBase()}`;
 const AUTH_HEADER = FUSION_POD_AUTH;
 const HDRS        = { Authorization: AUTH_HEADER, Accept: 'application/json' };
 
@@ -45,7 +52,7 @@ const coaSegmentCache: Record<string, Record<string, string>> = {};
 // backward-compat alias used by BIP "Get Account Description"
 const coaAccountCache: Record<string, string> = {};
 
-const COA_BASE = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05/valueSets`;
+const COA_BASE = `${getFusionBase()}/valueSets`;
 
 const COA_SEGMENTS = [
   { key: 'coa-company',          label: 'Company',          valueSet: 'Company_VS'         },

@@ -14,13 +14,20 @@ import {
 import { Link } from 'react-router-dom';
 import dayjs, { type Dayjs } from 'dayjs';
 import { FUSION_POD_HOST, FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
+
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
 const { Title, Text } = Typography;
 
 // Electron goes direct (no CORS); browser dev routes via the Vite proxy.
 // preload exposes window.electronAPI (not window.electron) — detect via that.
-const FUSION_BASE = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
+const FUSION_BASE = `${getFusionBase()}`;
 // itemCosts is exposed on the "latest" resource version (same as Manage Item Cost).
 const LATEST_URL = `${FUSION_POD_HOST}/fscmRestApi/resources/latest`;
 const AUTH_HEADER = FUSION_POD_AUTH;

@@ -21,7 +21,8 @@ import * as XLSX from 'xlsx';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import CreatePurchaseOrder from './CreatePurchaseOrder';
 import POLifeCycleModal from './POLifeCycle';
-import { FUSION_POD_HOST, FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
+import { FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -41,8 +42,13 @@ const CHART_COLORS = [
   '#00918A', '#D93025', '#FF6B6B', '#4ECDC4', '#95E1D3',
 ];
 
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
+
 // ── Oracle Fusion API config ─────────────────────────────────────────────────
-const BASE_URL = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
 const AUTH_HEADER = FUSION_POD_AUTH;
 const PAGE_SIZE = 25;
 const CHILD_LIMIT = 500;
@@ -279,7 +285,7 @@ const PODetailPage: React.FC<{ po: RawPO; onClose?: () => void; onEdit?: (po: Ra
       const results = await Promise.allSettled(
         linesList.map(async (line) => {
           const schedLink = line.links?.find(l => l.name === 'schedules')?.href;
-          const base = schedLink ?? `${BASE_URL}/purchaseOrders/${po.POHeaderId}/child/lines/${line.POLineId}/child/schedules`;
+          const base = schedLink ?? `${getFusionBase()}/purchaseOrders/${po.POHeaderId}/child/lines/${line.POLineId}/child/schedules`;
           const items = await fetchAllPages(base);
           return items.map(s => ({ ...s, _lineNumber: line.LineNumber, _lineItem: line.Item, _lineDescription: line.Description }));
         })
@@ -300,7 +306,7 @@ const PODetailPage: React.FC<{ po: RawPO; onClose?: () => void; onEdit?: (po: Ra
 
   useEffect(() => {
     const base = po.links?.find(l => l.name === 'lines')?.href
-      ?? `${BASE_URL}/purchaseOrders/${po.POHeaderId}/child/lines`;
+      ?? `${getFusionBase()}/purchaseOrders/${po.POHeaderId}/child/lines`;
     setLinesUrl(base);
     doFetch(base);
   }, [po.POHeaderId, doFetch]);
@@ -427,7 +433,7 @@ ${po.NoteToSupplier ? `<div class="sec">Notes</div><div class="fv">${po.NoteToSu
 
   const handleRefresh = () => {
     const base = po.links?.find(l => l.name === 'lines')?.href
-      ?? `${BASE_URL}/purchaseOrders/${po.POHeaderId}/child/lines`;
+      ?? `${getFusionBase()}/purchaseOrders/${po.POHeaderId}/child/lines`;
     doFetch(base);
     message.success('Lines refreshed');
   };
@@ -1042,7 +1048,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
     const resource = (describeResource || 'draftPurchaseOrders').trim();
     setDescribeLoading(true); setDescribeErr(''); setDescribeActions(null);
     try {
-      const r = await fetch(`${BASE_URL}/${resource}/describe`, { headers: { Authorization: AUTH_HEADER, Accept: 'application/json' } });
+      const r = await fetch(`${getFusionBase()}/${resource}/describe`, { headers: { Authorization: AUTH_HEADER, Accept: 'application/json' } });
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
       const d = await r.json();
       let actions: any = d?.Resources?.[resource]?.actions ?? d?.actions ?? [];
@@ -1061,7 +1067,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
     let ok = 0; const failures: string[] = [];
     for (const po of chosen) {
       try {
-        const r = await fetch(`${BASE_URL}/draftPurchaseOrders/${po.POHeaderId}`, {
+        const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${po.POHeaderId}`, {
           method: 'POST',
           headers: { Authorization: AUTH_HEADER, Accept: 'application/json', 'Content-Type': 'application/vnd.oracle.adf.action+json' },
           body: JSON.stringify({ name: approveAction, parameters: [] }),
@@ -1094,7 +1100,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
     const q = buildQParam(params);
     const up = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String((pageNum - 1) * PAGE_SIZE), totalResults: 'true', expand: 'lines' });
     if (q) up.set('q', q);
-    return `${BASE_URL}/purchaseOrders?${up.toString()}`;
+    return `${getFusionBase()}/purchaseOrders?${up.toString()}`;
   };
 
   const fetchLineCounts = useCallback(async (pos: RawPO[]) => {
@@ -1106,7 +1112,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
           // One call gets the line count (totalResults) and, via the expanded
           // schedule, the ship-to location (which lives on the schedule, not the header).
           const r = await fetch(
-            `${BASE_URL}/purchaseOrders/${po.POHeaderId}/child/lines?limit=1&totalResults=true&expand=schedules`,
+            `${getFusionBase()}/purchaseOrders/${po.POHeaderId}/child/lines?limit=1&totalResults=true&expand=schedules`,
             { headers: { Authorization: AUTH_HEADER, Accept: 'application/json' } }
           );
           if (!r.ok) return { id: po.POHeaderId, count: 0, shipTo: '' };
@@ -1186,7 +1192,7 @@ const SearchTab: React.FC<{ onOpen: (po: RawPO) => void; onEdit: (po: RawPO) => 
     const fetchBusUnits = async () => {
       setBusUnitsLoading(true);
       try {
-        const res = await fetch(`${BASE_URL}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`, { headers: { Authorization: AUTH_HEADER, Accept: 'application/json' } });
+        const res = await fetch(`${getFusionBase()}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`, { headers: { Authorization: AUTH_HEADER, Accept: 'application/json' } });
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         const json = await res.json();
         const items: BusinessUnit[] = (json.items ?? []);
@@ -1996,7 +2002,7 @@ Content-Type: application/vnd.oracle.adf.action+json`}
               <div key={po.POHeaderId} style={{ padding: '6px 10px', borderBottom: `1px solid ${REDWOOD.neutral100}` }}>
                 <Tag color="blue" style={{ fontSize: 10 }}>{po.OrderNumber}</Tag>
                 <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
-                  {`${BASE_URL}/draftPurchaseOrders/${po.POHeaderId}`}
+                  {`${getFusionBase()}/draftPurchaseOrders/${po.POHeaderId}`}
                 </Text>
               </div>
             ))}

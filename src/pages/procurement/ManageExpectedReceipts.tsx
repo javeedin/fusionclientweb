@@ -15,8 +15,15 @@ import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import { FUSION_POD_HOST, FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
+
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
 const { Title, Text } = Typography;
 const { Option } = Select;
 const { RangePicker } = DatePicker;
@@ -24,7 +31,7 @@ const { RangePicker } = DatePicker;
 // In Electron the request goes directly (no CORS). In a browser (localhost dev)
 // we route through the Vite proxy to avoid CORS blocking. NOTE: the preload
 // exposes window.electronAPI (not window.electron), so detect via that.
-const FUSION_BASE = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
+const FUSION_BASE = `${getFusionBase()}`;
 const AUTH_HEADER = FUSION_POD_AUTH;
 const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
 

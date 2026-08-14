@@ -14,12 +14,19 @@ import { Link } from 'react-router-dom';
 import dayjs, { type Dayjs } from 'dayjs';
 import { ShipConfirmModal, PickSlipDialog } from './ConfirmPicks';
 import { FUSION_POD_HOST, FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
+
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
 const { Title, Text } = Typography;
 
 // Electron goes direct (no CORS); browser dev routes via the Vite proxy.
-const FUSION_BASE = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
+const FUSION_BASE = `${getFusionBase()}`;
 const AUTH_HEADER = FUSION_POD_AUTH;
 const FUSION_HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
 const PAGE_LIMIT = 500;

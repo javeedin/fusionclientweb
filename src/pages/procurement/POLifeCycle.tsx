@@ -5,7 +5,8 @@ import {
   Button, Tooltip, Segmented, message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { FUSION_POD_HOST, FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 import {
   HistoryOutlined, FolderOpenOutlined, FileTextOutlined,
   ReloadOutlined, ApiOutlined, InfoCircleOutlined, DollarOutlined,
@@ -19,6 +20,12 @@ import {
 
 const { Text } = Typography;
 
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
+
 // ── Redwood palette ──────────────────────────────────────────────────────────
 const REDWOOD = {
   primary: '#C74634', primaryLight: '#E85D4A', primaryDark: '#A33B2C',
@@ -31,7 +38,7 @@ const REDWOOD = {
 const CHART_COLORS = ['#C74634', '#0572CE', '#1D7B4D', '#B07700', '#7245A6', '#00918A', '#E85D4A', '#D93025'];
 
 // ── Fusion config ────────────────────────────────────────────────────────────
-const BASE_URL = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
+const BASE_URL = `${getFusionBase()}`;
 const AUTH_HEADER = FUSION_POD_AUTH;
 const CHILD_LIMIT = 500;
 // Fusion's canonical resource capitalises the C (LifeCycle); some versions use

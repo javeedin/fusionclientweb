@@ -21,13 +21,19 @@ import {
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { message } from 'antd';
-import { FUSION_POD_HOST, FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
 const { Text, Title } = Typography;
 const { Option } = Select;
 
-const FUSION_BASE = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
+
 const ORDS_DIRECT = buildApexUrl('test/FUSIONCLIENTERP');
 // In dev (localhost) use Vite proxy to avoid CORS; in Electron/production use direct URL.
 const ORDS_BASE   = window.location.hostname === 'localhost' ? '/ords-mitsu' : ORDS_DIRECT;
@@ -350,7 +356,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     setLovLoading(true);
     try {
       const [buRes, ccyRes, orgRes, subRes] = await Promise.allSettled([
-        fetch(`${FUSION_BASE}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`, { headers: FUSION_HDRS })
+        fetch(`${getFusionBase()}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`, { headers: FUSION_HDRS })
           .then(r => r.json())
           .then(d => {
             // Deduplicate business units by name and map to expected format
@@ -373,7 +379,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
               }));
           }),
         fetch(`${buildCurrencyUrl('currencies')}`).then(r => r.json()).then(d => d.items ?? d.data ?? (Array.isArray(d) ? d : [])),
-        fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500`, { headers: FUSION_HDRS }).then(r => r.ok ? r.json() : Promise.reject()).then(d => d.items ?? []),
+        fetch(`${getFusionBase()}/inventoryOrganizations?onlyData=true&limit=500`, { headers: FUSION_HDRS }).then(r => r.ok ? r.json() : Promise.reject()).then(d => d.items ?? []),
       ]);
       if (buRes.status === 'fulfilled') {
         setBusUnits(buRes.value);
@@ -458,7 +464,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     if (!term || term.length < 2) return;
     // Search by supplier name (Supplier) or supplier number (SupplierNumber).
     const attr = by === 'number' ? 'SupplierNumber' : 'Supplier';
-    const url = `${FUSION_BASE}/suppliers?q=${attr} LIKE '*${term}*'&limit=20`;
+    const url = `${getFusionBase()}/suppliers?q=${attr} LIKE '*${term}*'&limit=20`;
     setSupplierApiUrl(url);
     setSuppliersLoading(true);
     try {
@@ -474,7 +480,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     if (!supplierId) return;
     setSitesLoading(true);
     try {
-      const r = await fetch(`${FUSION_BASE}/suppliers/${supplierId}/child/sites?limit=100`, { headers: FUSION_HDRS });
+      const r = await fetch(`${getFusionBase()}/suppliers/${supplierId}/child/sites?limit=100`, { headers: FUSION_HDRS });
       const d = await r.json();
       setSupplierSites(d.items ?? []);
     } catch { /* ignore */ } finally { setSitesLoading(false); }
@@ -497,7 +503,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     if (!orgCode) return;
 
     // Fetch subinventories for the selected organization from Fusion API
-    fetch(`${FUSION_BASE}/subinventories?q=OrganizationCode=${encodeURIComponent(orgCode)}&onlyData=true&limit=500`, { headers: FUSION_HDRS })
+    fetch(`${getFusionBase()}/subinventories?q=OrganizationCode=${encodeURIComponent(orgCode)}&onlyData=true&limit=500`, { headers: FUSION_HDRS })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => {
         const subs = Array.from(new Set((d.items ?? []).map((s: any) => s.SecondaryInventoryName).filter(Boolean))).sort() as string[];
@@ -557,7 +563,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     setNextPoLoading(true);
     try {
       const q = `OrderNumber LIKE '${docType}%'`;
-      const url = `${FUSION_BASE}/purchaseOrders?q=${encodeURIComponent(q)}&orderBy=CreationDate:desc&limit=1`;
+      const url = `${getFusionBase()}/purchaseOrders?q=${encodeURIComponent(q)}&orderBy=CreationDate:desc&limit=1`;
       const r = await fetch(url, { headers: FUSION_HDRS });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
@@ -606,7 +612,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         const qParts = [`OrganizationCode=${header.shipToOrg}`, `ItemNumber=${line.itemNumber}`];
         if (header.subinventory) qParts.push(`SubinventoryCode=${header.subinventory}`);
         const urlParams = new URLSearchParams({ q: qParts.join(';'), limit: '50' });
-        const url = `${FUSION_BASE}/inventoryOnhandBalances?${urlParams}`;
+        const url = `${getFusionBase()}/inventoryOnhandBalances?${urlParams}`;
         const r = await fetch(url, { headers: FUSION_HDRS });
         const d = await r.json();
         const items: any[] = d.items ?? [];
@@ -633,7 +639,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       const qParts = [`OrganizationCode=${header.shipToOrg}`];
       if (header.subinventory) qParts.push(`SubinventoryCode=${header.subinventory}`);
       const params = new URLSearchParams({ q: qParts.join(';'), limit: '500', totalResults: 'true' });
-      const baseUrl = `${FUSION_BASE}/inventoryOnhandBalances?${params}`;
+      const baseUrl = `${getFusionBase()}/inventoryOnhandBalances?${params}`;
       setOrgQohApiUrl(baseUrl);
       const rows = await fetchLOV(baseUrl);
       setOrgQohRows(rows);
@@ -681,13 +687,13 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
           <div style={{ fontSize: 12 }}>
             <p>This permanently removes item <b>{line.itemNumber}</b> (POLineId {line.poLineId}) from PO {header?.poNumber} in Oracle Fusion.</p>
             <pre style={{ fontSize: 11, background: '#f5f5f5', padding: 8, borderRadius: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-{`DELETE ${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}/child/lines/${line.poLineId}`}
+{`DELETE ${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${line.poLineId}`}
             </pre>
           </div>
         ),
         onOk: async () => {
           try {
-            const r = await fetch(`${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}/child/lines/${line.poLineId}`, { method: 'DELETE', headers: FUSION_HDRS });
+            const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${line.poLineId}`, { method: 'DELETE', headers: FUSION_HDRS });
             if (!r.ok && r.status !== 204) {
               const t = await r.text();
               Modal.error({ title: 'Delete line failed', width: 620, content: <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 260, overflow: 'auto' }}>{t}</pre> });
@@ -735,7 +741,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       // attributes are the org-specific definition, not the item master (AMS).
       const org = header?.shipToOrg;
       const q = `ItemNumber='${itemNumber}'${org ? `;OrganizationCode=${org}` : ''}`;
-      const url = `${FUSION_BASE}/itemsV2?q=${encodeURIComponent(q)}&limit=50&onlyData=true`;
+      const url = `${getFusionBase()}/itemsV2?q=${encodeURIComponent(q)}&limit=50&onlyData=true`;
       setItemDetailApiUrl(`GET itemsV2?q=${q}`);
       const r = await fetch(url, { headers: FUSION_HDRS });
       const d = await r.json().catch(() => ({} as any));
@@ -769,7 +775,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
   // Read the item's master definition (the row that carries the Sales Account).
   const fetchMasterItem = async (itemNumber: string): Promise<Record<string, any> | null> => {
     try {
-      const url = `${FUSION_BASE}/itemsV2?q=ItemNumber='${encodeURIComponent(itemNumber)}'&limit=50&onlyData=true`;
+      const url = `${getFusionBase()}/itemsV2?q=ItemNumber='${encodeURIComponent(itemNumber)}'&limit=50&onlyData=true`;
       const r = await fetch(url, { headers: FUSION_HDRS });
       if (!r.ok) return null;
       const d = await r.json().catch(() => ({} as any));
@@ -822,7 +828,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
   // PATCH attribute updates, since itemsV2 POST only creates the assignment.
   const getItemSelfHref = async (itemNumber: string, org: string): Promise<string | null> => {
     try {
-      const url = `${FUSION_BASE}/itemsV2?q=ItemNumber='${itemNumber}';OrganizationCode=${org}&limit=1`;
+      const url = `${getFusionBase()}/itemsV2?q=ItemNumber='${itemNumber}';OrganizationCode=${org}&limit=1`;
       const r = await fetch(url, { headers: FUSION_HDRS });
       if (!r.ok) return null;
       const d = await r.json().catch(() => ({} as any));
@@ -855,8 +861,8 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     }
     const errOf = (data: any, r: Response) => data?.detail || data?.message || (Array.isArray(data?.['o:errorDetails']) ? data['o:errorDetails'][0]?.detail : '') || `HTTP ${r.status}`;
     const doPatch = () => fetch(selfHref!, { method: 'PATCH', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(copied) });
-    const doUpsert = () => fetch(`${FUSION_BASE}/itemsV2`, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json', 'Upsert-Mode': 'true' }, body: JSON.stringify(buildAssignBody(org, line, master)) });
-    const doPost = () => fetch(`${FUSION_BASE}/itemsV2`, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(buildAssignBody(org, line, master)) });
+    const doUpsert = () => fetch(`${getFusionBase()}/itemsV2`, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json', 'Upsert-Mode': 'true' }, body: JSON.stringify(buildAssignBody(org, line, master)) });
+    const doPost = () => fetch(`${getFusionBase()}/itemsV2`, { method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(buildAssignBody(org, line, master)) });
     try {
       let r = await (isUpdate ? doPatch() : doPost());
       let data = await r.json().catch(() => ({} as any));
@@ -978,7 +984,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     setEditMode(true);
     setEditLoading(true);
     try {
-      const url = `${FUSION_BASE}/draftPurchaseOrders/${id}`;
+      const url = `${getFusionBase()}/draftPurchaseOrders/${id}`;
       const r = await fetch(url, { headers: FUSION_HDRS });
       const d = await r.json();
       if (!r.ok) throw new Error(d?.title ?? d?.detail ?? `HTTP ${r.status}`);
@@ -1010,7 +1016,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       let offset = 0;
       const PAGE = 500;
       for (let guard = 0; guard < 200; guard++) {
-        const lr = await fetch(`${FUSION_BASE}/draftPurchaseOrders/${id}/child/lines?expand=schedules&limit=${PAGE}&offset=${offset}`, { headers: FUSION_HDRS });
+        const lr = await fetch(`${getFusionBase()}/draftPurchaseOrders/${id}/child/lines?expand=schedules&limit=${PAGE}&offset=${offset}`, { headers: FUSION_HDRS });
         const ld = await lr.json();
         if (!lr.ok) throw new Error(ld?.title ?? ld?.detail ?? `HTTP ${lr.status}`);
         const items: any[] = ld?.items ?? [];
@@ -1262,7 +1268,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
 
   const handleRunFusionPost = async () => {
     if (!fusionPreparedBody) return;
-    const fusionUrl = `${FUSION_BASE}/draftPurchaseOrders`;
+    const fusionUrl = `${getFusionBase()}/draftPurchaseOrders`;
     setFusionPostLoading(true);
     setFusionPostResult(null);
     try {
@@ -1283,7 +1289,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
   };
 
   const handleTestFusion = async () => {
-    const testUrl = `${FUSION_BASE}/draftPurchaseOrders?limit=1`;
+    const testUrl = `${getFusionBase()}/draftPurchaseOrders?limit=1`;
     setFusionTestLoading(true);
     try {
       const r = await fetch(testUrl, { headers: FUSION_HDRS });
@@ -1351,7 +1357,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
 
     setGeneratePoLoading(true);
     try {
-      const r = await fetch(`${FUSION_BASE}/draftPurchaseOrders`, {
+      const r = await fetch(`${getFusionBase()}/draftPurchaseOrders`, {
         method: 'POST',
         headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -1419,7 +1425,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     }
     setApprovingFusion(true);
     try {
-      const r = await fetch(`${FUSION_BASE}/draftPurchaseOrders/${id}`, {
+      const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${id}`, {
         method: 'POST',
         headers: { ...FUSION_HDRS, 'Content-Type': 'application/vnd.oracle.adf.action+json' },
         body: JSON.stringify({ name: 'submit', parameters: [] }),
@@ -1467,7 +1473,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       for (const l of lines.filter(x => x.poLineId == null)) {
         nextNum += 1;
         const body = buildLineBody(l, nextNum);   // full schedule + LineNumber
-        const r = await fetch(`${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}/child/lines`, {
+        const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines`, {
           method: 'POST', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
         if (r.ok) {
@@ -1480,14 +1486,14 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       }
       for (const l of lines.filter(x => x.poLineId != null)) {
         const body = { Quantity: l.qty, Price: l.price, Description: l.description };
-        const r = await fetch(`${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}`, {
+        const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}`, {
           method: 'PATCH', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
         if (r.ok) updated++; else { const t = await r.text(); errors.push(`Update line ${l.lineNum}: ${t.slice(0, 300)}`); }
         // Need-by lives on the schedule — PATCH it (and the schedule qty) so it saves.
         if (l.scheduleId != null && l.needBy) {
           const schBody = { RequestedDeliveryDate: l.needBy.format('YYYY-MM-DD'), Quantity: l.qty };
-          const sr = await fetch(`${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}/child/schedules/${l.scheduleId}`, {
+          const sr = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}/child/schedules/${l.scheduleId}`, {
             method: 'PATCH', headers: { ...FUSION_HDRS, 'Content-Type': 'application/json' }, body: JSON.stringify(schBody),
           });
           if (!sr.ok) { const t = await sr.text(); errors.push(`Need-by line ${l.lineNum}: ${t.slice(0, 200)}`); }
@@ -1516,15 +1522,15 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     let nextNum = nextLineNumberBase();
     lines.filter(l => l.poLineId == null).forEach(l => {
       nextNum += 1;
-      ops.push({ method: 'POST', url: `${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}/child/lines`, body: buildLineBody(l, nextNum), lineKey: l.key });
+      ops.push({ method: 'POST', url: `${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines`, body: buildLineBody(l, nextNum), lineKey: l.key });
     });
     lines.filter(l => l.poLineId != null).forEach(l => {
       ops.push({
-        method: 'PATCH', url: `${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}`,
+        method: 'PATCH', url: `${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}`,
         body: { Quantity: l.qty, Price: l.price, Description: l.description }, lineKey: l.key,
       });
       if (l.scheduleId != null && l.needBy) ops.push({
-        method: 'PATCH', url: `${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}/child/schedules/${l.scheduleId}`,
+        method: 'PATCH', url: `${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}/child/schedules/${l.scheduleId}`,
         body: { RequestedDeliveryDate: l.needBy.format('YYYY-MM-DD'), Quantity: l.qty }, lineKey: l.key,
       });
     });
@@ -1565,13 +1571,13 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         <div style={{ fontSize: 12 }}>
           <p>This permanently removes the entire purchase order (POHeaderId {poHeaderId}) from Oracle Fusion.</p>
           <pre style={{ fontSize: 11, background: '#f5f5f5', padding: 8, borderRadius: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-{`DELETE ${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}`}
+{`DELETE ${getFusionBase()}/draftPurchaseOrders/${poHeaderId}`}
           </pre>
         </div>
       ),
       onOk: async () => {
         try {
-          const r = await fetch(`${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}`, { method: 'DELETE', headers: FUSION_HDRS });
+          const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}`, { method: 'DELETE', headers: FUSION_HDRS });
           if (!r.ok && r.status !== 204) {
             const t = await r.text();
             Modal.error({ title: 'Delete PO failed', width: 620, content: <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 260, overflow: 'auto' }}>{t}</pre> });
@@ -1605,7 +1611,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         <div style={{ fontSize: 12 }}>
           <p>This permanently removes <b>every line</b> — and each line's schedules and distributions — from PO {header?.poNumber} in Oracle Fusion. The PO header stays.</p>
           <pre style={{ fontSize: 11, background: '#f5f5f5', padding: 8, borderRadius: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-{`DELETE ${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}/child/lines/{POLineId}   ×${fusionLines.length}`}
+{`DELETE ${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/{POLineId}   ×${fusionLines.length}`}
           </pre>
         </div>
       ),
@@ -1616,7 +1622,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         // Delete highest line number first so re-sequencing never clashes.
         for (const l of [...fusionLines].sort((a, b) => (b.lineNum ?? 0) - (a.lineNum ?? 0))) {
           try {
-            const r = await fetch(`${FUSION_BASE}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}`, { method: 'DELETE', headers: FUSION_HDRS });
+            const r = await fetch(`${getFusionBase()}/draftPurchaseOrders/${poHeaderId}/child/lines/${l.poLineId}`, { method: 'DELETE', headers: FUSION_HDRS });
             if (r.ok || r.status === 204) deleted++;
             else { const t = await r.text(); errors.push(`Line ${l.lineNum} (${l.itemNumber}): ${t.slice(0, 200)}`); }
           } catch (e: any) { errors.push(`Line ${l.lineNum} (${l.itemNumber}): ${e.message}`); }
@@ -1641,7 +1647,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     if (!poHeaderId) { message.warning('Save the purchase order first — the action needs the Fusion PO id.'); return; }
     setPoActionLoading(actionName);
     try {
-      const url = `${FUSION_BASE}/${resource}/${poHeaderId}`;
+      const url = `${getFusionBase()}/${resource}/${poHeaderId}`;
       const r = await fetch(url, {
         method: 'POST',
         headers: { ...FUSION_HDRS, 'Content-Type': 'application/vnd.oracle.adf.action+json' },
@@ -1677,7 +1683,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
         <div style={{ fontSize: 12 }}>
           <p style={{ margin: '0 0 8px' }}>POST the Fusion custom action <b>{actionName}</b> to this purchase order.</p>
           <pre style={{ fontSize: 11, background: '#f5f5f5', padding: 10, borderRadius: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-{`POST ${FUSION_BASE}/${resource}/${poHeaderId}
+{`POST ${getFusionBase()}/${resource}/${poHeaderId}
 Content-Type: application/vnd.oracle.adf.action+json
 
 ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
@@ -2285,8 +2291,8 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
         query = `ItemDescription LIKE %${searchTerm.trim()}%;OrganizationCode=${org}`;
       }
 
-      const url = `${FUSION_BASE}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`;
-      setAddItemApiUrl(`${FUSION_BASE}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`);
+      const url = `${getFusionBase()}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`;
+      setAddItemApiUrl(`${getFusionBase()}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`);
 
       const res = await fetch(url, { headers: FUSION_HDRS });
       if (!res.ok) throw new Error(`API returned ${res.status}`);
@@ -2449,8 +2455,8 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
     const worker = async () => {
       while (idx < itemNumbers.length) {
         const num = itemNumbers[idx++];
-        const url = `${FUSION_BASE}/itemsV2?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(num)}&limit=1&onlyData=true`;
-        setAddItemApiUrl(`${FUSION_BASE}/itemsV2?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(num)}&limit=1&onlyData=true`);
+        const url = `${getFusionBase()}/itemsV2?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(num)}&limit=1&onlyData=true`;
+        setAddItemApiUrl(`${getFusionBase()}/itemsV2?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(num)}&limit=1&onlyData=true`);
         try {
           const r = await fetch(url, { headers: FUSION_HDRS });
           if (r.ok) {
@@ -2999,7 +3005,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
               {
                 label: 'Business Units (Procurement BU / Bill To BU)',
                 method: 'GET', tag: 'blue',
-                url: `${FUSION_BASE}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`,
+                url: `${getFusionBase()}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`,
                 note: 'Oracle Fusion: list of business units with default Currency — used to populate BU dropdowns and auto-fill currency on selection',
                 source: 'Oracle Fusion REST',
               },
@@ -3013,14 +3019,14 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
               {
                 label: 'Inventory Organizations (Ship To Org)',
                 method: 'GET', tag: 'blue',
-                url: `${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500`,
+                url: `${getFusionBase()}/inventoryOrganizations?onlyData=true&limit=500`,
                 note: 'Oracle Fusion: list of inventory organizations filtered by Procurement BU for ship-to selection',
                 source: 'Oracle Fusion REST',
               },
               {
                 label: 'Subinventories',
                 method: 'GET', tag: 'blue',
-                url: `${FUSION_BASE}/subinventories?q=OrganizationCode=<code>&onlyData=true&limit=500`,
+                url: `${getFusionBase()}/subinventories?q=OrganizationCode=<code>&onlyData=true&limit=500`,
                 note: 'Oracle Fusion: warehouse sub-inventory codes, filtered by selected ship-to org',
                 source: 'Oracle Fusion REST',
               },
@@ -3044,7 +3050,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                 <Tag style={{ marginLeft: 'auto', fontSize: 10 }}>Oracle Fusion REST</Tag>
               </div>
               <div style={{ fontFamily: 'monospace', fontSize: 11, color: C.blue, wordBreak: 'break-all', padding: '6px 10px', background: '#f0f5ff', borderRadius: 5, marginBottom: 6 }}>
-                {`${FUSION_BASE}/suppliers?q=Supplier LIKE '*<term>*'&limit=20`}
+                {`${getFusionBase()}/suppliers?q=Supplier LIKE '*<term>*'&limit=20`}
               </div>
               <Text style={{ fontSize: 12, color: C.textMid }}>Fired when searching for a supplier — called live with the typed search term</Text>
             </div>
@@ -3055,7 +3061,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                 <Tag style={{ marginLeft: 'auto', fontSize: 10 }}>Oracle Fusion REST</Tag>
               </div>
               <div style={{ fontFamily: 'monospace', fontSize: 11, color: C.blue, wordBreak: 'break-all', padding: '6px 10px', background: '#f0f5ff', borderRadius: 5, marginBottom: 6 }}>
-                {`${FUSION_BASE}/suppliers/<supplierId>/child/sites?limit=100`}
+                {`${getFusionBase()}/suppliers/<supplierId>/child/sites?limit=100`}
               </div>
               <Text style={{ fontSize: 12, color: C.textMid }}>Fired after a supplier is selected — loads available sites for that supplier</Text>
             </div>
@@ -4781,7 +4787,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
             <Space size={6}><Tag color={assignApiUpdate ? 'orange' : 'green'}>{assignApiUpdate ? 'PATCH' : 'POST'}</Tag>
               <Text type="secondary">{assignApiUpdate ? 'Already assigned — Update one item /itemsV2/{itemsV2UniqID} (attributes only)' : 'Assign item to inventory org (copies master-org attributes)'}</Text></Space>
           </div>
-          <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>{assignApiUpdate ? assignApiHref : `${FUSION_BASE}/itemsV2`}</Text>
+          <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>{assignApiUpdate ? assignApiHref : `${getFusionBase()}/itemsV2`}</Text>
           {assignApiUpdate && <div style={{ fontSize: 11, color: C.textLight, marginTop: 4 }}>If the server rejects PATCH (InvalidOperationUpdate…), it retries once via <Text code style={{ fontSize: 11 }}>POST + Upsert-Mode: true</Text>.</div>}
           {assignApiLoading ? (
             <div style={{ textAlign: 'center', padding: 24 }}><Text type="secondary">Reading master item…</Text></div>
@@ -4831,7 +4837,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
             </div>
             {customActionName.trim() && poHeaderId && (
               <pre style={{ fontSize: 11, background: '#f5f5f5', padding: 10, borderRadius: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }}>
-{`POST ${FUSION_BASE}/${(customActionResource || 'purchaseOrders').trim()}/${poHeaderId}
+{`POST ${getFusionBase()}/${(customActionResource || 'purchaseOrders').trim()}/${poHeaderId}
 Content-Type: application/vnd.oracle.adf.action+json
 
 ${JSON.stringify({ name: customActionName.trim(), parameters: [] }, null, 2)}`}
@@ -4894,7 +4900,7 @@ ${JSON.stringify({ name: customActionName.trim(), parameters: [] }, null, 2)}`}
               POST · Endpoint
             </div>
             <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
-              {`${FUSION_BASE}/draftPurchaseOrders`}
+              {`${getFusionBase()}/draftPurchaseOrders`}
             </Text>
           </div>
 

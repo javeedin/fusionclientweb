@@ -5,7 +5,8 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { Link } from 'react-router-dom';
-import { FUSION_POD_HOST, FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
+import { FUSION_POD_AUTH, getFusionInstance } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 import {
   DatabaseOutlined, ApiOutlined, PlayCircleOutlined, ReloadOutlined, CheckCircleTwoTone,
   CloseCircleTwoTone, MinusCircleOutlined, LoadingOutlined, SearchOutlined, CopyOutlined,
@@ -18,11 +19,17 @@ import {
 
 const { Text, Title, Paragraph } = Typography;
 
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
+
 // Same Fusion endpoint resolution the rest of the app uses (proxy in browser,
 // direct URL under Electron) with Basic auth.
 const _isElectron = typeof navigator !== 'undefined' && /electron/i.test(navigator.userAgent)
   || !!(window as unknown as { electronAPI?: unknown }).electronAPI;
-const FUSION_BASE = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
+const FUSION_BASE = `${getFusionBase()}`;
 const FUSION_HDRS = { Authorization: FUSION_POD_AUTH, Accept: 'application/json' };
 
 const RW = {

@@ -16,8 +16,15 @@ import {
 } from 'recharts';
 import { Link } from 'react-router-dom';
 import { FUSION_POD_HOST, FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
+
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
 const { Title, Text } = Typography;
 
 // ── Palette ───────────────────────────────────────────────────────────────────

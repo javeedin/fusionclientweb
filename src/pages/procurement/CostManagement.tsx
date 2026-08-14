@@ -10,12 +10,19 @@ import {
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { FUSION_POD_HOST, FUSION_POD_AUTH } from '../../config/fusionInstance';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
+
+// Get Fusion base URL from current company configuration
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
 const { Title, Text } = Typography;
 
 // Direct in Electron (no CORS); Vite proxy in the browser. preload exposes electronAPI.
-const FUSION_BASE = `${FUSION_POD_HOST}/fscmRestApi/resources/11.13.18.05`;
+const FUSION_BASE = `${getFusionBase()}`;
 const AUTH_HEADER = FUSION_POD_AUTH;
 const HDRS = { Authorization: AUTH_HEADER, Accept: 'application/json' };
 const ERP_URL = `${FUSION_BASE}/erpintegrations`;
