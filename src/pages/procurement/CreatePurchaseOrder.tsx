@@ -259,6 +259,8 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
   const [currencyInput, setCurrencyInput] = useState('');
   const [fxRate, setFxRate] = useState<{ rate: number; inverseRate: number; rateDate: string; rateType: string } | null>(null);
   const [fxRateLoading, setFxRateLoading] = useState(false);
+  const [fxRateType, setFxRateType] = useState<'CORPORATE' | 'USER'>('CORPORATE');
+  const [userFxRate, setUserFxRate] = useState<number | null>(null);
   const [inventoryOrgs, setInventoryOrgs] = useState<any[]>([]);
   const [filteredInventoryOrgs, setFilteredInventoryOrgs] = useState<any[]>([]);
   const [subinventories, setSubinventories] = useState<any[]>([]);
@@ -1211,9 +1213,11 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     const currencyObj = currencies.find(c => c.code === header.currency);
 
     // Conversion rate — only for a foreign currency (base currency is functional).
-    // Pulled from the fxRate already shown on the page (rate/type/date).
+    // Use CORPORATE rate (auto-fetched) or USER rate (manually entered) based on fxRateType.
     const isForeignCcy = !!header.currency && header.currency !== baseCurrency;
-    const useFx = isForeignCcy && fxRate && fxRate.rate > 0;
+    const useCorporateRate = isForeignCcy && fxRateType === 'CORPORATE' && fxRate && fxRate.rate > 0;
+    const useUserRate = isForeignCcy && fxRateType === 'USER' && userFxRate && userFxRate > 0;
+    const hasValidRate = useCorporateRate || useUserRate;
 
     return {
       ProcurementBUId:           procBUId,
@@ -1221,10 +1225,10 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
       RequiredAcknowledgment:    'None',
       CurrencyCode:              header.currency,
       Currency:                  currencyObj?.name ?? null,
-      ConversionRateTypeCode:    useFx ? (fxRate!.rateType || 'Corporate') : null,
-      ConversionRateType:        useFx ? (fxRate!.rateType || 'Corporate') : null,
-      ConversionRateDate:        useFx && fxRate!.rateDate ? dayjs(fxRate!.rateDate).format('YYYY-MM-DD') : null,
-      ConversionRate:            useFx ? fxRate!.rate : null,
+      ConversionRateTypeCode:    hasValidRate ? fxRateType : null,
+      ConversionRateType:        hasValidRate ? fxRateType : null,
+      ConversionRateDate:        useCorporateRate && fxRate!.rateDate ? dayjs(fxRate!.rateDate).format('YYYY-MM-DD') : null,
+      ConversionRate:            useCorporateRate ? fxRate!.rate : (useUserRate ? userFxRate : null),
       Buyer:                     header.buyer || null,
       PayOnReceiptFlag:          header.payOnReceipt ? 'Y' : 'N',
       RequisitioningBUId:        reqBUId ?? null,
@@ -1306,8 +1310,12 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     // Foreign currency must have a conversion rate to AED before interfacing to
     // Fusion — if none was found (or still loading), don't allow the save.
     if (header.currency && header.currency !== baseCurrency) {
-      if (fxRateLoading) errors.push(`Conversion rate for ${header.currency} → ${baseCurrency} is still loading — try again in a moment`);
-      else if (!fxRate || !(fxRate.rate > 0)) errors.push(`Conversion rate for ${header.currency} → ${baseCurrency} is required — none found`);
+      if (fxRateType === 'CORPORATE') {
+        if (fxRateLoading) errors.push(`Conversion rate for ${header.currency} → ${baseCurrency} is still loading — try again in a moment`);
+        else if (!fxRate || !(fxRate.rate > 0)) errors.push(`Conversion rate for ${header.currency} → ${baseCurrency} is required — none found`);
+      } else if (fxRateType === 'USER') {
+        if (!userFxRate || !(userFxRate > 0)) errors.push(`User conversion rate for ${header.currency} → ${baseCurrency} is required — please enter a valid rate`);
+      }
     }
     if (lines.length === 0)     errors.push('At least one line item is required');
     const linesWithoutNeedBy = lines.filter(l => !l.needBy);
@@ -2746,12 +2754,48 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                     </div>
                   </Col>
                 )}
-                {fxRate && headerForm.getFieldValue('currency') && headerForm.getFieldValue('currency') !== selectedBuBaseCurrency && (
+                {(fxRate || fxRateType === 'USER') && headerForm.getFieldValue('currency') && headerForm.getFieldValue('currency') !== selectedBuBaseCurrency && (
                   <Col span={12}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '6px 10px', background: '#f0f5ff', borderRadius: 6, border: '1px solid #d6e4ff' }}>
-                      <SwapOutlined style={{ color: C.blue, fontSize: 13 }} />
-                      <Text style={{ fontSize: 12, color: C.textMid }}>Conversion Rate:</Text>
-                      <Text strong style={{ fontSize: 13, color: C.blue, fontFamily: 'monospace' }}>1 {headerForm.getFieldValue('currency')} = {fxRate.rate.toFixed(4)} {selectedBuBaseCurrency}</Text>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8, padding: '10px', background: '#f0f5ff', borderRadius: 6, border: '1px solid #d6e4ff' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <SwapOutlined style={{ color: C.blue, fontSize: 13 }} />
+                        <Text style={{ fontSize: 12, color: C.textMid }}>Conversion Rate Type:</Text>
+                        <Select
+                          size="small"
+                          value={fxRateType}
+                          onChange={(v) => {
+                            setFxRateType(v);
+                            if (v === 'CORPORATE') setUserFxRate(null);
+                          }}
+                          style={{ width: 140 }}
+                        >
+                          <Option value="CORPORATE">CORPORATE</Option>
+                          <Option value="USER">USER</Option>
+                        </Select>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Text style={{ fontSize: 12, color: C.textMid, minWidth: 120 }}>Rate (1 {headerForm.getFieldValue('currency')} =):</Text>
+                        {fxRateType === 'CORPORATE' ? (
+                          <Text strong style={{ fontSize: 13, color: C.blue, fontFamily: 'monospace' }}>
+                            {fxRateLoading ? 'Loading...' : (fxRate?.rate.toFixed(4) ?? '—')} {selectedBuBaseCurrency}
+                          </Text>
+                        ) : (
+                          <InputNumber
+                            size="small"
+                            value={userFxRate}
+                            onChange={(v) => setUserFxRate(v)}
+                            placeholder="Enter rate"
+                            precision={6}
+                            style={{ width: 120 }}
+                            suffix={selectedBuBaseCurrency}
+                          />
+                        )}
+                      </div>
+                      {fxRateType === 'CORPORATE' && fxRate && (
+                        <Text style={{ fontSize: 11, color: C.textLight, fontStyle: 'italic' }}>
+                          {fxRate.rateType} · {fxRate.rateDate ? dayjs(fxRate.rateDate).format('D-MMM-YYYY') : ''}
+                        </Text>
+                      )}
                     </div>
                   </Col>
                 )}
@@ -3300,26 +3344,28 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                           <Text style={{ fontSize: 11, color: C.textLight }}>Fetching rate…</Text>
                         </div>
                       )}
-                      {fxRate && !fxRateLoading && (
+                      {((fxRateType === 'CORPORATE' && fxRate && !fxRateLoading) || (fxRateType === 'USER' && userFxRate)) && (
                         <div style={{
                           background: '#EBF5FF', border: `1px solid ${C.blue}40`,
                           borderRadius: 5, padding: '6px 10px', marginBottom: 8,
                         }}>
                           <div style={{ fontSize: 10, color: C.textLight, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>
-                            Conversion Rate · {fxRate.rateType}
+                            Conversion Rate · {fxRateType}{fxRateType === 'CORPORATE' && fxRate ? ` · ${fxRate.rateType}` : ''}
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <Text strong style={{ fontSize: 13, color: C.blue, fontVariantNumeric: 'tabular-nums' }}>
-                              1 {header.currency} = {fxRate.rate.toFixed(4)} {baseCurrency}
+                              1 {header.currency} = {(fxRateType === 'CORPORATE' ? fxRate?.rate : userFxRate)?.toFixed(4)} {baseCurrency}
                             </Text>
                           </div>
-                          <div style={{ fontSize: 10, color: C.textLight, marginTop: 2 }}>
-                            Inverse: 1 {baseCurrency} = {fxRate.inverseRate > 0 ? fxRate.inverseRate.toFixed(6) : (1 / fxRate.rate).toFixed(6)} {header.currency}
-                            &nbsp;·&nbsp;{fxRate.rateDate ? dayjs(fxRate.rateDate).format('D-MMM-YYYY') : ''}
-                          </div>
+                          {fxRateType === 'CORPORATE' && fxRate && (
+                            <div style={{ fontSize: 10, color: C.textLight, marginTop: 2 }}>
+                              Inverse: 1 {baseCurrency} = {fxRate.inverseRate > 0 ? fxRate.inverseRate.toFixed(6) : (1 / fxRate.rate).toFixed(6)} {header.currency}
+                              &nbsp;·&nbsp;{fxRate.rateDate ? dayjs(fxRate.rateDate).format('D-MMM-YYYY') : ''}
+                            </div>
+                          )}
                           {grandTotal > 0 && (
                             <div style={{ borderTop: `1px solid ${C.blue}30`, marginTop: 4, paddingTop: 4, fontSize: 11, color: C.textMid }}>
-                              PO Total ≈ <Text strong style={{ color: C.teal }}>{fmt(grandTotal * fxRate.rate)} {baseCurrency}</Text>
+                              PO Total ≈ <Text strong style={{ color: C.teal }}>{fmt(grandTotal * (fxRateType === 'CORPORATE' ? fxRate?.rate ?? 0 : userFxRate ?? 0))} {baseCurrency}</Text>
                             </div>
                           )}
                         </div>
