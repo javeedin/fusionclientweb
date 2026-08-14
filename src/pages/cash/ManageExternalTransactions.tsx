@@ -2916,6 +2916,9 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
   const [accountingAllLoading, setAccountingAllLoading] = useState(false);
   const [accountingApiUrls, setAccountingApiUrls] = useState<Array<{ url: string; status?: number; error?: string }>>([]);
   const [accountingApiModalOpen, setAccountingApiModalOpen] = useState(false);
+  const [accountingSearchTerm, setAccountingSearchTerm] = useState('');
+  const [accountingPageNum, setAccountingPageNum] = useState(1);
+  const [accountingPageSize, setAccountingPageSize] = useState(10);
 
   const modulePrefix = module === 'ap' ? '/ap' : '/cash';
 
@@ -5391,12 +5394,40 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
             {accountingAllData.length === 0 ? (
               <Empty description="No accounting records found" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             ) : (() => {
-              const balanced = accountingAllData.filter(r => r.isBalanced).length;
-              const unbalanced = accountingAllData.filter(r => !r.isBalanced).length;
-              const missingAccounts = accountingAllData.filter(r => r.hasMissingAccounts).length;
-              const amountMismatch = accountingAllData.filter(r => r.hasAmountMismatch).length;
+              // Filter data based on search term
+              const q = accountingSearchTerm.trim().toLowerCase();
+              const filtered = !q ? accountingAllData : accountingAllData.filter(r =>
+                [r.transactionId, r.transactionNumber, r.transactionDate, r.debitAccount, r.creditAccount,
+                 r.debitAccountDesc, r.creditAccountDesc, r.glBatchId, r.glStatus, r.reference1, r.reference2,
+                 r.reference3, r.reference4, r.reference5]
+                .some(v => String(v ?? '').toLowerCase().includes(q))
+              );
+
+              const balanced = filtered.filter(r => r.isBalanced).length;
+              const unbalanced = filtered.filter(r => !r.isBalanced).length;
+              const missingAccounts = filtered.filter(r => r.hasMissingAccounts).length;
+              const amountMismatch = filtered.filter(r => r.hasAmountMismatch).length;
+
               return (
                 <>
+                  {/* Search Box */}
+                  <div style={{ marginBottom: 16 }}>
+                    <Input
+                      prefix={<SearchOutlined style={{ color: REDWOOD.neutral600 }} />}
+                      placeholder="Search by Txn ID, Date, Account, GL Batch, Status, or any field…"
+                      allowClear
+                      value={accountingSearchTerm}
+                      onChange={e => {
+                        setAccountingSearchTerm(e.target.value);
+                        setAccountingPageNum(1);
+                      }}
+                      style={{ width: '100%' }}
+                    />
+                    <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+                      Found {filtered.length} of {accountingAllData.length} records
+                    </Text>
+                  </div>
+
                   {/* KPI Summary */}
                   <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
                     <Col xs={12} sm={6}>
@@ -5427,16 +5458,29 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
 
                   {/* Data Table */}
                   <Table<typeof accountingAllData[number]>
-                    dataSource={accountingAllData}
+                    dataSource={filtered}
                     rowKey="transactionId"
                     size="small"
-                    pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
+                    pagination={{
+                      current: accountingPageNum,
+                      pageSize: accountingPageSize,
+                      total: filtered.length,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50', '100'],
+                      showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} records`,
+                      onChange: (p, s) => { setAccountingPageNum(p); setAccountingPageSize(s); },
+                    }}
                     columns={[
                       {
-                        title: 'Txn ID',
+                        title: 'Txn ID / #',
                         dataIndex: 'transactionId',
-                        width: 80,
-                        render: v => <Text style={{ fontWeight: 600 }}>{v}</Text>,
+                        width: 100,
+                        render: (v, r) => (
+                          <div>
+                            <Text style={{ fontWeight: 600, fontSize: 12, display: 'block' }}>ID: {v}</Text>
+                            <Text style={{ color: REDWOOD.neutral600, fontSize: 11 }}># {r.transactionNumber}</Text>
+                          </div>
+                        ),
                       },
                       {
                         title: 'Date',
