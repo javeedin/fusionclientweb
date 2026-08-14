@@ -36,98 +36,100 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithStatus = useCallback(async (username: string, password: string): Promise<LoginResult> => {
     try {
       const currentCompany = getCurrentCompany();
-      const APEX_AUTH_BASE = `${currentCompany.apexBaseUrl}/auth`;
-      const APEX_ADMIN_BASE = `${currentCompany.apexBaseUrl}/admin`;
       const fusionInstances = currentCompany.fusionInstances || [];
 
       console.log('[Auth] Logging in with company:', currentCompany.code);
       console.log('[Auth] Fusion instances available:', fusionInstances.length);
 
-      // Check if Fusion instances are configured
+      // Decision: based on company configuration
       if (fusionInstances.length > 0) {
-        console.log('[Auth] Attempting Fusion SOAP login...');
+        console.log('[Auth] Company configured for Fusion login - Attempting Fusion SOAP login...');
 
         // Get the selected instance from sessionStorage (set by Login component)
         const selectedInstanceUrl = sessionStorage.getItem('fusionInstanceUrl');
-        if (selectedInstanceUrl) {
-          const fusionResult = await fusionSOAPLogin(selectedInstanceUrl, username, password);
-          if (fusionResult.success && fusionResult.sessionId) {
-            console.log('[Auth] Fusion login SUCCESS - Session ID obtained');
-            const uname = username;
-            const userData: User = {
-              id: uname,
-              username: uname,
-              name: username,
-              email: username,
-              role: 'User',
-            };
+        if (!selectedInstanceUrl) {
+          console.error('[Auth] No Fusion instance URL found in sessionStorage');
+          return { status: 'ERROR', message: 'Fusion instance not selected. Please select an instance and try again.' };
+        }
 
-            setUser(userData);
-            localStorage.setItem('erp_user', JSON.stringify(userData));
-            localStorage.setItem('erp_token', fusionResult.sessionId);
-            localStorage.setItem('fusion_session_id', fusionResult.sessionId);
-            if (isElectron) {
-              (window as any).electronAPI.saveErpSession(userData, fusionResult.sessionId).catch(() => {});
+        const fusionResult = await fusionSOAPLogin(selectedInstanceUrl, username, password);
+        if (fusionResult.success && fusionResult.sessionId) {
+          console.log('[Auth] Fusion login SUCCESS - Session ID obtained');
+          const uname = username;
+          const userData: User = {
+            id: uname,
+            username: uname,
+            name: username,
+            email: username,
+            role: 'User',
+          };
+
+          setUser(userData);
+          localStorage.setItem('erp_user', JSON.stringify(userData));
+          localStorage.setItem('erp_token', fusionResult.sessionId);
+          localStorage.setItem('fusion_session_id', fusionResult.sessionId);
+          if (isElectron) {
+            (window as any).electronAPI.saveErpSession(userData, fusionResult.sessionId).catch(() => {});
+          }
+
+          return { status: 'SUCCESS', message: 'Logged in via Oracle Fusion' };
+        } else {
+          console.error('[Auth] Fusion login failed:', fusionResult.error);
+          return { status: 'ERROR', message: fusionResult.error || 'Fusion login failed' };
+        }
+      } else {
+        // Company has NO Fusion instances - use APEX login
+        console.log('[Auth] Company configured for APEX login - Using APEX authentication (direct URL)');
+        const loginUrl = buildApexAuthUrl('login');
+        const res = await fetch(loginUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+
+        if (data.status === 'SUCCESS') {
+          const uname = data.user?.username || username;
+          const userData: User = {
+            id: uname,
+            username: uname,
+            name: data.user?.name || username,
+            email: data.user?.email || username,
+            role: 'User',
+          };
+          // Load profile photo
+          try {
+            const photoUrl = buildApexAuthUrl(`profile-photo/${encodeURIComponent(uname)}`);
+            const photoRes = await fetch(photoUrl);
+            const photoData = await photoRes.json();
+            if (photoData.status === 'OK' && photoData.photo) {
+              userData.photo = `data:${photoData.mime_type};base64,${photoData.photo}`;
             }
+          } catch { /* photo is optional */ }
 
-            return { status: 'SUCCESS', message: 'Logged in via Oracle Fusion' };
-          } else {
-            console.warn('[Auth] Fusion login failed:', fusionResult.error, '- Falling back to APEX');
+          // Load user access (isAdmin, modules, bus)
+          try {
+            const accessUrl = buildApexAdminUrl(`user-access/${encodeURIComponent(uname)}`);
+            const accessRes = await fetch(accessUrl);
+            const accessData = await accessRes.json();
+            if (accessData.status === 'SUCCESS') {
+              userData.isAdmin  = accessData.data?.is_admin === 'Y';
+              userData.modules  = accessData.data?.modules  || [];
+              userData.bus      = accessData.data?.bus       || [];
+            }
+          } catch { /* access is optional */ }
+
+          setUser(userData);
+          localStorage.setItem('erp_user', JSON.stringify(userData));
+          localStorage.setItem('erp_token', data.token || '');
+          localStorage.removeItem('fusion_session_id');
+          if (isElectron) {
+            (window as any).electronAPI.saveErpSession(userData, data.token || '').catch(() => {});
           }
         }
+
+        return { status: data.status, message: data.message || '' };
       }
-
-      // Fallback to APEX login (direct URLs, no proxy needed)
-      console.log('[Auth] Using APEX authentication (direct URL)');
-      const loginUrl = buildApexAuthUrl('login');
-      const res = await fetch(loginUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-      const data = await res.json();
-
-      if (data.status === 'SUCCESS') {
-        const uname = data.user?.username || username;
-        const userData: User = {
-          id: uname,
-          username: uname,
-          name: data.user?.name || username,
-          email: data.user?.email || username,
-          role: 'User',
-        };
-        // Load profile photo
-        try {
-          const photoUrl = buildApexAuthUrl(`profile-photo/${encodeURIComponent(uname)}`);
-          const photoRes = await fetch(photoUrl);
-          const photoData = await photoRes.json();
-          if (photoData.status === 'OK' && photoData.photo) {
-            userData.photo = `data:${photoData.mime_type};base64,${photoData.photo}`;
-          }
-        } catch { /* photo is optional */ }
-
-        // Load user access (isAdmin, modules, bus)
-        try {
-          const accessUrl = buildApexAdminUrl(`user-access/${encodeURIComponent(uname)}`);
-          const accessRes = await fetch(accessUrl);
-          const accessData = await accessRes.json();
-          if (accessData.status === 'SUCCESS') {
-            userData.isAdmin  = accessData.data?.is_admin === 'Y';
-            userData.modules  = accessData.data?.modules  || [];
-            userData.bus      = accessData.data?.bus       || [];
-          }
-        } catch { /* access is optional */ }
-
-        setUser(userData);
-        localStorage.setItem('erp_user', JSON.stringify(userData));
-        localStorage.setItem('erp_token', data.token || '');
-        localStorage.removeItem('fusion_session_id');
-        if (isElectron) {
-          (window as any).electronAPI.saveErpSession(userData, data.token || '').catch(() => {});
-        }
-      }
-
-      return { status: data.status, message: data.message || '' };
     } catch {
       return { status: 'ERROR', message: 'Unable to connect. Please check your internet connection.' };
     }
