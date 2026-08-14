@@ -279,43 +279,59 @@ const ItemMaster: React.FC = () => {
   // ── Load organizations from Fusion API (always, regardless of search mode) ───
   useEffect(() => {
     const load = async () => {
-      try {
-        const fusionBase = getFusionBase();
-        if (!fusionBase) {
-          setOrgsError('Please select a Fusion instance');
+      const fusionBase = getFusionBase();
+      if (!fusionBase) {
+        setOrgsError('Please select a Fusion instance');
+        setOrgsLoading(false);
+        return;
+      }
+
+      // Retry logic with exponential backoff for network failures
+      let retries = 0;
+      const maxRetries = 3;
+      let lastError: any = null;
+
+      while (retries < maxRetries) {
+        try {
+          const all: any[] = [];
+          let offset = 0;
+          while (true) {
+            const r = await fetch(
+              `${fusionBase}/inventoryOrganizations?limit=500&offset=${offset}`,
+              { headers: FUSION_HDRS },
+            );
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const d = await r.json();
+            const items = d.items ?? [];
+            all.push(...items);
+            if (!d.hasMore || items.length < 500) break;
+            offset += 500;
+          }
+          const opts: OrgOption[] = all
+            .map((o: any) => ({
+              label: o.OrganizationCode
+                ? `${o.OrganizationCode}${o.OrganizationName ? ' — ' + o.OrganizationName : ''}`
+                : String(o.OrganizationCode ?? o.organizationCode ?? ''),
+              value: o.OrganizationCode ?? o.organizationCode ?? '',
+            }))
+            .filter(o => o.value)
+            .sort((a, b) => a.value.localeCompare(b.value));
+          setOrgs(opts);
+          setOrgsError('');
           setOrgsLoading(false);
           return;
+        } catch (e: any) {
+          lastError = e;
+          retries++;
+          if (retries < maxRetries) {
+            // Exponential backoff: 1s, 2s, 4s
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries - 1) * 1000));
+          }
         }
-        const all: any[] = [];
-        let offset = 0;
-        while (true) {
-          const r = await fetch(
-            `${fusionBase}/inventoryOrganizations?limit=500&offset=${offset}`,
-            { headers: FUSION_HDRS },
-          );
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const d = await r.json();
-          const items = d.items ?? [];
-          all.push(...items);
-          if (!d.hasMore || items.length < 500) break;
-          offset += 500;
-        }
-        const opts: OrgOption[] = all
-          .map((o: any) => ({
-            label: o.OrganizationCode
-              ? `${o.OrganizationCode}${o.OrganizationName ? ' — ' + o.OrganizationName : ''}`
-              : String(o.OrganizationCode ?? o.organizationCode ?? ''),
-            value: o.OrganizationCode ?? o.organizationCode ?? '',
-          }))
-          .filter(o => o.value)
-          .sort((a, b) => a.value.localeCompare(b.value));
-        setOrgs(opts);
-        setOrgsError('');
-      } catch (e: any) {
-        setOrgsError(e.message);
-      } finally {
-        setOrgsLoading(false);
       }
+      // All retries failed
+      setOrgsError(`${lastError.message} (retried ${maxRetries} times)`);
+      setOrgsLoading(false);
     };
     load();
   }, [selectedFusionInstance, getFusionBase]);
