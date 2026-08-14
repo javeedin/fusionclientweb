@@ -99,7 +99,8 @@ ipcMain.handle('send-otp-email', async (_event, { to, otp }) => {
 
 // Open new window (for "New Window" feature)
 // Optional path parameter: if provided, navigate to that path in the new window
-ipcMain.handle('openNewWindow', async (event, path) => {
+ipcMain.handle('openNewWindow', async (event, pathParam) => {
+  console.log('[New Window] Handler called with path:', pathParam);
   try {
     const newWindow = new BrowserWindow({
       width: 1400,
@@ -117,26 +118,31 @@ ipcMain.handle('openNewWindow', async (event, path) => {
       show: false, // Don't show until ready
     });
 
+    console.log('[New Window] BrowserWindow created');
+
     // Load the same URL as main window, optionally with a path hash
     if (mainWindow) {
       const currentUrl = mainWindow.webContents.getURL();
       const baseUrl = currentUrl.replace(/#.*$/, ''); // Remove any existing hash
-      const urlToLoad = path ? `${baseUrl}#${path}` : currentUrl;
+      const urlToLoad = pathParam ? `${baseUrl}#${pathParam}` : currentUrl;
+      console.log('[New Window] Loading URL:', urlToLoad);
       newWindow.loadURL(urlToLoad);
     } else {
       // Fallback: use app root
       const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
       const baseUrl = isDev ? 'http://localhost:5173' : `file://${path.join(app.getAppPath(), 'dist', 'index.html')}`;
-      const urlToLoad = path ? `${baseUrl}#${path}` : baseUrl;
+      const urlToLoad = pathParam ? `${baseUrl}#${pathParam}` : baseUrl;
+
+      console.log('[New Window] Fallback mode - isDev:', isDev, 'URL:', urlToLoad);
 
       if (isDev) {
         newWindow.loadURL(urlToLoad);
       } else {
         newWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'));
         // If path provided, use URL hash navigation after load
-        if (path) {
+        if (pathParam) {
           newWindow.webContents.once('did-finish-load', () => {
-            newWindow.webContents.executeJavaScript(`window.location.hash = '${path}'`);
+            newWindow.webContents.executeJavaScript(`window.location.hash = '${pathParam}'`);
           });
         }
       }
@@ -144,15 +150,20 @@ ipcMain.handle('openNewWindow', async (event, path) => {
 
     // Show and maximize window once ready
     newWindow.once('ready-to-show', () => {
+      console.log('[New Window] Window ready to show');
       newWindow.show();
       newWindow.maximize();
       newWindow.focus();
     });
 
-    console.log('[New Window] Opened successfully', path ? `(path: ${path})` : '');
+    console.log('[New Window] Opened successfully', pathParam ? `(path: ${pathParam})` : '');
     return true;
   } catch (err) {
-    console.error('[New Window] Error:', err.message);
+    console.error('[New Window] Error details:', {
+      message: err.message,
+      stack: err.stack,
+      path: pathParam,
+    });
     return false;
   }
 });
