@@ -1,5 +1,6 @@
 import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect } from 'react';
+import { getCurrentCompany } from '../../config/company.config';
 import dayjs from 'dayjs';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input, Select,
@@ -26,10 +27,14 @@ const REDWOOD = {
   neutral600: '#6B6B6B', neutral900: '#1A1A1A', surface: '#FFFFFF',
 };
 
-const BASE_URL   = 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/11.13.18.05';
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
+
+const BASE_URL   = getFusionBase();
 const HEADERS = getFusionAuthHeaders();
 const PAGE_SIZE  = 25;
-const HEADERS    = { Authorization: HEADERS, Accept: 'application/json' };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface OraLink { rel: string; href: string; name: string; kind: string }

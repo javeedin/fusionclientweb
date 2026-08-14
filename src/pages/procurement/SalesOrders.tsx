@@ -17,18 +17,18 @@ import {
   ThunderboltOutlined, CarOutlined, InboxOutlined, WarningFilled, AppstoreOutlined,
   PaperClipOutlined, FileTextOutlined, LinkOutlined, FileOutlined, FileImageOutlined,
 } from '@ant-design/icons';
-import { Link, getFusionAuthHeaders } from 'react-router-dom';
-import { ShipConfirmModal, PickSlipDialog, getFusionAuthHeaders } from './ConfirmPicks';
+import { Link } from 'react-router-dom';
+import { ShipConfirmModal, PickSlipDialog } from './ConfirmPicks';
 import dayjs, { type Dayjs } from 'dayjs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, getFusionAuthHeaders } from 'recharts';
-import { getCurrentCompany, getFusionAuthHeaders } from '../../config/company.config';
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
+import { getCurrentCompany } from '../../config/company.config';
 import CustomerSearchBipModal from '../../components/CustomerSearchBipModal';
-import { convertBipCustomerToFill, type CustomerSearchResult, getFusionAuthHeaders } from '../../services/customerSearchBip.service';
-import { ORACLE_SOAP_CONFIG, getFusionAuthHeaders } from '../../config/api.config';
+import { convertBipCustomerToFill, type CustomerSearchResult } from '../../services/customerSearchBip.service';
+import { ORACLE_SOAP_CONFIG } from '../../config/api.config';
 
 const { Content } = Layout;
 

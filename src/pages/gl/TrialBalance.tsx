@@ -3899,8 +3899,7 @@ const TrialBalance: React.FC = () => {
                   <div style={{ maxWidth: 520 }}>
                     <Text style={{ fontSize: 12 }} type="secondary">Called once per foreign currency (skips AED):</Text>
                     <div style={{ marginTop: 6, background: '#f5f8ff', borderRadius: 6, padding: '8px 10px', fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
-                      {`${buildCurrencyUrl('currencies/'bmsrate?source_cur={CCY}&target_cur=AED`}
-                      {revalRateDate ? `&rate_date=${revalRateDate}` : ''}
+                      {`${buildCurrencyUrl('currencies/bmsrate?source_cur={CCY}&target_cur=AED')}${revalRateDate ? `&rate_date=${revalRateDate}` : ''}`}
                     </div>
                     <div style={{ marginTop: 8 }}>
                       <Text style={{ fontSize: 11 }} type="secondary">Parameters:</Text>
