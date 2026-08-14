@@ -775,6 +775,28 @@ const ExternalTxnForm: React.FC<{
   const [fDebugSteps, setFDebugSteps]                 = useState<import('../../services/approvals.service').ApprovalDebugStep[]>([]);
   const [fDebugOpen, setFDebugOpen]                   = useState(false);
 
+  // ── Accounting for all transactions ────────────────────────────────────────
+  const [accountingAllModalOpen, setAccountingAllModalOpen] = useState(false);
+  const [accountingAllData, setAccountingAllData] = useState<Array<{
+    transactionId: number;
+    transactionNumber: string;
+    transactionDate: string;
+    debits: number;
+    credits: number;
+    debitAccount: string;
+    creditAccount: string;
+    glBatchId: number | null;
+    glHeaderId: number | null;
+    glStatus: string;
+    reference1: string;
+    reference2: string;
+    reference3: string;
+    reference4: string;
+    reference5: string;
+    lines: any[];
+  }>>([]);
+  const [accountingAllLoading, setAccountingAllLoading] = useState(false);
+
   const watchedAsset   = Form.useWatch('assetAccountCombination', form);
   const watchedOffset  = Form.useWatch('offsetAccountCombination', form);
   const watchedAmount  = Form.useWatch('amount', form);
@@ -3395,6 +3417,103 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
     });
   };
 
+  const fetchAccountingForAllTransactions = async () => {
+    setAccountingAllLoading(true);
+    const data: typeof accountingAllData = [];
+
+    // Build filtered list using same logic as search results
+    const q = gridSearch.trim().toLowerCase();
+    let base = transactions;
+    if (reconStatusFilter === 'REC') base = base.filter(t => t.status === 'REC');
+    if (reconStatusFilter === 'UNR') base = base.filter(t => t.status !== 'REC');
+    if (acctStatusFilter === 'POSTED') base = base.filter(t => t.accountingFlag === 'Y');
+    if (acctStatusFilter === 'NOT_POSTED') base = base.filter(t => t.accountingFlag !== 'Y');
+    if (createdByFilter) base = base.filter(t => t.createdBy === createdByFilter);
+    const filtered = !q ? base : base.filter(r =>
+      [r.externalTransactionId, r.transactionId, r.bankAccountName, r.businessUnitName,
+       r.referenceText, r.description, r.status, r.source, r.transactionType,
+       r.currencyCode, r.assetAccountCombination, r.offsetAccountCombination,
+       r.transactionDate, r.payeeName, r.checkNumber, r.reconReference]
+      .some(v => String(v ?? '').toLowerCase().includes(q))
+    );
+
+    for (const txn of filtered) {
+      try {
+        const glResult = await getGlJournalLines({
+          reference2: String(txn.externalTransactionId),
+          reference5: 'BANK_EXTERNAL_TRANSACTIONS',
+        });
+
+        const lines = glResult.items || (Array.isArray(glResult) ? glResult : []);
+        if (!lines || lines.length === 0) continue;
+
+        let totalDebits = 0;
+        let totalCredits = 0;
+        let debitAccount = '';
+        let creditAccount = '';
+        let glBatchId: number | null = null;
+        let glHeaderId: number | null = null;
+        let glStatus = '';
+        let reference1 = '';
+        let reference2 = '';
+        let reference3 = '';
+        let reference4 = '';
+        let reference5 = '';
+
+        lines.forEach((line: any, idx: number) => {
+          const dr = line.entered_dr || line.enteredDr || 0;
+          const cr = line.entered_cr || line.enteredCr || 0;
+          totalDebits += Number(dr) || 0;
+          totalCredits += Number(cr) || 0;
+
+          if (idx === 0) {
+            const account = line.account || line.accountCombination || '';
+            if (dr > 0) debitAccount = account;
+            if (cr > 0) creditAccount = account;
+            glBatchId = line.gl_batch_id || line.glBatchId || null;
+            glHeaderId = line.gl_header_id || line.glHeaderId || null;
+            glStatus = line.gl_status || line.glStatus || '';
+            reference1 = line.reference1 || '';
+            reference2 = line.reference2 || '';
+            reference3 = line.reference3 || '';
+            reference4 = line.reference4 || '';
+            reference5 = line.reference5 || '';
+          } else {
+            const account = line.account || line.accountCombination || '';
+            if (dr > 0 && !debitAccount) debitAccount = account;
+            if (cr > 0 && !creditAccount) creditAccount = account;
+          }
+        });
+
+        if (totalDebits > 0 || totalCredits > 0) {
+          data.push({
+            transactionId: txn.transactionId,
+            transactionNumber: String(txn.transactionId),
+            transactionDate: txn.transactionDate,
+            debits: totalDebits,
+            credits: totalCredits,
+            debitAccount,
+            creditAccount,
+            glBatchId,
+            glHeaderId,
+            glStatus,
+            reference1,
+            reference2,
+            reference3,
+            reference4,
+            reference5,
+            lines,
+          });
+        }
+      } catch (err) {
+        console.error(`Error fetching accounting for transaction ${txn.externalTransactionId}:`, err);
+      }
+    }
+
+    setAccountingAllData(data);
+    setAccountingAllLoading(false);
+  };
+
   // Full journal preview for a transaction row — the two balanced lines (DR/CR)
   // with entered (txn currency) and accounted (ledger currency = entered × rate).
   const renderAcctJournal = (r: BankAcctProgressRow) => {
@@ -4708,6 +4827,18 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                       Create Accounting ({selectedRowKeys.length})
                     </Button>
                   )}
+                  <Button
+                    size="small"
+                    icon={<AccountBookOutlined />}
+                    style={{ color: REDWOOD.success, borderColor: REDWOOD.success }}
+                    loading={accountingAllLoading}
+                    onClick={async () => {
+                      setAccountingAllModalOpen(true);
+                      await fetchAccountingForAllTransactions();
+                    }}
+                  >
+                    Show Accounting for All Trx
+                  </Button>
                 </Space>
                 <Space size={8}>
                   <Input
@@ -5187,6 +5318,83 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
               </div>
             );
           })()}
+        </Modal>
+
+        {/* ── Show Accounting for All Transactions Modal ──────────────────── */}
+        <Modal
+          title={<Space><AccountBookOutlined style={{ color: REDWOOD.success }} />Show Accounting for All Trx</Space>}
+          open={accountingAllModalOpen}
+          onCancel={() => setAccountingAllModalOpen(false)}
+          footer={<Button onClick={() => setAccountingAllModalOpen(false)}>Close</Button>}
+          width={1000}
+          destroyOnClose
+        >
+          <Spin spinning={accountingAllLoading}>
+            {accountingAllData.length === 0 ? (
+              <Empty description="No accounting records found" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            ) : (
+              <Table<typeof accountingAllData[number]>
+                dataSource={accountingAllData}
+                rowKey="transactionId"
+                size="small"
+                pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
+                columns={[
+                  {
+                    title: 'Txn ID',
+                    dataIndex: 'transactionId',
+                    width: 90,
+                    render: v => <Text style={{ fontWeight: 600 }}>{v}</Text>,
+                  },
+                  {
+                    title: 'Date',
+                    dataIndex: 'transactionDate',
+                    width: 110,
+                    render: v => <Text>{dayjs(v).format('DD MMM YYYY')}</Text>,
+                  },
+                  {
+                    title: 'Debits',
+                    dataIndex: 'debits',
+                    width: 120,
+                    align: 'right' as const,
+                    render: v => <Text style={{ color: REDWOOD.info, fontWeight: 600 }}>{fmtAmount(v, 'AED')}</Text>,
+                  },
+                  {
+                    title: 'Credits',
+                    dataIndex: 'credits',
+                    width: 120,
+                    align: 'right' as const,
+                    render: v => <Text style={{ color: REDWOOD.success, fontWeight: 600 }}>{fmtAmount(v, 'AED')}</Text>,
+                  },
+                  {
+                    title: 'DR Account',
+                    dataIndex: 'debitAccount',
+                    render: v => <Text style={{ fontSize: 11, fontFamily: 'monospace', color: REDWOOD.info }}>{v || '—'}</Text>,
+                  },
+                  {
+                    title: 'CR Account',
+                    dataIndex: 'creditAccount',
+                    render: v => <Text style={{ fontSize: 11, fontFamily: 'monospace', color: REDWOOD.success }}>{v || '—'}</Text>,
+                  },
+                  {
+                    title: 'GL Batch',
+                    dataIndex: 'glBatchId',
+                    width: 100,
+                    render: v => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
+                  },
+                  {
+                    title: 'Status',
+                    dataIndex: 'glStatus',
+                    width: 100,
+                    render: v => (
+                      <Tag color={v === 'POSTED' ? 'green' : 'processing'} style={{ fontSize: 11 }}>
+                        {v || 'UNKNOWN'}
+                      </Tag>
+                    ),
+                  },
+                ]}
+              />
+            )}
+          </Spin>
         </Modal>
 
       </Content>
