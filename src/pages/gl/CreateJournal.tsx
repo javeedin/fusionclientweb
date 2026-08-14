@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../../config/api.helper';
+import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Resizable } from 'react-resizable';
@@ -1000,7 +1000,7 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
     setBmsRateLoading(true);
     setBmsRate(null);
     const dateParam = convDate ? `&rate_date=${encodeURIComponent(dayjs(convDate, 'D-MMM-YYYY').format('YYYY-MM-DD'))}` : '';
-    const bmsUrl = `${APEX_DB_CONFIG.baseUrl}/currencies/bmsrate?source_cur=${currency}&target_cur=AED${dateParam}`;
+    const bmsUrl = `${buildCurrencyUrl('currencies/bmsrate')}?source_cur=${currency}&target_cur=AED${dateParam}`;
     setLastBmsRateUrl(bmsUrl);
     fetch(bmsUrl)
       .then(r => r.json())

@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../../config/api.helper';
+import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import dayjs from 'dayjs';
 import {
@@ -3124,7 +3124,7 @@ const TrialBalance: React.FC = () => {
       if (!ccy || ccy === 'AED') continue;
       setRevalBmsFetching(prev => ({ ...prev, [ccy]: true }));
       try {
-        const res  = await fetch(`${APEX_DB_CONFIG.baseUrl}/currencies/bmsrate?source_cur=${encodeURIComponent(ccy)}&target_cur=AED${dateParam}`);
+        const res  = await fetch(`${buildCurrencyUrl('currencies/bmsrate')}?source_cur=${encodeURIComponent(ccy)}&target_cur=AED${dateParam}`);
         const data = await res.json();
         if (data.rate) {
           const rateStr = String(data.rate);

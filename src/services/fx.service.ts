@@ -1,4 +1,4 @@
-import { APEX_DB_CONFIG } from '../config/api.config';
+import { getBuimercApexBaseUrl } from '../config/company.config';
 
 export interface FxRateResult {
   rate: number;          // from -> to conversion rate (0 when not found)
@@ -12,6 +12,7 @@ export interface FxRateResult {
 // AED) as of `date` (YYYY-MM-DD) — uses the latest rate on/before that date.
 // Same currency short-circuits to rate 1 (no webservice call). Reads
 // GET /currencies/dailyrates (ordered RATE_DATE DESC).
+// NOTE: Currency rates webservice is centralized in BUIMERC and is shared across all companies
 export const getConversionRate = async (
   from: string,
   to = 'AED',
@@ -25,7 +26,7 @@ export const getConversionRate = async (
     const p = new URLSearchParams({ from_currency: from, to_currency: to, rate_type: rateType });
     if (date) p.append('date_to', date);       // latest rate on/before the date
     p.append('row_limit', '1');
-    const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/currencies/dailyrates?${p.toString()}`, {
+    const res = await fetch(`${getBuimercApexBaseUrl()}/currencies/dailyrates?${p.toString()}`, {
       headers: { Accept: 'application/json' },
     });
     const data = await res.json().catch(() => ({}));

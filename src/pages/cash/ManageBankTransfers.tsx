@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../../config/api.helper';
+import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
@@ -382,7 +382,7 @@ const TransferForm: React.FC<{
     // paymentCurrency = toCurrency (follows to account)
     const rateDate = (form.getFieldValue('conversionRateDate') as Dayjs | undefined)?.format('YYYY-MM-DD');
     const datePart = rateDate ? `&rate_date=${rateDate}` : '';
-    fetch(`${APEX_BASE}/currencies/bmsrate?source_cur=${toCurrency}&target_cur=${fromCurrency}${datePart}`)
+    fetch(`${buildCurrencyUrl('currencies/bmsrate')}?source_cur=${toCurrency}&target_cur=${fromCurrency}${datePart}`)
       .then(r => r.json())
       .then(data => {
         if (data.status === 'ok') {
@@ -412,7 +412,7 @@ const TransferForm: React.FC<{
     }
     const rateDate2 = (form.getFieldValue('conversionRateDate') as Dayjs | undefined)?.format('YYYY-MM-DD');
     const datePart2 = rateDate2 ? `&rate_date=${rateDate2}` : '';
-    fetch(`${APEX_BASE}/currencies/bmsrate?source_cur=${toCurrency}&target_cur=AED${datePart2}`)
+    fetch(`${buildCurrencyUrl('currencies/bmsrate')}?source_cur=${toCurrency}&target_cur=AED${datePart2}`)
       .then(r => r.json())
       .then(data => {
         if (data.status === 'ok') {
@@ -1032,7 +1032,7 @@ const TransferForm: React.FC<{
                     const datePart = rateDate ? `&rate_date=${rateDate}` : '';
                     setBmsRateLoading(true);
                     setBmsRateInfo(null);
-                    fetch(`${APEX_BASE}/currencies/bmsrate?source_cur=${toCurrency}&target_cur=${fromCurrency}${datePart}`)
+                    fetch(`${buildCurrencyUrl('currencies/bmsrate')}?source_cur=${toCurrency}&target_cur=${fromCurrency}${datePart}`)
                       .then(r => r.json())
                       .then(data => {
                         if (data.status === 'ok') {

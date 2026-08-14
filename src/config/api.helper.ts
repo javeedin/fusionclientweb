@@ -1,4 +1,4 @@
-import { getApexBaseUrl } from './company.config';
+import { getApexBaseUrl, getBuimercApexBaseUrl } from './company.config';
 
 /**
  * Build company-specific APEX URLs dynamically
@@ -32,4 +32,14 @@ export function buildApexAdminUrl(endpoint: string): string {
  */
 export function getApiBaseUrl(): string {
   return normalizeUrl(getApexBaseUrl());
+}
+
+/**
+ * Build currency rate URLs using BUIMERC (shared currency service)
+ * NOTE: Currency rates webservice is centralized in BUIMERC
+ */
+export function buildCurrencyUrl(endpoint: string): string {
+  const baseUrl = getBuimercApexBaseUrl();
+  if (!endpoint) return normalizeUrl(baseUrl);
+  return normalizeUrl(`${baseUrl}/${endpoint}`);
 }

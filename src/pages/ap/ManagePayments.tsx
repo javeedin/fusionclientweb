@@ -78,6 +78,7 @@ import FloatingMenu from '../../components/FloatingMenu';
 import AccountSelector from '../../components/AccountSelector';
 import PaymentDetail from './PaymentDetail';
 import { ORACLE_FUSION_CONFIG, APEX_DB_CONFIG } from '../../config/api.config';
+import { buildCurrencyUrl } from '../../config/api.helper';
 import {
   checkAccountingExists,
   createAccounting,
@@ -588,7 +589,7 @@ const ManagePayments: React.FC = () => {
     setBmsRate(null);
     const convDate = (createPaymentForm.getFieldValue('conversionDate') as any)?.format?.('YYYY-MM-DD');
     const datePart = convDate ? `&rate_date=${convDate}` : '';
-    fetch(`${APEX_DB_CONFIG.baseUrl}/currencies/bmsrate?source_cur=${createPaymentCurrency}&target_cur=AED${datePart}`)
+    fetch(`${buildCurrencyUrl('currencies/bmsrate')}?source_cur=${createPaymentCurrency}&target_cur=AED${datePart}`)
       .then(r => r.json())
       .then(data => {
         if (data.status === 'ok') {

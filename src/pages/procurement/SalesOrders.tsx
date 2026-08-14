@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../../config/api.helper';
+import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Form, Input, Select, DatePicker, Button,
@@ -4748,7 +4748,7 @@ const RegisterOrderModal: React.FC<{ open: boolean; onClose: () => void; onProce
     // Fetch conversion rate from daily rates webservice (txn → base)
     try {
       const params = new URLSearchParams({ from_currency: txnCcy, to_currency: baseCcy });
-      const url = `${APEX_BASE}/currencies/dailyrates?${params}`;
+      const url = `${buildCurrencyUrl('currencies/dailyrates')}?${params}`;
       trackApiCall(`Currency Conversion (${txnCcy} → ${baseCcy})`, url);
       const res = await fetch(url);
 
@@ -5983,7 +5983,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     // Fetch conversion rate from daily rates webservice (txn → base)
     try {
       const params = new URLSearchParams({ from_currency: txnCcy, to_currency: baseCcy });
-      const url = `${APEX_BASE}/currencies/dailyrates?${params}`;
+      const url = `${buildCurrencyUrl('currencies/dailyrates')}?${params}`;
       const res = await fetch(url);
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

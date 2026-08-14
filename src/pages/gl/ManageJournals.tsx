@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../../config/api.helper';
+import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
 import React, { useState, useEffect, useRef } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
@@ -2385,7 +2385,7 @@ const ManageJournals: React.FC = () => {
       try {
         const dateParam = effectiveDate ? `&rate_date=${effectiveDate}` : '';
         const res = await fetch(
-          `${APEX_DB_CONFIG.baseUrl}/currencies/bmsrate?source_cur=${currencyCode}&target_cur=AED${dateParam}`,
+          `${buildCurrencyUrl('currencies/bmsrate')}?source_cur=${currencyCode}&target_cur=AED${dateParam}`,
           { headers: { Accept: 'application/json' } }
         );
         const data = await res.json();

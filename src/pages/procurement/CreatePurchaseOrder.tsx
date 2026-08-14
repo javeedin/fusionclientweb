@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../../config/api.helper';
+import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
@@ -430,7 +430,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     try {
       // Get the most recent rate for this currency → AED
       const params = new URLSearchParams({ from_currency: currency, to_currency: 'AED' });
-      const res = await fetch(`${GL_ORDS_BASE}/currencies/dailyrates?${params}`);
+      const res = await fetch(`${buildCurrencyUrl('currencies/dailyrates')}?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const raw = (await res.text()).replace(/:\s*(-?)\.(\d)/g, ': $10.$2');
       const json = JSON.parse(raw);
@@ -1089,7 +1089,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     setAcqFxLoading(prev => ({ ...prev, [chargeKey]: true }));
     try {
       const params = new URLSearchParams({ from_currency: currency, to_currency: baseCurrency });
-      const res = await fetch(`${GL_ORDS_BASE}/currencies/dailyrates?${params}`);
+      const res = await fetch(`${buildCurrencyUrl('currencies/dailyrates')}?${params}`);
       if (!res.ok) return;
       const raw = (await res.text()).replace(/:\s*(-?)\.(\d)/g, ': $10.$2');
       const json = JSON.parse(raw);

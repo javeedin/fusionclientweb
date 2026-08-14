@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../../config/api.helper';
+import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import dayjs from 'dayjs';
 import {
@@ -3203,7 +3203,7 @@ const TrialBalance: React.FC = () => {
       if (!ccy || ccy === 'AED') continue;
       setRevalBmsFetching(prev => ({ ...prev, [ccy]: true }));
       try {
-        const res  = await fetch(`${APEX_DB_CONFIG.baseUrl}/currencies/bmsrate?source_cur=${encodeURIComponent(ccy)}&target_cur=AED${dateParam}`);
+        const res  = await fetch(`${buildCurrencyUrl('currencies/bmsrate')}?source_cur=${encodeURIComponent(ccy)}&target_cur=AED${dateParam}`);
         const data = await res.json();
         if (data.rate) {
           const rateStr = String(data.rate);
@@ -3899,7 +3899,7 @@ const TrialBalance: React.FC = () => {
                   <div style={{ maxWidth: 520 }}>
                     <Text style={{ fontSize: 12 }} type="secondary">Called once per foreign currency (skips AED):</Text>
                     <div style={{ marginTop: 6, background: '#f5f8ff', borderRadius: 6, padding: '8px 10px', fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
-                      {`${APEX_DB_CONFIG.baseUrl}/currencies/bmsrate?source_cur={CCY}&target_cur=AED`}
+                      {`${buildCurrencyUrl('currencies/'bmsrate?source_cur={CCY}&target_cur=AED`}
                       {revalRateDate ? `&rate_date=${revalRateDate}` : ''}
                     </div>
                     <div style={{ marginTop: 8 }}>

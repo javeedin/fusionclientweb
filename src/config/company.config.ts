@@ -123,3 +123,9 @@ export function getApexBaseUrl(): string {
   const company = getCurrentCompany();
   return company.apexBaseUrl;
 }
+
+// Get BUIMERC APEX base URL for shared services (e.g., currency rates webservice)
+// This is an exception - currency rates webservice is centralized in BUIMERC
+export function getBuimercApexBaseUrl(): string {
+  return COMPANIES.BUIMERC.apexBaseUrl;
+}

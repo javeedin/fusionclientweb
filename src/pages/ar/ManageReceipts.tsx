@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../../config/api.helper';
+import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Layout, Card, Form, Select, Input, Button, Space, Typography, Table, Tag,
@@ -1691,7 +1691,7 @@ const ManageReceipts: React.FC = () => {
     setFxRateLoading(prev => ({ ...prev, [tabKey]: true }));
     try {
       const params = new URLSearchParams({ from_currency: currency, to_currency: 'AED' });
-      const res  = await fetch(`${GL_ORDS_BASE}/currencies/dailyrates?${params}`, {
+      const res  = await fetch(`${buildCurrencyUrl('currencies/dailyrates')}?${params}`, {
         headers: { Accept: 'application/json' },
       });
       const text  = await res.text();
@@ -5670,7 +5670,7 @@ const ManageReceipts: React.FC = () => {
             { key: 4, service: 'Business Units',          method: 'GET',              url: `${APEX_DB_CONFIG.baseUrl}/gl/businessunits` },
             { key: 5, service: 'Receipt Method Accounts', method: 'GET',              url: ORDS_RECEIPT_METHOD_ACCOUNTS },
             { key: 6, service: 'GL Segment Values',       method: 'GET',              url: 'chartofaccounts/structuresegments (via AccountSelector)' },
-            { key: 7, service: 'FX Daily Rates',          method: 'GET',              url: `${GL_ORDS_BASE}/currencies/dailyrates` },
+            { key: 7, service: 'FX Daily Rates',          method: 'GET',              url: `${buildCurrencyUrl('currencies/dailyrates')}` },
             { key: 8, service: 'SLA Create Accounting',   method: 'POST',             url: `${APEX_DB_CONFIG.baseUrl}/sla/accounting/create` },
             { key: 9, service: 'SLA Post to Ledger',      method: 'POST',             url: `${APEX_DB_CONFIG.baseUrl}/sla/accounting/post` },
             { key: 10, service: 'GL Journals Create',     method: 'POST',             url: `${APEX_DB_CONFIG.baseUrl}/journals/create` },

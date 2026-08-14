@@ -1,4 +1,4 @@
-import { buildApexUrl } from '../../config/api.helper';
+import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
@@ -3665,7 +3665,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
     setBmsRate(null);
     const convDate = (form.getFieldValue('conversionDate') as any)?.format?.('YYYY-MM-DD');
     const datePart = convDate ? `&rate_date=${convDate}` : '';
-    fetch(`${APEX_DB_CONFIG.baseUrl}/currencies/bmsrate?source_cur=${currency}&target_cur=AED${datePart}`)
+    fetch(`${buildCurrencyUrl('currencies/bmsrate')}?source_cur=${currency}&target_cur=AED${datePart}`)
       .then(r => r.json())
       .then(data => {
         if (data.status === 'ok') {
