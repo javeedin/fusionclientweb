@@ -65,7 +65,7 @@ const ParallelRunStrategy: React.FC = () => {
         <div style={{ padding: '12px 24px', background: R.surface, borderBottom: `1px solid ${R.n200}` }}>
           <Breadcrumb items={[
             { title: <Link to="/home"><HomeOutlined /> Home</Link> },
-            { title: <Link to="/procurement">Fusion Client</Link> },
+            { title: <Link to="/procurement">Fusion Supply Chain</Link> },
             { title: 'Parallel Run / UAT Strategy' },
           ]} />
           <Title level={4} style={{ margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: 8 }}>

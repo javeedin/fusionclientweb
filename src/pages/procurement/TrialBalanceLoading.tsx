@@ -402,7 +402,7 @@ const TrialBalanceLoading: React.FC = () => {
       <Content style={{ padding: '16px 24px' }}>
         <Breadcrumb style={{ marginBottom: 12 }} items={[
           { title: <Link to="/"><HomeOutlined /></Link> },
-          { title: <Link to="/procurement">Purchasing</Link> },
+          { title: <Link to="/procurement">Fusion Supply Chain</Link> },
           { title: 'Trial Balance Loading' },
         ]} />
 
