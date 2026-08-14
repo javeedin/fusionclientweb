@@ -69,9 +69,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem('erp_user', JSON.stringify(userData));
           localStorage.setItem('erp_token', fusionResult.sessionId);
           localStorage.setItem('fusion_session_id', fusionResult.sessionId);
-          // Store username and password for Basic Auth on REST API calls
+          // Store credentials and instance URL for Basic Auth on REST API calls
           localStorage.setItem('fusion_username', username);
-          sessionStorage.setItem('fusion_password', password);
+          localStorage.setItem('fusion_password', password);
+          localStorage.setItem('fusion_instance_url', selectedInstanceUrl);
           if (isElectron) {
             (window as any).electronAPI.saveErpSession(userData, fusionResult.sessionId).catch(() => {});
           }
@@ -256,7 +257,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('erp_token');
     localStorage.removeItem('fusion_session_id');
     localStorage.removeItem('fusion_username');
-    sessionStorage.removeItem('fusion_password');
+    localStorage.removeItem('fusion_password');
+    localStorage.removeItem('fusion_instance_url');
     if (isElectron) {
       (window as any).electronAPI.clearErpSession().catch(() => {});
     }
