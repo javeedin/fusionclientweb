@@ -2914,6 +2914,8 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
     lines: any[];
   }>>([]);
   const [accountingAllLoading, setAccountingAllLoading] = useState(false);
+  const [accountingApiUrls, setAccountingApiUrls] = useState<Array<{ url: string; status?: number; error?: string }>>([]);
+  const [accountingApiModalOpen, setAccountingApiModalOpen] = useState(false);
 
   const modulePrefix = module === 'ap' ? '/ap' : '/cash';
 
@@ -3425,7 +3427,9 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
 
   const fetchAccountingForAllTransactions = async () => {
     setAccountingAllLoading(true);
+    setAccountingApiUrls([]);
     const data: typeof accountingAllData = [];
+    const apiUrls: typeof accountingApiUrls = [];
 
     // Build filtered list using same logic as search results
     const q = gridSearch.trim().toLowerCase();
@@ -3445,6 +3449,8 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
 
     for (const txn of filtered) {
       try {
+        const glUrl = `${APEX_BASE}/gl/journals/lines?reference2=${txn.externalTransactionId}&reference5=BANK_EXTERNAL_TRANSACTIONS`;
+        apiUrls.push({ url: glUrl });
         const glResult = await getGlJournalLines({
           reference2: String(txn.externalTransactionId),
           reference5: 'BANK_EXTERNAL_TRANSACTIONS',
@@ -3540,11 +3546,14 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
           });
         }
       } catch (err) {
+        const glUrl = `${APEX_BASE}/gl/journals/lines?reference2=${txn.externalTransactionId}&reference5=BANK_EXTERNAL_TRANSACTIONS`;
+        apiUrls.push({ url: glUrl, error: String(err) });
         console.error(`Error fetching accounting for transaction ${txn.externalTransactionId}:`, err);
       }
     }
 
     setAccountingAllData(data);
+    setAccountingApiUrls(apiUrls);
     setAccountingAllLoading(false);
   };
 
@@ -5356,7 +5365,22 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
 
         {/* ── Show Accounting for All Transactions Modal ──────────────────── */}
         <Modal
-          title={<Space><AccountBookOutlined style={{ color: REDWOOD.success }} />Show Accounting for All Trx</Space>}
+          title={
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Space>
+                <AccountBookOutlined style={{ color: REDWOOD.success }} />
+                <span>Show Accounting for All Trx</span>
+              </Space>
+              <Button
+                size="small"
+                icon={<ApiOutlined />}
+                onClick={() => setAccountingApiModalOpen(true)}
+                style={{ color: REDWOOD.info, borderColor: REDWOOD.info }}
+              >
+                API Inspector
+              </Button>
+            </div>
+          }
           open={accountingAllModalOpen}
           onCancel={() => setAccountingAllModalOpen(false)}
           footer={<Button onClick={() => setAccountingAllModalOpen(false)}>Close</Button>}
@@ -5498,6 +5522,83 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
               );
             })()}
           </Spin>
+        </Modal>
+
+        {/* ── API Inspector Modal for Accounting ──────────────────── */}
+        <Modal
+          title={<Space><ApiOutlined style={{ color: REDWOOD.info }} /><span>API Inspector</span></Space>}
+          open={accountingApiModalOpen}
+          onCancel={() => setAccountingApiModalOpen(false)}
+          footer={[
+            <Button key="close" onClick={() => setAccountingApiModalOpen(false)}>Close</Button>,
+            <Button
+              key="test"
+              type="primary"
+              icon={<SendOutlined />}
+              style={{ background: REDWOOD.info, borderColor: REDWOOD.info }}
+              onClick={async () => {
+                const testUrl = accountingApiUrls[0]?.url;
+                if (!testUrl) {
+                  message.warning('No API URLs to test');
+                  return;
+                }
+                try {
+                  message.loading({ content: 'Testing API endpoint...', key: 'test' });
+                  const response = await fetch(testUrl);
+                  const data = await response.json();
+                  message.success({ content: `API test successful (${response.status})`, key: 'test' });
+                  console.log('API Response:', data);
+                } catch (err) {
+                  message.error({ content: `API test failed: ${String(err)}`, key: 'test' });
+                  console.error('API Error:', err);
+                }
+              }}
+            >
+              Test First URL
+            </Button>,
+          ]}
+          width={900}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <Text strong style={{ fontSize: 13 }}>Total API Calls: {accountingApiUrls.length}</Text>
+          </div>
+          <div style={{ maxHeight: 600, overflowY: 'auto', background: '#f5f5f5', borderRadius: 4, padding: 12 }}>
+            {accountingApiUrls.length === 0 ? (
+              <Text type="secondary">No API calls recorded yet</Text>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {accountingApiUrls.map((item, idx) => (
+                  <div key={idx} style={{ background: '#fff', border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 4, padding: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <Badge color={item.error ? REDWOOD.error : REDWOOD.success} />
+                      <Text style={{ fontSize: 11, color: REDWOOD.neutral600 }}>Call #{idx + 1}</Text>
+                      {item.error && <Tag color="error" style={{ fontSize: 10 }}>Error</Tag>}
+                    </div>
+                    <Text
+                      code
+                      copyable
+                      style={{
+                        display: 'block',
+                        fontSize: 11,
+                        wordBreak: 'break-all',
+                        background: '#f9f9f9',
+                        padding: 6,
+                        borderRadius: 2,
+                        marginBottom: 4,
+                      }}
+                    >
+                      {item.url}
+                    </Text>
+                    {item.error && (
+                      <Text type="danger" style={{ fontSize: 10, display: 'block' }}>
+                        Error: {item.error}
+                      </Text>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </Modal>
 
       </Content>
