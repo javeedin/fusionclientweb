@@ -19,10 +19,14 @@ function getCurrentVersion() {
   }
 }
 
-// Compare versions (semver-like)
+// Compare versions (semver-like) - strips company prefix if present
 function isNewerVersion(latest, current) {
-  const latestParts = (latest || '0.0.0').split('.').map(Number);
-  const currentParts = (current || '0.0.0').split('.').map(Number);
+  // Extract numeric version (strip company prefix if present)
+  const latestNumeric = latest.split('.').slice(-3).join('.') || '0.0.0';
+  const currentNumeric = current.split('.').slice(-3).join('.') || '0.0.0';
+
+  const latestParts = latestNumeric.split('.').map(Number);
+  const currentParts = currentNumeric.split('.').map(Number);
 
   for (let i = 0; i < 3; i++) {
     const l = latestParts[i] || 0;
@@ -76,7 +80,8 @@ async function checkForUpdates(companyName) {
 
           const release = companyReleases[0];
           const currentVersion = getCurrentVersion();
-          const latestVersion = release.tag_name?.replace(companyName + '-v', '')?.replace(companyName + '-', '') || '0.0.0';
+          const numericVersion = release.tag_name?.replace(companyName + '-v', '')?.replace(companyName + '-', '') || '0.0.0';
+          const latestVersion = `${companyName}.${numericVersion}`;
 
           console.log('[Update] Current:', currentVersion, 'Latest:', latestVersion);
 
