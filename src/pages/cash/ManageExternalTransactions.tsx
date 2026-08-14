@@ -775,28 +775,6 @@ const ExternalTxnForm: React.FC<{
   const [fDebugSteps, setFDebugSteps]                 = useState<import('../../services/approvals.service').ApprovalDebugStep[]>([]);
   const [fDebugOpen, setFDebugOpen]                   = useState(false);
 
-  // ── Accounting for all transactions ────────────────────────────────────────
-  const [accountingAllModalOpen, setAccountingAllModalOpen] = useState(false);
-  const [accountingAllData, setAccountingAllData] = useState<Array<{
-    transactionId: number;
-    transactionNumber: string;
-    transactionDate: string;
-    debits: number;
-    credits: number;
-    debitAccount: string;
-    creditAccount: string;
-    glBatchId: number | null;
-    glHeaderId: number | null;
-    glStatus: string;
-    reference1: string;
-    reference2: string;
-    reference3: string;
-    reference4: string;
-    reference5: string;
-    lines: any[];
-  }>>([]);
-  const [accountingAllLoading, setAccountingAllLoading] = useState(false);
-
   const watchedAsset   = Form.useWatch('assetAccountCombination', form);
   const watchedOffset  = Form.useWatch('offsetAccountCombination', form);
   const watchedAmount  = Form.useWatch('amount', form);
@@ -2908,6 +2886,28 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
   const [approvalStatusTxn, setApprovalStatusTxn]       = useState<ExternalTxnRecord | null>(null);
   const [approvalDebugSteps, setApprovalDebugSteps]     = useState<import('../../services/approvals.service').ApprovalDebugStep[]>([]);
   const [approvalDebugOpen, setApprovalDebugOpen]       = useState(false);
+
+  // ── Accounting for all transactions ────────────────────────────────────────
+  const [accountingAllModalOpen, setAccountingAllModalOpen] = useState(false);
+  const [accountingAllData, setAccountingAllData] = useState<Array<{
+    transactionId: number;
+    transactionNumber: string;
+    transactionDate: string;
+    debits: number;
+    credits: number;
+    debitAccount: string;
+    creditAccount: string;
+    glBatchId: number | null;
+    glHeaderId: number | null;
+    glStatus: string;
+    reference1: string;
+    reference2: string;
+    reference3: string;
+    reference4: string;
+    reference5: string;
+    lines: any[];
+  }>>([]);
+  const [accountingAllLoading, setAccountingAllLoading] = useState(false);
 
   const modulePrefix = module === 'ap' ? '/ap' : '/cash';
 
