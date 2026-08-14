@@ -63,14 +63,20 @@ const GlobalMenuSearch: React.FC = () => {
   };
 
   const handleOpenNewWindow = () => {
-    const base = window.location.href.replace(/#.*$/, '');
-    const newWin = window.open(base, '_blank', 'width=1400,height=900,left=0,top=0');
-    if (newWin) {
-      try {
-        newWin.moveTo(0, 0);
-        newWin.resizeTo(screen.width, screen.height);
-      } catch (e) {
-        // Browsers may block this for security reasons - that's ok
+    // For Electron: use IPC to open new window in Electron context
+    if ((window as any).electronAPI?.openNewWindow) {
+      (window as any).electronAPI.openNewWindow();
+    } else {
+      // Fallback for browser: use window.open
+      const base = window.location.href.replace(/#.*$/, '');
+      const newWin = window.open(base, '_blank', 'width=1400,height=900,left=0,top=0');
+      if (newWin) {
+        try {
+          newWin.moveTo(0, 0);
+          newWin.resizeTo(screen.width, screen.height);
+        } catch (e) {
+          // Browsers may block this for security reasons - that's ok
+        }
       }
     }
   };
