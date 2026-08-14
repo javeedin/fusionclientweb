@@ -434,15 +434,13 @@ const PasswordGate: React.FC<{ onSuccess: () => void }> = ({ onSuccess }) => {
 
   const handleLogin = () => {
     setLoading(true);
-    setTimeout(() => {
-      if (password === CORRECT_PASSWORD) {
-        sessionStorage.setItem(SESSION_KEY, 'true');
-        onSuccess();
-      } else {
-        setError('Incorrect password. Please try again.');
-      }
-      setLoading(false);
-    }, 400);
+    if (password === CORRECT_PASSWORD) {
+      sessionStorage.setItem(SESSION_KEY, 'true');
+      onSuccess();
+    } else {
+      setError('Incorrect password. Please try again.');
+    }
+    setLoading(false);
   };
 
   return (
@@ -657,17 +655,17 @@ const ProcurementHome: React.FC = () => {
 // ── Main Export with Password Gate ───────────────────────────────────────────
 const ProcurementModule: React.FC = () => {
   const { isAuthenticated } = useAuth();
+  // If already logged into ERP, skip password gate
   const [authenticated, setAuthenticated] = useState(
-    () => sessionStorage.getItem(SESSION_KEY) === 'true'
+    () => isAuthenticated || sessionStorage.getItem(SESSION_KEY) === 'true'
   );
 
-  // Auto-authenticate users already logged into ERP
+  // Store in sessionStorage for consistency
   useEffect(() => {
-    if (isAuthenticated && !authenticated) {
+    if (authenticated) {
       sessionStorage.setItem(SESSION_KEY, 'true');
-      setAuthenticated(true);
     }
-  }, [isAuthenticated, authenticated]);
+  }, [authenticated]);
 
   if (!authenticated) {
     return <PasswordGate onSuccess={() => setAuthenticated(true)} />;
