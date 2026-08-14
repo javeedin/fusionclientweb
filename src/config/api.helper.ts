@@ -10,23 +10,8 @@ function normalizeUrl(url: string): string {
 }
 
 export function buildApexUrl(endpoint: string): string {
-  // In browser, route through proxy to bypass CORS; in Electron, use direct APEX URLs
-  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
-
-  if (typeof window !== 'undefined' && !isElectron) {
-    // Browser: use proxy with company-specific APEX base URL
-    const apexBase = encodeURIComponent(getApexBaseUrl());
-    const proxyBase = 'http://localhost:3001/api/apex';
-    if (!endpoint) return `${proxyBase}?base=${apexBase}`;
-
-    // Check if endpoint already has query params
-    if (endpoint.includes('?')) {
-      return normalizeUrl(`${proxyBase}/${endpoint}&base=${apexBase}`);
-    }
-    return normalizeUrl(`${proxyBase}/${endpoint}?base=${apexBase}`);
-  }
-
-  // Electron or server-side: use direct APEX URL
+  // APEX REST API calls use direct URLs (not proxied)
+  // Only login/auth endpoints use proxy
   const baseUrl = getApexBaseUrl();
   if (!endpoint) return normalizeUrl(baseUrl);
   return normalizeUrl(`${baseUrl}/${endpoint}`);

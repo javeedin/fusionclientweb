@@ -1001,58 +1001,6 @@ app.all(/^\/api\/apex-admin\/(.+)$/, async (req, res) => {
   }
 });
 
-// ─── Generic APEX API Proxy ──────────────────────────────────────────────────
-// Routes all APEX API calls through the proxy to avoid CORS issues
-// GET /api/apex/*?base=<APEX_BASE_URL>  (e.g., /api/apex/ap/payments?base=https://...)
-// If base parameter is not provided, falls back to APEX_CONFIG.baseUrl
-app.all(/^\/api\/apex\/(.+)$/, async (req, res) => {
-  const path = req.params[0]; // Gets everything after /api/apex/
-
-  // Get APEX base URL from query parameter or use default
-  let apexBase = req.query.base ? String(req.query.base) : APEX_CONFIG.baseUrl;
-
-  // Remove base parameter from query string to avoid passing it upstream
-  const queryParams = new URLSearchParams(req.query);
-  queryParams.delete('base');
-  const queryString = queryParams.toString() ? '?' + queryParams.toString() : '';
-
-  const url = `${apexBase}/${path}`;
-
-  if (VERBOSE) {
-    console.log(`[APEX API ${req.method}] Path: ${path}`);
-    console.log(`[APEX API ${req.method}] Base: ${apexBase}`);
-    console.log(`[APEX API ${req.method}] URL: ${url}${queryString}`);
-    if (req.body) console.log(`[APEX API ${req.method}] Body:`, JSON.stringify(req.body).substring(0, 200));
-  }
-
-  try {
-    const fetchOptions = {
-      method: req.method,
-      headers: { 'Content-Type': 'application/json' },
-    };
-
-    if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
-      fetchOptions.body = JSON.stringify(req.body);
-    }
-
-    const response = await fetch(`${url}${queryString}`, fetchOptions);
-    const data = await response.text();
-
-    if (VERBOSE) console.log(`[APEX API ${req.method}] Response Status: ${response.status}`);
-
-    // Try to parse as JSON, otherwise return as text
-    try {
-      const jsonData = JSON.parse(data);
-      res.json(jsonData);
-    } catch {
-      res.send(data);
-    }
-  } catch (error) {
-    console.error(`[APEX API ${req.method}] Error:`, error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // Start server
 app.listen(PORT, () => {
   console.log('='.repeat(50));
