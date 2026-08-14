@@ -367,7 +367,7 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
                 ledgerCurrency: b.ledgerCurrency,
               }));
           }),
-        fetch(`${GL_ORDS_BASE}/currencies?enabled=Y`).then(r => r.json()).then(d => d.items ?? d.data ?? (Array.isArray(d) ? d : [])),
+        fetch(`${buildCurrencyUrl('currencies')}`).then(r => r.json()).then(d => d.items ?? d.data ?? (Array.isArray(d) ? d : [])),
         fetch(`${FUSION_BASE}/inventoryOrganizations?onlyData=true&limit=500`, { headers: FUSION_HDRS }).then(r => r.ok ? r.json() : Promise.reject()).then(d => d.items ?? []),
       ]);
       if (buRes.status === 'fulfilled') {
