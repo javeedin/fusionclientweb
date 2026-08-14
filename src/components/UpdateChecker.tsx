@@ -1,7 +1,8 @@
 import React from 'react';
-import { Modal, Button, Space, Typography, Progress, Alert, Spin, Divider, message } from 'antd';
+import { Modal, Button, Space, Typography, Progress, Alert, Spin, Divider, message, Tag } from 'antd';
 import { DownloadOutlined, CheckCircleOutlined, FolderOutlined } from '@ant-design/icons';
 import { useUpdateChecker } from '../hooks/useUpdateChecker';
+import { useAuth } from '../context/AuthContext';
 
 const { Text, Paragraph } = Typography;
 
@@ -11,15 +12,16 @@ interface UpdateCheckerProps {
 }
 
 export const UpdateChecker: React.FC<UpdateCheckerProps> = ({ open, onClose }) => {
+  const { user } = useAuth();
   const { updateInfo, loading, installing, error, checkForUpdates, downloadAndInstall } = useUpdateChecker();
   const [downloadSuccess, setDownloadSuccess] = React.useState(false);
 
   React.useEffect(() => {
     if (open && !updateInfo && !loading) {
-      checkForUpdates();
+      checkForUpdates(user?.company);
       setDownloadSuccess(false);
     }
-  }, [open, updateInfo, loading, checkForUpdates]);
+  }, [open, updateInfo, loading, checkForUpdates, user?.company]);
 
   const handleRetry = () => {
     checkForUpdates();
@@ -78,6 +80,11 @@ export const UpdateChecker: React.FC<UpdateCheckerProps> = ({ open, onClose }) =
 
       {!loading && !error && updateInfo && (
         <div>
+          <div style={{ marginBottom: 16 }}>
+            <Text strong style={{ fontSize: 14 }}>Company:</Text>
+            <Tag color="blue" style={{ marginLeft: 8 }}>{user?.company || 'Unknown'}</Tag>
+          </div>
+
           <div style={{ marginBottom: 16 }}>
             <Text strong style={{ fontSize: 14 }}>Current Version:</Text>
             <Text style={{ fontSize: 14, marginLeft: 12 }}>{updateInfo.currentVersion}</Text>

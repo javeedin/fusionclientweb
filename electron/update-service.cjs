@@ -33,12 +33,13 @@ function isNewerVersion(latest, current) {
   return false;
 }
 
-// Fetch latest release from GitHub
-async function checkForUpdates() {
+// Fetch latest release from GitHub (company-specific)
+async function checkForUpdates(companyName) {
   return new Promise((resolve, reject) => {
-    const url = `${GITHUB_API}/${REPO}/releases/latest`;
+    const url = `${GITHUB_API}/${REPO}/releases`;
 
     console.log('[Update] Checking for updates at:', url);
+    console.log('[Update] Company:', companyName);
 
     const req = https.get(url, {
       headers: { 'User-Agent': 'FusionClient-Updater' }
@@ -47,9 +48,35 @@ async function checkForUpdates() {
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try {
-          const release = JSON.parse(data);
+          const releases = JSON.parse(data);
+          if (!Array.isArray(releases) || releases.length === 0) {
+            resolve({
+              hasUpdate: false,
+              currentVersion: getCurrentVersion(),
+              latestVersion: '0.0.0',
+              message: 'No releases found for this company',
+            });
+            return;
+          }
+
+          // Find latest release for this company
+          const companyReleases = releases.filter(r =>
+            r.tag_name?.startsWith(companyName + '-')
+          );
+
+          if (companyReleases.length === 0) {
+            resolve({
+              hasUpdate: false,
+              currentVersion: getCurrentVersion(),
+              latestVersion: '0.0.0',
+              message: `No releases found for company: ${companyName}`,
+            });
+            return;
+          }
+
+          const release = companyReleases[0];
           const currentVersion = getCurrentVersion();
-          const latestVersion = release.tag_name?.replace('v', '') || release.tag_name || '0.0.0';
+          const latestVersion = release.tag_name?.replace(companyName + '-v', '')?.replace(companyName + '-', '') || '0.0.0';
 
           console.log('[Update] Current:', currentVersion, 'Latest:', latestVersion);
 

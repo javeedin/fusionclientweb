@@ -1427,10 +1427,10 @@ ipcMain.handle('rag:query', async (_event, { question, mode, history }) => {
 });
 
 // ─── Update Checker (IPC) ───────────────────────────────────────────────────────
-ipcMain.handle('check-for-updates', async () => {
+ipcMain.handle('check-for-updates', async (_event, companyName) => {
   try {
-    console.log('[Update] Checking for updates...');
-    const result = await updateService.checkForUpdates();
+    console.log('[Update] Checking for updates for company:', companyName);
+    const result = await updateService.checkForUpdates(companyName);
     return { success: true, ...result };
   } catch (err) {
     console.error('[Update] Check failed:', err.message);

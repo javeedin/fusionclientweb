@@ -4,6 +4,7 @@ import { UploadOutlined, CheckCircleOutlined, CloudUploadOutlined } from '@ant-d
 import { Breadcrumb, Row, Col } from 'antd';
 import { Link } from 'react-router-dom';
 import { HomeOutlined } from '@ant-design/icons';
+import { useAuth } from '../../context/AuthContext';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -25,6 +26,7 @@ const REDWOOD = {
 };
 
 const ReleaseUploader: React.FC = () => {
+  const { user } = useAuth();
   const [form] = Form.useForm();
   const [currentVersion, setCurrentVersion] = useState<string>('');
   const [newVersion, setNewVersion] = useState<string>('');
@@ -117,9 +119,9 @@ const ReleaseUploader: React.FC = () => {
             'Accept': 'application/vnd.github.v3+json',
           },
           body: JSON.stringify({
-            tag_name: `v${newVersion}`,
-            name: `Version ${newVersion}`,
-            body: releaseNotes || 'Update release',
+            tag_name: `${user?.company}-v${newVersion}`,
+            name: `${user?.company} - Version ${newVersion}`,
+            body: `**Company:** ${user?.company}\n\n${releaseNotes || 'Update release'}`,
             draft: false,
             prerelease: false,
           }),
@@ -219,6 +221,10 @@ const ReleaseUploader: React.FC = () => {
                 <Text type="secondary">
                   Create and upload new versions to GitHub Releases
                 </Text>
+                <div style={{ marginTop: 8 }}>
+                  <Text strong>Company: </Text>
+                  <Tag color="blue">{user?.company || 'Unknown'}</Tag>
+                </div>
               </div>
             </div>
           </div>

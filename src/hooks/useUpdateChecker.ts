@@ -16,11 +16,11 @@ export const useUpdateChecker = () => {
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const checkForUpdates = useCallback(async () => {
+  const checkForUpdates = useCallback(async (companyName?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const result = await (window as any).electronAPI.checkForUpdates();
+      const result = await (window as any).electronAPI.checkForUpdates(companyName);
       if (result.success) {
         setUpdateInfo(result as UpdateInfo);
       } else {
