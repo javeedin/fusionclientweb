@@ -300,7 +300,10 @@ const ItemMaster: React.FC = () => {
           while (true) {
             const r = await fetch(
               `${fusionBase}/inventoryOrganizations?limit=500&offset=${offset}`,
-              { headers: FUSION_HDRS },
+              {
+                headers: FUSION_HDRS,
+                credentials: 'include', // Critical: include cookies for session/auth
+              },
             );
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const d = await r.json();
@@ -431,7 +434,13 @@ const ItemMaster: React.FC = () => {
 
         while (retries < maxRetries && !r) {
           try {
-            r = await fetch(pageUrl, { signal: ctrl.signal, ...(source === 'fusion' ? { headers: FUSION_HDRS } : {}) });
+            r = await fetch(pageUrl, {
+              signal: ctrl.signal,
+              ...(source === 'fusion' ? {
+                headers: FUSION_HDRS,
+                credentials: 'include', // Critical: include cookies for Fusion API
+              } : {}),
+            });
             break;
           } catch (e: any) {
             lastError = e;
@@ -490,6 +499,7 @@ const ItemMaster: React.FC = () => {
 
       const response = await fetch(url, {
         headers: FUSION_HDRS,
+        credentials: 'include', // Critical: include cookies for session
       });
 
       const result = `✓ Connected! HTTP ${response.status}
