@@ -101,48 +101,74 @@ async function checkForUpdates() {
   });
 }
 
-// Download file with progress
+// Download file with progress and redirect support
 async function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destPath);
+    const downloadToFile = (downloadUrl) => {
+      const file = fs.createWriteStream(destPath);
 
-    console.log('[Update] Downloading from:', url);
+      console.log('[Update] Downloading from:', downloadUrl);
 
-    const req = https.get(url, {
-      headers: { 'User-Agent': 'FusionClient-Updater' }
-    }, (res) => {
-      let downloadedBytes = 0;
-      const totalBytes = parseInt(res.headers['content-length'], 10);
+      const req = https.get(downloadUrl, {
+        headers: { 'User-Agent': 'FusionClient-Updater' },
+        timeout: 60000,
+      }, (res) => {
+        // Handle redirects
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          console.log('[Update] Redirect to:', res.headers.location);
+          file.destroy();
+          fs.unlink(destPath, () => {});
+          downloadToFile(res.headers.location);
+          return;
+        }
 
-      res.on('data', (chunk) => {
-        downloadedBytes += chunk.length;
-        const progress = Math.round((downloadedBytes / totalBytes) * 100);
-        console.log(`[Update] Download progress: ${progress}%`);
+        if (res.statusCode !== 200) {
+          file.destroy();
+          fs.unlink(destPath, () => {});
+          reject(new Error(`Download failed with status ${res.statusCode}`));
+          return;
+        }
+
+        let downloadedBytes = 0;
+        const totalBytes = parseInt(res.headers['content-length'], 10);
+
+        console.log('[Update] Total size:', totalBytes, 'bytes');
+
+        res.on('data', (chunk) => {
+          downloadedBytes += chunk.length;
+          if (totalBytes > 0) {
+            const progress = Math.round((downloadedBytes / totalBytes) * 100);
+            console.log(`[Update] Download progress: ${progress}%`);
+          }
+        });
+
+        res.pipe(file);
+
+        file.on('finish', () => {
+          file.close();
+          console.log('[Update] Download complete:', destPath);
+          resolve();
+        });
+
+        file.on('error', (e) => {
+          fs.unlink(destPath, () => {});
+          reject(new Error(`File write failed: ${e.message}`));
+        });
       });
 
-      res.pipe(file);
-
-      file.on('finish', () => {
-        file.close();
-        console.log('[Update] Download complete:', destPath);
-        resolve();
+      req.on('error', (e) => {
+        fs.unlink(destPath, () => {});
+        reject(new Error(`Download failed: ${e.message}`));
       });
-    });
 
-    req.on('error', (e) => {
-      fs.unlink(destPath, () => {});
-      reject(new Error(`Download failed: ${e.message}`));
-    });
+      req.on('timeout', () => {
+        req.destroy();
+        fs.unlink(destPath, () => {});
+        reject(new Error('Download timeout'));
+      });
+    };
 
-    file.on('error', (e) => {
-      fs.unlink(destPath, () => {});
-      reject(new Error(`File write failed: ${e.message}`));
-    });
-
-    req.setTimeout(60000, () => {
-      req.destroy();
-      reject(new Error('Download timeout'));
-    });
+    downloadToFile(url);
   });
 }
 
