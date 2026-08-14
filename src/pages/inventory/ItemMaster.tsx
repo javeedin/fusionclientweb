@@ -59,6 +59,7 @@ interface ItemRow {
   attribute7: string; attribute8: string; attribute9: string;
   attribute10: string;
   instance_name: string | null;
+  fusion_data?: Record<string, any>;
 }
 
 interface OrgOption { label: string; value: string; }
@@ -76,7 +77,7 @@ const mapFusionItem = (it: any): ItemRow => ({
   inventory_item_status_code: pfv(it, ['ItemStatusValue', 'ItemStatus', 'ApprovalStatusValue']) ?? '',
   organization_code: pfv(it, ['OrganizationCode']) ?? '',
   inventory_org_code: pfv(it, ['OrganizationCode']) ?? null,
-  sales_account:     '',
+  sales_account:     pfv(it, ['SalesAccountValue']) ?? '',
   item_price:        String(pfv(it, ['ListPrice', 'UnitPrice']) ?? ''),
   barcode:           null,
   old_item_code:     '',
@@ -88,6 +89,7 @@ const mapFusionItem = (it: any): ItemRow => ({
   attribute7: String(pfv(it, ['Attribute7']) ?? ''), attribute8: String(pfv(it, ['Attribute8']) ?? ''), attribute9: String(pfv(it, ['Attribute9']) ?? ''),
   attribute10: String(pfv(it, ['Attribute10']) ?? ''),
   instance_name: null,
+  fusion_data: it,
 });
 
 // ── Edit Item Panel ───────────────────────────────────────────────────────────
@@ -177,6 +179,45 @@ const EditItemPanel: React.FC<{ item: ItemRow }> = ({ item }) => {
   );
 };
 
+// ── Truncated Text Component with Tooltip ──────────────────────────────────
+const TruncatedText: React.FC<{ text?: string; maxChars?: number }> = ({ text = '', maxChars = 10 }) => {
+  if (!text) return <Text type="secondary">—</Text>;
+  const trimmed = String(text).trim();
+  if (trimmed.length <= maxChars) return <Text code style={{ fontSize: 11 }}>{trimmed}</Text>;
+  return (
+    <Tooltip title={trimmed} placement="topLeft">
+      <Text code style={{ fontSize: 11, cursor: 'help' }}>{trimmed.slice(0, maxChars)}...</Text>
+    </Tooltip>
+  );
+};
+
+// ── Detail Modal Component ──────────────────────────────────────────────────
+const DetailModal: React.FC<{ visible: boolean; item: ItemRow | null; onClose: () => void }> = ({ visible, item, onClose }) => {
+  if (!item?.fusion_data) return null;
+
+  const data = item.fusion_data;
+  const entries = Object.entries(data).filter(([, v]) => v != null && v !== '');
+
+  return (
+    <Modal title={`Item Details — ${item.item_number}`} open={visible} onCancel={onClose} width={900}
+      footer={<Button onClick={onClose}>Close</Button>}
+      styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+        {entries.map(([key, value]) => (
+          <div key={key} style={{ padding: '8px', background: REDWOOD.neutral100, borderRadius: 4 }}>
+            <Text strong style={{ fontSize: 11, color: REDWOOD.primary, display: 'block', marginBottom: 4 }}>
+              {key}
+            </Text>
+            <Text style={{ fontSize: 12, wordBreak: 'break-word', display: 'block' }}>
+              {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
+            </Text>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
+};
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 const ItemMaster: React.FC = () => {
   const [form] = Form.useForm();
@@ -203,6 +244,10 @@ const ItemMaster: React.FC = () => {
   const [drawer, setDrawer] = useState<{ open: boolean; label: string; values: { value: string; count: number }[] }>({
     open: false, label: '', values: [],
   });
+
+  // detail modal for Fusion data
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailItem, setDetailItem] = useState<ItemRow | null>(null);
 
   // API debug modal
   const [apiOpen, setApiOpen]       = useState(false);
@@ -501,6 +546,10 @@ const ItemMaster: React.FC = () => {
       render: v => v?.trim() || '—',
     },
     {
+      title: 'Sales Account', dataIndex: 'sales_account', key: 'sales_account', width: 200,
+      render: v => <TruncatedText text={v} maxChars={10} />,
+    },
+    {
       title: 'Inv', dataIndex: 'inventory_item_flag', key: 'inv', width: 55, align: 'center',
       render: v => v === 'Y' ? <Tag color="success" style={{ fontSize: 10, margin: 0 }}>Y</Tag> : <Text type="secondary">—</Text>,
     },
@@ -514,12 +563,20 @@ const ItemMaster: React.FC = () => {
     { title: 'Rep Status', dataIndex: 'attribute4', key: 'a4', width: 100, render: v => v || '—' },
     { title: 'Category',   dataIndex: 'attribute5', key: 'a5', width: 100, render: v => v || '—' },
     {
-      title: '', key: 'actions', width: 80, fixed: 'right',
+      title: '', key: 'actions', width: 120, fixed: 'right',
       render: (_: any, record: ItemRow) => (
-        <Button size="small" icon={<EditOutlined />} onClick={() => openEditTab(record)}
-          style={{ fontSize: 11, color: REDWOOD.info, borderColor: REDWOOD.info }}>
-          Edit
-        </Button>
+        <Space size={4}>
+          {record.fusion_data && (
+            <Tooltip title="View all details">
+              <Button size="small" icon={<FileSearchOutlined />} onClick={() => { setDetailItem(record); setDetailOpen(true); }}
+                style={{ fontSize: 11, color: REDWOOD.warning, borderColor: REDWOOD.warning }} />
+            </Tooltip>
+          )}
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEditTab(record)}
+            style={{ fontSize: 11, color: REDWOOD.info, borderColor: REDWOOD.info }}>
+            Edit
+          </Button>
+        </Space>
       ),
     },
   ];
@@ -898,6 +955,9 @@ const ItemMaster: React.FC = () => {
           )}
         />
       </Drawer>
+
+      {/* Detail Modal for Fusion Data */}
+      <DetailModal visible={detailOpen} item={detailItem} onClose={() => setDetailOpen(false)} />
     </div>
   );
 
