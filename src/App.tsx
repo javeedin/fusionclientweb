@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useCallback } from 'react';
+import { lazy, Suspense, useState, useCallback, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ConfigProvider, Spin } from 'antd';
 import { AuthProvider } from './context/AuthContext';
@@ -8,6 +8,7 @@ import { NotificationProvider } from './context/NotificationContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import MainLayout from './layouts/MainLayout';
 import { ShowAndTellProvider, ShowAndTellOverlay } from './features/showAndTell';
+import { UpdateChecker } from './components/UpdateChecker';
 
 // These two load immediately (login + home are always needed)
 import Login from './pages/Login';
@@ -170,11 +171,28 @@ const ComingSoon = ({ moduleName }: { moduleName: string }) => (
 
 function App() {
   const [splashDone, setSplashDone] = useState(false);
+  const [updateCheckerOpen, setUpdateCheckerOpen] = useState(false);
   const handleSplashDone = useCallback(() => setSplashDone(true), []);
+
+  useEffect(() => {
+    if (!(window as any).electronAPI) return;
+
+    const handleOpenUpdateChecker = () => {
+      setUpdateCheckerOpen(true);
+    };
+
+    (window as any).electronAPI.onOpenUpdateChecker(handleOpenUpdateChecker);
+
+    return () => {
+      // Clean up listener on unmount
+      (window as any).electronAPI.removeOpenUpdateCheckerListener?.();
+    };
+  }, []);
 
   return (
     <>
       {!splashDone && <SplashScreen onDone={handleSplashDone} />}
+      <UpdateChecker open={updateCheckerOpen} onClose={() => setUpdateCheckerOpen(false)} />
     <ConfigProvider
       theme={{
         token: {

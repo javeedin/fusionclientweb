@@ -70,6 +70,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Optional path parameter: navigates to that path in the new window
   openNewWindow: (path) => ipcRenderer.invoke('openNewWindow', path),
 
+  // Update checker
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  downloadAndInstallUpdate: (params) => ipcRenderer.invoke('download-and-install-update', params),
+  onOpenUpdateChecker: (callback) => ipcRenderer.on('open-update-checker', callback),
+  removeOpenUpdateCheckerListener: () => ipcRenderer.removeAllListeners('open-update-checker'),
+  onOpenAbout: (callback) => ipcRenderer.on('open-about', callback),
+
   // Check if running in Electron
   isElectron: true,
 
