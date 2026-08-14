@@ -69,7 +69,7 @@ async function checkForUpdates(companyName) {
               hasUpdate: false,
               currentVersion: getCurrentVersion(),
               latestVersion: '0.0.0',
-              message: `No releases found for company: ${companyName}`,
+              message: 'No release found',
             });
             return;
           }
