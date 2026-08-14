@@ -10,6 +10,7 @@ let nodemailer = null;
 try { nodemailer = require('nodemailer'); } catch (_) { /* optional */ }
 
 const rag = require('./rag.cjs');
+const updateService = require('./update-service.cjs');
 const getUserDataPath = () => app.getPath('userData');
 
 // ── Email sender (IPC) ──────────────────────────────────────────────────────
@@ -488,6 +489,53 @@ function createWindow() {
     // event.preventDefault();
     // mainWindow.hide();
   });
+
+  // Setup application menu
+  setupAppMenu();
+}
+
+// Setup application menu with Help → Check for Updates
+function setupAppMenu() {
+  const template = [
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Exit',
+          accelerator: 'CmdOrCtrl+Q',
+          click: () => {
+            isQuitting = true;
+            app.quit();
+          }
+        }
+      ]
+    },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'Check for Updates',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send('open-update-checker');
+            }
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'About FusionClient',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send('open-about');
+            }
+          }
+        }
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
 }
 
 // Create system tray icon
@@ -1303,6 +1351,37 @@ ipcMain.handle('rag:query', async (_event, { question, mode, history }) => {
     return { success: true, ...result };
   } catch (err) {
     console.error('[rag:query]', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── Update Checker (IPC) ───────────────────────────────────────────────────────
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    console.log('[Update] Checking for updates...');
+    const result = await updateService.checkForUpdates();
+    return { success: true, ...result };
+  } catch (err) {
+    console.error('[Update] Check failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('download-and-install-update', async (_event, { downloadUrl, downloadName }) => {
+  try {
+    console.log('[Update] Starting download and install...');
+    const tempDir = app.getPath('temp');
+    const destPath = path.join(tempDir, downloadName || 'FusionClient-Update.exe');
+
+    // Download
+    await updateService.downloadFile(downloadUrl, destPath);
+    console.log('[Update] Download complete, installing...');
+
+    // Install (replaces exe and restarts)
+    await updateService.installUpdate(destPath);
+    return { success: true, message: 'Update installed, restarting app...' };
+  } catch (err) {
+    console.error('[Update] Install failed:', err.message);
     return { success: false, error: err.message };
   }
 });
