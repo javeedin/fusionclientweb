@@ -271,6 +271,8 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
   const [itemCacheTs, setItemCacheTs] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [itemSearchType, setItemSearchType] = useState<'number' | 'description'>('number');
+  const [itemOffset, setItemOffset] = useState(0);
+  const [itemHasMore, setItemHasMore] = useState(false);
   const [itemSearchLoading, setItemSearchLoading] = useState(false);
   const [selectedItemKeys, setSelectedItemKeys] = useState<string[]>([]);
   const [lovLoading, setLovLoading] = useState(false);
@@ -2254,11 +2256,13 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
     setPastedRows([]);
     setPasteText('');
     setItems([]);
+    setItemOffset(0);
+    setItemHasMore(false);
     setItemCacheTs('');
     setItemSearchType('number');
   };
 
-  const searchItemsV2 = async () => {
+  const searchItemsV2 = async (offset = 0) => {
     if (!header || !searchTerm.trim()) {
       message.warning('Please enter a search term');
       return;
@@ -2275,24 +2279,43 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
 
       let query = '';
       if (itemSearchType === 'number') {
-        query = `ItemNumber LIKE '%${encodeURIComponent(searchTerm.trim())}%';OrganizationCode=${org}`;
+        query = `ItemNumber LIKE '%${searchTerm.trim()}%';OrganizationCode=${org}`;
       } else {
-        query = `ItemDescription LIKE '%${encodeURIComponent(searchTerm.trim())}%';OrganizationCode=${org}`;
+        query = `ItemDescription LIKE '%${searchTerm.trim()}%';OrganizationCode=${org}`;
       }
 
-      const url = `${FUSION_BASE}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=100&onlyData=true`;
-      setAddItemApiUrl(`GET itemsV2?q=${query}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=100&onlyData=true`);
+      const url = `${FUSION_BASE}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offset}&onlyData=true`;
+      setAddItemApiUrl(`GET itemsV2?q=${query}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offset}&onlyData=true`);
 
       const res = await fetch(url, { headers: FUSION_HDRS });
       if (!res.ok) throw new Error(`API returned ${res.status}`);
 
       const data = await res.json();
       const results = data.items ?? data.data ?? [];
+      const hasMore = data.hasMore ?? results.length === 50;
 
-      if (results.length === 0) {
-        message.info(`No items found matching "${searchTerm}" in organization ${org}`);
-        setItems([]);
+      if (offset === 0) {
+        // First page - replace items
+        if (results.length === 0) {
+          message.info(`No items found matching "${searchTerm}" in organization ${org}`);
+          setItems([]);
+          setItemOffset(0);
+          setItemHasMore(false);
+        } else {
+          const mapped = results.map((item: any) => ({
+            item_number: item.ItemNumber,
+            description: item.ItemDescription,
+            primary_uom_code: item.PrimaryUOMValue || item.PrimaryUnitOfMeasureCode,
+            inventory_item_status_code: item.ItemStatusValue,
+            ...item
+          }));
+          setItems(mapped);
+          setItemOffset(50);
+          setItemHasMore(hasMore);
+          message.success(`Found item(s) in ${org}. Showing first 50 items.`);
+        }
       } else {
+        // Next page - append items
         const mapped = results.map((item: any) => ({
           item_number: item.ItemNumber,
           description: item.ItemDescription,
@@ -2300,8 +2323,9 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
           inventory_item_status_code: item.ItemStatusValue,
           ...item
         }));
-        setItems(mapped);
-        message.success(`Found ${results.length} item(s) in ${org}`);
+        setItems(prev => [...prev, ...mapped]);
+        setItemOffset(offset + 50);
+        setItemHasMore(hasMore);
       }
     } catch (e: any) {
       message.error(`Search failed: ${e?.message ?? 'Network error'}`);
@@ -4205,7 +4229,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
           {addItemApiUrl && (
             <Tooltip title="Click to copy API URL">
               <div
-                onClick={() => navigator.clipboard?.writeText(addItemApiUrl + '&limit=500&offset=0').catch(() => {})}
+                onClick={() => navigator.clipboard?.writeText(addItemApiUrl).catch(() => {})}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
                   background: '#0d1117', border: '1px solid #30363d',
@@ -4217,8 +4241,8 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                   fontFamily: 'monospace', fontSize: 11, color: '#58a6ff',
                   flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
-                  {addItemApiUrl}&amp;limit=500&amp;offset=0&nbsp;→&nbsp;
-                  {itemsLoading ? 'loading all pages…' : itemCacheTs ? `${items.length} records (from local cache)` : `${items.length} records (all pages fetched)`}
+                  {addItemApiUrl}&nbsp;→&nbsp;
+                  {itemSearchLoading ? 'loading…' : `${items.length} records loaded${itemHasMore ? ' (more available)' : ''}`}
                 </span>
               </div>
             </Tooltip>
@@ -4282,13 +4306,26 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                       </div>
                     )}
                     {items.length > 0 && !itemSearchLoading && (
-                      <Table columns={itemTableCols} dataSource={filteredItems} rowKey={r => String(r.item_number)}
-                        size="small" bordered
-                        pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10','20','50','100'],
-                          showTotal: (t, [s, e]) => `${s}–${e} of ${t} items` }}
-                        scroll={{ x: 700 }}
-                        rowSelection={rowSel}
-                        rowClassName={(_, i) => i % 2 !== 0 ? 'po-row-alt' : ''} />
+                      <>
+                        <Table columns={itemTableCols} dataSource={filteredItems} rowKey={r => String(r.item_number)}
+                          size="small" bordered
+                          pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10','20','50','100'],
+                            showTotal: (t, [s, e]) => `${s}–${e} of ${t} items` }}
+                          scroll={{ x: 700 }}
+                          rowSelection={rowSel}
+                          rowClassName={(_, i) => i % 2 !== 0 ? 'po-row-alt' : ''} />
+                        {itemHasMore && (
+                          <div style={{ marginTop: 12, textAlign: 'center' }}>
+                            <Button
+                              onClick={() => searchItemsV2(itemOffset)}
+                              loading={itemSearchLoading}
+                              type="default"
+                            >
+                              Load Next 50 Records
+                            </Button>
+                          </div>
+                        )}
+                      </>
                     )}
                   </>
                 ),
