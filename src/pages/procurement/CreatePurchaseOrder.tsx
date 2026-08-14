@@ -2286,7 +2286,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
       }
 
       const url = `${FUSION_BASE}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`;
-      setAddItemApiUrl(`GET itemsV2?q=${query}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`);
+      setAddItemApiUrl(`${FUSION_BASE}/itemsV2?q=${encodeURIComponent(query)}&fields=ItemNumber,ItemDescription,PrimaryUOMValue,ItemStatusValue&limit=50&offset=${offsetNum}&onlyData=true`);
 
       const res = await fetch(url, { headers: FUSION_HDRS });
       if (!res.ok) throw new Error(`API returned ${res.status}`);
@@ -2450,7 +2450,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
       while (idx < itemNumbers.length) {
         const num = itemNumbers[idx++];
         const url = `${FUSION_BASE}/itemsV2?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(num)}&limit=1&onlyData=true`;
-        setAddItemApiUrl(`GET itemsV2?q=OrganizationCode=${org};ItemNumber=${num}&limit=1&onlyData=true`);
+        setAddItemApiUrl(`${FUSION_BASE}/itemsV2?q=OrganizationCode=${org};ItemNumber=${encodeURIComponent(num)}&limit=1&onlyData=true`);
         try {
           const r = await fetch(url, { headers: FUSION_HDRS });
           if (r.ok) {
