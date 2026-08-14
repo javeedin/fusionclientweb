@@ -9,6 +9,7 @@ import {
   MessageOutlined,
   MailOutlined,
   DatabaseOutlined,
+  CloudUploadOutlined,
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -106,6 +107,14 @@ const adminCards: AdminCard[] = [
     icon: <MailOutlined />,
     color: '#0056b3',
     path: '/admin/brevo-settings',
+  },
+  {
+    key: 'release-uploader',
+    title: 'Release Uploader',
+    description: 'Create and upload new Electron app versions to GitHub Releases. Users can then check for updates and install automatically.',
+    icon: <CloudUploadOutlined />,
+    color: REDWOOD.primary,
+    path: '/admin/releases',
   },
 ];
 
