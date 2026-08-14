@@ -1001,6 +1001,51 @@ app.all(/^\/api\/apex-admin\/(.+)$/, async (req, res) => {
   }
 });
 
+// ─── Generic APEX API Proxy ──────────────────────────────────────────────────
+// Routes all APEX API calls through the proxy to avoid CORS issues
+// GET /api/apex/*  (e.g., /api/apex/ap/payments, /api/apex/approvals/requests)
+app.all(/^\/api\/apex\/(.+)$/, async (req, res) => {
+  const path = req.params[0]; // Gets everything after /api/apex/
+  const apexBase = APEX_CONFIG.baseUrl;
+  const url = `${apexBase}/${path}`;
+  const queryString = Object.keys(req.query).length > 0
+    ? '?' + new URLSearchParams(req.query).toString()
+    : '';
+
+  if (VERBOSE) {
+    console.log(`[APEX API ${req.method}] Path: ${path}`);
+    console.log(`[APEX API ${req.method}] URL: ${url}${queryString}`);
+    if (req.body) console.log(`[APEX API ${req.method}] Body:`, JSON.stringify(req.body).substring(0, 200));
+  }
+
+  try {
+    const fetchOptions = {
+      method: req.method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
+      fetchOptions.body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(`${url}${queryString}`, fetchOptions);
+    const data = await response.text();
+
+    if (VERBOSE) console.log(`[APEX API ${req.method}] Response Status: ${response.status}`);
+
+    // Try to parse as JSON, otherwise return as text
+    try {
+      const jsonData = JSON.parse(data);
+      res.json(jsonData);
+    } catch {
+      res.send(data);
+    }
+  } catch (error) {
+    console.error(`[APEX API ${req.method}] Error:`, error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log('='.repeat(50));

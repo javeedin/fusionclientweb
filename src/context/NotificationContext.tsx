@@ -65,7 +65,7 @@ interface NotificationContextValue {
 const NotificationContext = createContext<NotificationContextValue | null>(null);
 
 const uid = () => `notif-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const APEX_PAYMENTS_URL = `${APEX_DB_CONFIG.baseUrl}/ap/payments`;
+const APEX_PAYMENTS_URL = 'http://localhost:3001/api/apex/ap/payments';
 const APPROVAL_POLL_INTERVAL = 60_000; // 60 seconds
 
 function approvalToNotification(req: ApprovalRequest): AppNotification {

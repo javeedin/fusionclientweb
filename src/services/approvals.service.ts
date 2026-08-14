@@ -2,9 +2,7 @@
 // Approval Management Engine — Service Layer
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { APEX_DB_CONFIG } from '../config/api.config';
-
-const BASE = `${APEX_DB_CONFIG.baseUrl}/approvals`;
+const BASE = 'http://localhost:3001/api/apex/approvals';
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
