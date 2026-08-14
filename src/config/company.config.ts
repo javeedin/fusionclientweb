@@ -11,8 +11,6 @@ export interface CompanyConfig {
   apexBaseUrl: string;
   fusionBaseUrl: string;
   hcmBaseUrl: string;
-  fusionUser: string;
-  fusionPassword: string;
   fusionInstances: FusionInstance[];
 }
 
@@ -41,8 +39,6 @@ const COMPANIES: Record<CompanyCode, CompanyConfig> = {
     apexBaseUrl: import.meta.env.REACT_APP_BUIMERC_APEX_BASE_URL || '',
     fusionBaseUrl: import.meta.env.REACT_APP_BUIMERC_FUSION_BASE_URL || '',
     hcmBaseUrl: import.meta.env.REACT_APP_BUIMERC_HCM_BASE_URL || '',
-    fusionUser: import.meta.env.REACT_APP_BUIMERC_FUSION_USER || '',
-    fusionPassword: import.meta.env.REACT_APP_BUIMERC_FUSION_PASSWORD || '',
     fusionInstances: parseFusionInstances(import.meta.env.REACT_APP_BUIMERC_FUSION_INSTANCES || '', 'BUIMERC'),
   },
   MITSUMI: {
@@ -51,8 +47,6 @@ const COMPANIES: Record<CompanyCode, CompanyConfig> = {
     apexBaseUrl: import.meta.env.REACT_APP_MITSUMI_APEX_BASE_URL || '',
     fusionBaseUrl: import.meta.env.REACT_APP_MITSUMI_FUSION_BASE_URL || '',
     hcmBaseUrl: import.meta.env.REACT_APP_MITSUMI_HCM_BASE_URL || '',
-    fusionUser: import.meta.env.REACT_APP_MITSUMI_FUSION_USER || '',
-    fusionPassword: import.meta.env.REACT_APP_MITSUMI_FUSION_PASSWORD || '',
     fusionInstances: parseFusionInstances(import.meta.env.REACT_APP_MITSUMI_FUSION_INSTANCES || '', 'MITSUMI'),
   },
   GRAYSINC: {
@@ -61,8 +55,6 @@ const COMPANIES: Record<CompanyCode, CompanyConfig> = {
     apexBaseUrl: import.meta.env.REACT_APP_GRAYSINC_APEX_BASE_URL || '',
     fusionBaseUrl: import.meta.env.REACT_APP_GRAYSINC_FUSION_BASE_URL || '',
     hcmBaseUrl: import.meta.env.REACT_APP_GRAYSINC_HCM_BASE_URL || '',
-    fusionUser: import.meta.env.REACT_APP_GRAYSINC_FUSION_USER || '',
-    fusionPassword: import.meta.env.REACT_APP_GRAYSINC_FUSION_PASSWORD || '',
     fusionInstances: parseFusionInstances(import.meta.env.REACT_APP_GRAYSINC_FUSION_INSTANCES || '', 'GRAYSINC'),
   },
 };
