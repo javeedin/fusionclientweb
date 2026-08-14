@@ -129,3 +129,9 @@ export function getApexBaseUrl(): string {
 export function getBuimercApexBaseUrl(): string {
   return COMPANIES.BUIMERC.apexBaseUrl;
 }
+
+// Get ORDS hostname (dynamic) - can be configured via environment variable
+// Path /ords/test/FUSIONCLIENTERP/inventory/itemmaster is fixed for all companies
+export function getOrdsHostname(): string {
+  return import.meta.env.REACT_APP_ORDS_HOSTNAME || 'https://g827cd88c3cfc03-mitsumioracledb.adb.me-dubai-1.oraclecloudapps.com';
+}
