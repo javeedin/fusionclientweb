@@ -860,19 +860,11 @@ const CustomerSiteActivities: React.FC = () => {
                 </Button>
               </Form.Item>
               {fusionData.length > 0 && (
-                <>
-                  <Form.Item>
-                    <Button icon={<DownloadOutlined />} onClick={() => exportToExcel(fusionData, 'CustomerSiteActivities')}>
-                      Export
-                    </Button>
-                  </Form.Item>
-                  <Form.Item>
-                    <Button type="default" style={{ background: REDWOOD.primary, color: '#fff', borderColor: REDWOOD.primary }}
-                      onClick={() => setReceivablesOverviewVisible(true)}>
-                      RECEIVABLES OVERVIEW
-                    </Button>
-                  </Form.Item>
-                </>
+                <Form.Item>
+                  <Button icon={<DownloadOutlined />} onClick={() => exportToExcel(fusionData, 'CustomerSiteActivities')}>
+                    Export
+                  </Button>
+                </Form.Item>
               )}
             </Form>
           </Card>
