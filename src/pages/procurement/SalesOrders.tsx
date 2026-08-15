@@ -3949,8 +3949,8 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
     { title: 'UOM', width: 60, render: (_, r) => pf(r, ['PrimaryUOMValue', 'PrimaryUOMCode', 'PrimaryUnitOfMeasure', 'UOMCode']) ?? '—' },
     { title: 'Lot', width: 120, ellipsis: true, render: (_, r) => { const l = vuOf(r.ItemNumber).lot; return l ? <Tag color="geekblue" style={{ fontSize: 10 }}>{l}</Tag> : '—'; } },
     { title: 'Item Cost', width: 95, align: 'right', render: (_, r) => { const c = costs[r.ItemNumber]; if (costLoading && !c) return <Spin size="small" />; return (c?.cost == null) ? <Text type="secondary" style={{ fontSize: 11 }}>—</Text> : <Text strong style={{ fontSize: 11.5, color: REDWOOD.primary, fontVariantNumeric: 'tabular-nums' }}>{num2(c.cost)}</Text>; } },
-    { title: 'O/H (Cost)', width: 82, align: 'right', render: (_, r) => { const c = costs[r.ItemNumber]; if (costLoading && !c) return <Spin size="small" />; return (c?.onhand == null) ? <Text type="secondary" style={{ fontSize: 11 }}>—</Text> : <Text style={{ fontSize: 11, color: REDWOOD.info, fontVariantNumeric: 'tabular-nums' }}>{fmtQty(c.onhand)}</Text>; } },
-    { title: 'On-hand', width: 150, render: (_, r) => {
+    { title: 'Costed QOH', width: 82, align: 'right', render: (_, r) => { const c = costs[r.ItemNumber]; if (costLoading && !c) return <Spin size="small" />; return (c?.onhand == null) ? <Text type="secondary" style={{ fontSize: 11 }}>—</Text> : <Text style={{ fontSize: 11, color: REDWOOD.info, fontVariantNumeric: 'tabular-nums' }}>{fmtQty(c.onhand)}</Text>; } },
+    { title: 'Total QOH', width: 150, render: (_, r) => {
         const item = r.ItemNumber; const p = vuOf(item); const st = onh[item]; const base = costOnhandOf(item);
         const invOrg = org || p.invOrg; const sub = subinv || p.subinv; // prefer the header warehouse/subinventory
         return <Space size={4}>
@@ -3962,6 +3962,13 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
           </>}
           {st?.err && <Tooltip title={st.err}><Text type="danger" style={{ fontSize: 10 }}>err</Text></Tooltip>}
         </Space>;
+      } },
+    { title: 'Un Costed QOH', width: 110, align: 'right', render: (_, r) => {
+        const item = r.ItemNumber; const st = onh[item]; const c = costs[item];
+        const totalQoh = st?.qty ?? c?.onhand ?? 0;
+        const costedQoh = c?.onhand ?? 0;
+        const unCostedQoh = totalQoh - costedQoh;
+        return <Text style={{ fontSize: 11, color: unCostedQoh > 0 ? REDWOOD.warning : REDWOOD.neutral600, fontVariantNumeric: 'tabular-nums' }}>{fmtQty(unCostedQoh)}</Text>;
       } },
     { title: 'Ord Qty', width: 88, render: (_, r) => { const cap = maxQohOf(r.ItemNumber); return <InputNumber size="small" min={0} max={cap != null ? cap : undefined} value={dget(r.ItemNumber).qty} onChange={v => setQty(r.ItemNumber, Number(v) || 0)} style={{ width: 76 }} />; } },
     { title: 'Unit Price', width: 98, render: (_, r) => <InputNumber size="small" min={0} value={dget(r.ItemNumber).price} onChange={v => dset(r.ItemNumber, { price: Number(v) || 0 })} style={{ width: 86 }} /> },
@@ -4317,7 +4324,7 @@ const OnhandPanel: React.FC<{ org?: string; subinv?: string; ccy?: string; onAdd
       let capturedUrl = '';
 
       if (type === 'itemNumber') {
-        q += `;ItemNumber=${query.trim()}`;
+        q += `;ItemNumber LIKE ${query.trim()}%`;
         capturedUrl = `${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&onlyData=true&limit=100`;
       } else {
         // For description search, we'll fetch items by description from itemCosts first
@@ -4421,7 +4428,7 @@ const OnhandPanel: React.FC<{ org?: string; subinv?: string; ccy?: string; onAdd
     { title: 'Description', width: 200, ellipsis: true, render: (_, r) => <Text style={{ fontSize: 12 }}>{uomMap[r.item]?.desc || '—'}</Text> },
     { title: 'UOM', width: 70, render: (_, r) => <Text style={{ fontSize: 12 }}>{uomMap[r.item]?.uom || '—'}</Text> },
     { title: 'Subinventory', width: 100, render: (_, r) => <Text style={{ fontSize: 12 }}>{r.subinv || '—'}</Text> },
-    { title: 'On-hand Qty', width: 110, align: 'right', render: (_, r) => <Text style={{ fontVariantNumeric: 'tabular-nums' }}>{r.qty}</Text> },
+    { title: 'Total QOH', width: 110, align: 'right', render: (_, r) => <Text style={{ fontVariantNumeric: 'tabular-nums' }}>{r.qty}</Text> },
     { title: 'Order Qty', width: 90, render: (_, r) => { const it = r.item; return <InputNumber size="small" min={0} value={qtys[it] ?? 0} onChange={v => setQty(it, Number(v) || 0)} style={{ width: 76 }} />; } },
   ];
 
