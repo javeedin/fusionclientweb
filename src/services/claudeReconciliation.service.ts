@@ -152,7 +152,23 @@ RESPONSE FORMAT (JSON array - REQUIRED):
       console.error('Full response:', JSON.stringify(data, null, 2));
     }
 
-    const claudeText = data.content?.[0]?.text || '';
+    // Handle extended thinking - look for text block in content array
+    console.log('=== SEARCHING FOR TEXT BLOCK ===');
+    let claudeText = '';
+
+    if (data.content && Array.isArray(data.content)) {
+      console.log('Total content blocks:', data.content.length);
+
+      for (let i = 0; i < data.content.length; i++) {
+        console.log(`Block ${i}: type="${data.content[i].type}"`);
+        if (data.content[i].type === 'text' && data.content[i].text) {
+          claudeText = data.content[i].text;
+          console.log(`✓ Found text in block ${i}`);
+          break;
+        }
+      }
+    }
+
     console.log('=== EXTRACTED TEXT ===');
     console.log('Text:', claudeText);
     console.log('Text type:', typeof claudeText);
