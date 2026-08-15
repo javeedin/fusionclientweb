@@ -3848,6 +3848,7 @@ const PdfPanel: React.FC<{ org?: string; ccy?: string; onAdd: (items: any[]) => 
 const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { value: string; label: string; pct: number }[]; onAdd: (items: any[]) => void }> = ({ org, subinv, taxOptions = [], onAdd }) => {
   const [byDesc, setByDesc] = useState(false);
   const [term, setTerm] = useState('');
+  const [filterText, setFilterText] = useState('');
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -3895,6 +3896,16 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
   const costOnhandOf = (item: string) => costs[item]?.onhand;
   const num2 = (v: number) => new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
   const onhQty = (x: any) => num(pf(x, ['PrimaryQuantity', 'QuantityOnhand', 'OnhandQuantity', 'Quantity']));
+
+  // Filter rows by description or item number
+  const filteredRows = useMemo(() => {
+    if (!filterText.trim()) return rows;
+    const f = filterText.trim().toLowerCase();
+    return rows.filter(r =>
+      String(r.ItemNumber).toLowerCase().includes(f) ||
+      String(r.ItemDescription).toLowerCase().includes(f)
+    );
+  }, [rows, filterText]);
 
   // On-hand: query the org+item (+subinventory) balances, follow each balance's
   // lot child link to read per-lot quantities, then match the cost row's lot.
@@ -3961,7 +3972,7 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
 
   const cols: ColumnsType<any> = [
     { title: 'Item', dataIndex: 'ItemNumber', width: 140, fixed: 'left', render: v => <Text strong style={{ color: REDWOOD.info, fontSize: 12 }}>{v}</Text> },
-    { title: 'Description', dataIndex: 'ItemDescription', width: 200, ellipsis: true, render: v => <Text style={{ fontSize: 12 }}>{v ?? '—'}</Text> },
+    { title: 'Description', dataIndex: 'ItemDescription', flex: 1, ellipsis: true, render: v => <Text style={{ fontSize: 12 }}>{v ?? '—'}</Text> },
     { title: 'UOM', width: 60, render: (_, r) => pf(r, ['PrimaryUOMValue', 'PrimaryUOMCode', 'PrimaryUnitOfMeasure', 'UOMCode']) ?? '—' },
     { title: 'Lot', width: 120, ellipsis: true, render: (_, r) => { const l = vuOf(r.ItemNumber).lot; return l ? <Tag color="geekblue" style={{ fontSize: 10 }}>{l}</Tag> : '—'; } },
     { title: 'Item Cost', width: 95, align: 'right', render: (_, r) => { const c = costs[r.ItemNumber]; if (costLoading && !c) return <Spin size="small" />; return (c?.cost == null) ? <Text type="secondary" style={{ fontSize: 11 }}>—</Text> : <Text strong style={{ fontSize: 11.5, color: REDWOOD.primary, fontVariantNumeric: 'tabular-nums' }}>{num2(c.cost)}</Text>; } },
@@ -4020,9 +4031,15 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
         <Tooltip title="Web services used"><Button icon={<ApiOutlined />} onClick={() => setApiOpen(true)} /></Tooltip>
       </Space.Compact>
       {error ? <div style={{ color: REDWOOD.error, fontSize: 12, marginBottom: 8 }}><InfoCircleOutlined style={{ marginRight: 6 }} />{error}</div> : null}
-      <Table size="small" columns={cols} dataSource={rows} rowKey="ItemNumber" loading={loading}
+      {rows.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <Input placeholder="Filter by item number or description..." value={filterText} onChange={e => setFilterText(e.target.value)} allowClear prefix={<SearchOutlined />} />
+          <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>Showing {filteredRows.length} of {rows.length} items</Text>
+        </div>
+      )}
+      <Table size="small" columns={cols} dataSource={filteredRows} rowKey="ItemNumber" loading={loading}
         rowSelection={{ selectedRowKeys: sel, onChange: setSel }}
-        pagination={rows.length > 12 ? { pageSize: 12, size: 'small' } : false} scroll={{ x: 1980, y: 340 }}
+        pagination={filteredRows.length > 12 ? { pageSize: 12, size: 'small' } : false} scroll={{ x: 1980, y: 340 }}
         locale={{ emptyText: 'Search for items to add' }} />
       <div style={{ marginTop: 10, display: 'flex', alignItems: 'center' }}>
         <Text type="secondary" style={{ fontSize: 12 }}>{sel.length} selected</Text>
@@ -4340,11 +4357,11 @@ const OnhandPanel: React.FC<{ org?: string; subinv?: string; ccy?: string; onAdd
       let capturedUrl = '';
 
       if (type === 'itemNumber') {
-        q += `;ItemNumber LIKE ${query.trim()}%`;
+        q += `;ItemNumber LIKE '${query.trim()}%'`;
         capturedUrl = `${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&onlyData=true&limit=100`;
       } else {
         // For description search, we'll fetch items by description from itemCosts first
-        const itemRes = await fetch(`${LATEST_URL}/itemCosts?q=${encodeURIComponent(`ItemDescription=${query.trim()}`)}&onlyData=true&limit=100`, { headers: getHeaders() });
+        const itemRes = await fetch(`${LATEST_URL}/itemCosts?q=${encodeURIComponent(`ItemDescription LIKE '${query.trim()}%'`)}&onlyData=true&limit=100`, { headers: getHeaders() });
         if (!itemRes.ok) throw new Error(`HTTP ${itemRes.status} searching items`);
         const itemData = await itemRes.json();
         const itemNumbers = (itemData.items ?? []).map((i: any) => pf(i, ['ItemNumber', 'Item'])).filter(Boolean);
