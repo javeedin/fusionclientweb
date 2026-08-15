@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  Modal, Button, Table, Tag, Space, Alert, Spin, Empty, Tabs, Row, Col, Card, Typography, Divider, message, Tooltip,
+  Modal, Button, Table, Tag, Space, Alert, Spin, Empty, Tabs, Row, Col, Card, Typography, Divider, message, Tooltip, Input,
 } from 'antd';
 import {
   RobotOutlined, DownloadOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined,
@@ -39,6 +39,49 @@ const ClaudeReconciliationModal: React.FC<ClaudeReconciliationModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ReconciliationResult | null>(null);
   const [error, setError] = useState('');
+  const [apiKey, setApiKey] = useState(claudeApiKey);
+  const [testLoading, setTestLoading] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+
+  const handleTestApiKey = async () => {
+    if (!apiKey.trim()) {
+      setTestResult({ success: false, message: 'Please enter an API key' });
+      return;
+    }
+
+    setTestLoading(true);
+    setTestResult(null);
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-sonnet-20241022',
+          max_tokens: 100,
+          messages: [{ role: 'user', content: 'Test' }],
+        }),
+      });
+
+      if (response.ok) {
+        setTestResult({ success: true, message: 'API key is valid! ✓' });
+      } else {
+        const error = await response.text();
+        setTestResult({ success: false, message: `Error: ${response.status} - ${error}` });
+      }
+    } catch (err) {
+      setTestResult({
+        success: false,
+        message: err instanceof Error ? err.message : 'Connection error',
+      });
+    } finally {
+      setTestLoading(false);
+    }
+  };
 
   const handleReconcile = async () => {
     if (!stmtLines.length || !sysTxns.length) {
@@ -49,7 +92,7 @@ const ClaudeReconciliationModal: React.FC<ClaudeReconciliationModalProps> = ({
     setLoading(true);
     setError('');
     try {
-      const reconResult = await reconcileWithClaude(stmtLines, sysTxns, claudeApiKey);
+      const reconResult = await reconcileWithClaude(stmtLines, sysTxns, apiKey || claudeApiKey);
       setResult(reconResult);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Unknown error';
@@ -70,9 +113,18 @@ const ClaudeReconciliationModal: React.FC<ClaudeReconciliationModalProps> = ({
   return (
     <Modal
       title={
-        <Space>
-          <RobotOutlined style={{ color: REDWOOD.info }} />
-          Claude AI Bank Reconciliation
+        <Space style={{ width: '100%', justifyContent: 'space-between', display: 'flex' }}>
+          <Space>
+            <RobotOutlined style={{ color: REDWOOD.info }} />
+            Claude AI Bank Reconciliation
+          </Space>
+          <Button
+            type="text"
+            size="small"
+            onClick={() => setShowSettings(!showSettings)}
+          >
+            {showSettings ? 'Hide Settings' : 'API Settings'}
+          </Button>
         </Space>
       }
       open={open}
@@ -84,6 +136,40 @@ const ClaudeReconciliationModal: React.FC<ClaudeReconciliationModalProps> = ({
       {!result ? (
         <div>
           {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
+
+          {showSettings && (
+            <Card style={{ marginBottom: 16, backgroundColor: REDWOOD.neutral100 }}>
+              <div style={{ marginBottom: 12 }}>
+                <Text strong>Claude API Key Settings</Text>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <Input.Password
+                  placeholder="Enter Claude API key (sk-...)"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                <Button
+                  onClick={handleTestApiKey}
+                  loading={testLoading}
+                  style={{
+                    borderColor: testResult?.success ? REDWOOD.success : undefined,
+                    color: testResult?.success ? REDWOOD.success : undefined,
+                  }}
+                >
+                  Test Key
+                </Button>
+              </div>
+              {testResult && (
+                <Alert
+                  type={testResult.success ? 'success' : 'error'}
+                  message={testResult.message}
+                  style={{ marginTop: 12 }}
+                  showIcon
+                />
+              )}
+            </Card>
+          )}
 
           <Card style={{ marginBottom: 16 }}>
             <Row gutter={16}>
