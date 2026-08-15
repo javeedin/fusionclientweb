@@ -11,7 +11,8 @@ import { Link } from 'react-router-dom';
 import type { ColumnsType, TableRowSelection, ColumnType } from 'antd/es/table/interface';
 import * as XLSX from 'xlsx';
 import FloatingMenu from '../../components/FloatingMenu';
-import { ORACLE_FUSION_CONFIG } from '../../config/api.config';
+import { getFusionAuthHeaders } from '../../config/api.helper';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -26,8 +27,10 @@ const REDWOOD = {
   border:     '#E5E5E5',
 };
 
-const FUSION_AUTH = 'Basic ' + btoa(`${ORACLE_FUSION_CONFIG.username}:${ORACLE_FUSION_CONFIG.password}`);
-const FUSION_BASE = `${ORACLE_FUSION_CONFIG.baseUrl}/receivablesCustomerAccountSiteActivities`;
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/receivablesCustomerAccountSiteActivities` : '';
+};
 
 const CHILD_LABEL_MAP: Record<string, string> = {
   creditMemoApplications:           'CM Applications',
@@ -214,7 +217,8 @@ const CustomerSiteActivities: React.FC = () => {
     if (values.BillToSiteNumber) filters.push(`BillToSiteNumber like "%${values.BillToSiteNumber}%"`);
 
     const LIMIT = 500;
-    const baseUrl = `${FUSION_BASE}?limit=${LIMIT}${filters.length ? `&q=${encodeURIComponent(filters.join(' AND '))}` : ''}`;
+    const fusionBase = getFusionBase();
+    const baseUrl = `${fusionBase}?limit=${LIMIT}${filters.length ? `&q=${encodeURIComponent(filters.join(' AND '))}` : ''}`;
     const firstUrl = `${baseUrl}&offset=0`;
 
     setApiDebug({ url: firstUrl, status: null, response: '' });
@@ -229,7 +233,7 @@ const CustomerSiteActivities: React.FC = () => {
 
       while (hasMore) {
         const url = `${baseUrl}&offset=${offset}`;
-        const res = await fetch(url, { headers: { Authorization: FUSION_AUTH } });
+        const res = await fetch(url, { headers: getFusionAuthHeaders() });
         const text = await res.text();
         let json: { items?: Row[]; hasMore?: boolean };
         try { json = JSON.parse(text); } catch { throw new Error(`Non-JSON (HTTP ${res.status}): ${text.substring(0, 300)}`); }
@@ -273,6 +277,7 @@ const CustomerSiteActivities: React.FC = () => {
     const allResults: Record<string, Row[]> = {};
     CHILD_NAMES.forEach(cn => { allResults[cn] = []; });
 
+    const fusionBase = getFusionBase();
     await Promise.all(
       selected.flatMap(site =>
         CHILD_NAMES.map(async childName => {
@@ -284,8 +289,8 @@ const CustomerSiteActivities: React.FC = () => {
             const allItems: Row[] = [];
 
             while (hasMore) {
-              const url = `${FUSION_BASE}/${siteId}/child/${childName}?limit=${LIMIT}&offset=${offset}`;
-              const res = await fetch(url, { headers: { Authorization: FUSION_AUTH } });
+              const url = `${fusionBase}/${siteId}/child/${childName}?limit=${LIMIT}&offset=${offset}`;
+              const res = await fetch(url, { headers: getFusionAuthHeaders() });
               if (!res.ok) break;
               const json = await res.json();
               const page: Row[] = (json.items || []).map((item: Row) => {
