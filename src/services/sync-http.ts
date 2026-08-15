@@ -312,7 +312,10 @@ export const callSoapBip = async (
     const startTime = Date.now();
     log?.('info', 'Sending SOAP request...');
 
-    const response = await fetch(url, {
+    // Construct full SOAP endpoint URL
+    const soapUrl = url.endsWith('/ReportService') ? url : `${url}/xmlpserver/services/v2/ReportService`;
+
+    const response = await fetch(soapUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '"runReport"' },
       body: envelope,

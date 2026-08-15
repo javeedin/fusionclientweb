@@ -440,7 +440,7 @@ const Customers: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <TeamOutlined style={{ fontSize: 24, color: REDWOOD.teal }} />
-              <Title level={2} style={{ margin: 0 }}>
+              <Title level={4} style={{ margin: 0 }}>
                 Customers
               </Title>
             </div>
