@@ -1,145 +1,84 @@
 import React, { useMemo } from 'react';
-import { DetailsList, IColumn, SelectionMode, Stack, Text, Tag, mergeStyleSets } from '@fluentui/react';
+import { Table, Tag, Empty, Typography } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import { ReconciliationResult, ReconciliationMatch } from '../../services/claudeReconciliation.service';
 
 interface ReconciliationTableProps {
   result: ReconciliationResult;
 }
 
-const classNames = mergeStyleSets({
-  header: {
-    fontSize: 14,
-    fontWeight: 600,
-    color: '#242424',
-    paddingBottom: 8,
-  },
-  confidenceHigh: {
-    backgroundColor: '#D4EDDA',
-    color: '#155724',
-    padding: '4px 8px',
-    borderRadius: 4,
-    fontSize: 12,
-    fontWeight: 500,
-  },
-  confidenceMedium: {
-    backgroundColor: '#FFF3CD',
-    color: '#856404',
-    padding: '4px 8px',
-    borderRadius: 4,
-    fontSize: 12,
-    fontWeight: 500,
-  },
-  confidenceLow: {
-    backgroundColor: '#F8D7DA',
-    color: '#721C24',
-    padding: '4px 8px',
-    borderRadius: 4,
-    fontSize: 12,
-    fontWeight: 500,
-  },
-});
+const { Text } = Typography;
 
 const ReconciliationTable: React.FC<ReconciliationTableProps> = ({ result }) => {
-  const columns: IColumn[] = useMemo(
+  const columns: ColumnsType<ReconciliationMatch> = useMemo(
     () => [
       {
-        key: 'stmtAmount',
-        name: 'Statement Amount',
-        fieldName: 'stmtAmount',
-        minWidth: 100,
-        maxWidth: 120,
-        onRender: (item: ReconciliationMatch) => (
-          <Text>{item.stmtAmount.toFixed(2)}</Text>
-        ),
+        title: 'Statement Amount',
+        dataIndex: 'stmtAmount',
+        width: 120,
+        render: (value: number) => value.toFixed(2),
       },
       {
-        key: 'stmtDate',
-        name: 'Statement Date',
-        fieldName: 'stmtDate',
-        minWidth: 100,
-        maxWidth: 120,
+        title: 'Statement Date',
+        dataIndex: 'stmtDate',
+        width: 120,
       },
       {
-        key: 'txnNumber',
-        name: 'Transaction #',
-        fieldName: 'txnNumber',
-        minWidth: 80,
-        maxWidth: 100,
+        title: 'Txn #',
+        dataIndex: 'txnNumber',
+        width: 100,
       },
       {
-        key: 'txnAmount',
-        name: 'Transaction Amount',
-        fieldName: 'txnAmount',
-        minWidth: 100,
-        maxWidth: 120,
-        onRender: (item: ReconciliationMatch) => (
-          <Text>{item.txnAmount.toFixed(2)}</Text>
-        ),
+        title: 'Transaction Amount',
+        dataIndex: 'txnAmount',
+        width: 130,
+        render: (value: number) => value.toFixed(2),
       },
       {
-        key: 'txnSource',
-        name: 'Source',
-        fieldName: 'txnSource',
-        minWidth: 80,
-        maxWidth: 100,
+        title: 'Source',
+        dataIndex: 'txnSource',
+        width: 100,
       },
       {
-        key: 'confidence',
-        name: 'Confidence',
-        fieldName: 'confidence',
-        minWidth: 110,
-        maxWidth: 130,
-        onRender: (item: ReconciliationMatch) => {
-          const percentage = Math.round(item.confidence * 100);
-          const className =
-            item.confidence >= 0.95
-              ? classNames.confidenceHigh
-              : item.confidence >= 0.8
-              ? classNames.confidenceMedium
-              : classNames.confidenceLow;
+        title: 'Confidence',
+        dataIndex: 'confidence',
+        width: 110,
+        render: (value: number) => {
+          const percentage = Math.round(value * 100);
+          let color = 'orange';
+          if (value >= 0.95) color = 'green';
+          else if (value >= 0.8) color = 'blue';
 
-          return <div className={className}>{percentage}%</div>;
+          return <Tag color={color}>{percentage}%</Tag>;
         },
       },
       {
-        key: 'reason',
-        name: 'Match Reason',
-        fieldName: 'reason',
-        minWidth: 150,
+        title: 'Reason',
+        dataIndex: 'reason',
+        width: 150,
       },
     ],
     []
   );
 
   return (
-    <Stack tokens={{ childrenGap: 12 }}>
-      <Text className={classNames.header}>
+    <div>
+      <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 12 }}>
         Matched Transactions ({result.matches.length})
       </Text>
       {result.matches.length > 0 ? (
-        <DetailsList
-          items={result.matches}
+        <Table
           columns={columns}
-          selectionMode={SelectionMode.none}
-          isHeaderVisible
-          compact
-          onRenderDetailsHeader={(props, defaultRender) => (
-            <div style={{ borderBottom: '2px solid #E1E1E1' }}>
-              {defaultRender?.({
-                ...props,
-                styles: {
-                  root: { paddingTop: 0, paddingBottom: 8 },
-                },
-              })}
-            </div>
-          )}
+          dataSource={result.matches}
+          pagination={{ pageSize: 10, size: 'small' }}
+          rowKey={(_, index) => index}
+          size="small"
+          scroll={{ x: true }}
         />
       ) : (
-        <Text style={{ color: '#A19F9D', padding: '20px', textAlign: 'center' }}>
-          No matched transactions
-        </Text>
+        <Empty description="No matched transactions" />
       )}
-    </Stack>
+    </div>
   );
 };
 

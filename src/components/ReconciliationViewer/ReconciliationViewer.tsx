@@ -1,10 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import {
-  Stack, Pivot, PivotItem, Text, DetailsList, IColumn, SelectionMode,
-  Spinner, SpinnerSize, MessageBar, MessageBarType, PrimaryButton, DefaultButton,
-  mergeStyleSets, CommandBar, ICommandBarItemProps,
-} from '@fluentui/react';
+import React, { useMemo } from 'react';
+import { Tabs, Table, Empty, Alert, Spin, Space, Button, Row, Col, Typography } from 'antd';
 import { DownloadOutlined } from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
 import { ReconciliationResult } from '../../services/claudeReconciliation.service';
 import { exportReconciliationToExcel } from '../../services/claudeReconciliation.service';
 import ReconciliationSummary from './ReconciliationSummary';
@@ -21,15 +18,7 @@ interface ReconciliationViewerProps {
   onClose?: () => void;
 }
 
-const classNames = mergeStyleSets({
-  root: {
-    padding: 16,
-    backgroundColor: '#FFFFFF',
-  },
-  tabContent: {
-    padding: '16px 0',
-  },
-});
+const { Text } = Typography;
 
 const ReconciliationViewer: React.FC<ReconciliationViewerProps> = ({
   result,
@@ -46,207 +35,173 @@ const ReconciliationViewer: React.FC<ReconciliationViewerProps> = ({
     exportReconciliationToExcel(result, fileName);
   };
 
-  const commandBarItems: ICommandBarItemProps[] = [
-    {
-      key: 'export',
-      text: 'Export to Excel',
-      iconProps: { iconName: 'ExcelDocument' },
-      onClick: handleExport,
-      disabled: !result,
-    },
-    {
-      key: 'close',
-      text: 'Close',
-      iconProps: { iconName: 'Cancel' },
-      onClick: onClose,
-    },
-  ];
-
   // Bank Statement Columns
-  const stmtColumns: IColumn[] = useMemo(
+  const stmtColumns: ColumnsType<any> = useMemo(
     () => [
       {
-        key: 'lineId',
-        name: 'Line ID',
-        fieldName: 'lineId',
-        minWidth: 60,
-        maxWidth: 80,
+        title: 'Line ID',
+        dataIndex: 'lineId',
+        width: 80,
       },
       {
-        key: 'transactionDate',
-        name: 'Date',
-        fieldName: 'transactionDate',
-        minWidth: 100,
-        maxWidth: 120,
+        title: 'Date',
+        dataIndex: 'transactionDate',
+        width: 120,
       },
       {
-        key: 'amount',
-        name: 'Amount',
-        fieldName: 'amount',
-        minWidth: 100,
-        maxWidth: 120,
-        onRender: (item) => <Text>{item.amount.toFixed(2)}</Text>,
+        title: 'Amount',
+        dataIndex: 'amount',
+        width: 100,
+        render: (value: number) => value.toFixed(2),
       },
       {
-        key: 'reference',
-        name: 'Reference',
-        fieldName: 'reference',
-        minWidth: 100,
+        title: 'Reference',
+        dataIndex: 'reference',
+        width: 120,
       },
       {
-        key: 'description',
-        name: 'Description',
-        fieldName: 'description',
-        minWidth: 150,
+        title: 'Description',
+        dataIndex: 'description',
+        flex: 1,
       },
     ],
     []
   );
 
   // System Transaction Columns
-  const txnColumns: IColumn[] = useMemo(
+  const txnColumns: ColumnsType<any> = useMemo(
     () => [
       {
-        key: 'txnId',
-        name: 'Transaction ID',
-        fieldName: 'txnId',
-        minWidth: 80,
-        maxWidth: 100,
+        title: 'Transaction ID',
+        dataIndex: 'txnId',
+        width: 100,
       },
       {
-        key: 'txnNumber',
-        name: 'Txn #',
-        fieldName: 'txnNumber',
-        minWidth: 80,
-        maxWidth: 100,
+        title: 'Txn #',
+        dataIndex: 'txnNumber',
+        width: 100,
       },
       {
-        key: 'txnDate',
-        name: 'Date',
-        fieldName: 'txnDate',
-        minWidth: 100,
-        maxWidth: 120,
+        title: 'Date',
+        dataIndex: 'txnDate',
+        width: 120,
       },
       {
-        key: 'amount',
-        name: 'Amount',
-        fieldName: 'amount',
-        minWidth: 100,
-        maxWidth: 120,
-        onRender: (item) => <Text>{item.amount.toFixed(2)}</Text>,
+        title: 'Amount',
+        dataIndex: 'amount',
+        width: 100,
+        render: (value: number) => value.toFixed(2),
       },
       {
-        key: 'source',
-        name: 'Source',
-        fieldName: 'source',
-        minWidth: 100,
-        maxWidth: 120,
+        title: 'Source',
+        dataIndex: 'source',
+        width: 100,
       },
       {
-        key: 'payee',
-        name: 'Payee',
-        fieldName: 'payee',
-        minWidth: 150,
+        title: 'Payee',
+        dataIndex: 'payee',
+        flex: 1,
       },
     ],
     []
   );
 
   return (
-    <Stack className={classNames.root} tokens={{ childrenGap: 16 }}>
+    <div style={{ padding: 0 }}>
       {error && (
-        <MessageBar messageBarType={MessageBarType.error} dismissButtonAriaLabel="Close">
-          {error}
-        </MessageBar>
+        <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} />
       )}
 
       {loading && (
-        <Stack
-          horizontalAlign="center"
-          verticalAlign="center"
-          style={{ padding: '40px 20px' }}
-          tokens={{ childrenGap: 12 }}
-        >
-          <Spinner size={SpinnerSize.large} label="Analyzing transactions with Claude..." />
-        </Stack>
+        <div style={{ padding: '60px 20px', textAlign: 'center' }}>
+          <Spin size="large" tip="Analyzing transactions with Claude..." />
+        </div>
       )}
 
       {!loading && result && (
-        <Stack tokens={{ childrenGap: 20 }}>
-          <Stack horizontal horizontalAlign="space-between" verticalAlign="center">
-            <Text variant="xLarge" style={{ fontWeight: 600 }}>
-              Bank Reconciliation Results
-            </Text>
-            <Stack horizontal tokens={{ childrenGap: 8 }}>
-              <PrimaryButton onClick={handleExport} iconProps={{ iconName: 'ExcelDocument' }}>
-                Export to Excel
-              </PrimaryButton>
-              {onClose && <DefaultButton onClick={onClose} text="Close" />}
-            </Stack>
-          </Stack>
+        <Space direction="vertical" size="large" style={{ width: '100%' }}>
+          <Row justify="space-between" align="middle">
+            <Col>
+              <Text strong style={{ fontSize: 18 }}>Bank Reconciliation Results</Text>
+            </Col>
+            <Col>
+              <Space>
+                <Button type="primary" icon={<DownloadOutlined />} onClick={handleExport}>
+                  Export to Excel
+                </Button>
+                {onClose && <Button onClick={onClose}>Close</Button>}
+              </Space>
+            </Col>
+          </Row>
 
           <ReconciliationSummary result={result} />
 
           <ReconciliationChart result={result} />
 
-          <Pivot>
-            <PivotItem headerText={`Matched (${result.matches.length})`}>
-              <div className={classNames.tabContent}>
-                <ReconciliationTable result={result} />
-              </div>
-            </PivotItem>
-
-            <PivotItem headerText={`Unmatched Statements (${result.unmatchedStmtLines.length})`}>
-              <div className={classNames.tabContent}>
-                <Text style={{ marginBottom: 12, display: 'block', fontWeight: 600 }}>
-                  Bank statement lines with no matching system transaction
-                </Text>
-                {result.unmatchedStmtLines.length > 0 ? (
-                  <DetailsList
-                    items={result.unmatchedStmtLines}
-                    columns={stmtColumns}
-                    selectionMode={SelectionMode.none}
-                    isHeaderVisible
-                    compact
-                  />
-                ) : (
-                  <Text style={{ color: '#A19F9D', padding: '20px', textAlign: 'center' }}>
-                    No unmatched statements
-                  </Text>
-                )}
-              </div>
-            </PivotItem>
-
-            <PivotItem headerText={`Unmatched Transactions (${result.unmatchedSysTxns.length})`}>
-              <div className={classNames.tabContent}>
-                <Text style={{ marginBottom: 12, display: 'block', fontWeight: 600 }}>
-                  System transactions with no matching bank statement
-                </Text>
-                {result.unmatchedSysTxns.length > 0 ? (
-                  <DetailsList
-                    items={result.unmatchedSysTxns}
-                    columns={txnColumns}
-                    selectionMode={SelectionMode.none}
-                    isHeaderVisible
-                    compact
-                  />
-                ) : (
-                  <Text style={{ color: '#A19F9D', padding: '20px', textAlign: 'center' }}>
-                    No unmatched transactions
-                  </Text>
-                )}
-              </div>
-            </PivotItem>
-          </Pivot>
-        </Stack>
+          <Tabs
+            items={[
+              {
+                key: 'matched',
+                label: `Matched (${result.matches.length})`,
+                children: <ReconciliationTable result={result} />,
+              },
+              {
+                key: 'unmatched-stmt',
+                label: `Unmatched Statements (${result.unmatchedStmtLines.length})`,
+                children: (
+                  <div>
+                    <Text style={{ marginBottom: 12, display: 'block' }}>
+                      Bank statement lines with no matching system transaction
+                    </Text>
+                    {result.unmatchedStmtLines.length > 0 ? (
+                      <Table
+                        columns={stmtColumns}
+                        dataSource={result.unmatchedStmtLines}
+                        pagination={{ pageSize: 10, size: 'small' }}
+                        rowKey={(_, index) => index}
+                        size="small"
+                        scroll={{ x: true }}
+                      />
+                    ) : (
+                      <Empty description="No unmatched statements" />
+                    )}
+                  </div>
+                ),
+              },
+              {
+                key: 'unmatched-txn',
+                label: `Unmatched Transactions (${result.unmatchedSysTxns.length})`,
+                children: (
+                  <div>
+                    <Text style={{ marginBottom: 12, display: 'block' }}>
+                      System transactions with no matching bank statement
+                    </Text>
+                    {result.unmatchedSysTxns.length > 0 ? (
+                      <Table
+                        columns={txnColumns}
+                        dataSource={result.unmatchedSysTxns}
+                        pagination={{ pageSize: 10, size: 'small' }}
+                        rowKey={(_, index) => index}
+                        size="small"
+                        scroll={{ x: true }}
+                      />
+                    ) : (
+                      <Empty description="No unmatched transactions" />
+                    )}
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </Space>
       )}
 
       {!loading && !result && !error && (
-        <Stack horizontalAlign="center" verticalAlign="center" style={{ padding: '40px 20px' }}>
-          <Text>Click "Start Reconciliation" to analyze transactions</Text>
-        </Stack>
+        <div style={{ padding: '60px 20px', textAlign: 'center' }}>
+          <Text>Click "Reconcile with Claude" to analyze transactions</Text>
+        </div>
       )}
-    </Stack>
+    </div>
   );
 };
 

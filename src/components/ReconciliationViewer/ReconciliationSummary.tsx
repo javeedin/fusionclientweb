@@ -1,14 +1,11 @@
 import React from 'react';
-import { Stack, Text, Card, ICardTokens } from '@fluentui/react';
+import { Row, Col, Card, Statistic } from 'antd';
+import { CheckCircleOutlined, DollarOutlined, ExclamationCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { ReconciliationResult } from '../../services/claudeReconciliation.service';
 
 interface ReconciliationSummaryProps {
   result: ReconciliationResult;
 }
-
-const cardTokens: ICardTokens = {
-  childrenMargin: 12,
-};
 
 const ReconciliationSummary: React.FC<ReconciliationSummaryProps> = ({ result }) => {
   const matchPercentage = result.totalMatches > 0
@@ -16,57 +13,53 @@ const ReconciliationSummary: React.FC<ReconciliationSummaryProps> = ({ result })
     : 0;
 
   return (
-    <Stack tokens={{ childrenGap: 12 }}>
-      <Stack horizontal tokens={{ childrenGap: 20 }} wrap>
-        <Card tokens={cardTokens} style={{ flex: 1, minWidth: 150 }}>
-          <Stack tokens={{ childrenGap: 8 }}>
-            <Text variant="small" style={{ color: '#606E8C' }}>MATCHED TRANSACTIONS</Text>
-            <Text variant="superLarge" style={{ color: '#107C10', fontWeight: 700 }}>
-              {result.totalMatches}
-            </Text>
-            <Text variant="small" style={{ color: '#606E8C' }}>
-              {matchPercentage}% match rate
-            </Text>
-          </Stack>
+    <Row gutter={16}>
+      <Col xs={24} sm={12} md={6}>
+        <Card style={{ backgroundColor: '#F6FFED' }}>
+          <Statistic
+            title="Matched Transactions"
+            value={result.totalMatches}
+            prefix={<CheckCircleOutlined style={{ color: '#52C41A' }} />}
+            valueStyle={{ color: '#52C41A', fontSize: 28, fontWeight: 700 }}
+            suffix={`(${matchPercentage}%)`}
+          />
         </Card>
+      </Col>
 
-        <Card tokens={cardTokens} style={{ flex: 1, minWidth: 150 }}>
-          <Stack tokens={{ childrenGap: 8 }}>
-            <Text variant="small" style={{ color: '#606E8C' }}>TOTAL MATCHED AMOUNT</Text>
-            <Text variant="superLarge" style={{ color: '#0078D4', fontWeight: 700 }}>
-              {result.totalAmount.toFixed(2)}
-            </Text>
-            <Text variant="small" style={{ color: '#606E8C' }}>
-              Reconciled
-            </Text>
-          </Stack>
+      <Col xs={24} sm={12} md={6}>
+        <Card style={{ backgroundColor: '#E6F7FF' }}>
+          <Statistic
+            title="Matched Amount"
+            value={result.totalAmount}
+            prefix={<DollarOutlined style={{ color: '#1890FF' }} />}
+            valueStyle={{ color: '#1890FF', fontSize: 28, fontWeight: 700 }}
+            precision={2}
+          />
         </Card>
+      </Col>
 
-        <Card tokens={cardTokens} style={{ flex: 1, minWidth: 150 }}>
-          <Stack tokens={{ childrenGap: 8 }}>
-            <Text variant="small" style={{ color: '#606E8C' }}>UNMATCHED STATEMENTS</Text>
-            <Text variant="superLarge" style={{ color: '#FFB900', fontWeight: 700 }}>
-              {result.unmatchedStmtLines.length}
-            </Text>
-            <Text variant="small" style={{ color: '#606E8C' }}>
-              Pending review
-            </Text>
-          </Stack>
+      <Col xs={24} sm={12} md={6}>
+        <Card style={{ backgroundColor: '#FFFBE6' }}>
+          <Statistic
+            title="Unmatched Statements"
+            value={result.unmatchedStmtLines.length}
+            prefix={<ExclamationCircleOutlined style={{ color: '#FAAD14' }} />}
+            valueStyle={{ color: '#FAAD14', fontSize: 28, fontWeight: 700 }}
+          />
         </Card>
+      </Col>
 
-        <Card tokens={cardTokens} style={{ flex: 1, minWidth: 150 }}>
-          <Stack tokens={{ childrenGap: 8 }}>
-            <Text variant="small" style={{ color: '#606E8C' }}>UNMATCHED TRANSACTIONS</Text>
-            <Text variant="superLarge" style={{ color: '#E81123', fontWeight: 700 }}>
-              {result.unmatchedSysTxns.length}
-            </Text>
-            <Text variant="small" style={{ color: '#606E8C' }}>
-              Needs attention
-            </Text>
-          </Stack>
+      <Col xs={24} sm={12} md={6}>
+        <Card style={{ backgroundColor: '#FFF1F0' }}>
+          <Statistic
+            title="Unmatched Transactions"
+            value={result.unmatchedSysTxns.length}
+            prefix={<CloseCircleOutlined style={{ color: '#FF4D4F' }} />}
+            valueStyle={{ color: '#FF4D4F', fontSize: 28, fontWeight: 700 }}
+          />
         </Card>
-      </Stack>
-    </Stack>
+      </Col>
+    </Row>
   );
 };
 
