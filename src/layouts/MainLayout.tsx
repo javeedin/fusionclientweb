@@ -38,6 +38,7 @@ import NotificationPanel from '../components/NotificationPanel';
 import ApprovalToastWatcher from '../components/ApprovalToastWatcher';
 import Autopilot from '../components/Autopilot';
 import CompanySelector from '../components/CompanySelector';
+import DebugCredentialsPanel from '../components/DebugCredentialsPanel';
 import type { MenuProps } from 'antd';
 
 // Type for BeforeInstallPromptEvent
@@ -359,6 +360,7 @@ const MainLayout: React.FC = () => {
             </Badge>
           </Tooltip>
           <SupportTicketButton />
+          <DebugCredentialsPanel />
           <Tooltip title="Autopilot Assistant">
             <Button
               type="text"
