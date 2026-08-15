@@ -441,13 +441,14 @@ const CustomerSiteActivities: React.FC = () => {
       const childTabItems = CHILD_NAMES.map(cn => {
         const state = siteChildStates[cn] || { loading: false, data: [], columns: [] };
 
-        // Filter data by balance if enabled
-        const filteredData = filterBalances
-          ? state.data.filter(row => {
-              const balance = row['TotalOpenReceivablesForSite'];
-              return balance !== null && balance !== undefined && balance !== 0;
-            })
-          : state.data;
+        // Filter data by balance if enabled (only for AR Invoices tab)
+        let filteredData = state.data;
+        if (filterBalances && cn === 'transactionPaymentSchedules') {
+          filteredData = state.data.filter(row => {
+            const balance = row['TotalBalanceAmount'];
+            return balance !== null && balance !== undefined && balance !== 0;
+          });
+        }
 
         // Build columns with sorting
         let cols = buildColumns(filteredData);
@@ -499,12 +500,14 @@ const CustomerSiteActivities: React.FC = () => {
             <div>
               {!state.loading && state.data.length > 0 && (
                 <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Checkbox
-                    checked={filterBalances}
-                    onChange={(e) => setBalanceFilter(prev => ({ ...prev, [key]: e.target.checked }))}
-                  >
-                    Records with Balances
-                  </Checkbox>
+                  {cn === 'transactionPaymentSchedules' && (
+                    <Checkbox
+                      checked={filterBalances}
+                      onChange={(e) => setBalanceFilter(prev => ({ ...prev, [key]: e.target.checked }))}
+                    >
+                      Records with Balances
+                    </Checkbox>
+                  )}
                   <Button size="small" icon={<DownloadOutlined />} onClick={() => exportToExcel(filteredData, cn)}>Export to Excel</Button>
                 </div>
               )}
