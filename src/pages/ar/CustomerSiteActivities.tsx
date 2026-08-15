@@ -249,6 +249,8 @@ const CustomerSiteActivities: React.FC = () => {
   const [activeDetailTab, setActiveDetailTab] = useState<string>('');
   const [childStates, setChildStates] = useState<Record<string, Record<string, ChildState>>>({});
   const [balanceFilter, setBalanceFilter] = useState<Record<string, boolean>>({});
+  const [detailApiDebug, setDetailApiDebug] = useState<Record<string, { urls: string[]; statuses: Record<string, number | null>; responses: Record<string, string> }>>({});
+  const [detailApiDebugVisible, setDetailApiDebugVisible] = useState<string | null>(null);
 
   const [apiDebug, setApiDebug] = useState<ApiDebug | null>(null);
   const [apiDebugVisible, setApiDebugVisible] = useState(false);
@@ -346,6 +348,11 @@ const CustomerSiteActivities: React.FC = () => {
     CHILD_NAMES.forEach(cn => { initStates[cn] = { loading: true, data: [], columns: [] }; });
     setChildStates(prev => ({ ...prev, [tabKey]: initStates }));
 
+    // Initialize API debug info
+    const apiDebugUrls: string[] = [];
+    const apiDebugStatuses: Record<string, number | null> = {};
+    const apiDebugResponses: Record<string, string> = {};
+
     const allResults: Record<string, Row[]> = {};
     CHILD_NAMES.forEach(cn => { allResults[cn] = []; });
 
@@ -357,12 +364,27 @@ const CustomerSiteActivities: React.FC = () => {
           let offset = 0;
           let hasMore = true;
           const allItems: Row[] = [];
+          let lastStatus = 0;
+          let lastJson: unknown = null;
 
           while (hasMore) {
             const url = `${fusionBase}/${siteId}/child/${childName}?limit=${LIMIT}&offset=${offset}`;
+            apiDebugUrls.push(url);
+
             const res = await fetch(url, { headers: getFusionAuthHeaders() });
-            if (!res.ok) break;
+            lastStatus = res.status;
+
+            if (!res.ok) {
+              apiDebugStatuses[childName] = res.status;
+              const text = await res.text();
+              apiDebugResponses[childName] = `HTTP ${res.status}: ${text.substring(0, 200)}`;
+              break;
+            }
+
             const json = await res.json();
+            lastJson = json;
+            apiDebugStatuses[childName] = res.status;
+
             const page: Row[] = (json.items || []).map((item: Row) => {
               const r: Row = {};
               Object.keys(item).filter(k => k !== 'links').forEach(k => { r[k] = item[k]; });
@@ -372,8 +394,15 @@ const CustomerSiteActivities: React.FC = () => {
             hasMore = !!json.hasMore && page.length === LIMIT;
             offset += LIMIT;
           }
+
+          if (lastJson) {
+            apiDebugResponses[childName] = JSON.stringify({ status: lastStatus, itemsCount: allItems.length, sample: allItems[0] || null }, null, 2);
+          }
           allResults[childName].push(...allItems);
-        } catch { /* skip */ }
+        } catch (e) {
+          apiDebugStatuses[childName] = -1;
+          apiDebugResponses[childName] = String(e);
+        }
       })
     );
 
@@ -383,6 +412,12 @@ const CustomerSiteActivities: React.FC = () => {
       finalStates[cn] = { loading: false, data, columns: buildColumns(data) };
     });
     setChildStates(prev => ({ ...prev, [tabKey]: finalStates }));
+
+    // Store API debug info
+    setDetailApiDebug(prev => ({
+      ...prev,
+      [tabKey]: { urls: apiDebugUrls, statuses: apiDebugStatuses, responses: apiDebugResponses }
+    }));
   }, [detailsTabs]);
 
   const closeDetailsTab = (tabKey: string) => {
@@ -593,11 +628,20 @@ const CustomerSiteActivities: React.FC = () => {
         ),
       };
 
+      const debugInfo = detailApiDebug[key];
+
       return {
         key,
         label: (
           <span>
             {site['CustomerName']?.substring(0, 20)}
+            <Button
+              type="text"
+              size="small"
+              onClick={(e) => { e.stopPropagation(); setDetailApiDebugVisible(key); }}
+              icon={<ApiOutlined />}
+              style={{ marginLeft: 4, padding: 0, color: debugInfo ? REDWOOD.info : undefined }}
+            />
             <Button
               type="text"
               size="small"
@@ -757,6 +801,38 @@ const CustomerSiteActivities: React.FC = () => {
             </pre>
           </div>
         ) : <Empty description="Click Search to populate" />}
+      </Modal>
+
+      <Modal open={!!detailApiDebugVisible} onCancel={() => setDetailApiDebugVisible(null)} footer={null} width={1000}
+        title={<Space><ApiOutlined style={{ color: REDWOOD.info }} /> Detail API Debug</Space>}>
+        {detailApiDebugVisible && detailApiDebug[detailApiDebugVisible] ? (
+          <div>
+            {CHILD_NAMES.map(childName => {
+              const debug = detailApiDebug[detailApiDebugVisible];
+              const status = debug.statuses[childName];
+              const response = debug.responses[childName];
+              const isSuccess = status && status < 300;
+              return (
+                <div key={childName} style={{ marginBottom: 16, border: `1px solid ${REDWOOD.border}`, borderRadius: 6, padding: 12 }}>
+                  <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Space>
+                      <Text strong>{CHILD_LABEL_MAP[childName]}</Text>
+                      <Tag color={isSuccess ? 'green' : 'red'}>{status || 'Error'}</Tag>
+                    </Space>
+                    {response && (
+                      <Button size="small" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(response); message.success('Copied'); }}>Copy</Button>
+                    )}
+                  </div>
+                  {response && (
+                    <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, maxHeight: 250, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 11, margin: 0 }}>
+                      {response}
+                    </pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : <Empty description="No debug info available" />}
       </Modal>
     </Layout>
   );
