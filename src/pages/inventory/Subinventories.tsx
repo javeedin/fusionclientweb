@@ -125,7 +125,7 @@ const Subinventories: React.FC = () => {
     }
 
     const fusionBase = getFusionBase();
-    const url = `${fusionBase}/inventoryOrganizations?q=BusinessUnitId=${selectedBU}&onlyData=true&limit=500`;
+    const url = `${fusionBase}/inventoryOrganizations?q=ManagementBusinessUnitId=${selectedBU}&onlyData=true&limit=500`;
     setOrgsApiUrl(url);
     fetch(url, { headers: getFusionAuthHeaders() })
       .then(r => r.json())
