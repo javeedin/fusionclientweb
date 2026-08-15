@@ -755,15 +755,6 @@ const CustomerSiteActivities: React.FC = () => {
             <Button
               type="text"
               size="small"
-              onClick={(e) => { e.stopPropagation(); setOverviewCustomerKey(key); setReceivablesOverviewVisible(true); }}
-              title="View Receivables Overview"
-              style={{ marginLeft: 4, padding: 0, fontSize: 12, fontWeight: 600, color: REDWOOD.primary }}
-            >
-              📊 Overview
-            </Button>
-            <Button
-              type="text"
-              size="small"
               onClick={(e) => { e.stopPropagation(); exportDetailTabs(); }}
               icon={<DownloadOutlined />}
               style={{ marginLeft: 4, padding: 0 }}
@@ -808,6 +799,12 @@ const CustomerSiteActivities: React.FC = () => {
                     <div style={{ fontSize: 14, fontWeight: 600, color: REDWOOD.primary }}>
                       {formatVal('amount', site['TotalOpenReceivablesForSite'])}
                     </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                    <Button type="primary" size="large" onClick={() => { setOverviewCustomerKey(key); setReceivablesOverviewVisible(true); }}
+                      style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary, width: '100%' }}>
+                      📊 RECEIVABLES OVERVIEW
+                    </Button>
                   </div>
                 </div>
               </Space>
