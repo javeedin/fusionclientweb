@@ -261,6 +261,7 @@ const CustomerSiteActivities: React.FC = () => {
   const [apiDebug, setApiDebug] = useState<ApiDebug | null>(null);
   const [apiDebugVisible, setApiDebugVisible] = useState(false);
   const [recordsWithBalances, setRecordsWithBalances] = useState(true);
+  const [receivablesOverviewVisible, setReceivablesOverviewVisible] = useState(false);
 
   // ── Load page data ──────────────────────────────────────────────
   const loadPage = useCallback(async (pageNum: number) => {
@@ -451,6 +452,75 @@ const CustomerSiteActivities: React.FC = () => {
     if (activeDetailTab === tabKey) {
       setActiveDetailTab(detailsTabs[0]?.key || 'sites');
     }
+  };
+
+  // ── Receivables Overview Calculations ──────────────────────────
+  const computeOverviewData = () => {
+    const allArInvoices = childStates[Object.keys(childStates)[0]]?.transactionPaymentSchedules?.data || [];
+    const allCreditMemos = childStates[Object.keys(childStates)[0]]?.creditMemos?.data || [];
+    const allAdjustments = childStates[Object.keys(childStates)[0]]?.transactionAdjustments?.data || [];
+
+    const openInvoices = allArInvoices.filter(row => row['InstallmentStatus'] === 'Open');
+    const openBalance = openInvoices.reduce((sum, row) => sum + (Number(row['TotalBalanceAmount']) || 0), 0);
+    const openInvoiceCount = openInvoices.length;
+
+    const openCredits = allCreditMemos.filter(row => row['CreditMemoStatus'] === 'Open');
+    const openCreditBalance = openCredits.reduce((sum, row) => sum + (Number(row['TotalBalanceAmount']) || 0), 0);
+    const openCreditCount = openCredits.length;
+
+    const netOpen = openBalance + openCreditBalance;
+    const pastDueInvoices = openInvoices.filter(row => {
+      const daysLate = Number(row['PaymentDaysLate']) || 0;
+      return daysLate > 0;
+    });
+    const pastDueBalance = pastDueInvoices.reduce((sum, row) => sum + (Number(row['TotalBalanceAmount']) || 0), 0);
+
+    // Ageing buckets
+    const ageingBuckets = {
+      'Not yet due': { amount: 0, count: 0 },
+      '1-30 days': { amount: 0, count: 0 },
+      '31-60 days': { amount: 0, count: 0 },
+      '61-90 days': { amount: 0, count: 0 },
+      '91-180 days': { amount: 0, count: 0 },
+      '180+ days': { amount: 0, count: 0 },
+    };
+
+    openInvoices.forEach(row => {
+      const daysLate = Number(row['PaymentDaysLate']) || 0;
+      const balance = Number(row['TotalBalanceAmount']) || 0;
+      let bucket = 'Not yet due';
+      if (daysLate > 180) bucket = '180+ days';
+      else if (daysLate > 90) bucket = '91-180 days';
+      else if (daysLate > 60) bucket = '61-90 days';
+      else if (daysLate > 30) bucket = '31-60 days';
+      else if (daysLate > 0) bucket = '1-30 days';
+
+      ageingBuckets[bucket as keyof typeof ageingBuckets].amount += balance;
+      ageingBuckets[bucket as keyof typeof ageingBuckets].count += 1;
+    });
+
+    // Year-by-year analysis
+    const yearData: Record<number, { invoices: number; grossAmount: number; creditCount: number; creditAmount: number; adjustments: number }> = {};
+
+    allArInvoices.forEach(row => {
+      const dateStr = row['TransactionDate'] as string;
+      if (!dateStr) return;
+      const year = parseInt(dateStr.substring(0, 4));
+      if (!yearData[year]) yearData[year] = { invoices: 0, grossAmount: 0, creditCount: 0, creditAmount: 0, adjustments: 0 };
+      yearData[year].invoices += 1;
+      yearData[year].grossAmount += Number(row['TotalOriginalAmount']) || 0;
+    });
+
+    allCreditMemos.forEach(row => {
+      const dateStr = row['CreditMemoDate'] as string;
+      if (!dateStr) return;
+      const year = parseInt(dateStr.substring(0, 4));
+      if (!yearData[year]) yearData[year] = { invoices: 0, grossAmount: 0, creditCount: 0, creditAmount: 0, adjustments: 0 };
+      yearData[year].creditCount += 1;
+      yearData[year].creditAmount += Number(row['TotalOriginalAmount']) || 0;
+    });
+
+    return { openBalance, openInvoiceCount, openCreditBalance, openCreditCount, netOpen, pastDueBalance, ageingBuckets, yearData };
   };
 
   const buildDetailsTabItems = () => {
@@ -777,11 +847,19 @@ const CustomerSiteActivities: React.FC = () => {
                 </Button>
               </Form.Item>
               {fusionData.length > 0 && (
-                <Form.Item>
-                  <Button icon={<DownloadOutlined />} onClick={() => exportToExcel(fusionData, 'CustomerSiteActivities')}>
-                    Export
-                  </Button>
-                </Form.Item>
+                <>
+                  <Form.Item>
+                    <Button icon={<DownloadOutlined />} onClick={() => exportToExcel(fusionData, 'CustomerSiteActivities')}>
+                      Export
+                    </Button>
+                  </Form.Item>
+                  <Form.Item>
+                    <Button type="default" style={{ background: REDWOOD.primary, color: '#fff', borderColor: REDWOOD.primary }}
+                      onClick={() => setReceivablesOverviewVisible(true)}>
+                      RECEIVABLES OVERVIEW
+                    </Button>
+                  </Form.Item>
+                </>
               )}
             </Form>
           </Card>
@@ -893,6 +971,124 @@ const CustomerSiteActivities: React.FC = () => {
             })}
           </div>
         ) : <Empty description="No debug info available" />}
+      </Modal>
+
+      <Modal open={receivablesOverviewVisible} onCancel={() => setReceivablesOverviewVisible(false)} footer={null} width={1200}
+        title="RECEIVABLES OVERVIEW">
+        {(() => {
+          const overview = computeOverviewData();
+          const overviewTabs = [
+            {
+              key: 'overview',
+              label: 'Overview',
+              children: (
+                <div>
+                  <div style={{ marginBottom: 24 }}>
+                    <Title level={5} style={{ marginBottom: 16 }}>1 · CURRENT BALANCE POSITION</Title>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
+                          <th style={{ textAlign: 'left', padding: 8, fontWeight: 600 }}>Item</th>
+                          <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Amount (MUR)</th>
+                          <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Count</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                          <td style={{ padding: 8 }}>Open invoice balance</td>
+                          <td style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>{overview.openBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>{overview.openInvoiceCount}</td>
+                        </tr>
+                        <tr style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                          <td style={{ padding: 8 }}>Unapplied credit memos</td>
+                          <td style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>{overview.openCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>{overview.openCreditCount}</td>
+                        </tr>
+                        <tr style={{ background: REDWOOD.neutral100 }}>
+                          <td style={{ padding: 8, fontWeight: 700 }}>NET OPEN RECEIVABLES</td>
+                          <td style={{ textAlign: 'right', padding: 8, fontWeight: 700, color: REDWOOD.primary }}>{overview.netOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ textAlign: 'right', padding: 8, fontWeight: 700 }}>{overview.openInvoiceCount + overview.openCreditCount}</td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding: 8 }}>— of which past due</td>
+                          <td style={{ textAlign: 'right', padding: 8, color: REDWOOD.error }}>{overview.pastDueBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>{overview.pastDueBalance > 0 ? overview.ageingBuckets['1-30 days'].count + overview.ageingBuckets['31-60 days'].count + overview.ageingBuckets['61-90 days'].count + overview.ageingBuckets['91-180 days'].count + overview.ageingBuckets['180+ days'].count : 0}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div>
+                    <Title level={5} style={{ marginBottom: 16 }}>2 · AGEING OF OPEN RECEIVABLES</Title>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
+                          <th style={{ textAlign: 'left', padding: 8, fontWeight: 600 }}>Ageing bucket</th>
+                          <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Amount (MUR)</th>
+                          <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>% of open</th>
+                          <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Count</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(overview.ageingBuckets).map(([bucket, data]) => (
+                          <tr key={bucket} style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                            <td style={{ padding: 8 }}>{bucket}</td>
+                            <td style={{ textAlign: 'right', padding: 8 }}>{data.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td style={{ textAlign: 'right', padding: 8 }}>{((data.amount / overview.openBalance) * 100).toFixed(1)}%</td>
+                            <td style={{ textAlign: 'right', padding: 8 }}>{data.count}</td>
+                          </tr>
+                        ))}
+                        <tr style={{ background: REDWOOD.neutral100, fontWeight: 700 }}>
+                          <td style={{ padding: 8 }}>Total</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>{overview.openBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>100.0%</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>{overview.openInvoiceCount}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ),
+            },
+            {
+              key: 'history',
+              label: 'Customer History',
+              children: (
+                <div>
+                  <Title level={5} style={{ marginBottom: 16 }}>YEAR-BY-YEAR TRADING & PAYMENT HISTORY</Title>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
+                        <th style={{ textAlign: 'center', padding: 8, fontWeight: 600 }}>Year</th>
+                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Invoices</th>
+                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Gross invoiced (MUR)</th>
+                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Avg invoice</th>
+                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Credit memos</th>
+                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Credit value (MUR)</th>
+                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Net sales (MUR)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(overview.yearData).sort(([yearA], [yearB]) => parseInt(yearA) - parseInt(yearB)).map(([year, data]) => (
+                        <tr key={year} style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                          <td style={{ textAlign: 'center', padding: 8, fontWeight: 600 }}>{year}</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>{data.invoices}</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>{data.grossAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>{data.invoices > 0 ? (data.grossAmount / data.invoices).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>{data.creditCount}</td>
+                          <td style={{ textAlign: 'right', padding: 8 }}>{data.creditAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>{(data.grossAmount + data.creditAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ),
+            },
+          ];
+
+          return <Tabs items={overviewTabs} style={{ background: REDWOOD.surface }} />;
+        })()}
       </Modal>
     </Layout>
   );
