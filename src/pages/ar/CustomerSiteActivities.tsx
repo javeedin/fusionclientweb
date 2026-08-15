@@ -171,8 +171,8 @@ function exportToExcel(data: Row[], filename: string) {
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
-function SiteResultsTable({ data, columns, loading }: {
-  data: Row[]; columns: ColumnsType<Row>; loading?: boolean;
+function SiteResultsTable({ data, columns, loading, currentPage = 1, hasMore = false, totalRecords = 0, onPageChange }: {
+  data: Row[]; columns: ColumnsType<Row>; loading?: boolean; currentPage?: number; hasMore?: boolean; totalRecords?: number; onPageChange?: (page: number) => void;
 }) {
   const [filter, setFilter] = useState('');
 
@@ -187,11 +187,18 @@ function SiteResultsTable({ data, columns, loading }: {
   return (
     <div>
       {data.length > 0 && (
-        <div style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <Input prefix={<SearchOutlined style={{ color: '#aaa' }} />} placeholder="Filter results..."
-            value={filter} onChange={e => setFilter(e.target.value)}
-            allowClear style={{ width: 280 }} size="small" />
-          <Text type="secondary" style={{ fontSize: 12 }}>{filtered.length} / {data.length} rows</Text>
+        <div style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Input prefix={<SearchOutlined style={{ color: '#aaa' }} />} placeholder="Filter results..."
+              value={filter} onChange={e => setFilter(e.target.value)}
+              allowClear style={{ width: 280 }} size="small" />
+            <Text type="secondary" style={{ fontSize: 12 }}>{filtered.length} / {data.length} rows</Text>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>Page {currentPage}</Text>
+            <Button size="small" onClick={() => onPageChange?.(currentPage - 1)} disabled={currentPage === 1}>Previous</Button>
+            <Button size="small" onClick={() => onPageChange?.(currentPage + 1)} disabled={!hasMore}>Next</Button>
+          </div>
         </div>
       )}
       <Table
@@ -202,12 +209,7 @@ function SiteResultsTable({ data, columns, loading }: {
         loading={loading}
         size="small"
         scroll={{ x: 'max-content' }}
-        pagination={{
-          defaultPageSize: 20,
-          showSizeChanger: true,
-          pageSizeOptions: [20, 50, 100, 200, 500, 1000],
-          showTotal: t => `Total ${t} sites`,
-        }}
+        pagination={false}
       />
     </div>
   );
@@ -244,6 +246,11 @@ const CustomerSiteActivities: React.FC = () => {
   const [fusionData, setFusionData] = useState<Row[]>([]);
   const [fusionColumns, setFusionColumns] = useState<ColumnsType<Row>>([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchFilters, setSearchFilters] = useState<Record<string, string>>({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const PAGE_SIZE = 50;
 
   const [detailsTabs, setDetailsTabs] = useState<Array<{ key: string; site: Row }>>([]);
   const [activeDetailTab, setActiveDetailTab] = useState<string>('');
@@ -255,59 +262,47 @@ const CustomerSiteActivities: React.FC = () => {
   const [apiDebugVisible, setApiDebugVisible] = useState(false);
   const [recordsWithBalances, setRecordsWithBalances] = useState(true);
 
-  // ── Search Fusion ────────────────────────────────────────────────
-  const handleSearch = useCallback(async () => {
-    const values = form.getFieldsValue();
+  // ── Load page data ──────────────────────────────────────────────
+  const loadPage = useCallback(async (pageNum: number) => {
+    const offset = (pageNum - 1) * PAGE_SIZE;
     const filters: string[] = [];
-    if (values.CustomerName)    filters.push(`CustomerName like "%${values.CustomerName}%"`);
-    if (values.AccountNumber)   filters.push(`AccountNumber like "%${values.AccountNumber}%"`);
-    if (values.BillToSiteNumber) filters.push(`BillToSiteNumber like "%${values.BillToSiteNumber}%"`);
+    if (searchFilters.CustomerName) filters.push(`CustomerName LIKE '${searchFilters.CustomerName}%'`);
+    if (searchFilters.AccountNumber) filters.push(`AccountNumber LIKE '${searchFilters.AccountNumber}%'`);
+    if (searchFilters.BillToSiteNumber) filters.push(`BillToSiteNumber LIKE '${searchFilters.BillToSiteNumber}%'`);
 
-    const LIMIT = 500;
     const fusionBase = getFusionBase();
-    const baseUrl = `${fusionBase}?onlyData=true&limit=${LIMIT}${filters.length ? `&q=${encodeURIComponent(filters.join(' AND '))}` : ''}`;
-    const firstUrl = `${baseUrl}&offset=0`;
+    const url = `${fusionBase}?onlyData=true&limit=${PAGE_SIZE}${filters.length ? `&q=${encodeURIComponent(filters.join(' AND '))}` : ''}&offset=${offset}`;
 
-    setApiDebug({ url: firstUrl, status: null, response: '' });
+    setApiDebug({ url, status: null, response: '' });
     setSearchLoading(true);
     try {
-      let offset = 0;
-      let hasMore = true;
-      let allItems: Row[] = [];
-      let lastStatus = 0;
-      let lastJson: unknown = null;
+      const res = await fetch(url, { headers: getFusionAuthHeaders() });
+      const text = await res.text();
+      let json: { items?: Row[]; hasMore?: boolean };
+      try { json = JSON.parse(text); } catch { throw new Error(`Non-JSON (HTTP ${res.status}): ${text.substring(0, 300)}`); }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      while (hasMore) {
-        const url = `${baseUrl}&offset=${offset}`;
-        const res = await fetch(url, { headers: getFusionAuthHeaders() });
-        const text = await res.text();
-        let json: { items?: Row[]; hasMore?: boolean };
-        try { json = JSON.parse(text); } catch { throw new Error(`Non-JSON (HTTP ${res.status}): ${text.substring(0, 300)}`); }
-        lastStatus = res.status;
-        lastJson = json;
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const page = (json.items || []).map(item => {
-          const r: Row = {};
-          Object.keys(item).filter(k => k !== 'links').forEach(k => { r[k] = item[k]; });
-          return r;
-        });
-        allItems = allItems.concat(page);
-        hasMore = !!json.hasMore && page.length === LIMIT;
-        offset += LIMIT;
-      }
+      setApiDebug({ url, status: res.status, response: JSON.stringify(json, null, 2) });
 
-      setApiDebug({ url: firstUrl, status: lastStatus, response: JSON.stringify(lastJson, null, 2) });
+      const items = (json.items || []).map(item => {
+        const r: Row = {};
+        Object.keys(item).filter(k => k !== 'links').forEach(k => { r[k] = item[k]; });
+        return r;
+      });
 
       // Filter by balance if checkbox is checked
-      let filteredItems = allItems;
+      let filteredItems = items;
       if (recordsWithBalances) {
-        filteredItems = allItems.filter(item => {
+        filteredItems = items.filter(item => {
           const balance = item['TotalOpenReceivablesForSite'];
           return balance !== null && balance !== undefined && balance !== 0;
         });
       }
 
       setFusionData(filteredItems);
+      setCurrentPage(pageNum);
+      setHasMore(!!json.hasMore && items.length === PAGE_SIZE);
+      setTotalRecords(offset + filteredItems.length + (json.hasMore ? PAGE_SIZE : 0));
 
       // Build columns with Details action
       const cols = buildCustomerListColumns();
@@ -328,7 +323,7 @@ const CustomerSiteActivities: React.FC = () => {
         ),
       });
       setFusionColumns(cols);
-      if (!allItems.length) message.info('No results found');
+      if (!items.length) message.info('No results found');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setApiDebug(prev => prev ? { ...prev, status: -1, response: msg } : null);
@@ -336,7 +331,23 @@ const CustomerSiteActivities: React.FC = () => {
     } finally {
       setSearchLoading(false);
     }
-  }, [form]);
+  }, [searchFilters, recordsWithBalances]);
+
+  // ── Search Fusion ────────────────────────────────────────────────
+  const handleSearch = useCallback(async () => {
+    const values = form.getFieldsValue();
+    setSearchFilters({
+      CustomerName: values.CustomerName || '',
+      AccountNumber: values.AccountNumber || '',
+      BillToSiteNumber: values.BillToSiteNumber || '',
+    });
+    setCurrentPage(1);
+    setTotalRecords(0);
+    setHasMore(false);
+
+    // Load first page with new filters
+    await loadPage(1);
+  }, [form, loadPage]);
 
   // ── Open details tab for a specific site ──────────────────────
   const openDetailsTab = useCallback(async (site: Row) => {
@@ -780,6 +791,10 @@ const CustomerSiteActivities: React.FC = () => {
               data={fusionData}
               columns={fusionColumns}
               loading={searchLoading}
+              currentPage={currentPage}
+              hasMore={hasMore}
+              totalRecords={totalRecords}
+              onPageChange={loadPage}
             />
           </Card>
         </div>
