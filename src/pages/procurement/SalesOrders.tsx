@@ -3914,23 +3914,16 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
     setOnh(p => ({ ...p, [item]: { loading: true } }));
     try {
       let q = `OrganizationCode=${invOrg};ItemNumber=${item}`; if (subinv) q += `;SubinventoryCode=${subinv}`;
-      const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&limit=500`, { headers: getHeaders() });
+      const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&expand=lots&onlyData=true&limit=500`, { headers: getHeaders() });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       const balances: any[] = d.items ?? [];
-      // Collect lot-level rows: use LotNumber when present on the balance itself,
-      // otherwise follow the balance's lot child link to fetch per-lot detail.
+      // With expand=lots, lot details are nested in each balance.lots array
       const lotRows: any[] = [];
       for (const b of balances) {
         if (pf(b, ['LotNumber']) != null) { lotRows.push(b); continue; }
-        const child = (b.links ?? []).find((l: any) => l.rel === 'child' && /lot/i.test(l.href || l.name || ''));
-        if (child?.href) {
-          try {
-            const cr = await fetch(`${fusionHref(child.href)}${child.href.includes('?') ? '&' : '?'}limit=500`, { headers: getHeaders() });
-            const cd = await cr.json();
-            (cd.items ?? []).forEach((x: any) => lotRows.push(x));
-          } catch { /* skip this balance's lot detail */ }
-        } else { lotRows.push(b); }
+        const lots = (b.lots ?? []) as any[];
+        if (lots.length > 0) { lots.forEach(x => lotRows.push(x)); } else { lotRows.push(b); }
       }
       const lots = Array.from(new Set(lotRows.map(x => pf(x, ['LotNumber'])).filter(Boolean))) as string[];
       const matched = lot ? lotRows.filter(x => String(pf(x, ['LotNumber']) ?? '') === String(lot)) : lotRows;
@@ -3972,7 +3965,7 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
 
   const cols: ColumnsType<any> = [
     { title: 'Item', dataIndex: 'ItemNumber', width: 140, fixed: 'left', render: v => <Text strong style={{ color: REDWOOD.info, fontSize: 12 }}>{v}</Text> },
-    { title: 'Description', dataIndex: 'ItemDescription', flex: 1, ellipsis: true, render: v => <Text style={{ fontSize: 12 }}>{v ?? '—'}</Text> },
+    { title: 'Description', dataIndex: 'ItemDescription', flex: 1, ellipsis: { showTitle: false }, render: (v) => <Tooltip title={v}><Text style={{ fontSize: 12, whiteSpace: 'normal', wordBreak: 'break-word' }}>{v ?? '—'}</Text></Tooltip> },
     { title: 'UOM', width: 60, render: (_, r) => pf(r, ['PrimaryUOMValue', 'PrimaryUOMCode', 'PrimaryUnitOfMeasure', 'UOMCode']) ?? '—' },
     { title: 'Lot', width: 120, ellipsis: true, render: (_, r) => { const l = vuOf(r.ItemNumber).lot; return l ? <Tag color="geekblue" style={{ fontSize: 10 }}>{l}</Tag> : '—'; } },
     { title: 'Item Cost', width: 95, align: 'right', render: (_, r) => { const c = costs[r.ItemNumber]; if (costLoading && !c) return <Spin size="small" />; return (c?.cost == null) ? <Text type="secondary" style={{ fontSize: 11 }}>—</Text> : <Text strong style={{ fontSize: 11.5, color: REDWOOD.primary, fontVariantNumeric: 'tabular-nums' }}>{num2(c.cost)}</Text>; } },
