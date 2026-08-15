@@ -15,6 +15,7 @@ import { buildApexUrl, getFusionAuthHeaders, getFusionInstanceUrl } from '../../
 import { useAuth } from '../../context/AuthContext';
 import { searchCustomersByBIP, CustomerSearchResult } from '../../services/customerSearchBip.service';
 import { ORACLE_SOAP_CONFIG } from '../../config/api.config';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -49,7 +50,9 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void }> 
   useEffect(() => {
     const fetchBUs = async () => {
       try {
-        const url = `${buildApexUrl('gl/businessunits')}`;
+        const company = getCurrentCompany();
+        const fusionBaseUrl = company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+        const url = `${fusionBaseUrl}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`;
         const headers = getFusionAuthHeaders();
         setBuApiDetails({ url, headers: JSON.stringify(headers, null, 2) });
 
@@ -62,11 +65,20 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void }> 
           response: JSON.stringify(data, null, 2)
         }));
 
-        if (res.ok) {
-          const options = (data.items ?? []).map((bu: any) => ({
-            value: bu.business_unit_id?.toString() || '',
-            label: bu.business_unit_name || '',
-          })).filter((o: any) => o.value && o.label);
+        if (res.ok && data.items) {
+          const seen = new Set<string>();
+          const options = (data.items ?? [])
+            .filter((bu: any) => {
+              const name = bu.businessUnitName;
+              if (!name || seen.has(name)) return false;
+              seen.add(name);
+              return true;
+            })
+            .map((bu: any) => ({
+              value: bu.businessUnitId?.toString() || '',
+              label: bu.businessUnitName || '',
+            }))
+            .filter((o: any) => o.value && o.label);
           setBuOptions(options);
         } else {
           console.warn('Failed to fetch business units:', res.status);
