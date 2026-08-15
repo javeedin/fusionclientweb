@@ -95,7 +95,7 @@ const CustomerSearchBipModal: React.FC<CustomerSearchBipModalProps> = ({
   // Search customers when user clicks search button
   const handleSearch = async () => {
     if (!searchText.trim()) {
-      alert('Please enter a customer name, account number, or party number to search');
+      message.warning('Please enter a customer name, account number, or party number to search');
       return;
     }
 
