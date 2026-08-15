@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   Layout, Card, Form, Input, Button, Space, Typography, Table, Tabs,
-  Breadcrumb, Spin, message, Empty, Modal, Tag, Badge, Checkbox,
+  Breadcrumb, Spin, message, Empty, Modal, Tag, Badge, Checkbox, Row, Col,
 } from 'antd';
 import {
   HomeOutlined, SearchOutlined, DownloadOutlined,
@@ -38,10 +38,20 @@ const CHILD_LABEL_MAP: Record<string, string> = {
   standardReceiptApplications:      'Receipt Applications',
   standardReceipts:                 'Standard Receipts',
   transactionAdjustments:           'Adjustments',
-  transactionPaymentSchedules:      'Payment Schedules',
+  transactionPaymentSchedules:      'AR Invoices',
   transactionsPaidByOtherCustomers: 'Paid by Others',
 };
 const CHILD_NAMES = Object.keys(CHILD_LABEL_MAP);
+
+// Aging bucket calculator
+const getAgingBucket = (days: number | null | undefined): string => {
+  if (days === null || days === undefined || days === '') return '-';
+  const d = Number(days);
+  if (d <= 30) return 'Current';
+  if (d <= 60) return '31-60';
+  if (d <= 90) return '61-90';
+  return '90+';
+};
 
 type Row = Record<string, unknown>;
 
@@ -392,6 +402,7 @@ const CustomerSiteActivities: React.FC = () => {
       const siteChildStates = childStates[key] || {};
       const filterBalances = balanceFilter[key] !== false; // default true
 
+      // Build child activity tabs
       const childTabItems = CHILD_NAMES.map(cn => {
         const state = siteChildStates[cn] || { loading: false, data: [], columns: [] };
 
@@ -405,6 +416,21 @@ const CustomerSiteActivities: React.FC = () => {
 
         // Build columns with sorting
         let cols = buildColumns(filteredData);
+
+        // Add Aging Bucket column for AR Invoices tab
+        if (cn === 'transactionPaymentSchedules') {
+          cols.push({
+            title: 'Aging Bucket',
+            key: 'agingBucket',
+            width: 100,
+            render: (_: unknown, record: Row) => {
+              const bucket = getAgingBucket(record['PaymentDaysLate']);
+              const bucketColor = bucket === 'Current' ? REDWOOD.success : bucket === '31-60' ? '#faad14' : bucket === '61-90' ? '#ff7a45' : REDWOOD.error;
+              return <Tag color={bucketColor}>{bucket}</Tag>;
+            },
+          });
+        }
+
         cols = cols.map(col => ({
           ...col,
           sorter: (a: Row, b: Row) => {
@@ -468,6 +494,105 @@ const CustomerSiteActivities: React.FC = () => {
         };
       });
 
+      // Calculate aging summary from AR Invoices data
+      const arInvoicesState = siteChildStates['transactionPaymentSchedules'] || { data: [] };
+      const agingSummary = { Current: 0, '31-60': 0, '61-90': 0, '90+': 0, Total: 0 };
+      arInvoicesState.data.forEach(row => {
+        const days = row['PaymentDaysLate'];
+        const amount = row['TotalBalanceAmount'] || 0;
+        const bucket = getAgingBucket(days);
+        if (bucket !== '-') {
+          (agingSummary as Record<string, number>)[bucket] = ((agingSummary as Record<string, number>)[bucket] || 0) + amount;
+        }
+        agingSummary.Total += amount;
+      });
+
+      // Overview tab
+      const overviewTab = {
+        key: 'overview',
+        label: (
+          <span>
+            <EyeOutlined style={{ marginRight: 6 }} />
+            Overview
+          </span>
+        ),
+        children: (
+          <div>
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+              <Col xs={24} sm={12} md={6}>
+                <Card style={{ borderColor: REDWOOD.border }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Total Open Receivables</Text>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: REDWOOD.primary, marginTop: 8 }}>
+                      {formatVal('amount', site['TotalOpenReceivablesForSite'])}
+                    </div>
+                  </div>
+                </Card>
+              </Col>
+              <Col xs={24} sm={12} md={6}>
+                <Card style={{ borderColor: REDWOOD.border }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Total Transactions Due</Text>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: REDWOOD.info, marginTop: 8 }}>
+                      {formatVal('amount', site['TotalTransactionsDueForSite'])}
+                    </div>
+                  </div>
+                </Card>
+              </Col>
+              <Col xs={24} sm={12} md={6}>
+                <Card style={{ borderColor: REDWOOD.border }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Total Invoices</Text>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: REDWOOD.success, marginTop: 8 }}>
+                      {arInvoicesState.data.length}
+                    </div>
+                  </div>
+                </Card>
+              </Col>
+              <Col xs={24} sm={12} md={6}>
+                <Card style={{ borderColor: REDWOOD.border }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Avg Days Late</Text>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: REDWOOD.warning, marginTop: 8 }}>
+                      {arInvoicesState.data.length > 0
+                        ? Math.round(arInvoicesState.data.reduce((sum, r) => sum + (Number(r['PaymentDaysLate']) || 0), 0) / arInvoicesState.data.length)
+                        : 0}
+                    </div>
+                  </div>
+                </Card>
+              </Col>
+            </Row>
+
+            <Card style={{ borderColor: REDWOOD.border, marginTop: 16 }} title={<Text strong>Aging Summary</Text>}>
+              <Row gutter={[16, 16]}>
+                {['Current', '31-60', '61-90', '90+'].map(bucket => (
+                  <Col xs={24} sm={12} md={6} key={bucket}>
+                    <div style={{
+                      padding: 12,
+                      borderRadius: 6,
+                      background: bucket === 'Current' ? '#f6ffed' : bucket === '31-60' ? '#fffbe6' : bucket === '61-90' ? '#fff7e6' : '#fff1f0',
+                      borderLeft: `4px solid ${bucket === 'Current' ? REDWOOD.success : bucket === '31-60' ? '#faad14' : bucket === '61-90' ? '#ff7a45' : REDWOOD.error}`,
+                    }}>
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>{bucket} Days</Text>
+                      <div style={{
+                        fontSize: 18,
+                        fontWeight: 700,
+                        color: bucket === 'Current' ? REDWOOD.success : bucket === '31-60' ? '#faad14' : bucket === '61-90' ? '#ff7a45' : REDWOOD.error,
+                      }}>
+                        {formatVal('amount', agingSummary[bucket as keyof typeof agingSummary])}
+                      </div>
+                      <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+                        {agingSummary.Total > 0 ? ((agingSummary[bucket as keyof typeof agingSummary] / agingSummary.Total) * 100).toFixed(1) : 0}%
+                      </Text>
+                    </div>
+                  </Col>
+                ))}
+              </Row>
+            </Card>
+          </div>
+        ),
+      };
+
       return {
         key,
         label: (
@@ -509,7 +634,7 @@ const CustomerSiteActivities: React.FC = () => {
                 </div>
               </Space>
             </Card>
-            <Tabs items={childTabItems} style={{ background: REDWOOD.surface, borderRadius: 8 }} />
+            <Tabs items={[overviewTab, ...childTabItems]} style={{ background: REDWOOD.surface, borderRadius: 8 }} />
           </div>
         ),
       };
