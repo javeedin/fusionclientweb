@@ -35,7 +35,13 @@ export const reconcileWithClaude = async (
   sysTxns: any[],
   claudeApiKey: string
 ): Promise<ReconciliationResult> => {
+  console.log('=== CLAUDE RECONCILIATION STARTED ===');
+  console.log('Statements count:', stmtLines.length);
+  console.log('Transactions count:', sysTxns.length);
+  console.log('API Key exists:', !!claudeApiKey);
+
   if (!claudeApiKey) {
+    console.error('ERROR: Claude API key not configured');
     throw new Error('Claude API key not configured');
   }
 
@@ -57,6 +63,9 @@ export const reconcileWithClaude = async (
     source: txn.source,
     payee: txn.payee || '',
   }));
+
+  console.log('Formatted statements sample:', stmtSummary.slice(0, 2));
+  console.log('Formatted transactions sample:', txnSummary.slice(0, 2));
 
   const prompt = `You are a bank reconciliation expert. Your ONLY task is to match bank statement lines with system transactions.
 
@@ -89,6 +98,10 @@ RESPONSE FORMAT (JSON array - REQUIRED):
 ]`;
 
   try {
+    console.log('Sending request to Claude API...');
+    console.log('Model: claude-opus-5');
+    console.log('Prompt length:', prompt.length);
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -108,39 +121,61 @@ RESPONSE FORMAT (JSON array - REQUIRED):
       }),
     });
 
+    console.log('Response status:', response.status);
+    console.log('Response ok:', response.ok);
+
     if (!response.ok) {
       const error = await response.text();
+      console.error('Claude API error:', response.status, error);
       throw new Error(`Claude API error: ${response.status} - ${error}`);
     }
 
     const data = await response.json();
-    const claudeText = data.content[0]?.text || '';
+    console.log('Claude response data:', data);
 
-    console.log('Claude Raw Response:', claudeText);
+    const claudeText = data.content[0]?.text || '';
+    console.log('=== CLAUDE RAW RESPONSE START ===');
+    console.log(claudeText);
+    console.log('=== CLAUDE RAW RESPONSE END ===');
+    console.log('Response length:', claudeText.length);
 
     // Extract JSON from Claude response - handle markdown code blocks
     let jsonText = claudeText;
 
+    console.log('Step 1: Looking for markdown code blocks...');
     // Remove markdown code blocks if present
     const codeBlockMatch = claudeText.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (codeBlockMatch) {
       jsonText = codeBlockMatch[1].trim();
-      console.log('Extracted from markdown code block');
+      console.log('✓ Found markdown code block, extracted');
+      console.log('Extracted text length:', jsonText.length);
+    } else {
+      console.log('✗ No markdown code block found');
     }
 
+    console.log('Step 2: Looking for JSON array pattern...');
     // Extract JSON array
     const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {
-      console.error('Failed to extract JSON. Full response:', claudeText);
+      console.error('✗ FAILED: Could not find JSON array pattern');
+      console.error('Full response:', claudeText);
+      console.error('After code block extraction:', jsonText);
       throw new Error(`Claude did not return valid JSON array. Response: ${claudeText.substring(0, 300)}`);
     }
 
+    console.log('✓ Found JSON array pattern');
+    console.log('JSON array length:', jsonMatch[0].length);
+    console.log('First 200 chars:', jsonMatch[0].substring(0, 200));
+
     let matches;
     try {
+      console.log('Step 3: Parsing JSON...');
       matches = JSON.parse(jsonMatch[0]);
-      console.log('Successfully parsed Claude response:', matches.length, 'items');
+      console.log('✓ Successfully parsed JSON!');
+      console.log('Parsed items count:', matches.length);
+      console.log('First item:', matches[0]);
     } catch (parseError) {
-      console.error('JSON parse error:', parseError);
+      console.error('✗ JSON parse error:', parseError);
       console.error('Attempted to parse:', jsonMatch[0].substring(0, 500));
       throw new Error(`Failed to parse Claude JSON response: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
     }
