@@ -13,11 +13,12 @@ import {
   CheckOutlined, CloseOutlined, ReconciliationOutlined, FileTextOutlined,
   ApiOutlined, CopyOutlined, PlusOutlined, ThunderboltOutlined, DownloadOutlined,
   CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, InfoCircleOutlined, LinkOutlined,
-  UndoOutlined, ReadOutlined,
+  UndoOutlined, ReadOutlined, RobotOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import AccountSelector, { validateAccountCode } from '../../components/AccountSelector';
+import ClaudeReconciliationModal from '../../components/ClaudeReconciliationModal';
 import ReconAgent from './ReconAgent';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { buildPcBankTxnSlaPayload, fetchLedgerByBusinessUnit, derivePeriodName, createAccounting } from '../../services/sla.service';
@@ -948,6 +949,10 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
   const [extTxnMode, setExtTxnMode]         = useState<'single' | 'multiple'>('single');
   const [extTxnLines, setExtTxnLines]       = useState<Array<{key: number; amount?: number; description: string; offsetAccount: string; offsetDesc: string}>>([]);
   const [extLineCoaIdx, setExtLineCoaIdx]   = useState(0);
+
+  // Claude AI Reconciliation
+  const [claudeReconOpen, setClaudeReconOpen] = useState(false);
+  const [claudeApiKey, setClaudeApiKey] = useState<string>('');
 
   // Load bank accounts for the ext txn modal (filter by legal entity)
   const loadExtBankAccounts = useCallback((legalEntity: string) => {
@@ -3704,6 +3709,30 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         </Col>
         <Col>
           <Button
+            icon={<RobotOutlined />}
+            size="large"
+            onClick={async () => {
+              try {
+                const res = await fetch(`${APEX_BASE}/settings/claudekey`);
+                const data = await res.json();
+                if (data.apiKey) {
+                  setClaudeApiKey(data.apiKey);
+                  setClaudeReconOpen(true);
+                } else {
+                  message.error('Claude API key not configured. Go to Admin → Claude AI Key Settings');
+                }
+              } catch (err) {
+                message.error('Failed to load Claude API key');
+              }
+            }}
+            disabled={stmtLines.length === 0 || sysTxns.length === 0}
+            style={{ borderColor: REDWOOD.info, color: REDWOOD.info }}
+          >
+            Reconcile with Claude
+          </Button>
+        </Col>
+        <Col>
+          <Button
             type="primary"
             icon={showApiLog ? <ApiOutlined /> : <CheckOutlined />}
             size="large"
@@ -5346,6 +5375,16 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
           );
         })()}
       </Modal>
+
+      {/* ── Claude AI Reconciliation Modal ───────────────────────────────── */}
+      <ClaudeReconciliationModal
+        open={claudeReconOpen}
+        onClose={() => setClaudeReconOpen(false)}
+        stmtLines={stmtLines}
+        sysTxns={sysTxns}
+        claudeApiKey={claudeApiKey}
+        bankAccountName={selectedStatement?.bankAccountName || 'Unknown'}
+      />
     </>
   );
 };
