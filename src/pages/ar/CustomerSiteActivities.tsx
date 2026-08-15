@@ -524,7 +524,25 @@ const CustomerSiteActivities: React.FC = () => {
       yearData[year].creditAmount += Number(row['TotalOriginalAmount']) || 0;
     });
 
-    return { openBalance, openInvoiceCount, openCreditBalance, openCreditCount, netOpen, pastDueBalance, ageingBuckets, yearData };
+    // KEY PERFORMANCE INDICATORS
+    const totalInvoiced = allArInvoices.reduce((sum, row) => sum + (Number(row['TotalOriginalAmount']) || 0), 0);
+    const totalCredits = allCreditMemos.reduce((sum, row) => sum + Math.abs(Number(row['TotalOriginalAmount']) || 0), 0);
+    const closedInvoices = allArInvoices.filter(row => row['InstallmentStatus'] === 'Closed').length;
+    const totalInvoiceCount = allArInvoices.filter(row => new Set([...new Map(allArInvoices.map(r => [r['InstallmentId'] + '-' + r['InstallmentNumber'], r])).values()]).has(row)).length;
+    const paymentRate = totalInvoiceCount > 0 ? closedInvoices / totalInvoiceCount : 0;
+
+    // OPEN ITEMS DETAIL - sorted by due date
+    const openItems = allArInvoices.filter(row => row['InstallmentStatus'] === 'Open')
+      .sort((a, b) => {
+        const dateA = new Date(a['PaymentScheduleDueDate'] as string).getTime();
+        const dateB = new Date(b['PaymentScheduleDueDate'] as string).getTime();
+        return dateA - dateB;
+      });
+
+    return {
+      openBalance, openInvoiceCount, openCreditBalance, openCreditCount, netOpen, pastDueBalance, ageingBuckets, yearData,
+      totalInvoiced, totalCredits, closedInvoices, paymentRate, openItems
+    };
   };
 
   const buildDetailsTabItems = () => {
@@ -1085,6 +1103,173 @@ const CustomerSiteActivities: React.FC = () => {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              ),
+            },
+            {
+              key: 'kpi',
+              label: 'KPI & Health',
+              children: (
+                <div>
+                  <div style={{ marginBottom: 24 }}>
+                    <Title level={5} style={{ marginBottom: 16 }}>3 · KEY PERFORMANCE INDICATORS</Title>
+                    <Row gutter={[16, 16]}>
+                      <Col xs={24} sm={12} md={6}>
+                        <Card style={{ borderColor: REDWOOD.border }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Gross Invoiced</Text>
+                            <div style={{ fontSize: 20, fontWeight: 700, color: REDWOOD.primary, marginTop: 8 }}>
+                              {overview.totalInvoiced.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          </div>
+                        </Card>
+                      </Col>
+                      <Col xs={24} sm={12} md={6}>
+                        <Card style={{ borderColor: REDWOOD.border }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Credit Value</Text>
+                            <div style={{ fontSize: 20, fontWeight: 700, color: REDWOOD.success, marginTop: 8 }}>
+                              {overview.totalCredits.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          </div>
+                        </Card>
+                      </Col>
+                      <Col xs={24} sm={12} md={6}>
+                        <Card style={{ borderColor: REDWOOD.border }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Settlement Rate</Text>
+                            <div style={{ fontSize: 20, fontWeight: 700, color: REDWOOD.info, marginTop: 8 }}>
+                              {(overview.paymentRate * 100).toFixed(1)}%
+                            </div>
+                          </div>
+                        </Card>
+                      </Col>
+                      <Col xs={24} sm={12} md={6}>
+                        <Card style={{ borderColor: REDWOOD.border }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Closed Invoices</Text>
+                            <div style={{ fontSize: 20, fontWeight: 700, marginTop: 8 }}>
+                              {overview.closedInvoices}
+                            </div>
+                          </div>
+                        </Card>
+                      </Col>
+                    </Row>
+                  </div>
+
+                  <div>
+                    <Title level={5} style={{ marginBottom: 16 }}>4 · CUSTOMER HEALTH SCORECARD</Title>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <tbody>
+                        <tr style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                          <td style={{ padding: 12, fontWeight: 600 }}>Payment Discipline</td>
+                          <td style={{ padding: 12, textAlign: 'right' }}>
+                            <Tag color={overview.paymentRate > 0.8 ? 'green' : overview.paymentRate > 0.5 ? 'orange' : 'red'}>
+                              {overview.paymentRate > 0.8 ? 'Excellent' : overview.paymentRate > 0.5 ? 'Fair' : 'Poor'}
+                            </Tag>
+                          </td>
+                        </tr>
+                        <tr style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                          <td style={{ padding: 12, fontWeight: 600 }}>DSO (Days Sales Outstanding)</td>
+                          <td style={{ padding: 12, textAlign: 'right' }}>
+                            {overview.openInvoiceCount > 0
+                              ? Math.round(overview.openBalance / (overview.totalInvoiced / 365))
+                              : 0} days
+                          </td>
+                        </tr>
+                        <tr style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                          <td style={{ padding: 12, fontWeight: 600 }}>Past Due Ratio</td>
+                          <td style={{ padding: 12, textAlign: 'right' }}>
+                            {overview.openBalance > 0
+                              ? ((overview.pastDueBalance / overview.openBalance) * 100).toFixed(1)
+                              : 0}%
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding: 12, fontWeight: 600 }}>Credit Utilization</td>
+                          <td style={{ padding: 12, textAlign: 'right' }}>
+                            {overview.openCreditBalance !== 0
+                              ? Math.abs(overview.openCreditBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                              : 'None'}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ),
+            },
+            {
+              key: 'openitems',
+              label: 'Open Items',
+              children: (
+                <div>
+                  <Title level={5} style={{ marginBottom: 16 }}>5 · OPEN ITEMS DETAIL (oldest due date first)</Title>
+                  {overview.openItems && overview.openItems.length > 0 ? (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
+                            <th style={{ textAlign: 'left', padding: 8, fontWeight: 600 }}>Invoice #</th>
+                            <th style={{ textAlign: 'left', padding: 8, fontWeight: 600 }}>Date</th>
+                            <th style={{ textAlign: 'left', padding: 8, fontWeight: 600 }}>Due Date</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Amount (MUR)</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Balance (MUR)</th>
+                            <th style={{ textAlign: 'center', padding: 8, fontWeight: 600 }}>Days Late</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {overview.openItems.map((item: Row, idx: number) => (
+                            <tr key={idx} style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                              <td style={{ padding: 8 }}>{item['TransactionNumber']}</td>
+                              <td style={{ padding: 8 }}>
+                                {item['TransactionDate'] ? new Date(item['TransactionDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' }) : '-'}
+                              </td>
+                              <td style={{ padding: 8 }}>
+                                {item['PaymentScheduleDueDate'] ? new Date(item['PaymentScheduleDueDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' }) : '-'}
+                              </td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>
+                                {(Number(item['TotalOriginalAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                              <td style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>
+                                {(Number(item['TotalBalanceAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                              <td style={{ textAlign: 'center', padding: 8 }}>
+                                <Tag color={Number(item['PaymentDaysLate']) > 0 ? 'red' : 'green'}>
+                                  {item['PaymentDaysLate'] || 0}
+                                </Tag>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <Empty description="No open items" />
+                  )}
+                </div>
+              ),
+            },
+            {
+              key: 'notes',
+              label: 'Data Notes',
+              children: (
+                <div>
+                  <Title level={5} style={{ marginBottom: 16 }}>6 · DATA QUALITY & METHOD NOTES</Title>
+                  <div style={{ background: REDWOOD.neutral100, padding: 16, borderRadius: 8, lineHeight: 1.8 }}>
+                    <p><strong>Data Source:</strong> Oracle Fusion Receivables - Customer Account Site Activities</p>
+                    <p><strong>Reporting Period:</strong> All historical data available in the system</p>
+                    <p><strong>Ageing Calculation:</strong> Based on Payment Due Date and Payment Days Late field</p>
+                    <p><strong>Open Balance Definition:</strong> Invoice status = 'Open' with remaining balance amount</p>
+                    <p><strong>Credit Memos:</strong> Negative amounts shown as credits available on account</p>
+                    <p><strong>Duplicates:</strong> Data may include duplicate export rows - refer to source export for reconciliation</p>
+                    <p><strong>Currency:</strong> All amounts in {overview.openItems?.[0]?.EnteredCurrency || 'MUR'}</p>
+                    <p><strong>Last Updated:</strong> As of export date</p>
+                    <p style={{ marginTop: 16, fontSize: 12, color: REDWOOD.primary }}>
+                      ℹ️ This report is generated from the loaded AR Invoices, Credit Memos, and related transaction data.
+                      For reconciliation with Oracle Fusion, verify record counts and amounts against the source export.
+                    </p>
+                  </div>
                 </div>
               ),
             },
