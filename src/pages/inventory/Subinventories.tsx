@@ -33,6 +33,9 @@ interface SubinventoryRow {
   subinventory_name: string;
   locator_id: string;
   instance_name: string;
+  locator_control_meaning?: string;
+  locator_control?: string;
+  locator_structure?: string;
 }
 
 interface Subinventory {
@@ -231,9 +234,12 @@ const Subinventories: React.FC = () => {
           warehouse_code: item.WarehouseCode || item.warehouse_code || '',
           warehouse_name: item.WarehouseName || item.warehouse_name || '',
           subinventory_code: item.SubinventoryCode || item.subinventory_code || '',
-          subinventory_name: item.SubinventoryName || item.subinventory_name || '',
+          subinventory_name: item.SecondaryInventoryName || item.SubinventoryName || item.subinventory_name || '',
           locator_id: item.LocatorId || item.locator_id || '',
           instance_name: item.InstanceName || item.instance_name || '',
+          locator_control_meaning: item.LocatorControlMeaning || '',
+          locator_control: item.LocatorControl || '',
+          locator_structure: item.LocatorStructure || '',
         }));
         setRows(rows);
       })
@@ -287,80 +293,20 @@ const Subinventories: React.FC = () => {
     }
   };
 
-  const hierarchy = useMemo(() => buildHierarchy(rows), [rows]);
-
-  const filteredHierarchy = useMemo(() => {
-    if (!search) return hierarchy;
-    const q = search.toLowerCase();
-    const result = new Map<string, BusinessUnit>();
-    hierarchy.forEach((bu, buKey) => {
-      const buMatch = matchesSearch(q, bu.code, bu.name);
-      const filteredWhs = new Map<string, Warehouse>();
-      bu.warehouses.forEach((wh, whKey) => {
-        const whMatch = matchesSearch(q, wh.code, wh.name);
-        const filteredSubs = wh.subinventories.filter(s => matchesSearch(q, s.code, s.name));
-        if (buMatch || whMatch || filteredSubs.length > 0) {
-          filteredWhs.set(whKey, { ...wh, subinventories: buMatch || whMatch ? wh.subinventories : filteredSubs });
-        }
-      });
-      if (buMatch || filteredWhs.size > 0) {
-        result.set(buKey, { ...bu, warehouses: buMatch ? bu.warehouses : filteredWhs });
-      }
-    });
-    return result;
-  }, [hierarchy, search]);
-
-  const totalBUs = hierarchy.size;
-  const totalWHs = useMemo(() => { let c = 0; hierarchy.forEach(bu => { c += bu.warehouses.size; }); return c; }, [hierarchy]);
-  const totalSubs = useMemo(() => { let c = 0; hierarchy.forEach(bu => { bu.warehouses.forEach(wh => { c += wh.subinventories.length; }); }); return c; }, [hierarchy]);
-
-  const buPanels = useMemo(() => {
-    const panels: any[] = [];
-    filteredHierarchy.forEach(bu => {
-      const whPanels: any[] = [];
-      bu.warehouses.forEach(wh => {
-        whPanels.push({
-          key: wh.code,
-          label: (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Text strong style={{ color: REDWOOD.info, fontSize: 13 }}>{wh.code}</Text>
-              <Text style={{ fontSize: 13 }}>{wh.name}</Text>
-              <Badge count={wh.subinventories.length} style={{ backgroundColor: REDWOOD.teal }} />
-            </div>
-          ),
-          children: (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {wh.subinventories.map(s => (
-                <Tag key={s.code} style={{ borderRadius: 12, background: REDWOOD.teal + '18', borderColor: REDWOOD.teal, color: REDWOOD.teal, margin: 0 }}>
-                  <span style={{ fontWeight: 600, marginRight: 4 }}>{s.code}</span>
-                  <span style={{ fontSize: 11, color: REDWOOD.neutral600 }}>{s.name}</span>
-                </Tag>
-              ))}
-            </div>
-          ),
-        });
-      });
-
-      panels.push({
-        key: bu.code,
-        label: (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Text strong style={{ color: REDWOOD.primary, fontSize: 14 }}>{bu.code}</Text>
-            <Text style={{ fontSize: 14 }}>{bu.name}</Text>
-            <Badge count={bu.warehouses.size} style={{ backgroundColor: REDWOOD.primary }} />
-          </div>
-        ),
-        children: (
-          <Collapse
-            size="small"
-            style={{ background: REDWOOD.neutral100 }}
-            items={whPanels}
-          />
-        ),
-      });
-    });
-    return panels;
-  }, [filteredHierarchy]);
+  const tableData = useMemo(() => {
+    return rows.map((row, idx) => ({
+      key: `${row.warehouse_code}-${row.subinventory_code}-${idx}`,
+      organizationCode: selectedOrg,
+      organizationName: orgs.find(o => (o.OrganizationCode || o.organization_code) === selectedOrg)?.OrganizationName || orgs.find(o => (o.OrganizationCode || o.organization_code) === selectedOrg)?.organization_name || '',
+      warehouseCode: row.warehouse_code,
+      warehouseName: row.warehouse_name,
+      subinventoryCode: row.subinventory_code,
+      subinventoryName: row.subinventory_name,
+      locatorControlMeaning: row.locator_control_meaning || '',
+      locatorControl: row.locator_control || '',
+      locatorStructure: row.locator_structure || '',
+    }));
+  }, [rows, selectedOrg, orgs]);
 
   return (
     <Layout style={{ minHeight: 'calc(100vh - 64px)', background: REDWOOD.neutral100 }}>
@@ -445,11 +391,10 @@ const Subinventories: React.FC = () => {
             <>
               <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
                 {[
-                  { label: 'Business Units', value: totalBUs, color: REDWOOD.primary },
-                  { label: 'Warehouses', value: totalWHs, color: REDWOOD.info },
-                  { label: 'Subinventories', value: totalSubs, color: REDWOOD.teal },
+                  { label: 'Warehouses', value: new Set(rows.map(r => r.warehouse_code)).size, color: REDWOOD.info },
+                  { label: 'Subinventories', value: rows.length, color: REDWOOD.teal },
                 ].map(kpi => (
-                  <Col xs={24} sm={8} key={kpi.label}>
+                  <Col xs={24} sm={12} key={kpi.label}>
                     <Card style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}`, textAlign: 'center' }} styles={{ body: { padding: '14px 16px' } }}>
                       <Text style={{ fontSize: 28, fontWeight: 700, color: kpi.color, display: 'block' }}>{kpi.value}</Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>{kpi.label}</Text>
@@ -458,21 +403,9 @@ const Subinventories: React.FC = () => {
                 ))}
               </Row>
 
-              <Card style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}`, marginBottom: 16 }} styles={{ body: { padding: '12px 16px' } }}>
-                <Input
-                  placeholder="Search business units, warehouses, or subinventories..."
-                  prefix={<SearchOutlined style={{ color: REDWOOD.neutral600 }} />}
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  allowClear
-                  style={{ maxWidth: 500 }}
-                />
+              <Card style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}` }} styles={{ body: { padding: '16px' } }}>
+                <SubinventoriesTable data={tableData} />
               </Card>
-
-              <Collapse
-                style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}`, background: REDWOOD.surface }}
-                items={buPanels}
-              />
             </>
           )}
 
