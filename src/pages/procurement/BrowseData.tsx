@@ -1,4 +1,4 @@
-import { getFusionAuthHeaders } from '../../config/api.helper';
+import { getFusionAuthHeaders, getFusionInstance } from '../../config/api.helper';
 import React, { useMemo, useState } from 'react';
 import {
   Card, Row, Col, Button, Table, Tag, Progress, Statistic, Modal, Tabs, Space,
