@@ -7,7 +7,7 @@ import {
 import { Link, useParams } from 'react-router-dom';
 import {
   HomeOutlined, SearchOutlined, ApiOutlined, CopyOutlined, InfoCircleOutlined,
-  ReloadOutlined, ClearOutlined, PlusOutlined, EditOutlined, ExportOutlined,
+  ReloadOutlined, ClearOutlined, PlusOutlined, EditOutlined,
   TeamOutlined, EnvironmentOutlined, PhoneOutlined, MailOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -32,9 +32,10 @@ interface CustomerDetail extends CustomerSearchResult {
 }
 
 // ─ Customers Search Tab ────────────────────────────────────────────────────────
-const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; onOpenInNewTab: (cust: CustomerDetail) => void }> = ({ onCustomerSelect, onOpenInNewTab }) => {
+const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void }> = ({ onCustomerSelect }) => {
   const [searchType, setSearchType] = useState<'name' | 'number'>('name');
   const [searchText, setSearchText] = useState('');
+  const [filterText, setFilterText] = useState('');
   const [businessUnitId, setBusinessUnitId] = useState<string>('');
   const [customers, setCustomers] = useState<CustomerDetail[]>([]);
   const [loading, setLoading] = useState(false);
@@ -121,6 +122,19 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
     }
   };
 
+  const filteredCustomers = useMemo(() => {
+    if (!filterText.trim()) return customers;
+    const searchLower = filterText.toLowerCase();
+    return customers.filter(c =>
+      (c.accountName?.toLowerCase().includes(searchLower) || false) ||
+      (c.accountNumber?.toLowerCase().includes(searchLower) || false) ||
+      (c.partyNumber?.toLowerCase().includes(searchLower) || false) ||
+      (c.city?.toLowerCase().includes(searchLower) || false) ||
+      (c.country?.toLowerCase().includes(searchLower) || false) ||
+      (c.status?.toLowerCase().includes(searchLower) || false)
+    );
+  }, [customers, filterText]);
+
   const cols: ColumnsType<CustomerDetail> = [
     {
       title: 'Account Name',
@@ -164,25 +178,16 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
     },
     {
       title: 'Action',
-      width: 120,
+      width: 80,
       render: (_, record) => (
-        <Space>
-          <Button
-            type="primary"
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => onCustomerSelect(record)}
-          >
-            View
-          </Button>
-          <Button
-            type="default"
-            size="small"
-            icon={<ExportOutlined />}
-            title="Open in new tab"
-            onClick={() => onOpenInNewTab(record)}
-          />
-        </Space>
+        <Button
+          type="primary"
+          size="small"
+          icon={<EditOutlined />}
+          onClick={() => onCustomerSelect(record)}
+        >
+          View
+        </Button>
       ),
     },
   ];
@@ -404,13 +409,23 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
 
       {!loading && searched && customers.length > 0 && (
         <div>
-          <Text type="secondary" style={{ fontSize: 12, marginBottom: 12, display: 'block' }}>
-            Found {customers.length} customer(s)
-          </Text>
+          <div style={{ marginBottom: 16 }}>
+            <Input
+              placeholder="Filter results by account name, number, party number, city, country, or status..."
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              prefix={<SearchOutlined />}
+              allowClear
+              size="large"
+            />
+            <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: 'block' }}>
+              Showing {filteredCustomers.length} of {customers.length} customer(s)
+            </Text>
+          </div>
           <Table
             size="small"
             columns={cols}
-            dataSource={customers}
+            dataSource={filteredCustomers}
             rowKey={(record) => record.accountNumber || record.partyNumber}
             pagination={{ pageSize: 20 }}
             scroll={{ x: 1000 }}
@@ -491,23 +506,14 @@ const Customers: React.FC = () => {
   const auth = useAuth();
   const [activeTab, setActiveTab] = useState('search');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerDetail | null>(null);
-  const [openTabs, setOpenTabs] = useState<CustomerDetail[]>([]);
 
   const handleCustomerSelect = (customer: CustomerDetail) => {
     setSelectedCustomer(customer);
     setActiveTab(`customer-${customer.accountNumber}`);
   };
 
-  const handleOpenInNewTab = (customer: CustomerDetail) => {
-    const existing = openTabs.find((t) => t.accountNumber === customer.accountNumber);
-    if (!existing) {
-      setOpenTabs([...openTabs, customer]);
-    }
-    setActiveTab(`customer-${customer.accountNumber}`);
-  };
-
-  const handleCloseTab = (accountNumber: string) => {
-    setOpenTabs(openTabs.filter((t) => t.accountNumber !== accountNumber));
+  const handleCloseDetail = () => {
+    setSelectedCustomer(null);
     setActiveTab('search');
   };
 
@@ -515,18 +521,18 @@ const Customers: React.FC = () => {
     {
       key: 'search',
       label: <span><SearchOutlined /> Search Customers</span>,
-      children: <SearchTab onCustomerSelect={handleCustomerSelect} onOpenInNewTab={handleOpenInNewTab} />,
+      children: <SearchTab onCustomerSelect={handleCustomerSelect} />,
     },
-    ...openTabs.map((customer) => ({
-      key: `customer-${customer.accountNumber}`,
+    ...(selectedCustomer ? [{
+      key: `customer-${selectedCustomer.accountNumber}`,
       label: (
         <span>
-          {customer.accountName} <span style={{ marginLeft: 8, cursor: 'pointer' }}>×</span>
+          {selectedCustomer.accountName}
         </span>
       ),
       closable: true,
-      children: <CustomerDetailTab customer={customer} onClose={() => setActiveTab('search')} />,
-    })),
+      children: <CustomerDetailTab customer={selectedCustomer} onClose={handleCloseDetail} />,
+    }] : []),
   ];
 
   return (
@@ -553,9 +559,8 @@ const Customers: React.FC = () => {
             activeKey={activeTab}
             onChange={(key) => setActiveTab(key)}
             onEdit={(key, action) => {
-              if (action === 'remove' && typeof key === 'string') {
-                const accountNumber = key.replace('customer-', '');
-                handleCloseTab(accountNumber);
+              if (action === 'remove') {
+                handleCloseDetail();
               }
             }}
             type="editable-card"
