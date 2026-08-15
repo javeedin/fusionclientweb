@@ -1,8 +1,9 @@
 import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Layout, Breadcrumb, Typography, Card, Row, Col, Input, Tag, Collapse, Badge, Spin, Alert, Button, Drawer, Space, Divider, message, Select,
+  Layout, Breadcrumb, Typography, Card, Row, Col, Input, Tag, Collapse, Badge, Spin, Alert, Button, Drawer, Space, Divider, message, Select, Table,
 } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import { HomeOutlined, ApartmentOutlined, SearchOutlined, ApiOutlined, CopyOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { getCurrentCompany } from '../../config/company.config';
@@ -76,6 +77,57 @@ const matchesSearch = (q: string, ...vals: string[]) => {
   return vals.some(v => v.toLowerCase().includes(low));
 };
 
+interface SubinventoryData {
+  key: string;
+  organizationCode: string;
+  organizationName: string;
+  warehouseCode: string;
+  warehouseName: string;
+  subinventoryCode: string;
+  subinventoryName: string;
+  locatorControlMeaning: string;
+  locatorControl: string;
+  locatorStructure: string;
+}
+
+const SubinventoriesTable: React.FC<{ data: SubinventoryData[] }> = ({ data }) => {
+  const [search, setSearch] = useState('');
+
+  const filtered = data.filter(d =>
+    !search || [d.organizationCode, d.organizationName, d.warehouseCode, d.warehouseName, d.subinventoryCode, d.subinventoryName, d.locatorControlMeaning]
+      .some(v => String(v).toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const cols: ColumnsType<SubinventoryData> = [
+    { title: 'Organization', dataIndex: 'organizationName', width: 180, render: (v, r) => <><Text strong style={{ color: REDWOOD.info }}>{r.organizationCode}</Text><br /><Text type="secondary" style={{ fontSize: 11 }}>{v}</Text></> },
+    { title: 'Warehouse', dataIndex: 'warehouseName', width: 150, render: (v, r) => <><Text strong>{r.warehouseCode}</Text><br /><Text type="secondary" style={{ fontSize: 11 }}>{v}</Text></> },
+    { title: 'Subinventory', dataIndex: 'subinventoryName', width: 180, render: (v, r) => <><Text strong style={{ color: REDWOOD.teal }}>{r.subinventoryCode}</Text><br /><Text type="secondary" style={{ fontSize: 11 }}>{v}</Text></> },
+    { title: 'Locator Control', dataIndex: 'locatorControlMeaning', width: 140, render: (v, r) => <><Tag color="blue" style={{ fontSize: 11 }}>{v}</Tag><br /><Text type="secondary" style={{ fontSize: 10 }}>({r.locatorControl})</Text></> },
+    { title: 'Locator Structure', dataIndex: 'locatorStructure', width: 120, render: (v) => <Text>{v || '—'}</Text> },
+  ];
+
+  return (
+    <>
+      <Input
+        placeholder="Search by organization, warehouse, subinventory, or locator control..."
+        prefix={<SearchOutlined style={{ color: REDWOOD.neutral600 }} />}
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        allowClear
+        style={{ marginBottom: 16, maxWidth: 500 }}
+      />
+      <Table
+        columns={cols}
+        dataSource={filtered}
+        rowKey="key"
+        pagination={{ pageSize: 20, showSizeChanger: true, showQuickJumper: true }}
+        size="small"
+        scroll={{ x: 800 }}
+      />
+    </>
+  );
+};
+
 const Subinventories: React.FC = () => {
   const [rows, setRows] = useState<SubinventoryRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -91,6 +143,8 @@ const Subinventories: React.FC = () => {
   const [buLoading, setBuLoading] = useState(true);
   const [buApiUrl, setBuApiUrl] = useState('');
   const [orgsApiUrl, setOrgsApiUrl] = useState('');
+  const [allOrgSubinventories, setAllOrgSubinventories] = useState<any[]>([]);
+  const [loadingAllSubs, setLoadingAllSubs] = useState(false);
 
   // Fetch business units on mount
   useEffect(() => {
@@ -186,6 +240,52 @@ const Subinventories: React.FC = () => {
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, [selectedOrg, selectedBU, busUnits]);
+
+  // Fetch all subinventories for all organizations
+  const fetchAllSubinventories = async () => {
+    if (orgs.length === 0) {
+      message.warning('No organizations available');
+      return;
+    }
+    setLoadingAllSubs(true);
+    const allSubs: any[] = [];
+    const fusionBase = getFusionBase();
+
+    try {
+      await Promise.all(orgs.map(async (org) => {
+        try {
+          const url = `${fusionBase}/subinventories?q=OrganizationCode=${encodeURIComponent(org.OrganizationCode || org.organization_code)}&onlyData=true&limit=500`;
+          const r = await fetch(url, { headers: getFusionAuthHeaders() });
+          const d = await r.json();
+          const items = Array.isArray(d) ? d : (d.items ?? []);
+          items.forEach((item: any) => {
+            allSubs.push({
+              key: `${org.OrganizationCode}-${item.SubinventoryCode}`,
+              organizationCode: org.OrganizationCode || org.organization_code,
+              organizationName: org.OrganizationName || org.organization_name,
+              warehouseCode: item.WarehouseCode || item.warehouse_code || '',
+              warehouseName: item.WarehouseName || item.warehouse_name || '',
+              subinventoryCode: item.SubinventoryCode || item.subinventory_code || '',
+              subinventoryName: item.SecondaryInventoryName || item.subinventory_name || '',
+              locatorControlMeaning: item.LocatorControlMeaning || '',
+              locatorControl: item.LocatorControl || '',
+              locatorStructure: item.LocatorStructure || '',
+            });
+          });
+        } catch (e) {
+          console.error(`Failed to fetch subinventories for ${org.OrganizationCode}:`, e);
+        }
+      }));
+      setAllOrgSubinventories(allSubs);
+      if (allSubs.length === 0) message.info('No subinventories found');
+      else message.success(`Found ${allSubs.length} subinventories across ${orgs.length} organizations`);
+    } catch (e) {
+      message.error('Failed to fetch subinventories');
+      console.error(e);
+    } finally {
+      setLoadingAllSubs(false);
+    }
+  };
 
   const hierarchy = useMemo(() => buildHierarchy(rows), [rows]);
 
@@ -341,7 +441,7 @@ const Subinventories: React.FC = () => {
 
           {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
 
-          {!loading && rows.length > 0 && (
+          {!loading && selectedOrg && rows.length > 0 && (
             <>
               <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
                 {[
@@ -377,7 +477,35 @@ const Subinventories: React.FC = () => {
           )}
 
           {!loading && !selectedOrg && !error && (
-            <Alert type="info" message="Select a business unit and inventory organization to view subinventories" style={{ marginTop: 16 }} />
+            <>
+              <Card style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}`, marginBottom: 16 }} styles={{ body: { padding: '16px' } }}>
+                <Space>
+                  <Text>Load all subinventories for selected organizations:</Text>
+                  <Button
+                    type="primary"
+                    icon={<SearchOutlined />}
+                    onClick={fetchAllSubinventories}
+                    loading={loadingAllSubs}
+                    disabled={orgs.length === 0}
+                  >
+                    Search All Subinventories
+                  </Button>
+                </Space>
+              </Card>
+
+              {allOrgSubinventories.length > 0 && (
+                <Card style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}` }} styles={{ body: { padding: '16px' } }}>
+                  <SubinventoriesTable data={allOrgSubinventories} />
+                </Card>
+              )}
+
+              {orgs.length === 0 && (
+                <Alert type="info" message="Select a business unit to load organizations" style={{ marginTop: 16 }} />
+              )}
+              {orgs.length > 0 && allOrgSubinventories.length === 0 && !loadingAllSubs && (
+                <Alert type="info" message={`${orgs.length} organization(s) available. Click "Search All Subinventories" to view their subinventories.`} style={{ marginTop: 16 }} />
+              )}
+            </>
           )}
 
           {!loading && selectedOrg && rows.length === 0 && !error && (
