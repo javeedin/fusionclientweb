@@ -626,11 +626,55 @@ const CustomerSiteActivities: React.FC = () => {
 
       const debugInfo = detailApiDebug[key];
 
+      const exportDetailTabs = () => {
+        const wb = XLSX.utils.book_new();
+
+        // Add each child entity as a sheet
+        CHILD_NAMES.forEach(cn => {
+          const state = siteChildStates[cn] || { data: [] };
+          if (state.data.length > 0) {
+            const cleaned = state.data.map(row => {
+              const r: Row = {};
+              Object.keys(row).filter(k => k !== 'links').forEach(k => { r[k] = row[k]; });
+              return r;
+            });
+            const ws = XLSX.utils.json_to_sheet(cleaned);
+            XLSX.utils.book_append_sheet(wb, ws, CHILD_LABEL_MAP[cn]);
+          }
+        });
+
+        // Add summary sheet with overview data
+        const summaryData = [{
+          'Customer Name': site['CustomerName'],
+          'Account Number': site['AccountNumber'],
+          'Bill To Site Number': site['BillToSiteNumber'],
+          'Total Open Receivables': site['TotalOpenReceivablesForSite'],
+          'Total Transactions Due': site['TotalTransactionsDueForSite'],
+          'Total Invoices': siteChildStates['transactionPaymentSchedules']?.data.length || 0,
+          'Avg Days Late': siteChildStates['transactionPaymentSchedules']?.data.length > 0
+            ? Math.round(siteChildStates['transactionPaymentSchedules'].data.reduce((sum: number, r: Row) => sum + (Number(r['PaymentDaysLate']) || 0), 0) / siteChildStates['transactionPaymentSchedules'].data.length)
+            : 0,
+        }];
+        const summaryWs = XLSX.utils.json_to_sheet(summaryData);
+        XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary', 0);
+
+        const fileName = `${site['CustomerName']}_Activities_${new Date().toISOString().split('T')[0]}`;
+        XLSX.writeFile(wb, `${fileName}.xlsx`);
+      };
+
       return {
         key,
         label: (
           <span>
             {site['CustomerName']?.substring(0, 20)}
+            <Button
+              type="text"
+              size="small"
+              onClick={(e) => { e.stopPropagation(); exportDetailTabs(); }}
+              icon={<DownloadOutlined />}
+              style={{ marginLeft: 4, padding: 0 }}
+              title="Export all tabs to Excel"
+            />
             <Button
               type="text"
               size="small"
