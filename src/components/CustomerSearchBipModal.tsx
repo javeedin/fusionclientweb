@@ -65,10 +65,14 @@ const CustomerSearchBipModal: React.FC<CustomerSearchBipModalProps> = ({
   onSelect,
   businessUnitId = '',
   businessUnitName = '',
-  soapBaseUrl = ORACLE_SOAP_CONFIG.prod.baseUrl,
-  username = ORACLE_SOAP_CONFIG.prod.username,
-  password = ORACLE_SOAP_CONFIG.prod.password,
+  soapBaseUrl,
+  username,
+  password,
 }) => {
+  // Use logged-in user credentials from localStorage, fallback to config defaults
+  const loggedInUsername = username || localStorage.getItem('fusion_username') || ORACLE_SOAP_CONFIG.prod.username;
+  const loggedInPassword = password || localStorage.getItem('fusion_password') || ORACLE_SOAP_CONFIG.prod.password;
+  const finalSoapUrl = soapBaseUrl || ORACLE_SOAP_CONFIG.prod.baseUrl;
   const [searchText, setSearchText] = useState('');
   const [filterText, setFilterText] = useState('');
   const [allCustomers, setAllCustomers] = useState<CustomerSearchResult[]>([]);
@@ -101,9 +105,9 @@ const CustomerSearchBipModal: React.FC<CustomerSearchBipModalProps> = ({
       const response = await searchCustomersByBIP(
         businessUnitId,
         searchText,
-        soapBaseUrl,
-        username,
-        password,
+        finalSoapUrl,
+        loggedInUsername,
+        loggedInPassword,
         searchType
       );
 
@@ -358,12 +362,12 @@ const CustomerSearchBipModal: React.FC<CustomerSearchBipModalProps> = ({
               alignItems: 'flex-start',
               gap: '8px'
             }}>
-              <span style={{ flex: 1 }}>{lastApiDetails.url || soapBaseUrl || 'N/A'}</span>
+              <span style={{ flex: 1 }}>{lastApiDetails.url || finalSoapUrl || 'N/A'}</span>
               <Button
                 type="text"
                 size="small"
                 icon={<CopyOutlined />}
-                onClick={() => copyToClipboard(lastApiDetails.url || soapBaseUrl || '')}
+                onClick={() => copyToClipboard(lastApiDetails.url || finalSoapUrl || '')}
               />
             </div>
           </div>
@@ -393,8 +397,8 @@ const CustomerSearchBipModal: React.FC<CustomerSearchBipModalProps> = ({
                 '/Custom/fusion_client/AR/CUSTOMER_SEARCH_BY_NAME_BIP.xdo',
                 businessUnitId || '',
                 searchText,
-                username || '',
-                password || '',
+                loggedInUsername || '',
+                loggedInPassword || '',
                 searchType
               ) : 'N/A')}
             </div>
@@ -407,8 +411,8 @@ const CustomerSearchBipModal: React.FC<CustomerSearchBipModalProps> = ({
                   '/Custom/fusion_client/AR/CUSTOMER_SEARCH_BY_NAME_BIP.xdo',
                   businessUnitId || '',
                   searchText,
-                  username || '',
-                  password || '',
+                  loggedInUsername || '',
+                  loggedInPassword || '',
                   searchType
                 ) : ''))}
                 style={{ marginTop: '8px' }}

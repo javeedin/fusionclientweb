@@ -4972,9 +4972,7 @@ const RegisterOrderModal: React.FC<{ open: boolean; onClose: () => void; onProce
       onSelect={onCustomerBipSelect}
       businessUnitId={buRow?.businessUnitId?.toString()}
       businessUnitName={buName}
-      soapBaseUrl={`${instance.host}/xmlpserver/services/v2/ReportService`}
-      username={instance.username}
-      password={instance.password}
+      soapBaseUrl={`${getFusionInstanceUrl() || instance.host}/xmlpserver/services/v2/ReportService`}
     />
   </>
   );
