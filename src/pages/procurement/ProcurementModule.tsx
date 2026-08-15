@@ -80,7 +80,7 @@ const procurementItems: MenuItemType[] = [
   {
     key: 'customers', group: 'Order Management',
     icon: <TeamOutlined />,
-    label: 'Customers',
+    label: 'Fusion Customers',
     description: 'Search and manage customer records via BIP report',
     color: REDWOOD.teal,
     path: '/procurement/customers',
