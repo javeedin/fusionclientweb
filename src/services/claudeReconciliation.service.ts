@@ -58,31 +58,35 @@ export const reconcileWithClaude = async (
     payee: txn.payee || '',
   }));
 
-  const prompt = `You are a bank reconciliation expert. Match bank statement lines with system transactions based primarily on AMOUNT matching, with secondary consideration for dates and references.
+  const prompt = `You are a bank reconciliation expert. Your ONLY task is to match bank statement lines with system transactions.
 
-BANK STATEMENTS:
+BANK STATEMENTS (array):
 ${JSON.stringify(stmtSummary, null, 2)}
 
-SYSTEM TRANSACTIONS:
+SYSTEM TRANSACTIONS (array):
 ${JSON.stringify(txnSummary, null, 2)}
 
-For each statement line, find matching system transaction(s) by:
-1. EXACT amount match (highest confidence)
-2. Amount match within rounding tolerance (small differences acceptable)
-3. If no exact match, provide "unmatched" indication
+MATCHING RULES:
+1. Primary: Match by EXACT AMOUNT
+2. Secondary: Consider date proximity (within 2 days)
+3. Confidence: 1.0 for exact match, 0.95 for small rounding differences, 0.8+ for date match
 
-Return a JSON array with this structure:
+INSTRUCTIONS:
+- For EACH statement line, find ONE matching transaction or mark as unmatched
+- Return a JSON array exactly as shown below
+- DO NOT include markdown code blocks, DO NOT include explanations
+- Return ONLY the JSON array, nothing else
+
+RESPONSE FORMAT (JSON array - REQUIRED):
 [
   {
-    "stmtLineId": number,
-    "txnId": number or null,
-    "confidence": 0.0 to 1.0,
-    "matched": boolean,
-    "reason": "exact match" | "amount mismatch" | "no system transaction" | "no statement line"
+    "stmtLineId": <stmt lineId>,
+    "txnId": <txn txnId or null if unmatched>,
+    "confidence": <0.0 to 1.0>,
+    "matched": <true or false>,
+    "reason": <"exact amount match" or "amount within tolerance" or "date match" or "no match">
   }
-]
-
-Focus on AMOUNT as primary matching criteria. Return ONLY valid JSON, no other text.`;
+]`;
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -112,13 +116,34 @@ Focus on AMOUNT as primary matching criteria. Return ONLY valid JSON, no other t
     const data = await response.json();
     const claudeText = data.content[0]?.text || '';
 
-    // Extract JSON from Claude response
-    const jsonMatch = claudeText.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
-      throw new Error('Claude did not return valid JSON array');
+    console.log('Claude Raw Response:', claudeText);
+
+    // Extract JSON from Claude response - handle markdown code blocks
+    let jsonText = claudeText;
+
+    // Remove markdown code blocks if present
+    const codeBlockMatch = claudeText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      jsonText = codeBlockMatch[1].trim();
+      console.log('Extracted from markdown code block');
     }
 
-    const matches = JSON.parse(jsonMatch[0]);
+    // Extract JSON array
+    const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      console.error('Failed to extract JSON. Full response:', claudeText);
+      throw new Error(`Claude did not return valid JSON array. Response: ${claudeText.substring(0, 300)}`);
+    }
+
+    let matches;
+    try {
+      matches = JSON.parse(jsonMatch[0]);
+      console.log('Successfully parsed Claude response:', matches.length, 'items');
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError);
+      console.error('Attempted to parse:', jsonMatch[0].substring(0, 500));
+      throw new Error(`Failed to parse Claude JSON response: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+    }
 
     // Build reconciliation result
     const result: ReconciliationResult = {
