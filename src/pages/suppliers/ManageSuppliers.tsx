@@ -537,11 +537,33 @@ const SearchTab: React.FC<{ onOpen: (s: RawSupplier) => void }> = ({ onOpen }) =
       {/* Results */}
       <Card styles={{ body: { padding: 0 } }}
         style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}`, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-        <div style={{ padding: '10px 16px', borderBottom: `1px solid ${REDWOOD.neutral200}`, display: 'flex', alignItems: 'center' }}>
-          <Text strong style={{ fontSize: 13 }}>
-            Suppliers
-            {searched && total > 0 && <Text type="secondary" style={{ fontWeight: 400, marginLeft: 8 }}>({total} result{total !== 1 ? 's' : ''})</Text>}
-          </Text>
+        <div style={{ padding: '10px 16px', borderBottom: `1px solid ${REDWOOD.neutral200}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Text strong style={{ fontSize: 13 }}>
+              Suppliers
+              {searched && total > 0 && <Text type="secondary" style={{ fontWeight: 400, marginLeft: 8 }}>({total} result{total !== 1 ? 's' : ''})</Text>}
+            </Text>
+            <Tooltip title={buildUrl(params, page)}>
+              <Button
+                type="text"
+                size="small"
+                icon={<ApiOutlined style={{ color: REDWOOD.info, fontSize: 14 }} />}
+                style={{ padding: '2px 6px', height: 'auto' }}
+              />
+            </Tooltip>
+            <Tooltip title="Copy API URL">
+              <Button
+                type="text"
+                size="small"
+                icon={<CopyOutlined style={{ color: REDWOOD.neutral600, fontSize: 12 }} />}
+                onClick={() => {
+                  navigator.clipboard.writeText(buildUrl(params, page));
+                  message.success('API URL copied to clipboard', 2);
+                }}
+                style={{ padding: '2px 6px', height: 'auto' }}
+              />
+            </Tooltip>
+          </div>
         </div>
         <Table
           columns={columns} dataSource={data} rowKey="SupplierId"
