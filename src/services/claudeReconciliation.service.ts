@@ -131,22 +131,33 @@ RESPONSE FORMAT (JSON array - REQUIRED):
     }
 
     const data = await response.json();
-    console.log('Claude full response object:', data);
+    console.log('=== FULL RESPONSE OBJECT ===');
+    console.log(JSON.stringify(data, null, 2));
+    console.log('=== END RESPONSE OBJECT ===');
+
     console.log('Response keys:', Object.keys(data));
 
     if (data.content) {
       console.log('Content array length:', data.content.length);
-      console.log('First content item:', data.content[0]);
+      console.log('First content item:', JSON.stringify(data.content[0], null, 2));
       console.log('First content item keys:', Object.keys(data.content[0]));
+
+      if (data.content[0]) {
+        console.log('Content[0] type:', data.content[0].type);
+        console.log('Content[0] text:', data.content[0].text);
+        console.log('Content[0] all properties:', JSON.stringify(data.content[0], null, 2));
+      }
     } else {
       console.error('No content field in response!');
+      console.error('Full response:', JSON.stringify(data, null, 2));
     }
 
-    const claudeText = data.content[0]?.text || '';
-    console.log('=== CLAUDE RAW RESPONSE START ===');
-    console.log(claudeText);
-    console.log('=== CLAUDE RAW RESPONSE END ===');
-    console.log('Response length:', claudeText.length);
+    const claudeText = data.content?.[0]?.text || '';
+    console.log('=== EXTRACTED TEXT ===');
+    console.log('Text:', claudeText);
+    console.log('Text type:', typeof claudeText);
+    console.log('Text length:', claudeText.length);
+    console.log('=== END EXTRACTED TEXT ===');
 
     // Extract JSON from Claude response - handle markdown code blocks
     let jsonText = claudeText;
