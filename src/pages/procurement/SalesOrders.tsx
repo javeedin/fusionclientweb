@@ -3861,7 +3861,7 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
   const url = useMemo(() => {
     const t = term.trim(); if (!t) return '';
     const field = byDesc ? 'ItemDescription' : 'ItemNumber';
-    const pattern = byDesc ? `%${t}%` : `${t}%`;
+    const pattern = `${t}%`;
     let q = `${field} LIKE '${pattern}'`;
     if (org) q += `;OrganizationCode=${org}`;
     return `${FUSION_BASE}/itemsV2?q=${encodeURIComponent(q)}&limit=100&onlyData=true`;
