@@ -1,7 +1,7 @@
 import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Layout, Breadcrumb, Typography, Card, Row, Col, Input, Tag, Collapse, Badge, Spin, Alert, Button, Drawer, Space, Divider, message,
+  Layout, Breadcrumb, Typography, Card, Row, Col, Input, Tag, Collapse, Badge, Spin, Alert, Button, Drawer, Space, Divider, message, Select,
 } from 'antd';
 import { HomeOutlined, ApartmentOutlined, SearchOutlined, ApiOutlined, CopyOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
@@ -78,18 +78,79 @@ const matchesSearch = (q: string, ...vals: string[]) => {
 
 const Subinventories: React.FC = () => {
   const [rows, setRows] = useState<SubinventoryRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [apiDrawerOpen, setApiDrawerOpen] = useState(false);
   const [apiUrl, setApiUrl] = useState('');
   const [apiResponse, setApiResponse] = useState('');
+  const [busUnits, setBusUnits] = useState<any[]>([]);
+  const [orgs, setOrgs] = useState<any[]>([]);
+  const [selectedBU, setSelectedBU] = useState('');
+  const [selectedOrg, setSelectedOrg] = useState('');
+  const [buLoading, setBuLoading] = useState(true);
 
+  // Fetch business units on mount
   useEffect(() => {
     const fusionBase = getFusionBase();
-    const url = `${fusionBase}/inventorySublocations?limit=500&onlyData=true`;
+    fetch(`${fusionBase}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`,
+      { headers: getFusionAuthHeaders() })
+      .then(r => r.json())
+      .then(d => {
+        const seen = new Set<string>();
+        const options = (d.items ?? [])
+          .filter((b: any) => {
+            const name = b.businessUnitName;
+            if (!name || seen.has(name)) return false;
+            seen.add(name);
+            return true;
+          });
+        setBusUnits(options);
+      })
+      .catch(e => console.error('Failed to fetch business units:', e))
+      .finally(() => setBuLoading(false));
+  }, []);
+
+  // Fetch organizations when BU changes
+  useEffect(() => {
+    if (!selectedBU) {
+      setOrgs([]);
+      setSelectedOrg('');
+      setRows([]);
+      return;
+    }
+
+    const fusionBase = getFusionBase();
+    fetch(`${fusionBase}/inventoryOrganizations?q=BusinessUnitId=${selectedBU}&onlyData=true&limit=500`,
+      { headers: getFusionAuthHeaders() })
+      .then(r => r.json())
+      .then(d => {
+        const items = d.items ?? [];
+        setOrgs(items);
+      })
+      .catch(e => {
+        console.error('Failed to fetch organizations:', e);
+        setOrgs([]);
+      });
+  }, [selectedBU]);
+
+  // Fetch subinventories when org changes
+  useEffect(() => {
+    if (!selectedOrg) {
+      setRows([]);
+      setApiUrl('');
+      setApiResponse('');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    const fusionBase = getFusionBase();
+    const url = `${fusionBase}/subinventories?q=OrganizationCode=${encodeURIComponent(selectedOrg)}&onlyData=true&limit=500`;
     const headers = getFusionAuthHeaders();
     setApiUrl(url);
+
     fetch(url, { headers })
       .then(r => {
         if (!r.ok) {
@@ -106,20 +167,20 @@ const Subinventories: React.FC = () => {
       .then(d => {
         const items = Array.isArray(d) ? d : (d.items ?? []);
         const rows = items.map((item: any) => ({
-          business_unit_code: item.BusinessUnitCode || '',
-          business_unit_name: item.BusinessUnitName || '',
-          warehouse_code: item.WarehouseCode || '',
-          warehouse_name: item.WarehouseName || '',
-          subinventory_code: item.SubinventoryCode || '',
-          subinventory_name: item.SubinventoryName || '',
-          locator_id: item.LocatorId || '',
-          instance_name: item.InstanceName || '',
+          business_unit_code: selectedBU || '',
+          business_unit_name: busUnits.find(b => b.businessUnitId === parseInt(selectedBU))?.businessUnitName || '',
+          warehouse_code: item.WarehouseCode || item.warehouse_code || '',
+          warehouse_name: item.WarehouseName || item.warehouse_name || '',
+          subinventory_code: item.SubinventoryCode || item.subinventory_code || '',
+          subinventory_name: item.SubinventoryName || item.subinventory_name || '',
+          locator_id: item.LocatorId || item.locator_id || '',
+          instance_name: item.InstanceName || item.instance_name || '',
         }));
         setRows(rows);
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [selectedOrg, selectedBU, busUnits]);
 
   const hierarchy = useMemo(() => buildHierarchy(rows), [rows]);
 
@@ -231,15 +292,51 @@ const Subinventories: React.FC = () => {
             />
           </div>
 
+          {/* Business Unit and Organization Selection */}
+          <Card style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}`, marginBottom: 16 }} styles={{ body: { padding: '16px' } }}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12}>
+                <Text strong style={{ display: 'block', marginBottom: 8 }}>Business Unit</Text>
+                <Select
+                  placeholder="Select business unit"
+                  value={selectedBU}
+                  onChange={setSelectedBU}
+                  loading={buLoading}
+                  style={{ width: '100%' }}
+                  options={busUnits.map(bu => ({
+                    value: bu.businessUnitId?.toString() || '',
+                    label: bu.businessUnitName || '',
+                  }))}
+                  allowClear
+                />
+              </Col>
+              <Col xs={24} sm={12}>
+                <Text strong style={{ display: 'block', marginBottom: 8 }}>Inventory Organization</Text>
+                <Select
+                  placeholder="Select organization"
+                  value={selectedOrg}
+                  onChange={setSelectedOrg}
+                  disabled={!selectedBU}
+                  style={{ width: '100%' }}
+                  options={orgs.map(org => ({
+                    value: org.OrganizationCode || org.organization_code || '',
+                    label: org.OrganizationName || org.organization_name || org.OrganizationCode || '',
+                  }))}
+                  allowClear
+                />
+              </Col>
+            </Row>
+          </Card>
+
           {loading && (
             <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
-              <Spin size="large" />
+              <Spin size="large" tip="Loading subinventories..." />
             </div>
           )}
 
           {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
 
-          {!loading && !error && (
+          {!loading && rows.length > 0 && (
             <>
               <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
                 {[
@@ -272,6 +369,14 @@ const Subinventories: React.FC = () => {
                 items={buPanels}
               />
             </>
+          )}
+
+          {!loading && !selectedOrg && !error && (
+            <Alert type="info" message="Select a business unit and inventory organization to view subinventories" style={{ marginTop: 16 }} />
+          )}
+
+          {!loading && selectedOrg && rows.length === 0 && !error && (
+            <Alert type="info" message="No subinventories found for the selected organization" style={{ marginTop: 16 }} />
           )}
         </div>
 
