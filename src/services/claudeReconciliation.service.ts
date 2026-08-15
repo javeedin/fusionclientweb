@@ -131,7 +131,16 @@ RESPONSE FORMAT (JSON array - REQUIRED):
     }
 
     const data = await response.json();
-    console.log('Claude response data:', data);
+    console.log('Claude full response object:', data);
+    console.log('Response keys:', Object.keys(data));
+
+    if (data.content) {
+      console.log('Content array length:', data.content.length);
+      console.log('First content item:', data.content[0]);
+      console.log('First content item keys:', Object.keys(data.content[0]));
+    } else {
+      console.error('No content field in response!');
+    }
 
     const claudeText = data.content[0]?.text || '';
     console.log('=== CLAUDE RAW RESPONSE START ===');
