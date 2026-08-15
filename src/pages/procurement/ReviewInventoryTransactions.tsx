@@ -1,4 +1,4 @@
-import { getFusionAuthHeaders } from '../../config/api.helper';
+import { getFusionAuthHeaders, getFusionInstance } from '../../config/api.helper';
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Form, Input, Select, DatePicker, Button,

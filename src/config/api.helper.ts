@@ -82,3 +82,18 @@ export function getFusionInstanceUrl(): string {
     return '';
   }
 }
+
+/**
+ * Get Fusion instance credentials from localStorage
+ */
+export function getFusionInstance(): { username: string; password: string; instanceUrl: string } {
+  try {
+    return {
+      username: localStorage.getItem('fusion_username') || '',
+      password: localStorage.getItem('fusion_password') || '',
+      instanceUrl: localStorage.getItem('fusion_instance_url') || '',
+    };
+  } catch {
+    return { username: '', password: '', instanceUrl: '' };
+  }
+}
