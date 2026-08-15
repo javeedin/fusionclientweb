@@ -262,6 +262,7 @@ const CustomerSiteActivities: React.FC = () => {
   const [apiDebugVisible, setApiDebugVisible] = useState(false);
   const [recordsWithBalances, setRecordsWithBalances] = useState(true);
   const [receivablesOverviewVisible, setReceivablesOverviewVisible] = useState(false);
+  const [overviewCustomerKey, setOverviewCustomerKey] = useState<string | null>(null);
 
   // ── Load page data ──────────────────────────────────────────────
   const loadPage = useCallback(async (pageNum: number) => {
@@ -455,10 +456,13 @@ const CustomerSiteActivities: React.FC = () => {
   };
 
   // ── Receivables Overview Calculations ──────────────────────────
-  const computeOverviewData = () => {
-    const allArInvoices = childStates[Object.keys(childStates)[0]]?.transactionPaymentSchedules?.data || [];
-    const allCreditMemos = childStates[Object.keys(childStates)[0]]?.creditMemos?.data || [];
-    const allAdjustments = childStates[Object.keys(childStates)[0]]?.transactionAdjustments?.data || [];
+  const computeOverviewData = (customerKey?: string | null) => {
+    const key = customerKey || overviewCustomerKey;
+    if (!key) return null;
+
+    const allArInvoices = childStates[key]?.transactionPaymentSchedules?.data || [];
+    const allCreditMemos = childStates[key]?.creditMemos?.data || [];
+    const allAdjustments = childStates[key]?.transactionAdjustments?.data || [];
 
     const openInvoices = allArInvoices.filter(row => row['InstallmentStatus'] === 'Open');
     const openBalance = openInvoices.reduce((sum, row) => sum + (Number(row['TotalBalanceAmount']) || 0), 0);
@@ -751,6 +755,15 @@ const CustomerSiteActivities: React.FC = () => {
             <Button
               type="text"
               size="small"
+              onClick={(e) => { e.stopPropagation(); setOverviewCustomerKey(key); setReceivablesOverviewVisible(true); }}
+              title="View Receivables Overview"
+              style={{ marginLeft: 4, padding: 0, fontSize: 12, fontWeight: 600, color: REDWOOD.primary }}
+            >
+              📊 Overview
+            </Button>
+            <Button
+              type="text"
+              size="small"
               onClick={(e) => { e.stopPropagation(); exportDetailTabs(); }}
               icon={<DownloadOutlined />}
               style={{ marginLeft: 4, padding: 0 }}
@@ -973,10 +986,11 @@ const CustomerSiteActivities: React.FC = () => {
         ) : <Empty description="No debug info available" />}
       </Modal>
 
-      <Modal open={receivablesOverviewVisible} onCancel={() => setReceivablesOverviewVisible(false)} footer={null} width={1200}
+      <Modal open={receivablesOverviewVisible} onCancel={() => { setReceivablesOverviewVisible(false); setOverviewCustomerKey(null); }} footer={null} width={1200}
         title="RECEIVABLES OVERVIEW">
         {(() => {
           const overview = computeOverviewData();
+          if (!overview) return <Empty description="No data available" />;
           const overviewTabs = [
             {
               key: 'overview',
