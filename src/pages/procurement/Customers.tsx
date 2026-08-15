@@ -48,7 +48,7 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
     const fetchBUs = async () => {
       try {
         const url = `${buildApexUrl('gl/businessunits')}`;
-        const res = await fetch(url);
+        const res = await fetch(url, { headers: getFusionAuthHeaders() });
         if (res.ok) {
           const data = await res.json();
           const options = (data.items ?? []).map((bu: any) => ({
@@ -56,6 +56,8 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
             label: bu.business_unit_name || '',
           })).filter((o: any) => o.value && o.label);
           setBuOptions(options);
+        } else {
+          console.warn('Failed to fetch business units:', res.status);
         }
       } catch (e) {
         console.warn('Failed to fetch business units:', e);
@@ -67,10 +69,6 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
   const handleSearch = async () => {
     if (!searchText.trim()) {
       message.warning('Please enter a search term');
-      return;
-    }
-    if (!businessUnitId) {
-      message.warning('Please select a business unit');
       return;
     }
 
@@ -179,67 +177,118 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
   return (
     <div>
       <Card style={{ marginBottom: 16 }}>
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <div>
-            <Text strong>Search Type</Text>
-            <div style={{ marginTop: 8 }}>
+        <Row gutter={16} align="bottom" style={{ width: '100%' }}>
+          <Col xs={24} sm={12} md={6}>
+            <div>
+              <Text strong style={{ display: 'block', marginBottom: 8 }}>Search Type</Text>
               <Select
                 value={searchType}
                 onChange={(value) => setSearchType(value as 'name' | 'number')}
-                style={{ width: 200 }}
+                style={{ width: '100%' }}
                 options={[
-                  { label: 'By Customer Name', value: 'name' },
-                  { label: 'By Account Number', value: 'number' },
+                  { label: 'By Name', value: 'name' },
+                  { label: 'By Account', value: 'number' },
                 ]}
               />
             </div>
-          </div>
+          </Col>
 
-          <div>
-            <Text strong>Business Unit</Text>
-            <div style={{ marginTop: 8 }}>
+          <Col xs={24} sm={12} md={8}>
+            <div>
+              <Text strong style={{ display: 'block', marginBottom: 8 }}>Business Unit</Text>
               <Select
-                placeholder="Select a business unit"
+                placeholder="Select business unit (optional)"
                 value={businessUnitId}
                 onChange={(value) => setBusinessUnitId(value)}
-                style={{ width: 300 }}
+                style={{ width: '100%' }}
                 options={buOptions}
                 allowClear
+                loading={buOptions.length === 0}
               />
             </div>
-          </div>
+          </Col>
 
-          <div>
-            <Text strong>Search Term</Text>
-            <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <Input
-                placeholder={searchType === 'name' ? 'Enter customer name (e.g. ABC Corp)' : 'Enter account number (e.g. 123456)'}
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                onPressEnter={handleSearch}
-                style={{ flex: 1, maxWidth: 400 }}
-                allowClear
-              />
-              <Button
-                type="primary"
-                icon={<SearchOutlined />}
-                onClick={handleSearch}
-                loading={loading}
-              >
-                Search
-              </Button>
-              {lastApiDetails.url && (
+          <Col xs={24} sm={24} md={10}>
+            <div>
+              <Text strong style={{ display: 'block', marginBottom: 8 }}>Search Term</Text>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Input
+                  placeholder={searchType === 'name' ? 'Enter customer name' : 'Enter account number'}
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  onPressEnter={handleSearch}
+                  allowClear
+                  style={{ flex: 1 }}
+                />
+                <Button
+                  type="primary"
+                  icon={<SearchOutlined />}
+                  onClick={handleSearch}
+                  loading={loading}
+                />
                 <Button
                   type="text"
                   icon={<ApiOutlined style={{ color: REDWOOD.info }} />}
                   onClick={() => setApiDrawerOpen(true)}
                   title="View API details"
                 />
-              )}
+              </div>
             </div>
-          </div>
-        </Space>
+          </Col>
+        </Row>
       </Card>
+
+      {/* API Details Drawer */}
+      <Drawer
+        title={<Space><ApiOutlined /> API Details</Space>}
+        placement="right"
+        onClose={() => setApiDrawerOpen(false)}
+        open={apiDrawerOpen}
+        width={700}
+      >
+        {lastApiDetails.url || searchText.trim() ? (
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            <div>
+              <Text strong>SOAP Endpoint</Text>
+              <div
+                style={{
+                  backgroundColor: REDWOOD.neutral100,
+                  padding: 12,
+                  borderRadius: 6,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  wordBreak: 'break-all',
+                  marginTop: 8,
+                }}
+              >
+                {lastApiDetails.url || `${getFusionInstanceUrl() || ORACLE_SOAP_CONFIG.prod.baseUrl}`}
+              </div>
+            </div>
+            <Divider style={{ margin: '16px 0' }} />
+            <div>
+              <Text strong>SOAP Envelope</Text>
+              <div
+                style={{
+                  backgroundColor: REDWOOD.neutral100,
+                  padding: 12,
+                  borderRadius: 6,
+                  fontFamily: 'monospace',
+                  fontSize: 10,
+                  overflow: 'auto',
+                  maxHeight: 400,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  marginTop: 8,
+                }}
+              >
+                {lastApiDetails.envelope || 'Run a search to see the payload'}
+              </div>
+            </div>
+          </Space>
+        ) : (
+          <Empty description="Run a search to view API details" />
+        )}
+      </Drawer>
 
       {loading && (
         <div style={{ textAlign: 'center', padding: '60px 20px' }}>
@@ -271,57 +320,6 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
         </div>
       )}
 
-      {/* API Details Drawer */}
-      <Drawer
-        title={<Space><ApiOutlined /> API Details</Space>}
-        placement="right"
-        onClose={() => setApiDrawerOpen(false)}
-        open={apiDrawerOpen}
-        width={600}
-      >
-        {lastApiDetails.url ? (
-          <Space direction="vertical" style={{ width: '100%' }} size="large">
-            <div>
-              <Text strong>SOAP Endpoint</Text>
-              <div
-                style={{
-                  backgroundColor: REDWOOD.neutral100,
-                  padding: 12,
-                  borderRadius: 6,
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  wordBreak: 'break-all',
-                  marginTop: 8,
-                }}
-              >
-                {lastApiDetails.url}
-              </div>
-            </div>
-            <Divider style={{ margin: '16px 0' }} />
-            <div>
-              <Text strong>SOAP Envelope</Text>
-              <div
-                style={{
-                  backgroundColor: REDWOOD.neutral100,
-                  padding: 12,
-                  borderRadius: 6,
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  overflow: 'auto',
-                  maxHeight: 400,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  marginTop: 8,
-                }}
-              >
-                {lastApiDetails.envelope}
-              </div>
-            </div>
-          </Space>
-        ) : (
-          <Empty description="No API details available" />
-        )}
-      </Drawer>
     </div>
   );
 };
