@@ -38,15 +38,16 @@ const ApiInspectorModal: React.FC<{
 
   // Login endpoint details
   const loginBaseUrl = selectedInstance || currentCompanyConfig?.fusionBaseUrl;
-  const loginEndpoint = `${loginBaseUrl}/fscmRestApi/resources/11.13.18.05/login`;
+  const loginEndpoint = `${loginBaseUrl}/xmlpserver/services/v2/SecurityService`;
 
   const apiEndpoints = [
     {
-      name: '🔐 Fusion Login Endpoint (Used during Sign-in)',
+      name: '🔐 Fusion SOAP Login Endpoint (Used during Sign-in)',
       baseUrl: loginBaseUrl,
-      resource: '/fscmRestApi/resources/11.13.18.05/login',
+      resource: '/xmlpserver/services/v2/SecurityService',
       method: 'POST',
-      description: 'Authentication endpoint for Oracle Fusion',
+      description: 'SOAP-based authentication endpoint for Oracle Fusion',
+      contentType: 'text/xml; charset=UTF-8',
       fullUrl: loginEndpoint,
     },
     {
@@ -143,11 +144,18 @@ const ApiInspectorModal: React.FC<{
             )}
           </div>
           <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>{endpoint.description}</div>
-          {endpoint.method && (
-            <div style={{ background: '#f0f0f0', padding: '6px 8px', borderRadius: 3, marginBottom: 8, fontSize: 11, display: 'inline-block' }}>
-              <Tag color={endpoint.method === 'POST' ? 'blue' : 'green'}>{endpoint.method}</Tag>
-            </div>
-          )}
+          <div style={{ marginBottom: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {endpoint.method && (
+              <div style={{ background: '#f0f0f0', padding: '6px 8px', borderRadius: 3, fontSize: 11, display: 'inline-block' }}>
+                <Tag color={endpoint.method === 'POST' ? 'blue' : 'green'}>{endpoint.method}</Tag>
+              </div>
+            )}
+            {endpoint.contentType && (
+              <div style={{ background: '#f0f0f0', padding: '6px 8px', borderRadius: 3, fontSize: 11, display: 'inline-block' }}>
+                <Tag color="orange">{endpoint.contentType}</Tag>
+              </div>
+            )}
+          </div>
           <div style={{ background: '#fafafa', padding: '8px', borderRadius: 4, marginBottom: 8, fontSize: 11 }}>
             <div><strong>Base URL:</strong></div>
             <code style={{ wordBreak: 'break-all', fontSize: 11 }}>{endpoint.baseUrl || 'Not configured'}</code>
@@ -159,12 +167,14 @@ const ApiInspectorModal: React.FC<{
           {idx === 0 && (
             <div style={{ marginTop: 10, padding: 8, background: '#e6f7ff', borderRadius: 3, borderLeft: '3px solid #1890ff' }}>
               <Text type="secondary" style={{ fontSize: 11 }}>
-                <strong>💡 Troubleshooting HTTP 500 Errors:</strong>
+                <strong>💡 This is a SOAP endpoint (not REST)</strong>
                 <ol style={{ marginTop: 6, paddingLeft: 16, marginBottom: 0 }}>
                   <li>Verify the URL is correct for your Fusion instance</li>
                   <li>Check your username/password combination</li>
                   <li>Ensure the Fusion instance is running and accessible</li>
-                  <li>Try "Copy" button and test the URL in an API client (Postman, curl)</li>
+                  <li>Content-Type must be: <code style={{ background: '#fff', padding: '2px 4px' }}>text/xml; charset=UTF-8</code></li>
+                  <li>Body must be SOAP XML format, not JSON</li>
+                  <li>For HTTP 500 errors: check Fusion logs or verify credentials are correct</li>
                 </ol>
               </Text>
             </div>
