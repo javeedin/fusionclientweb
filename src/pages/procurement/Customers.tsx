@@ -435,7 +435,7 @@ const Customers: React.FC = () => {
 
   return (
     <Layout style={{ minHeight: '100vh', background: REDWOOD.neutral100 }}>
-      <Content style={{ padding: '24px', maxWidth: 1400, margin: '0 auto' }}>
+      <Content style={{ padding: '24px', maxWidth: 'calc(100% - 48px)', margin: '0 auto' }}>
         <Breadcrumb style={{ marginBottom: 24 }} items={[{ icon: <HomeOutlined />, title: <Link to="/procurement">Procurement</Link> }, { title: 'Customers' }]} />
 
         <Card style={{ marginBottom: 24 }}>
