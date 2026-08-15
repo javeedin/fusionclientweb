@@ -36,7 +36,19 @@ const ApiInspectorModal: React.FC<{
 }> = ({ open, onClose, selectedCompany, selectedInstance, fusionInstances, currentCompanyConfig }) => {
   const instanceName = fusionInstances.find(i => i.url === selectedInstance)?.name || 'Unknown';
 
+  // Login endpoint details
+  const loginBaseUrl = selectedInstance || currentCompanyConfig?.fusionBaseUrl;
+  const loginEndpoint = `${loginBaseUrl}/fscmRestApi/resources/11.13.18.05/login`;
+
   const apiEndpoints = [
+    {
+      name: '🔐 Fusion Login Endpoint (Used during Sign-in)',
+      baseUrl: loginBaseUrl,
+      resource: '/fscmRestApi/resources/11.13.18.05/login',
+      method: 'POST',
+      description: 'Authentication endpoint for Oracle Fusion',
+      fullUrl: loginEndpoint,
+    },
     {
       name: 'Fusion Cloud REST API',
       baseUrl: selectedInstance || currentCompanyConfig?.fusionBaseUrl,
@@ -106,30 +118,57 @@ const ApiInspectorModal: React.FC<{
         <Text strong style={{ fontSize: 14 }}>Available API Endpoints (PODs):</Text>
       </div>
 
-      {apiEndpoints.map((endpoint, idx) => (
-        <div key={idx} style={{ marginBottom: 16, padding: '12px', border: '1px solid #e8e8e8', borderRadius: 4 }}>
+      {apiEndpoints.map((endpoint: any, idx) => (
+        <div
+          key={idx}
+          style={{
+            marginBottom: 16,
+            padding: '12px',
+            border: idx === 0 ? '2px solid #C74634' : '1px solid #e8e8e8',
+            borderRadius: 4,
+            background: idx === 0 ? '#fff7f5' : '#fff',
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <Text strong>{endpoint.name}</Text>
-            {endpoint.baseUrl && (
+            <Text strong style={{ color: idx === 0 ? '#C74634' : 'inherit' }}>{endpoint.name}</Text>
+            {(endpoint.baseUrl || endpoint.fullUrl) && (
               <Tooltip title="Copy full URL">
                 <Button
                   type="text"
                   size="small"
                   icon={<CopyOutlined />}
-                  onClick={() => copyToClipboard(`${endpoint.baseUrl}${endpoint.resource}`)}
+                  onClick={() => copyToClipboard(endpoint.fullUrl || `${endpoint.baseUrl}${endpoint.resource}`)}
                 />
               </Tooltip>
             )}
           </div>
           <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>{endpoint.description}</div>
+          {endpoint.method && (
+            <div style={{ background: '#f0f0f0', padding: '6px 8px', borderRadius: 3, marginBottom: 8, fontSize: 11, display: 'inline-block' }}>
+              <Tag color={endpoint.method === 'POST' ? 'blue' : 'green'}>{endpoint.method}</Tag>
+            </div>
+          )}
           <div style={{ background: '#fafafa', padding: '8px', borderRadius: 4, marginBottom: 8, fontSize: 11 }}>
             <div><strong>Base URL:</strong></div>
-            <code style={{ wordBreak: 'break-all' }}>{endpoint.baseUrl || 'Not configured'}</code>
+            <code style={{ wordBreak: 'break-all', fontSize: 11 }}>{endpoint.baseUrl || 'Not configured'}</code>
           </div>
           <div style={{ background: '#fafafa', padding: '8px', borderRadius: 4, fontSize: 11 }}>
             <div><strong>Resource Path:</strong></div>
-            <code>{endpoint.resource}</code>
+            <code style={{ fontSize: 11 }}>{endpoint.resource}</code>
           </div>
+          {idx === 0 && (
+            <div style={{ marginTop: 10, padding: 8, background: '#e6f7ff', borderRadius: 3, borderLeft: '3px solid #1890ff' }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                <strong>💡 Troubleshooting HTTP 500 Errors:</strong>
+                <ol style={{ marginTop: 6, paddingLeft: 16, marginBottom: 0 }}>
+                  <li>Verify the URL is correct for your Fusion instance</li>
+                  <li>Check your username/password combination</li>
+                  <li>Ensure the Fusion instance is running and accessible</li>
+                  <li>Try "Copy" button and test the URL in an API client (Postman, curl)</li>
+                </ol>
+              </Text>
+            </div>
+          )}
         </div>
       ))}
     </Modal>
