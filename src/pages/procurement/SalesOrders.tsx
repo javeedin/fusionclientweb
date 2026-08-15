@@ -4358,9 +4358,13 @@ const OnhandPanel: React.FC<{ org?: string; subinv?: string; ccy?: string; onAdd
 
       if (type === 'itemNumber') {
         q += `;ItemNumber LIKE '${query.trim()}%'`;
-        capturedUrl = `${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&onlyData=true&limit=100`;
+        capturedUrl = `${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&expand=lots&onlyData=true&limit=100`;
+        const r = await fetch(capturedUrl, { headers: getHeaders() });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        balances.push(...(d.items ?? []));
       } else {
-        // For description search, we'll fetch items by description from itemCosts first
+        // For description search, fetch items by description from itemCosts first
         const itemRes = await fetch(`${LATEST_URL}/itemCosts?q=${encodeURIComponent(`ItemDescription LIKE '${query.trim()}%'`)}&onlyData=true&limit=100`, { headers: getHeaders() });
         if (!itemRes.ok) throw new Error(`HTTP ${itemRes.status} searching items`);
         const itemData = await itemRes.json();
@@ -4377,30 +4381,17 @@ const OnhandPanel: React.FC<{ org?: string; subinv?: string; ccy?: string; onAdd
         // Capture URL for first item search
         if (itemNumbers.length > 0) {
           const qry = `OrganizationCode=${org}${subinv ? `;SubinventoryCode=${subinv}` : ''};ItemNumber=${itemNumbers[0]}`;
-          capturedUrl = `${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(qry)}&onlyData=true&limit=100`;
+          capturedUrl = `${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(qry)}&expand=lots&onlyData=true&limit=100`;
         }
 
-        // Search on-hand for each item number
+        // Fetch on-hand for each item with expand=lots (single call per item, includes lot details)
         await Promise.all(itemNumbers.map(async (itemNum: string) => {
-          for (let i = 0; i < 5; i++) {
-            const qry = `OrganizationCode=${org}${subinv ? `;SubinventoryCode=${subinv}` : ''};ItemNumber=${itemNum}`;
-            const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(qry)}&onlyData=true&limit=100&offset=${i * 100}`, { headers: getHeaders() });
-            if (!r.ok) return;
-            const d = await r.json();
-            balances.push(...(d.items ?? []));
-            if (!d.hasMore) break;
-          }
-        }));
-      }
-
-      if (type === 'itemNumber') {
-        for (let i = 0; i < 5; i++) {
-          const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(q)}&onlyData=true&limit=100&offset=${i * 100}`, { headers: getHeaders() });
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const qry = `OrganizationCode=${org}${subinv ? `;SubinventoryCode=${subinv}` : ''};ItemNumber=${itemNum}`;
+          const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(qry)}&expand=lots&onlyData=true&limit=100`, { headers: getHeaders() });
+          if (!r.ok) return;
           const d = await r.json();
           balances.push(...(d.items ?? []));
-          if (!d.hasMore) break;
-        }
+        }));
       }
 
       // Store captured URL for API drawer
