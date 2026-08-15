@@ -651,58 +651,61 @@ const CustomerSiteActivities: React.FC = () => {
   };
 
   const exportOverviewToExcel = () => {
-    if (!overviewData) return;
+    if (!overviewData || !overviewCustomerKey) return;
     const overview = overviewData;
-    const customerName = detailsTabs.find(t => t.key === overviewCustomerKey)?.site?.CustomerName || 'Unknown';
+    const customerSite = detailsTabs.find(t => t.key === overviewCustomerKey)?.site;
+    const customerName = customerSite?.CustomerName || 'Unknown';
     const wb = XLSX.utils.book_new();
 
-    // Overview Sheet - includes KPI, Health, Open Items
-    const overviewData_sheet: any[] = [];
-    overviewData_sheet.push(['RECEIVABLES OVERVIEW - OVERVIEW']);
-    overviewData_sheet.push(['Customer:', customerName]);
-    overviewData_sheet.push([]);
+    // ────── OVERVIEW SHEET ──────
+    const overviewRows: any[] = [];
+    overviewRows.push([`${customerName} — RECEIVABLES OVERVIEW`]);
+    overviewRows.push([]);
+    overviewRows.push(['Report as of', new Date().toLocaleDateString('en-US')]);
+    overviewRows.push([]);
 
-    // Current Balance Position
-    overviewData_sheet.push(['1 · CURRENT BALANCE POSITION']);
-    overviewData_sheet.push(['Item', 'Amount (MUR)', 'Count']);
-    overviewData_sheet.push(['Open invoice balance', overview.openBalance, overview.openInvoiceCount]);
-    overviewData_sheet.push(['Unapplied credit memos', overview.openCreditBalance, overview.openCreditCount]);
-    overviewData_sheet.push(['NET OPEN RECEIVABLES', overview.netOpen, overview.openInvoiceCount + overview.openCreditCount]);
-    overviewData_sheet.push(['— of which past due', overview.pastDueBalance, overview.pastDueBalance > 0 ? overview.ageingBuckets['1-30 days'].count + overview.ageingBuckets['31-60 days'].count + overview.ageingBuckets['61-90 days'].count + overview.ageingBuckets['91-180 days'].count + overview.ageingBuckets['180+ days'].count : 0]);
-    overviewData_sheet.push([]);
+    // 1 · CURRENT BALANCE POSITION
+    overviewRows.push(['1 · CURRENT BALANCE POSITION']);
+    overviewRows.push(['Item', 'Amount (MUR)', 'Items']);
+    overviewRows.push(['Open invoice balance (as exported)', overview.openBalance, overview.openInvoiceCount]);
+    overviewRows.push(['Unapplied credit memos (on account)', overview.openCreditBalance, overview.openCreditCount]);
+    overviewRows.push(['NET OPEN RECEIVABLES', overview.netOpen, overview.openInvoiceCount + overview.openCreditCount, 'Net position']);
+    overviewRows.push(['— of which past due', overview.pastDueBalance, overview.pastDueBalance > 0 ? overview.ageingBuckets['1-30 days'].count + overview.ageingBuckets['31-60 days'].count + overview.ageingBuckets['61-90 days'].count + overview.ageingBuckets['91-180 days'].count + overview.ageingBuckets['180+ days'].count : 0]);
+    overviewRows.push([]);
 
-    // Ageing of Open Receivables
-    overviewData_sheet.push(['2 · AGEING OF OPEN RECEIVABLES']);
-    overviewData_sheet.push(['Ageing bucket', 'Amount (MUR)', '% of open', 'Count']);
+    // 2 · AGEING OF OPEN RECEIVABLES
+    overviewRows.push(['2 · AGEING OF OPEN RECEIVABLES']);
+    overviewRows.push(['Ageing bucket', 'Amount (MUR)', '% of open', 'Items']);
     Object.entries(overview.ageingBuckets).forEach(([bucket, data]) => {
-      const pct = overview.openBalance > 0 ? ((data.amount / overview.openBalance) * 100).toFixed(1) : 0;
-      overviewData_sheet.push([bucket, data.amount, pct + '%', data.count]);
+      const pct = overview.openBalance > 0 ? (data.amount / overview.openBalance) * 100 : 0;
+      overviewRows.push([bucket, data.amount, pct, data.count]);
     });
-    overviewData_sheet.push(['Total', overview.openBalance, '100.0%', overview.openInvoiceCount]);
-    overviewData_sheet.push([]);
+    overviewRows.push(['Total', overview.openBalance, '100%', overview.openInvoiceCount]);
+    overviewRows.push([]);
 
-    // KPI & Health
-    overviewData_sheet.push(['3 · KEY PERFORMANCE INDICATORS']);
-    overviewData_sheet.push(['Metric', 'Value']);
-    overviewData_sheet.push(['Total Invoiced', overview.totalInvoiced]);
-    overviewData_sheet.push(['Total Credits', overview.totalCredits]);
-    overviewData_sheet.push(['Closed Invoices', overview.closedInvoices]);
-    overviewData_sheet.push(['Settlement Rate', (overview.paymentRate * 100).toFixed(2) + '%']);
-    overviewData_sheet.push([]);
+    // 3 · KEY PERFORMANCE INDICATORS
+    overviewRows.push(['3 · KEY PERFORMANCE INDICATORS']);
+    overviewRows.push(['Metric', 'Value']);
+    overviewRows.push(['Total invoiced (lifetime)', overview.totalInvoiced]);
+    overviewRows.push(['Total credits (lifetime)', overview.totalCredits]);
+    overviewRows.push(['Closed invoices', overview.closedInvoices]);
+    overviewRows.push(['Settlement rate', overview.paymentRate]);
+    overviewRows.push([]);
 
-    overviewData_sheet.push(['4 · CUSTOMER HEALTH SCORECARD']);
-    overviewData_sheet.push(['Metric', 'Value']);
-    overviewData_sheet.push(['Days Sales Outstanding (DSO)', overview.totalInvoiced > 0 ? ((overview.openBalance / overview.totalInvoiced) * 365).toFixed(0) : '-']);
-    overviewData_sheet.push(['Past Due Ratio', overview.totalInvoiced > 0 ? ((overview.pastDueBalance / overview.totalInvoiced) * 100).toFixed(2) + '%' : '-']);
-    overviewData_sheet.push(['On Time Payment Rate', overview.onTimeRate.toFixed(2) + '%']);
-    overviewData_sheet.push(['Average Settlement Days', overview.avgSettlementDays]);
-    overviewData_sheet.push([]);
+    // 4 · CUSTOMER HEALTH SCORECARD
+    overviewRows.push(['4 · CUSTOMER HEALTH SCORECARD']);
+    overviewRows.push(['Metric', 'Value']);
+    overviewRows.push(['Days Sales Outstanding (DSO)', overview.totalInvoiced > 0 ? (overview.openBalance / overview.totalInvoiced) * 365 : 0]);
+    overviewRows.push(['Past due ratio', overview.totalInvoiced > 0 ? (overview.pastDueBalance / overview.totalInvoiced) : 0]);
+    overviewRows.push(['On-time payment rate', overview.onTimeRate / 100]);
+    overviewRows.push(['Average settlement days', overview.avgSettlementDays]);
+    overviewRows.push([]);
 
-    // Open Items
-    overviewData_sheet.push(['5 · OPEN ITEMS DETAIL (oldest due date first)']);
-    overviewData_sheet.push(['Invoice #', 'Invoice Date', 'Due Date', 'Balance', 'Days Late', 'Status']);
-    overview.openItems.forEach(item => {
-      overviewData_sheet.push([
+    // 5 · OPEN ITEMS DETAIL
+    overviewRows.push(['5 · OPEN ITEMS DETAIL (oldest due date first)']);
+    overviewRows.push(['Invoice #', 'Invoice date', 'Due date', 'Open balance', 'Days late', 'Status']);
+    overview.openItems.slice(0, 50).forEach(item => {
+      overviewRows.push([
         item['TransactionNumber'] || '-',
         item['TransactionDate'] ? new Date(item['TransactionDate'] as string).toLocaleDateString('en-US') : '-',
         item['PaymentScheduleDueDate'] ? new Date(item['PaymentScheduleDueDate'] as string).toLocaleDateString('en-US') : '-',
@@ -712,83 +715,136 @@ const CustomerSiteActivities: React.FC = () => {
       ]);
     });
 
-    const overviewSheet = XLSX.utils.aoa_to_sheet(overviewData_sheet);
-    overviewSheet['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 12 }, { wch: 12 }];
+    const overviewSheet = XLSX.utils.aoa_to_sheet(overviewRows);
+    overviewSheet['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 12 }, { wch: 28 }];
+    // Format as currency
+    for (let row = 9; row <= 13; row++) {
+      if (overviewSheet[`B${row}`]) overviewSheet[`B${row}`].z = '$#,##0.00';
+    }
     XLSX.utils.book_append_sheet(wb, overviewSheet, 'Overview');
 
-    // Customer History Sheet
-    const historyData_sheet: any[] = [];
-    historyData_sheet.push(['RECEIVABLES OVERVIEW - CUSTOMER HISTORY']);
-    historyData_sheet.push(['Customer:', customerName]);
-    historyData_sheet.push([]);
+    // ────── CUSTOMER HISTORY SHEET ──────
+    const historyRows: any[] = [];
+    historyRows.push([`${customerName} — CUSTOMER HISTORY & BEHAVIOUR ANALYSIS`]);
+    historyRows.push([]);
+    historyRows.push(['As of', new Date().toLocaleDateString('en-US')]);
+    historyRows.push([]);
 
-    // Year-by-year
-    historyData_sheet.push(['1 · YEAR-BY-YEAR TRADING & PAYMENT HISTORY']);
-    historyData_sheet.push(['Year', 'Invoices', 'Gross Amount', 'Avg Invoice', 'Credit Count', 'Credit Value', 'Net Sales']);
-    const sortedYears = Object.keys(overview.yearData)
-      .map(y => parseInt(y))
-      .sort((a, b) => b - a);
+    // 1 · YEAR-BY-YEAR TRADING
+    historyRows.push(['1 · YEAR-BY-YEAR TRADING & PAYMENT HISTORY']);
+    historyRows.push(['Year', 'Invoices', 'Gross invoiced', 'Avg invoice', 'Credits', 'Credit value', 'Net sales']);
+    const sortedYears = Object.keys(overview.yearData).map(y => parseInt(y)).sort((a, b) => b - a);
     sortedYears.forEach(year => {
       const data = overview.yearData[year];
       const avgInv = data.invoices > 0 ? data.grossAmount / data.invoices : 0;
       const netSales = data.grossAmount + data.creditAmount;
-      historyData_sheet.push([year, data.invoices, data.grossAmount, avgInv, data.creditCount, data.creditAmount, netSales]);
+      historyRows.push([year, data.invoices, data.grossAmount, avgInv, data.creditCount, data.creditAmount, netSales]);
     });
-    historyData_sheet.push([]);
+    historyRows.push(['Total', sortedYears.reduce((s, y) => s + overview.yearData[y].invoices, 0), sortedYears.reduce((s, y) => s + overview.yearData[y].grossAmount, 0), '', sortedYears.reduce((s, y) => s + overview.yearData[y].creditCount, 0), sortedYears.reduce((s, y) => s + overview.yearData[y].creditAmount, 0)]);
+    historyRows.push([]);
 
-    // Monthly Activity
-    historyData_sheet.push(['2 · MONTHLY ACTIVITY (Last 12 Months)']);
-    historyData_sheet.push(['Month', 'Invoices', 'Amount', 'Credits', 'Credit Amount']);
+    // 2 · MONTHLY ACTIVITY
+    historyRows.push(['2 · MONTHLY ACTIVITY — LAST 12 MONTHS']);
+    historyRows.push(['Month', 'Invoices', 'Gross invoiced', 'Credit memos', 'Net sales']);
     const sortedMonths = Object.keys(overview.monthlyData).sort().reverse().slice(0, 12);
     sortedMonths.forEach(month => {
       const data = overview.monthlyData[month];
-      historyData_sheet.push([month, data.invoices, data.amount, data.credits, data.creditAmount]);
+      historyRows.push([month, data.invoices, data.amount, data.creditAmount, data.amount + data.creditAmount]);
     });
-    historyData_sheet.push([]);
+    historyRows.push([]);
 
-    // Credit Terms Mix
-    historyData_sheet.push(['3 · CREDIT TERMS MIX (Days between invoice and due date)']);
-    historyData_sheet.push(['Term Bucket', 'Count', '% of Invoices']);
-    const totalInvoices = Object.values(overview.creditTermsBuckets).reduce((a, b) => a + b, 0);
+    // 3 · CREDIT TERMS MIX
+    historyRows.push(['3 · HOW THEY BUY — CREDIT TERMS MIX (days between invoice date and due date)']);
+    historyRows.push(['Payment terms', 'Invoices (lifetime)', '% of invoices', 'Gross value', '% of value']);
+    const totalInvValue = Object.values(overview.basketBuckets).reduce((a, b) => a + b, 0);
     Object.entries(overview.creditTermsBuckets).forEach(([term, count]) => {
-      const pct = totalInvoices > 0 ? ((count / totalInvoices) * 100).toFixed(2) : 0;
-      historyData_sheet.push([term, count, pct + '%']);
+      const pct = totalInvValue > 0 ? (count / totalInvValue) * 100 : 0;
+      historyRows.push([term, count, count / totalInvValue, 0, 0]);
     });
-    historyData_sheet.push([]);
+    historyRows.push([]);
 
-    // Basket Size
-    historyData_sheet.push(['4 · BASKET SIZE - INVOICE VALUE DISTRIBUTION']);
-    historyData_sheet.push(['Value Range', 'Count', '% of Invoices']);
+    // 4 · BASKET SIZE
+    historyRows.push(['4 · BASKET SIZE — INVOICE VALUE DISTRIBUTION']);
+    historyRows.push(['Value range', 'Invoices (lifetime)', '% of invoices']);
     Object.entries(overview.basketBuckets).forEach(([range, count]) => {
-      const pct = totalInvoices > 0 ? ((count / totalInvoices) * 100).toFixed(2) : 0;
-      historyData_sheet.push([range, count, pct + '%']);
+      const pct = totalInvValue > 0 ? (count / totalInvValue) * 100 : 0;
+      historyRows.push([range, count, pct]);
     });
-    historyData_sheet.push([]);
+    historyRows.push([]);
 
-    // Payment Behaviour
-    historyData_sheet.push(['5 · PAYMENT BEHAVIOUR']);
-    historyData_sheet.push(['Metric', 'Value']);
-    historyData_sheet.push(['On-Time Payment Rate', overview.onTimeRate.toFixed(2) + '%']);
-    historyData_sheet.push(['Average Settlement Days', overview.avgSettlementDays]);
-    historyData_sheet.push([]);
+    // 5 · PAYMENT BEHAVIOUR
+    historyRows.push(['5 · PAYMENT BEHAVIOUR — WHEN INVOICES ACTUALLY SETTLE']);
+    historyRows.push(['Metric', 'Value']);
+    historyRows.push(['On-time payment rate %', overview.onTimeRate]);
+    historyRows.push(['Average settlement days', overview.avgSettlementDays]);
+    historyRows.push([]);
 
-    // Returns Analysis
-    historyData_sheet.push(['6 · RETURNS & CREDIT MEMO ANALYSIS']);
-    historyData_sheet.push(['Metric', 'Value']);
-    historyData_sheet.push(['Return Ratio', overview.returnsRatio.toFixed(2) + '%']);
-    historyData_sheet.push(['Average Credit Memo Value', overview.avgCreditMemo]);
-    historyData_sheet.push([]);
+    // 6 · RETURNS ANALYSIS
+    historyRows.push(['6 · RETURNS & CREDIT MEMO ANALYSIS — INVOICES VS RETURNS']);
+    historyRows.push(['Metric', 'Value']);
+    historyRows.push(['Return ratio %', overview.returnsRatio]);
+    historyRows.push(['Average credit memo value', overview.avgCreditMemo]);
+    historyRows.push([]);
 
-    // Third Party Settlements
-    historyData_sheet.push(['7 · SETTLEMENTS BY THIRD PARTIES']);
-    historyData_sheet.push(['Paid by Others Count', overview.settledInvoices.filter((row: any) => row['ReceiptType'] === 'Paid by Others').length]);
+    // 7 · THIRD PARTY SETTLEMENTS
+    historyRows.push(['7 · SETTLEMENTS MADE BY THIRD PARTIES ("Paid by Others")']);
+    historyRows.push(['Paid by others count', overview.settledInvoices.filter((row: any) => row['ReceiptType'] === 'Paid by Others').length]);
+    historyRows.push([]);
 
-    const historySheet = XLSX.utils.aoa_to_sheet(historyData_sheet);
-    historySheet['!cols'] = [{ wch: 30 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
+    // 8 · KEY INSIGHTS
+    historyRows.push(['8 · KEY INSIGHTS']);
+    const insights = [];
+    if (overview.paymentRate > 0.8) insights.push('✓ Strong payment discipline with >80% settlement rate');
+    if (overview.onTimeRate > 80) insights.push('✓ Excellent on-time payment behavior (>80%)');
+    if (overview.pastDueBalance > 0) insights.push(`⚠ Past due balance of MUR ${overview.pastDueBalance.toLocaleString('en-US', { maximumFractionDigits: 0 })}`);
+    if (overview.returnsRatio > 5) insights.push(`⚠ Return ratio of ${overview.returnsRatio.toFixed(1)}% is notable`);
+    if (insights.length === 0) insights.push('Customer account profile appears normal');
+    insights.forEach(insight => historyRows.push([insight]));
+
+    const historySheet = XLSX.utils.aoa_to_sheet(historyRows);
+    historySheet['!cols'] = [{ wch: 35 }, { wch: 18 }, { wch: 14 }, { wch: 18 }, { wch: 14 }];
     XLSX.utils.book_append_sheet(wb, historySheet, 'Customer History');
 
+    // ────── AR INVOICES DETAIL SHEET ──────
+    if (childStates[overviewCustomerKey]?.transactionPaymentSchedules?.data) {
+      const invoicesData = childStates[overviewCustomerKey].transactionPaymentSchedules.data;
+      const invoiceRows = [['Invoice #', 'Date', 'Due Date', 'Amount', 'Balance', 'Status', 'Days Late']];
+      invoicesData.slice(0, 100).forEach((inv: any) => {
+        invoiceRows.push([
+          inv['TransactionNumber'] || '',
+          inv['TransactionDate'] ? new Date(inv['TransactionDate'] as string).toLocaleDateString('en-US') : '',
+          inv['PaymentScheduleDueDate'] ? new Date(inv['PaymentScheduleDueDate'] as string).toLocaleDateString('en-US') : '',
+          inv['TotalOriginalAmount'] || 0,
+          inv['TotalBalanceAmount'] || 0,
+          inv['InstallmentStatus'] || '',
+          inv['PaymentDaysLate'] || 0
+        ]);
+      });
+      const invoiceSheet = XLSX.utils.aoa_to_sheet(invoiceRows);
+      invoiceSheet['!cols'] = [{ wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 12 }];
+      XLSX.utils.book_append_sheet(wb, invoiceSheet, 'AR Invoices');
+    }
+
+    // ────── CREDIT MEMOS DETAIL SHEET ──────
+    if (childStates[overviewCustomerKey]?.creditMemos?.data) {
+      const creditsData = childStates[overviewCustomerKey].creditMemos.data;
+      const creditRows = [['Credit #', 'Date', 'Amount', 'Balance', 'Status']];
+      creditsData.slice(0, 100).forEach((cm: any) => {
+        creditRows.push([
+          cm['TransactionNumber'] || '',
+          cm['CreditMemoDate'] ? new Date(cm['CreditMemoDate'] as string).toLocaleDateString('en-US') : '',
+          cm['TotalOriginalAmount'] || 0,
+          cm['TotalBalanceAmount'] || 0,
+          cm['CreditMemoStatus'] || ''
+        ]);
+      });
+      const creditSheet = XLSX.utils.aoa_to_sheet(creditRows);
+      creditSheet['!cols'] = [{ wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }];
+      XLSX.utils.book_append_sheet(wb, creditSheet, 'Credit Memos');
+    }
+
     // Save the file
-    const fileName = `Receivables_Overview_${customerName}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    const fileName = `Receivables_Overview_${customerName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
     XLSX.writeFile(wb, fileName);
   };
 
