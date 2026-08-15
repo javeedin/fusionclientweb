@@ -1,9 +1,9 @@
 import { buildApexUrl } from '../../config/api.helper';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Layout, Breadcrumb, Typography, Card, Row, Col, Input, Tag, Collapse, Badge, Spin, Alert,
+  Layout, Breadcrumb, Typography, Card, Row, Col, Input, Tag, Collapse, Badge, Spin, Alert, Button, Drawer, Space, Divider, message,
 } from 'antd';
-import { HomeOutlined, ApartmentOutlined, SearchOutlined } from '@ant-design/icons';
+import { HomeOutlined, ApartmentOutlined, SearchOutlined, ApiOutlined, CopyOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 
 const { Content } = Layout;
@@ -77,10 +77,26 @@ const Subinventories: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [apiDrawerOpen, setApiDrawerOpen] = useState(false);
+  const [apiUrl, setApiUrl] = useState('');
+  const [apiResponse, setApiResponse] = useState('');
 
   useEffect(() => {
-    fetch(`${ORDS_BASE}/inventory/inventorywarehousesubinventory`)
-      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+    const url = `${ORDS_BASE}/inventory/inventorywarehousesubinventory`;
+    setApiUrl(url);
+    fetch(url)
+      .then(r => {
+        if (!r.ok) {
+          return r.text().then(text => {
+            setApiResponse(`HTTP ${r.status}: ${text}`);
+            throw new Error(`HTTP ${r.status}`);
+          });
+        }
+        return r.json().then(d => {
+          setApiResponse(JSON.stringify(d, null, 2));
+          return d;
+        });
+      })
       .then(d => { setRows(Array.isArray(d) ? d : (d.items ?? [])); })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
@@ -173,19 +189,27 @@ const Subinventories: React.FC = () => {
         </div>
 
         <div style={{ padding: 24 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 24 }}>
-            <div style={{
-              width: 52, height: 52, borderRadius: 12,
-              background: `linear-gradient(135deg, ${REDWOOD.teal} 0%, #007A74 100%)`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: `0 4px 14px ${REDWOOD.teal}40`,
-            }}>
-              <ApartmentOutlined style={{ fontSize: 26, color: '#fff' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 24, justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{
+                width: 52, height: 52, borderRadius: 12,
+                background: `linear-gradient(135deg, ${REDWOOD.teal} 0%, #007A74 100%)`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: `0 4px 14px ${REDWOOD.teal}40`,
+              }}>
+                <ApartmentOutlined style={{ fontSize: 26, color: '#fff' }} />
+              </div>
+              <div>
+                <Title level={2} style={{ margin: 0, color: REDWOOD.neutral900 }}>Subinventories</Title>
+                <Text type="secondary">Warehouse and subinventory hierarchy by business unit</Text>
+              </div>
             </div>
-            <div>
-              <Title level={2} style={{ margin: 0, color: REDWOOD.neutral900 }}>Subinventories</Title>
-              <Text type="secondary">Warehouse and subinventory hierarchy by business unit</Text>
-            </div>
+            <Button
+              type="text"
+              icon={<ApiOutlined style={{ color: REDWOOD.info, fontSize: 18 }} />}
+              onClick={() => setApiDrawerOpen(true)}
+              title="View API Details"
+            />
           </div>
 
           {loading && (
@@ -231,6 +255,72 @@ const Subinventories: React.FC = () => {
             </>
           )}
         </div>
+
+        {/* API Details Drawer */}
+        <Drawer
+          title={<Space><ApiOutlined /> API Details</Space>}
+          placement="right"
+          onClose={() => setApiDrawerOpen(false)}
+          open={apiDrawerOpen}
+          width={700}
+        >
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            <div>
+              <Text strong style={{ color: REDWOOD.info }}>API Endpoint URL</Text>
+              <div style={{ marginTop: 8 }}>
+                <div
+                  style={{
+                    backgroundColor: REDWOOD.neutral100,
+                    padding: 12,
+                    borderRadius: 6,
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    wordBreak: 'break-all',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'flex-start',
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ flex: 1 }}>{apiUrl}</span>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CopyOutlined />}
+                    onClick={() => {
+                      navigator.clipboard.writeText(apiUrl);
+                      message.success('URL copied to clipboard');
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <Divider style={{ margin: '16px 0' }} />
+
+            <div>
+              <Text strong style={{ color: REDWOOD.info }}>Response</Text>
+              <div style={{ marginTop: 8 }}>
+                <div
+                  style={{
+                    backgroundColor: REDWOOD.neutral100,
+                    padding: 12,
+                    borderRadius: 6,
+                    fontFamily: 'monospace',
+                    fontSize: 10,
+                    overflow: 'auto',
+                    maxHeight: 400,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    border: `1px solid ${REDWOOD.neutral200}`,
+                  }}
+                >
+                  {apiResponse || 'Loading...'}
+                </div>
+              </div>
+            </div>
+          </Space>
+        </Drawer>
       </Content>
     </Layout>
   );
