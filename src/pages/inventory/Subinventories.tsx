@@ -1,8 +1,9 @@
 import { buildApexUrl } from '../../config/api.helper';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Layout, Breadcrumb, Typography, Card, Row, Col, Input, Tag, Collapse, Badge, Spin, Alert,
+  Layout, Breadcrumb, Typography, Card, Row, Col, Input, Tag, Badge, Spin, Alert, Table,
 } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import { HomeOutlined, ApartmentOutlined, SearchOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 
@@ -72,6 +73,49 @@ const matchesSearch = (q: string, ...vals: string[]) => {
   return vals.some(v => v.toLowerCase().includes(low));
 };
 
+interface SubinventoryData {
+  key: string;
+  warehouseCode: string;
+  warehouseName: string;
+  subinventoryCode: string;
+  subinventoryName: string;
+}
+
+const SubinventoriesTable: React.FC<{ data: SubinventoryData[] }> = ({ data }) => {
+  const [search, setSearch] = useState('');
+
+  const filtered = data.filter(d =>
+    !search || [d.warehouseCode, d.warehouseName, d.subinventoryCode, d.subinventoryName]
+      .some(v => String(v).toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const cols: ColumnsType<SubinventoryData> = [
+    { title: 'Warehouse', dataIndex: 'warehouseName', width: 180, render: (v, r) => <><Text strong style={{ color: REDWOOD.info }}>{r.warehouseCode}</Text><br /><Text type="secondary" style={{ fontSize: 11 }}>{v}</Text></> },
+    { title: 'Subinventory', dataIndex: 'subinventoryName', width: 200, render: (v, r) => <><Text strong style={{ color: REDWOOD.teal }}>{r.subinventoryCode}</Text><br /><Text type="secondary" style={{ fontSize: 11 }}>{v}</Text></> },
+  ];
+
+  return (
+    <>
+      <Input
+        placeholder="Search by warehouse or subinventory..."
+        prefix={<SearchOutlined style={{ color: REDWOOD.neutral600 }} />}
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        allowClear
+        style={{ marginBottom: 16, maxWidth: 500 }}
+      />
+      <Table
+        columns={cols}
+        dataSource={filtered}
+        rowKey="key"
+        pagination={{ pageSize: 20, showSizeChanger: true, showQuickJumper: true }}
+        size="small"
+        scroll={{ x: 600 }}
+      />
+    </>
+  );
+};
+
 const Subinventories: React.FC = () => {
   const [rows, setRows] = useState<SubinventoryRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -109,56 +153,25 @@ const Subinventories: React.FC = () => {
     return result;
   }, [hierarchy, search]);
 
-  const totalBUs = hierarchy.size;
   const totalWHs = useMemo(() => { let c = 0; hierarchy.forEach(bu => { c += bu.warehouses.size; }); return c; }, [hierarchy]);
   const totalSubs = useMemo(() => { let c = 0; hierarchy.forEach(bu => { bu.warehouses.forEach(wh => { c += wh.subinventories.length; }); }); return c; }, [hierarchy]);
 
-  const buPanels = useMemo(() => {
-    const panels: any[] = [];
+  const tableData = useMemo(() => {
+    const data: SubinventoryData[] = [];
     filteredHierarchy.forEach(bu => {
-      const whPanels: any[] = [];
       bu.warehouses.forEach(wh => {
-        whPanels.push({
-          key: wh.code,
-          label: (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Text strong style={{ color: REDWOOD.info, fontSize: 13 }}>{wh.code}</Text>
-              <Text style={{ fontSize: 13 }}>{wh.name}</Text>
-              <Badge count={wh.subinventories.length} style={{ backgroundColor: REDWOOD.teal }} />
-            </div>
-          ),
-          children: (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {wh.subinventories.map(s => (
-                <Tag key={s.code} style={{ borderRadius: 12, background: REDWOOD.teal + '18', borderColor: REDWOOD.teal, color: REDWOOD.teal, margin: 0 }}>
-                  <span style={{ fontWeight: 600, marginRight: 4 }}>{s.code}</span>
-                  <span style={{ fontSize: 11, color: REDWOOD.neutral600 }}>{s.name}</span>
-                </Tag>
-              ))}
-            </div>
-          ),
+        wh.subinventories.forEach(s => {
+          data.push({
+            key: `${wh.code}-${s.code}`,
+            warehouseCode: wh.code,
+            warehouseName: wh.name,
+            subinventoryCode: s.code,
+            subinventoryName: s.name,
+          });
         });
       });
-
-      panels.push({
-        key: bu.code,
-        label: (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Text strong style={{ color: REDWOOD.primary, fontSize: 14 }}>{bu.code}</Text>
-            <Text style={{ fontSize: 14 }}>{bu.name}</Text>
-            <Badge count={bu.warehouses.size} style={{ backgroundColor: REDWOOD.primary }} />
-          </div>
-        ),
-        children: (
-          <Collapse
-            size="small"
-            style={{ background: REDWOOD.neutral100 }}
-            items={whPanels}
-          />
-        ),
-      });
     });
-    return panels;
+    return data;
   }, [filteredHierarchy]);
 
   return (
@@ -200,11 +213,10 @@ const Subinventories: React.FC = () => {
             <>
               <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
                 {[
-                  { label: 'Business Units', value: totalBUs, color: REDWOOD.primary },
                   { label: 'Warehouses', value: totalWHs, color: REDWOOD.info },
                   { label: 'Subinventories', value: totalSubs, color: REDWOOD.teal },
                 ].map(kpi => (
-                  <Col xs={24} sm={8} key={kpi.label}>
+                  <Col xs={24} sm={12} key={kpi.label}>
                     <Card style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}`, textAlign: 'center' }} styles={{ body: { padding: '14px 16px' } }}>
                       <Text style={{ fontSize: 28, fontWeight: 700, color: kpi.color, display: 'block' }}>{kpi.value}</Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>{kpi.label}</Text>
@@ -213,21 +225,9 @@ const Subinventories: React.FC = () => {
                 ))}
               </Row>
 
-              <Card style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}`, marginBottom: 16 }} styles={{ body: { padding: '12px 16px' } }}>
-                <Input
-                  placeholder="Search business units, warehouses, or subinventories..."
-                  prefix={<SearchOutlined style={{ color: REDWOOD.neutral600 }} />}
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  allowClear
-                  style={{ maxWidth: 500 }}
-                />
+              <Card style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}` }} styles={{ body: { padding: '16px' } }}>
+                <SubinventoriesTable data={tableData} />
               </Card>
-
-              <Collapse
-                style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}`, background: REDWOOD.surface }}
-                items={buPanels}
-              />
             </>
           )}
         </div>
