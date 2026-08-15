@@ -89,12 +89,15 @@ const Subinventories: React.FC = () => {
   const [selectedBU, setSelectedBU] = useState('');
   const [selectedOrg, setSelectedOrg] = useState('');
   const [buLoading, setBuLoading] = useState(true);
+  const [buApiUrl, setBuApiUrl] = useState('');
+  const [orgsApiUrl, setOrgsApiUrl] = useState('');
 
   // Fetch business units on mount
   useEffect(() => {
     const fusionBase = getFusionBase();
-    fetch(`${fusionBase}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`,
-      { headers: getFusionAuthHeaders() })
+    const url = `${fusionBase}/payablesOptions?onlyData=true&limit=500&fields=businessUnitId,businessUnitName,paymentCurrency,ledgerCurrency`;
+    setBuApiUrl(url);
+    fetch(url, { headers: getFusionAuthHeaders() })
       .then(r => r.json())
       .then(d => {
         const seen = new Set<string>();
@@ -117,12 +120,14 @@ const Subinventories: React.FC = () => {
       setOrgs([]);
       setSelectedOrg('');
       setRows([]);
+      setOrgsApiUrl('');
       return;
     }
 
     const fusionBase = getFusionBase();
-    fetch(`${fusionBase}/inventoryOrganizations?q=BusinessUnitId=${selectedBU}&onlyData=true&limit=500`,
-      { headers: getFusionAuthHeaders() })
+    const url = `${fusionBase}/inventoryOrganizations?q=BusinessUnitId=${selectedBU}&onlyData=true&limit=500`;
+    setOrgsApiUrl(url);
+    fetch(url, { headers: getFusionAuthHeaders() })
       .then(r => r.json())
       .then(d => {
         const items = d.items ?? [];
@@ -382,67 +387,85 @@ const Subinventories: React.FC = () => {
 
         {/* API Details Drawer */}
         <Drawer
-          title={<Space><ApiOutlined /> API Details</Space>}
+          title={<Space><ApiOutlined /> API Details - Subinventories</Space>}
           placement="right"
           onClose={() => setApiDrawerOpen(false)}
           open={apiDrawerOpen}
-          width={700}
+          width={750}
         >
           <Space direction="vertical" style={{ width: '100%' }} size="large">
             <div>
-              <Text strong style={{ color: REDWOOD.info }}>API Endpoint URL</Text>
-              <div style={{ marginTop: 8 }}>
-                <div
-                  style={{
-                    backgroundColor: REDWOOD.neutral100,
-                    padding: 12,
-                    borderRadius: 6,
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    wordBreak: 'break-all',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    gap: 8,
-                  }}
-                >
-                  <span style={{ flex: 1 }}>{apiUrl}</span>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<CopyOutlined />}
-                    onClick={() => {
-                      navigator.clipboard.writeText(apiUrl);
-                      message.success('URL copied to clipboard');
-                    }}
-                  />
+              <Text strong style={{ fontSize: 12, color: REDWOOD.neutral900, display: 'block', marginBottom: 12 }}>📡 API Calls Sequence</Text>
+              {[
+                { step: '1️⃣', name: 'Business Units', url: buApiUrl, status: busUnits.length > 0 ? '✓ Loaded' : 'Pending' },
+                { step: '2️⃣', name: 'Inventory Organizations', url: orgsApiUrl, status: selectedBU && orgs.length > 0 ? '✓ Loaded' : selectedBU ? '⏳ Loading...' : 'Disabled' },
+                { step: '3️⃣', name: 'Subinventories', url: apiUrl, status: selectedOrg && rows.length > 0 ? '✓ Loaded' : selectedOrg ? '⏳ Loading...' : 'Disabled' },
+              ].map((api, idx) => (
+                <div key={idx} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: idx < 2 ? `1px solid ${REDWOOD.neutral200}` : 'none' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 16 }}>{api.step}</span>
+                    <Text strong style={{ fontSize: 13 }}>{api.name}</Text>
+                    <Tag color={api.status.includes('✓') ? 'green' : api.status.includes('⏳') ? 'blue' : 'default'} style={{ fontSize: 11 }}>
+                      {api.status}
+                    </Tag>
+                  </div>
+                  {api.url && (
+                    <div
+                      style={{
+                        backgroundColor: REDWOOD.neutral100,
+                        padding: 10,
+                        borderRadius: 4,
+                        fontFamily: 'monospace',
+                        fontSize: 10,
+                        wordBreak: 'break-all',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        gap: 8,
+                      }}
+                    >
+                      <span style={{ flex: 1 }}>{api.url}</span>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={() => {
+                          navigator.clipboard.writeText(api.url);
+                          message.success('URL copied');
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
-              </div>
+              ))}
             </div>
 
-            <Divider style={{ margin: '16px 0' }} />
-
-            <div>
-              <Text strong style={{ color: REDWOOD.info }}>Response</Text>
-              <div style={{ marginTop: 8 }}>
-                <div
-                  style={{
-                    backgroundColor: REDWOOD.neutral100,
-                    padding: 12,
-                    borderRadius: 6,
-                    fontFamily: 'monospace',
-                    fontSize: 10,
-                    overflow: 'auto',
-                    maxHeight: 400,
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    border: `1px solid ${REDWOOD.neutral200}`,
-                  }}
-                >
-                  {apiResponse || 'Loading...'}
+            {selectedOrg && apiResponse && (
+              <>
+                <Divider style={{ margin: '12px 0' }} />
+                <div>
+                  <Text strong style={{ color: REDWOOD.info, fontSize: 12 }}>Response (Last Call)</Text>
+                  <div style={{ marginTop: 8 }}>
+                    <div
+                      style={{
+                        backgroundColor: REDWOOD.neutral100,
+                        padding: 12,
+                        borderRadius: 6,
+                        fontFamily: 'monospace',
+                        fontSize: 10,
+                        overflow: 'auto',
+                        maxHeight: 300,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                        border: `1px solid ${REDWOOD.neutral200}`,
+                      }}
+                    >
+                      {apiResponse}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              </>
+            )}
           </Space>
         </Drawer>
       </Content>
