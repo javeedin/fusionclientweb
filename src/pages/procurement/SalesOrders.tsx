@@ -3868,7 +3868,7 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
   }, [term, byDesc, org]);
 
   const loadCosts = useCallback(async (items: any[]) => {
-    if (!items.length) return;
+    if (!items.length) return {};
     setCostLoading(true);
     const map: Record<string, { cost?: number; ccy?: string; onhand?: number; n: number; rows: any[] }> = {};
     await mapLimit(items, 5, async (it) => {
@@ -3883,15 +3883,31 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
       } catch { map[item] = { n: 0, rows: [] }; }
     });
     setCosts(map); setCostLoading(false);
+    return map;
   }, [org]);
 
   const search = useCallback(async () => {
     if (!url) { message.warning('Enter a search term'); return; }
     setLoading(true); setError(''); setSel([]); setCosts({}); setDraft({}); setOnh({});
-    try { const items = await fetchAllPages(url); setRows(items); loadCosts(items); }
+    try {
+      const items = await fetchAllPages(url);
+      setRows(items);
+      const costMap = await loadCosts(items);
+      // Automatically check on-hand for all items after costs load
+      await mapLimit(items, 3, async (item) => {
+        const costRow = costMap[item.ItemNumber]?.rows?.[0];
+        if (costRow) {
+          const p = parseVU(costRow.ValuationUnit);
+          const invOrg = org || p?.invOrg;
+          const sub = subinv || p?.subinv;
+          const lot = p?.lot;
+          if (invOrg) await checkOnhand(item.ItemNumber, invOrg, sub, lot);
+        }
+      });
+    }
     catch (e: any) { setError(e.message); setRows([]); }
     finally { setLoading(false); }
-  }, [url, loadCosts]);
+  }, [url, loadCosts, org, subinv, checkOnhand]);
 
   const dget = (item: string) => draft[item] ?? { qty: 0, price: num(costs[item]?.cost), tax: 0, taxCode: undefined as string | undefined, taxPct: undefined as number | undefined };
   const dset = (item: string, patch: Partial<{ qty: number; price: number; taxCode?: string; taxPct?: number; tax: number }>) =>
@@ -3950,7 +3966,7 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
     { title: 'Lot', width: 120, ellipsis: true, render: (_, r) => { const l = vuOf(r.ItemNumber).lot; return l ? <Tag color="geekblue" style={{ fontSize: 10 }}>{l}</Tag> : '—'; } },
     { title: 'Item Cost', width: 95, align: 'right', render: (_, r) => { const c = costs[r.ItemNumber]; if (costLoading && !c) return <Spin size="small" />; return (c?.cost == null) ? <Text type="secondary" style={{ fontSize: 11 }}>—</Text> : <Text strong style={{ fontSize: 11.5, color: REDWOOD.primary, fontVariantNumeric: 'tabular-nums' }}>{num2(c.cost)}</Text>; } },
     { title: 'Costed QOH', width: 82, align: 'right', render: (_, r) => { const c = costs[r.ItemNumber]; if (costLoading && !c) return <Spin size="small" />; return (c?.onhand == null) ? <Text type="secondary" style={{ fontSize: 11 }}>—</Text> : <Text style={{ fontSize: 11, color: REDWOOD.info, fontVariantNumeric: 'tabular-nums' }}>{fmtQty(c.onhand)}</Text>; } },
-    { title: 'Total QOH', width: 150, render: (_, r) => {
+    { title: 'Total QOH', width: 110, render: (_, r) => {
         const item = r.ItemNumber; const p = vuOf(item); const st = onh[item]; const base = costOnhandOf(item);
         const invOrg = org || p.invOrg; const sub = subinv || p.subinv; // prefer the header warehouse/subinventory
         return <Space size={4}>
