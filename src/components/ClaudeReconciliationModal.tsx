@@ -61,7 +61,7 @@ const ClaudeReconciliationModal: React.FC<ClaudeReconciliationModalProps> = ({
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: 'claude-opus-5',
+          model: 'claude-3-sonnet-20240229',
           max_tokens: 100,
           messages: [{ role: 'user', content: 'Test' }],
         }),
