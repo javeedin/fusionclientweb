@@ -267,6 +267,7 @@ const CustomerSiteActivities: React.FC = () => {
   const [overviewData, setOverviewData] = useState<any>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewProgress, setOverviewProgress] = useState('');
+  const [shouldCancelOverview, setShouldCancelOverview] = useState(false);
 
   // ── Load page data ──────────────────────────────────────────────
   const loadPage = useCallback(async (pageNum: number) => {
@@ -464,33 +465,46 @@ const CustomerSiteActivities: React.FC = () => {
     if (!receivablesOverviewVisible || !overviewCustomerKey) return;
 
     const computeAsync = async () => {
+      setShouldCancelOverview(false);
       setOverviewLoading(true);
       setOverviewProgress('Initializing data...');
 
       await new Promise(resolve => setTimeout(resolve, 100));
+      if (shouldCancelOverview) {
+        setOverviewLoading(false);
+        return;
+      }
 
       try {
         setOverviewProgress('Computing balance positions...');
         await new Promise(resolve => setTimeout(resolve, 100));
+        if (shouldCancelOverview) return;
 
         setOverviewProgress('Analyzing aging buckets...');
         await new Promise(resolve => setTimeout(resolve, 100));
+        if (shouldCancelOverview) return;
 
         setOverviewProgress('Calculating year-by-year metrics...');
         await new Promise(resolve => setTimeout(resolve, 100));
+        if (shouldCancelOverview) return;
 
         setOverviewProgress('Aggregating monthly activity...');
         await new Promise(resolve => setTimeout(resolve, 100));
+        if (shouldCancelOverview) return;
 
         setOverviewProgress('Analyzing payment behavior...');
         await new Promise(resolve => setTimeout(resolve, 100));
+        if (shouldCancelOverview) return;
 
         setOverviewProgress('Computing key insights...');
         await new Promise(resolve => setTimeout(resolve, 100));
+        if (shouldCancelOverview) return;
 
         const data = computeOverviewDataSync(overviewCustomerKey);
-        setOverviewData(data);
-        setOverviewProgress('');
+        if (!shouldCancelOverview) {
+          setOverviewData(data);
+          setOverviewProgress('');
+        }
       } finally {
         setOverviewLoading(false);
       }
@@ -1559,6 +1573,13 @@ const CustomerSiteActivities: React.FC = () => {
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 60 }}>
             <Spin size="large" />
             <Text style={{ marginTop: 24, fontSize: 16 }}>{overviewProgress}</Text>
+            <Button
+              danger
+              onClick={() => setShouldCancelOverview(true)}
+              style={{ marginTop: 24 }}
+            >
+              Cancel
+            </Button>
           </div>
         ) : ((() => {
           const overview = overviewData;
