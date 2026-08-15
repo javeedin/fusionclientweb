@@ -248,12 +248,12 @@ const CustomerSiteActivities: React.FC = () => {
   const [detailsTabs, setDetailsTabs] = useState<Array<{ key: string; site: Row }>>([]);
   const [activeDetailTab, setActiveDetailTab] = useState<string>('');
   const [childStates, setChildStates] = useState<Record<string, Record<string, ChildState>>>({});
-  const [balanceFilter, setBalanceFilter] = useState<Record<string, boolean>>({});
   const [detailApiDebug, setDetailApiDebug] = useState<Record<string, { urls: string[]; statuses: Record<string, number | null>; responses: Record<string, string> }>>({});
   const [detailApiDebugVisible, setDetailApiDebugVisible] = useState<string | null>(null);
 
   const [apiDebug, setApiDebug] = useState<ApiDebug | null>(null);
   const [apiDebugVisible, setApiDebugVisible] = useState(false);
+  const [recordsWithBalances, setRecordsWithBalances] = useState(true);
 
   // ── Search Fusion ────────────────────────────────────────────────
   const handleSearch = useCallback(async () => {
@@ -297,7 +297,17 @@ const CustomerSiteActivities: React.FC = () => {
       }
 
       setApiDebug({ url: firstUrl, status: lastStatus, response: JSON.stringify(lastJson, null, 2) });
-      setFusionData(allItems);
+
+      // Filter by balance if checkbox is checked
+      let filteredItems = allItems;
+      if (recordsWithBalances) {
+        filteredItems = allItems.filter(item => {
+          const balance = item['TotalOpenReceivablesForSite'];
+          return balance !== null && balance !== undefined && balance !== 0;
+        });
+      }
+
+      setFusionData(filteredItems);
 
       // Build columns with Details action
       const cols = buildCustomerListColumns();
@@ -440,15 +450,7 @@ const CustomerSiteActivities: React.FC = () => {
       // Build child activity tabs
       const childTabItems = CHILD_NAMES.map(cn => {
         const state = siteChildStates[cn] || { loading: false, data: [], columns: [] };
-
-        // Filter data by balance if enabled (only for AR Invoices tab)
-        let filteredData = state.data;
-        if (filterBalances && cn === 'transactionPaymentSchedules') {
-          filteredData = state.data.filter(row => {
-            const balance = row['TotalBalanceAmount'];
-            return balance !== null && balance !== undefined && balance !== 0;
-          });
-        }
+        const filteredData = state.data;
 
         // Build columns with sorting
         let cols = buildColumns(filteredData);
@@ -499,15 +501,7 @@ const CustomerSiteActivities: React.FC = () => {
           children: (
             <div>
               {!state.loading && state.data.length > 0 && (
-                <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  {cn === 'transactionPaymentSchedules' && (
-                    <Checkbox
-                      checked={filterBalances}
-                      onChange={(e) => setBalanceFilter(prev => ({ ...prev, [key]: e.target.checked }))}
-                    >
-                      Records with Balances
-                    </Checkbox>
-                  )}
+                <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
                   <Button size="small" icon={<DownloadOutlined />} onClick={() => exportToExcel(filteredData, cn)}>Export to Excel</Button>
                 </div>
               )}
@@ -710,6 +704,11 @@ const CustomerSiteActivities: React.FC = () => {
               </Form.Item>
               <Form.Item name="BillToSiteNumber" label="Site Number">
                 <Input placeholder="Site number..." style={{ width: 140 }} />
+              </Form.Item>
+              <Form.Item>
+                <Checkbox checked={recordsWithBalances} onChange={(e) => setRecordsWithBalances(e.target.checked)}>
+                  Records with Balances
+                </Checkbox>
               </Form.Item>
               <Form.Item>
                 <Button type="primary" htmlType="submit" icon={<SearchOutlined />} loading={searchLoading}
