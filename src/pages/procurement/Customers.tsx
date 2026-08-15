@@ -42,15 +42,26 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
   const [apiDrawerOpen, setApiDrawerOpen] = useState(false);
   const [lastApiDetails, setLastApiDetails] = useState<{ url?: string; envelope?: string }>({});
   const [buOptions, setBuOptions] = useState<{ value: string; label: string }[]>([]);
+  const [buApiDetails, setBuApiDetails] = useState<{ url?: string; headers?: string; status?: number; response?: string; error?: string }>({});
 
   // Fetch business units on mount
   useEffect(() => {
     const fetchBUs = async () => {
       try {
         const url = `${buildApexUrl('gl/businessunits')}`;
-        const res = await fetch(url, { headers: getFusionAuthHeaders() });
+        const headers = getFusionAuthHeaders();
+        setBuApiDetails({ url, headers: JSON.stringify(headers, null, 2) });
+
+        const res = await fetch(url, { headers });
+        const data = await res.json();
+
+        setBuApiDetails(prev => ({
+          ...prev,
+          status: res.status,
+          response: JSON.stringify(data, null, 2)
+        }));
+
         if (res.ok) {
-          const data = await res.json();
           const options = (data.items ?? []).map((bu: any) => ({
             value: bu.business_unit_id?.toString() || '',
             label: bu.business_unit_name || '',
@@ -60,6 +71,8 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
           console.warn('Failed to fetch business units:', res.status);
         }
       } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : 'Unknown error';
+        setBuApiDetails(prev => ({ ...prev, error: errorMsg }));
         console.warn('Failed to fetch business units:', e);
       }
     };
@@ -246,48 +259,133 @@ const SearchTab: React.FC<{ onCustomerSelect: (cust: CustomerDetail) => void; on
         open={apiDrawerOpen}
         width={700}
       >
-        {lastApiDetails.url || searchText.trim() ? (
-          <Space direction="vertical" style={{ width: '100%' }} size="large">
-            <div>
-              <Text strong>SOAP Endpoint</Text>
-              <div
-                style={{
-                  backgroundColor: REDWOOD.neutral100,
-                  padding: 12,
-                  borderRadius: 6,
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  wordBreak: 'break-all',
-                  marginTop: 8,
-                }}
-              >
-                {lastApiDetails.url || `${getFusionInstanceUrl() || ORACLE_SOAP_CONFIG.prod.baseUrl}`}
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          {/* Business Units API Section */}
+          {buApiDetails.url && (
+            <>
+              <div>
+                <Text strong style={{ color: REDWOOD.info }}>Business Units REST API</Text>
+                <div style={{ marginTop: 12 }}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>Endpoint URL</Text>
+                  <div
+                    style={{
+                      backgroundColor: REDWOOD.neutral100,
+                      padding: 12,
+                      borderRadius: 6,
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      wordBreak: 'break-all',
+                      marginTop: 4,
+                    }}
+                  >
+                    {buApiDetails.url}
+                  </div>
+                </div>
+                {buApiDetails.headers && (
+                  <div style={{ marginTop: 12 }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Headers</Text>
+                    <div
+                      style={{
+                        backgroundColor: REDWOOD.neutral100,
+                        padding: 12,
+                        borderRadius: 6,
+                        fontFamily: 'monospace',
+                        fontSize: 10,
+                        overflow: 'auto',
+                        maxHeight: 200,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                        marginTop: 4,
+                      }}
+                    >
+                      {buApiDetails.headers}
+                    </div>
+                  </div>
+                )}
+                {buApiDetails.status && (
+                  <div style={{ marginTop: 12 }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Response Status: {buApiDetails.status}</Text>
+                  </div>
+                )}
+                {buApiDetails.response && (
+                  <div style={{ marginTop: 12 }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Response Data</Text>
+                    <div
+                      style={{
+                        backgroundColor: REDWOOD.neutral100,
+                        padding: 12,
+                        borderRadius: 6,
+                        fontFamily: 'monospace',
+                        fontSize: 10,
+                        overflow: 'auto',
+                        maxHeight: 250,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                        marginTop: 4,
+                      }}
+                    >
+                      {buApiDetails.response}
+                    </div>
+                  </div>
+                )}
+                {buApiDetails.error && (
+                  <div style={{ marginTop: 12 }}>
+                    <Text type="danger" style={{ fontSize: 11 }}>Error: {buApiDetails.error}</Text>
+                  </div>
+                )}
               </div>
-            </div>
-            <Divider style={{ margin: '16px 0' }} />
-            <div>
-              <Text strong>SOAP Envelope</Text>
-              <div
-                style={{
-                  backgroundColor: REDWOOD.neutral100,
-                  padding: 12,
-                  borderRadius: 6,
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  overflow: 'auto',
-                  maxHeight: 400,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  marginTop: 8,
-                }}
-              >
-                {lastApiDetails.envelope || 'Run a search to see the payload'}
+              <Divider style={{ margin: '16px 0' }} />
+            </>
+          )}
+
+          {/* Customer Search SOAP API Section */}
+          {(lastApiDetails.url || searchText.trim()) && (
+            <>
+              <div>
+                <Text strong style={{ color: REDWOOD.info }}>Customer Search SOAP API</Text>
+                <div style={{ marginTop: 12 }}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>SOAP Endpoint</Text>
+                  <div
+                    style={{
+                      backgroundColor: REDWOOD.neutral100,
+                      padding: 12,
+                      borderRadius: 6,
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      wordBreak: 'break-all',
+                      marginTop: 4,
+                    }}
+                  >
+                    {lastApiDetails.url || `${getFusionInstanceUrl() || ORACLE_SOAP_CONFIG.prod.baseUrl}`}
+                  </div>
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>SOAP Envelope</Text>
+                  <div
+                    style={{
+                      backgroundColor: REDWOOD.neutral100,
+                      padding: 12,
+                      borderRadius: 6,
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                      overflow: 'auto',
+                      maxHeight: 400,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      marginTop: 4,
+                    }}
+                  >
+                    {lastApiDetails.envelope || 'Run a search to see the payload'}
+                  </div>
+                </div>
               </div>
-            </div>
-          </Space>
-        ) : (
-          <Empty description="Run a search to view API details" />
-        )}
+            </>
+          )}
+
+          {!buApiDetails.url && !lastApiDetails.url && (
+            <Empty description="Run a search to view API details" />
+          )}
+        </Space>
       </Drawer>
 
       {loading && (
