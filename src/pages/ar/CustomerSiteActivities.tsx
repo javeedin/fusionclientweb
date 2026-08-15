@@ -263,6 +263,9 @@ const CustomerSiteActivities: React.FC = () => {
   const [recordsWithBalances, setRecordsWithBalances] = useState(true);
   const [receivablesOverviewVisible, setReceivablesOverviewVisible] = useState(false);
   const [overviewCustomerKey, setOverviewCustomerKey] = useState<string | null>(null);
+  const [overviewData, setOverviewData] = useState<any>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewProgress, setOverviewProgress] = useState('');
 
   // ── Load page data ──────────────────────────────────────────────
   const loadPage = useCallback(async (pageNum: number) => {
@@ -455,8 +458,48 @@ const CustomerSiteActivities: React.FC = () => {
     }
   };
 
+  // Compute overview data with progress tracking
+  React.useEffect(() => {
+    if (!receivablesOverviewVisible || !overviewCustomerKey) return;
+
+    const computeAsync = async () => {
+      setOverviewLoading(true);
+      setOverviewProgress('Initializing data...');
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      try {
+        setOverviewProgress('Computing balance positions...');
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        setOverviewProgress('Analyzing aging buckets...');
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        setOverviewProgress('Calculating year-by-year metrics...');
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        setOverviewProgress('Aggregating monthly activity...');
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        setOverviewProgress('Analyzing payment behavior...');
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        setOverviewProgress('Computing key insights...');
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const data = computeOverviewDataSync(overviewCustomerKey);
+        setOverviewData(data);
+        setOverviewProgress('');
+      } finally {
+        setOverviewLoading(false);
+      }
+    };
+
+    computeAsync();
+  }, [receivablesOverviewVisible, overviewCustomerKey]);
+
   // ── Receivables Overview Calculations ──────────────────────────
-  const computeOverviewData = (customerKey?: string | null) => {
+  const computeOverviewDataSync = (customerKey?: string | null) => {
     const key = customerKey || overviewCustomerKey;
     if (!key) return null;
 
@@ -1057,8 +1100,13 @@ const CustomerSiteActivities: React.FC = () => {
 
       <Modal open={receivablesOverviewVisible} onCancel={() => { setReceivablesOverviewVisible(false); setOverviewCustomerKey(null); }} footer={null} width={1200}
         title="RECEIVABLES OVERVIEW">
-        {(() => {
-          const overview = computeOverviewData();
+        {overviewLoading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 60 }}>
+            <Spin size="large" />
+            <Text style={{ marginTop: 24, fontSize: 16 }}>{overviewProgress}</Text>
+          </div>
+        ) : ((() => {
+          const overview = overviewData;
           if (!overview) return <Empty description="No data available" />;
           const overviewTabs = [
             {
@@ -1515,7 +1563,7 @@ const CustomerSiteActivities: React.FC = () => {
           ];
 
           return <Tabs items={overviewTabs} style={{ background: REDWOOD.surface }} />;
-        })()}
+        })())}
       </Modal>
     </Layout>
   );
