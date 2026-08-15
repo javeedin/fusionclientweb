@@ -539,9 +539,71 @@ const CustomerSiteActivities: React.FC = () => {
         return dateA - dateB;
       });
 
+    // MONTHLY ACTIVITY
+    const monthlyData: Record<string, { invoices: number; amount: number; credits: number; creditAmount: number }> = {};
+    allArInvoices.forEach(row => {
+      const dateStr = row['TransactionDate'] as string;
+      if (!dateStr) return;
+      const monthKey = dateStr.substring(0, 7); // YYYY-MM
+      if (!monthlyData[monthKey]) monthlyData[monthKey] = { invoices: 0, amount: 0, credits: 0, creditAmount: 0 };
+      monthlyData[monthKey].invoices += 1;
+      monthlyData[monthKey].amount += Number(row['TotalOriginalAmount']) || 0;
+    });
+    allCreditMemos.forEach(row => {
+      const dateStr = row['CreditMemoDate'] as string;
+      if (!dateStr) return;
+      const monthKey = dateStr.substring(0, 7);
+      if (!monthlyData[monthKey]) monthlyData[monthKey] = { invoices: 0, amount: 0, credits: 0, creditAmount: 0 };
+      monthlyData[monthKey].credits += 1;
+      monthlyData[monthKey].creditAmount += Math.abs(Number(row['TotalOriginalAmount']) || 0);
+    });
+
+    // CREDIT TERMS MIX - days between invoice and due date
+    const creditTermsBuckets: Record<string, number> = { 'Same day': 0, '1-15 days': 0, '16-30 days': 0, '31-60 days': 0, '60+ days': 0 };
+    allArInvoices.forEach(row => {
+      const invDate = new Date(row['TransactionDate'] as string);
+      const dueDate = new Date(row['PaymentScheduleDueDate'] as string);
+      const daysDiff = Math.ceil((dueDate.getTime() - invDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysDiff <= 0) creditTermsBuckets['Same day']++;
+      else if (daysDiff <= 15) creditTermsBuckets['1-15 days']++;
+      else if (daysDiff <= 30) creditTermsBuckets['16-30 days']++;
+      else if (daysDiff <= 60) creditTermsBuckets['31-60 days']++;
+      else creditTermsBuckets['60+ days']++;
+    });
+
+    // BASKET SIZE - invoice value distribution
+    const basketBuckets: Record<string, number> = { '<10k': 0, '10k-50k': 0, '50k-100k': 0, '100k-500k': 0, '500k+': 0 };
+    allArInvoices.forEach(row => {
+      const amount = Number(row['TotalOriginalAmount']) || 0;
+      if (amount < 10000) basketBuckets['<10k']++;
+      else if (amount < 50000) basketBuckets['10k-50k']++;
+      else if (amount < 100000) basketBuckets['50k-100k']++;
+      else if (amount < 500000) basketBuckets['100k-500k']++;
+      else basketBuckets['500k+']++;
+    });
+
+    // PAYMENT BEHAVIOUR - settlement patterns
+    const settledInvoices = allArInvoices.filter(row => row['InstallmentStatus'] === 'Closed');
+    const settlementDays: number[] = [];
+    settledInvoices.forEach(row => {
+      const dueDate = new Date(row['PaymentScheduleDueDate'] as string);
+      const updateDate = new Date(row['LastUpdateDate'] as string);
+      const daysDiff = Math.ceil((updateDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+      settlementDays.push(daysDiff);
+    });
+    const avgSettlementDays = settlementDays.length > 0 ? Math.round(settlementDays.reduce((a, b) => a + b, 0) / settlementDays.length) : 0;
+    const onTimePayments = settlementDays.filter(d => d <= 0).length;
+    const onTimeRate = settlementDays.length > 0 ? (onTimePayments / settlementDays.length) * 100 : 0;
+
+    // RETURNS & CREDIT MEMO ANALYSIS
+    const returnsRatio = totalInvoiced > 0 ? (totalCredits / totalInvoiced) * 100 : 0;
+    const avgCreditMemo = allCreditMemos.length > 0 ? totalCredits / allCreditMemos.length : 0;
+
     return {
       openBalance, openInvoiceCount, openCreditBalance, openCreditCount, netOpen, pastDueBalance, ageingBuckets, yearData,
-      totalInvoiced, totalCredits, closedInvoices, paymentRate, openItems
+      totalInvoiced, totalCredits, closedInvoices, paymentRate, openItems,
+      monthlyData, creditTermsBuckets, basketBuckets, avgSettlementDays, onTimeRate,
+      returnsRatio, avgCreditMemo, settledInvoices
     };
   };
 
@@ -1075,34 +1137,211 @@ const CustomerSiteActivities: React.FC = () => {
               key: 'history',
               label: 'Customer History',
               children: (
-                <div>
-                  <Title level={5} style={{ marginBottom: 16 }}>YEAR-BY-YEAR TRADING & PAYMENT HISTORY</Title>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
-                        <th style={{ textAlign: 'center', padding: 8, fontWeight: 600 }}>Year</th>
-                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Invoices</th>
-                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Gross invoiced (MUR)</th>
-                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Avg invoice</th>
-                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Credit memos</th>
-                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Credit value (MUR)</th>
-                        <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Net sales (MUR)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(overview.yearData).sort(([yearA], [yearB]) => parseInt(yearA) - parseInt(yearB)).map(([year, data]) => (
-                        <tr key={year} style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
-                          <td style={{ textAlign: 'center', padding: 8, fontWeight: 600 }}>{year}</td>
-                          <td style={{ textAlign: 'right', padding: 8 }}>{data.invoices}</td>
-                          <td style={{ textAlign: 'right', padding: 8 }}>{data.grossAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                          <td style={{ textAlign: 'right', padding: 8 }}>{data.invoices > 0 ? (data.grossAmount / data.invoices).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
-                          <td style={{ textAlign: 'right', padding: 8 }}>{data.creditCount}</td>
-                          <td style={{ textAlign: 'right', padding: 8 }}>{data.creditAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                          <td style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>{(data.grossAmount + data.creditAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <div style={{ paddingBottom: 24 }}>
+                  {/* 1. YEAR-BY-YEAR TRADING */}
+                  <div style={{ marginBottom: 32, padding: 16, background: REDWOOD.neutral100, borderRadius: 8 }}>
+                    <Title level={5} style={{ marginBottom: 16, color: REDWOOD.primary }}>1 · YEAR-BY-YEAR TRADING & PAYMENT HISTORY</Title>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
+                            <th style={{ textAlign: 'center', padding: 8, fontWeight: 600 }}>Year</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Invoices</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Gross invoiced (MUR)</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Avg invoice</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Credit memos</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Credit value (MUR)</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Net sales (MUR)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(overview.yearData).sort(([yearA], [yearB]) => parseInt(yearA) - parseInt(yearB)).map(([year, data]) => (
+                            <tr key={year} style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                              <td style={{ textAlign: 'center', padding: 8, fontWeight: 600 }}>{year}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{data.invoices}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{data.grossAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{data.invoices > 0 ? (data.grossAmount / data.invoices).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{data.creditCount}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{data.creditAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>{(data.grossAmount + data.creditAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* 2. MONTHLY ACTIVITY */}
+                  <div style={{ marginBottom: 32, padding: 16, background: REDWOOD.neutral100, borderRadius: 8 }}>
+                    <Title level={5} style={{ marginBottom: 16, color: REDWOOD.primary }}>2 · MONTHLY ACTIVITY</Title>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
+                            <th style={{ textAlign: 'left', padding: 8, fontWeight: 600 }}>Month</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Invoices</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Amount (MUR)</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Credits</th>
+                            <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Credit Value (MUR)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(overview.monthlyData).sort(([a], [b]) => b.localeCompare(a)).slice(0, 12).map(([month, data]) => (
+                            <tr key={month} style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                              <td style={{ padding: 8, fontWeight: 600 }}>{month}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{data.invoices}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{data.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{data.credits}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{data.creditAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* 3. HOW THEY BUY - CREDIT TERMS */}
+                  <div style={{ marginBottom: 32, padding: 16, background: REDWOOD.neutral100, borderRadius: 8 }}>
+                    <Title level={5} style={{ marginBottom: 16, color: REDWOOD.primary }}>3 · HOW THEY BUY — CREDIT TERMS MIX (days between invoice date and due date)</Title>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
+                          <th style={{ textAlign: 'left', padding: 8, fontWeight: 600 }}>Terms</th>
+                          <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Count</th>
+                          <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>% of invoices</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {Object.entries(overview.creditTermsBuckets).map(([terms, count]) => {
+                          const total = Object.values(overview.creditTermsBuckets).reduce((a, b) => a + b, 0);
+                          return (
+                            <tr key={terms} style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                              <td style={{ padding: 8 }}>{terms}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{count}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{total > 0 ? ((count / total) * 100).toFixed(1) : 0}%</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* 4. BASKET SIZE */}
+                  <div style={{ marginBottom: 32, padding: 16, background: REDWOOD.neutral100, borderRadius: 8 }}>
+                    <Title level={5} style={{ marginBottom: 16, color: REDWOOD.primary }}>4 · BASKET SIZE — INVOICE VALUE DISTRIBUTION</Title>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
+                          <th style={{ textAlign: 'left', padding: 8, fontWeight: 600 }}>Size Range</th>
+                          <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Count</th>
+                          <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>% of invoices</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(overview.basketBuckets).map(([size, count]) => {
+                          const total = Object.values(overview.basketBuckets).reduce((a, b) => a + b, 0);
+                          return (
+                            <tr key={size} style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
+                              <td style={{ padding: 8 }}>{size}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{count}</td>
+                              <td style={{ textAlign: 'right', padding: 8 }}>{total > 0 ? ((count / total) * 100).toFixed(1) : 0}%</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* 5. PAYMENT BEHAVIOUR */}
+                  <div style={{ marginBottom: 32, padding: 16, background: REDWOOD.neutral100, borderRadius: 8 }}>
+                    <Title level={5} style={{ marginBottom: 16, color: REDWOOD.primary }}>5 · PAYMENT BEHAVIOUR — WHEN INVOICES ACTUALLY SETTLE</Title>
+                    <Row gutter={[16, 16]}>
+                      <Col xs={24} sm={12}>
+                        <Card style={{ borderColor: REDWOOD.border }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Avg Settlement Days</Text>
+                            <div style={{ fontSize: 24, fontWeight: 700, color: REDWOOD.primary, marginTop: 8 }}>
+                              {overview.avgSettlementDays} days
+                            </div>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>from due date</Text>
+                          </div>
+                        </Card>
+                      </Col>
+                      <Col xs={24} sm={12}>
+                        <Card style={{ borderColor: REDWOOD.border }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>On-Time Payment Rate</Text>
+                            <div style={{ fontSize: 24, fontWeight: 700, color: overview.onTimeRate > 50 ? REDWOOD.success : REDWOOD.error, marginTop: 8 }}>
+                              {overview.onTimeRate.toFixed(1)}%
+                            </div>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>paid by due date</Text>
+                          </div>
+                        </Card>
+                      </Col>
+                    </Row>
+                  </div>
+
+                  {/* 6. RETURNS & CREDIT MEMO ANALYSIS */}
+                  <div style={{ marginBottom: 32, padding: 16, background: REDWOOD.neutral100, borderRadius: 8 }}>
+                    <Title level={5} style={{ marginBottom: 16, color: REDWOOD.primary }}>6 · RETURNS & CREDIT MEMO ANALYSIS — INVOICES VS RETURNS</Title>
+                    <Row gutter={[16, 16]}>
+                      <Col xs={24} sm={12}>
+                        <Card style={{ borderColor: REDWOOD.border }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Returns as % of Gross</Text>
+                            <div style={{ fontSize: 24, fontWeight: 700, color: overview.returnsRatio > 5 ? REDWOOD.error : REDWOOD.success, marginTop: 8 }}>
+                              {overview.returnsRatio.toFixed(1)}%
+                            </div>
+                          </div>
+                        </Card>
+                      </Col>
+                      <Col xs={24} sm={12}>
+                        <Card style={{ borderColor: REDWOOD.border }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Avg Credit Memo Value</Text>
+                            <div style={{ fontSize: 18, fontWeight: 700, marginTop: 8 }}>
+                              {overview.avgCreditMemo.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          </div>
+                        </Card>
+                      </Col>
+                    </Row>
+                  </div>
+
+                  {/* 7. SETTLEMENTS BY THIRD PARTIES */}
+                  <div style={{ marginBottom: 32, padding: 16, background: REDWOOD.neutral100, borderRadius: 8 }}>
+                    <Title level={5} style={{ marginBottom: 16, color: REDWOOD.primary }}>7 · SETTLEMENTS MADE BY THIRD PARTIES ("Paid by Others")</Title>
+                    <Card style={{ borderColor: REDWOOD.border }}>
+                      <div style={{ textAlign: 'center' }}>
+                        <Text strong>This customer has {childStates[overviewCustomerKey || '']?.transactionsPaidByOtherCustomers?.data?.length || 0} settlements recorded as "Paid by Others"</Text>
+                        <div style={{ marginTop: 12, fontSize: 12, color: REDWOOD.primary }}>
+                          Third-party payment activity indicates complex organizational structure or group payment arrangements
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+
+                  {/* 8. KEY INSIGHTS */}
+                  <div style={{ marginBottom: 32, padding: 16, background: '#f0f5ff', borderRadius: 8, borderLeft: `4px solid ${REDWOOD.info}` }}>
+                    <Title level={5} style={{ marginBottom: 16, color: REDWOOD.info }}>💡 8 · KEY INSIGHTS</Title>
+                    <ul style={{ paddingLeft: 20, lineHeight: 1.8 }}>
+                      <li>
+                        <strong>Payment Pattern:</strong> {overview.onTimeRate > 80 ? 'Excellent payer - consistently pays on or before due date' : overview.onTimeRate > 50 ? 'Moderate payer - mixed timeliness' : 'Payment delays observed - average ' + overview.avgSettlementDays + ' days late'}
+                      </li>
+                      <li>
+                        <strong>Trading Volume:</strong> {overview.totalInvoiced > 0 ? 'Total lifetime invoiced: ' + overview.totalInvoiced.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' MUR across ' + overview.openInvoiceCount + ' transactions' : 'No invoice activity'}
+                      </li>
+                      <li>
+                        <strong>Return Rate:</strong> {overview.returnsRatio > 5 ? 'High return rate (' + overview.returnsRatio.toFixed(1) + '%) - monitor quality issues' : overview.returnsRatio > 0 ? 'Normal return rate (' + overview.returnsRatio.toFixed(1) + '%)' : 'No returns recorded'}
+                      </li>
+                      <li>
+                        <strong>Credit Terms:</strong> {overview.creditTermsBuckets['16-30 days'] > 0 ? 'Typical payment terms: 16-30 days (most common)' : 'Review payment terms configuration'}
+                      </li>
+                      <li>
+                        <strong>Outstanding Risk:</strong> {overview.pastDueBalance > 0 ? 'Past due amount: ' + overview.pastDueBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' MUR' : 'No past due amounts'}
+                      </li>
+                    </ul>
+                  </div>
                 </div>
               ),
             },
