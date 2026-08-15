@@ -3886,29 +3886,6 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
     return map;
   }, [org]);
 
-  const search = useCallback(async () => {
-    if (!url) { message.warning('Enter a search term'); return; }
-    setLoading(true); setError(''); setSel([]); setCosts({}); setDraft({}); setOnh({});
-    try {
-      const items = await fetchAllPages(url);
-      setRows(items);
-      const costMap = await loadCosts(items);
-      // Automatically check on-hand for all items after costs load
-      await mapLimit(items, 3, async (item) => {
-        const costRow = costMap[item.ItemNumber]?.rows?.[0];
-        if (costRow) {
-          const p = parseVU(costRow.ValuationUnit);
-          const invOrg = org || p?.invOrg;
-          const sub = subinv || p?.subinv;
-          const lot = p?.lot;
-          if (invOrg) await checkOnhand(item.ItemNumber, invOrg, sub, lot);
-        }
-      });
-    }
-    catch (e: any) { setError(e.message); setRows([]); }
-    finally { setLoading(false); }
-  }, [url, loadCosts, org, subinv, checkOnhand]);
-
   const dget = (item: string) => draft[item] ?? { qty: 0, price: num(costs[item]?.cost), tax: 0, taxCode: undefined as string | undefined, taxPct: undefined as number | undefined };
   const dset = (item: string, patch: Partial<{ qty: number; price: number; taxCode?: string; taxPct?: number; tax: number }>) =>
     // Re-derive tax from the chosen tax_code_per whenever qty/price/tax code change.
@@ -3950,6 +3927,29 @@ const ItemCostSearch: React.FC<{ org?: string; subinv?: string; taxOptions?: { v
       setOnh(p => ({ ...p, [item]: { qty, lots } }));
     } catch (e: any) { setOnh(p => ({ ...p, [item]: { err: e.message } })); }
   };
+
+  const search = useCallback(async () => {
+    if (!url) { message.warning('Enter a search term'); return; }
+    setLoading(true); setError(''); setSel([]); setCosts({}); setDraft({}); setOnh({});
+    try {
+      const items = await fetchAllPages(url);
+      setRows(items);
+      const costMap = await loadCosts(items);
+      // Automatically check on-hand for all items after costs load
+      await mapLimit(items, 3, async (item) => {
+        const costRow = costMap[item.ItemNumber]?.rows?.[0];
+        if (costRow) {
+          const p = parseVU(costRow.ValuationUnit);
+          const invOrg = org || p?.invOrg;
+          const sub = subinv || p?.subinv;
+          const lot = p?.lot;
+          if (invOrg) await checkOnhand(item.ItemNumber, invOrg, sub, lot);
+        }
+      });
+    }
+    catch (e: any) { setError(e.message); setRows([]); }
+    finally { setLoading(false); }
+  }, [url, loadCosts, org, subinv]);
 
   // Changing Ord Qty auto-selects the row so it will be added on "Add".
   const maxQohOf = (item: string) => onh[item]?.qty ?? costs[item]?.onhand;
