@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import {
   HomeOutlined, SearchOutlined, DownloadOutlined,
-  EyeOutlined, ApiOutlined, CopyOutlined, SyncOutlined, FilterOutlined,
+  EyeOutlined, ApiOutlined, CopyOutlined, SyncOutlined, FilterOutlined, ShoppingOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import type { ColumnsType, TableRowSelection, ColumnType } from 'antd/es/table/interface';
@@ -125,8 +125,8 @@ function exportToExcel(data: Row[], filename: string) {
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
-function SiteResultsTable({ data, columns, loading, rowSelection }: {
-  data: Row[]; columns: ColumnsType<Row>; loading?: boolean; rowSelection?: TableRowSelection<Row>;
+function SiteResultsTable({ data, columns, loading }: {
+  data: Row[]; columns: ColumnsType<Row>; loading?: boolean;
 }) {
   const [filter, setFilter] = useState('');
 
@@ -153,7 +153,6 @@ function SiteResultsTable({ data, columns, loading, rowSelection }: {
         dataSource={filtered}
         columns={columns}
         rowKey={r => String(r['BillToSiteUseId'] ?? JSON.stringify(r))}
-        rowSelection={rowSelection}
         loading={loading}
         size="small"
         scroll={{ x: 'max-content' }}
@@ -200,10 +199,9 @@ const CustomerSiteActivities: React.FC = () => {
   const [fusionColumns, setFusionColumns] = useState<ColumnsType<Row>>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
-  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
-  const [activeTab, setActiveTab] = useState('sites');
-  const [childStates, setChildStates] = useState<Record<string, ChildState>>({});
-  const [loadingActivities, setLoadingActivities] = useState(false);
+  const [detailsTabs, setDetailsTabs] = useState<Array<{ key: string; site: Row }>>([]);
+  const [activeDetailTab, setActiveDetailTab] = useState<string>('');
+  const [childStates, setChildStates] = useState<Record<string, Record<string, ChildState>>>({});
 
   const [apiDebug, setApiDebug] = useState<ApiDebug | null>(null);
   const [apiDebugVisible, setApiDebugVisible] = useState(false);
@@ -223,7 +221,6 @@ const CustomerSiteActivities: React.FC = () => {
 
     setApiDebug({ url: firstUrl, status: null, response: '' });
     setSearchLoading(true);
-    setSelectedRowKeys([]);
     try {
       let offset = 0;
       let hasMore = true;
@@ -252,7 +249,26 @@ const CustomerSiteActivities: React.FC = () => {
 
       setApiDebug({ url: firstUrl, status: lastStatus, response: JSON.stringify(lastJson, null, 2) });
       setFusionData(allItems);
-      setFusionColumns(buildColumns(allItems));
+
+      // Add Details column to each row
+      const columnsWithDetails = buildColumns(allItems);
+      columnsWithDetails.push({
+        title: 'Action',
+        key: 'action',
+        fixed: 'right',
+        width: 100,
+        render: (_: unknown, record: Row) => (
+          <Button
+            type="primary"
+            size="small"
+            onClick={() => openDetailsTab(record)}
+            style={{ background: REDWOOD.info, borderColor: REDWOOD.info }}
+          >
+            Details
+          </Button>
+        ),
+      });
+      setFusionColumns(columnsWithDetails);
       if (!allItems.length) message.info('No results found');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -263,94 +279,163 @@ const CustomerSiteActivities: React.FC = () => {
     }
   }, [form]);
 
-  // ── Load child activities for selected rows ──────────────────────
-  const handleLoadActivities = useCallback(async () => {
-    if (!selectedRowKeys.length) { message.warning('Select at least one customer site first'); return; }
-    const selected = fusionData.filter(r => selectedRowKeys.includes(String(r['BillToSiteUseId'])));
+  // ── Open details tab for a specific site ──────────────────────
+  const openDetailsTab = useCallback(async (site: Row) => {
+    const siteId = site['BillToSiteUseId'];
+    const tabKey = `detail-${siteId}`;
 
+    // Check if tab already exists
+    if (detailsTabs.find(t => t.key === tabKey)) {
+      setActiveDetailTab(tabKey);
+      return;
+    }
+
+    // Create new tab
+    setDetailsTabs(prev => [...prev, { key: tabKey, site }]);
+    setActiveDetailTab(tabKey);
+
+    // Load activities for this site
     const initStates: Record<string, ChildState> = {};
     CHILD_NAMES.forEach(cn => { initStates[cn] = { loading: true, data: [], columns: [] }; });
-    setChildStates(initStates);
-    setLoadingActivities(true);
-    setActiveTab(CHILD_NAMES[0]);
+    setChildStates(prev => ({ ...prev, [tabKey]: initStates }));
 
     const allResults: Record<string, Row[]> = {};
     CHILD_NAMES.forEach(cn => { allResults[cn] = []; });
 
     const fusionBase = getFusionBase();
     await Promise.all(
-      selected.flatMap(site =>
-        CHILD_NAMES.map(async childName => {
-          try {
-            const siteId = site['BillToSiteUseId'];
-            const LIMIT = 500;
-            let offset = 0;
-            let hasMore = true;
-            const allItems: Row[] = [];
+      CHILD_NAMES.map(async childName => {
+        try {
+          const LIMIT = 500;
+          let offset = 0;
+          let hasMore = true;
+          const allItems: Row[] = [];
 
-            while (hasMore) {
-              const url = `${fusionBase}/${siteId}/child/${childName}?limit=${LIMIT}&offset=${offset}`;
-              const res = await fetch(url, { headers: getFusionAuthHeaders() });
-              if (!res.ok) break;
-              const json = await res.json();
-              const page: Row[] = (json.items || []).map((item: Row) => {
-                const r: Row = { _customerName: `${site['CustomerName']} (${site['BillToSiteNumber']})` };
-                Object.keys(item).filter(k => k !== 'links').forEach(k => { r[k] = item[k]; });
-                return r;
-              });
-              allItems.push(...page);
-              hasMore = !!json.hasMore && page.length === LIMIT;
-              offset += LIMIT;
-            }
-            allResults[childName].push(...allItems);
-          } catch { /* skip */ }
-        })
-      )
+          while (hasMore) {
+            const url = `${fusionBase}/${siteId}/child/${childName}?limit=${LIMIT}&offset=${offset}`;
+            const res = await fetch(url, { headers: getFusionAuthHeaders() });
+            if (!res.ok) break;
+            const json = await res.json();
+            const page: Row[] = (json.items || []).map((item: Row) => {
+              const r: Row = {};
+              Object.keys(item).filter(k => k !== 'links').forEach(k => { r[k] = item[k]; });
+              return r;
+            });
+            allItems.push(...page);
+            hasMore = !!json.hasMore && page.length === LIMIT;
+            offset += LIMIT;
+          }
+          allResults[childName].push(...allItems);
+        } catch { /* skip */ }
+      })
     );
 
     const finalStates: Record<string, ChildState> = {};
     CHILD_NAMES.forEach(cn => {
       const data = allResults[cn];
-      finalStates[cn] = { loading: false, data, columns: buildColumns(data, { key: '_customerName', title: 'Customer' }) };
+      finalStates[cn] = { loading: false, data, columns: buildColumns(data) };
     });
-    setChildStates(finalStates);
-    setLoadingActivities(false);
-  }, [selectedRowKeys, fusionData]);
+    setChildStates(prev => ({ ...prev, [tabKey]: finalStates }));
+  }, [detailsTabs]);
 
-  const rowSelection: TableRowSelection<Row> = {
-    selectedRowKeys,
-    onChange: keys => setSelectedRowKeys(keys),
+  const closeDetailsTab = (tabKey: string) => {
+    setDetailsTabs(prev => prev.filter(t => t.key !== tabKey));
+    setChildStates(prev => {
+      const updated = { ...prev };
+      delete updated[tabKey];
+      return updated;
+    });
+    if (activeDetailTab === tabKey) {
+      setActiveDetailTab(detailsTabs[0]?.key || 'sites');
+    }
   };
 
-  const childTabItems = CHILD_NAMES.map(cn => {
-    const state = childStates[cn] || { loading: false, data: [], columns: [] };
-    return {
-      key: cn,
-      label: (
-        <span>
-          {CHILD_LABEL_MAP[cn]}
-          {state.data.length > 0 && <Badge count={state.data.length} size="small" style={{ marginLeft: 6, background: REDWOOD.info }} />}
-          {state.loading && <SyncOutlined spin style={{ marginLeft: 6, fontSize: 11 }} />}
-        </span>
-      ),
-      children: (
-        <div>
-          {!state.loading && state.data.length > 0 && (
-            <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'flex-end' }}>
-              <Button size="small" icon={<DownloadOutlined />} onClick={() => exportToExcel(state.data, cn)}>Export to Excel</Button>
+  const buildDetailsTabItems = () => {
+    return detailsTabs.map(({ key, site }) => {
+      const siteChildStates = childStates[key] || {};
+      const childTabItems = CHILD_NAMES.map(cn => {
+        const state = siteChildStates[cn] || { loading: false, data: [], columns: [] };
+        return {
+          key: cn,
+          label: (
+            <span>
+              {CHILD_LABEL_MAP[cn]}
+              {state.data.length > 0 && <Badge count={state.data.length} size="small" style={{ marginLeft: 6, background: REDWOOD.info }} />}
+              {state.loading && <SyncOutlined spin style={{ marginLeft: 6, fontSize: 11 }} />}
+            </span>
+          ),
+          children: (
+            <div>
+              {!state.loading && state.data.length > 0 && (
+                <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button size="small" icon={<DownloadOutlined />} onClick={() => exportToExcel(state.data, cn)}>Export to Excel</Button>
+                </div>
+              )}
+              <FilteredTable data={state.data} columns={state.columns} loading={state.loading}
+                emptyText="No data available" />
             </div>
-          )}
-          <FilteredTable data={state.data} columns={state.columns} loading={state.loading}
-            emptyText="Select customers in the first tab and click Load Activities" />
-        </div>
-      ),
-    };
-  });
+          ),
+        };
+      });
+
+      return {
+        key,
+        label: (
+          <span>
+            {site['CustomerName']?.substring(0, 20)}
+            <Button
+              type="text"
+              size="small"
+              onClick={(e) => { e.stopPropagation(); closeDetailsTab(key); }}
+              style={{ marginLeft: 8, padding: 0 }}
+            >
+              ×
+            </Button>
+          </span>
+        ),
+        children: (
+          <div>
+            <Card style={{ marginBottom: 16, borderColor: REDWOOD.border }} bodyStyle={{ padding: '16px' }}>
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 16 }}>
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Customer Name</Text>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{site['CustomerName']}</div>
+                  </div>
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Account Number</Text>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{site['AccountNumber']}</div>
+                  </div>
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Bill To Site Number</Text>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{site['BillToSiteNumber']}</div>
+                  </div>
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Total Open Receivables</Text>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: REDWOOD.primary }}>
+                      {formatVal('amount', site['TotalOpenReceivablesForSite'])}
+                    </div>
+                  </div>
+                </div>
+              </Space>
+            </Card>
+            <Tabs items={childTabItems} style={{ background: REDWOOD.surface, borderRadius: 8 }} />
+          </div>
+        ),
+      };
+    });
+  };
 
   const tabItems = [
     {
       key: 'sites',
-      label: 'Customer Sites',
+      label: (
+        <span>
+          <ShoppingOutlined style={{ marginRight: 8 }} />
+          All Customers
+          {fusionData.length > 0 && <Badge count={fusionData.length} style={{ marginLeft: 8, background: REDWOOD.info }} />}
+        </span>
+      ),
       children: (
         <div>
           <Card style={{ marginBottom: 16, borderColor: REDWOOD.border }} bodyStyle={{ padding: '16px 24px' }}>
@@ -386,31 +471,17 @@ const CustomerSiteActivities: React.FC = () => {
             </Form>
           </Card>
 
-          {selectedRowKeys.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <Space>
-                <Text type="secondary">{selectedRowKeys.length} site(s) selected</Text>
-                <Button type="primary" icon={<EyeOutlined />} loading={loadingActivities}
-                  style={{ background: REDWOOD.success, borderColor: REDWOOD.success }}
-                  onClick={handleLoadActivities}>
-                  Load Activities
-                </Button>
-              </Space>
-            </div>
-          )}
-
           <Card style={{ borderColor: REDWOOD.border }}>
             <SiteResultsTable
               data={fusionData}
               columns={fusionColumns}
               loading={searchLoading}
-              rowSelection={rowSelection}
             />
           </Card>
         </div>
       ),
     },
-    ...childTabItems,
+    ...buildDetailsTabItems(),
   ];
 
   return (
@@ -441,7 +512,7 @@ const CustomerSiteActivities: React.FC = () => {
             </Space>
           </div>
 
-          <Tabs activeKey={activeTab} onChange={setActiveTab} type="card" items={tabItems}
+          <Tabs activeKey={activeDetailTab || 'sites'} onChange={setActiveDetailTab} type="card" items={tabItems}
             style={{ background: REDWOOD.surface, borderRadius: 8 }} />
         </div>
 
