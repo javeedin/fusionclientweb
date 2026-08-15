@@ -18,7 +18,8 @@ import {
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import AccountSelector, { validateAccountCode } from '../../components/AccountSelector';
-import ClaudeReconciliationModal from '../../components/ClaudeReconciliationModal';
+import { ReconciliationViewer } from '../../components/ReconciliationViewer';
+import { reconcileWithClaude, type ReconciliationResult } from '../../services/claudeReconciliation.service';
 import ReconAgent from './ReconAgent';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { buildPcBankTxnSlaPayload, fetchLedgerByBusinessUnit, derivePeriodName, createAccounting } from '../../services/sla.service';
@@ -953,6 +954,9 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
   // Claude AI Reconciliation
   const [claudeReconOpen, setClaudeReconOpen] = useState(false);
   const [claudeApiKey, setClaudeApiKey] = useState<string>('');
+  const [claudeResult, setClaudeResult] = useState<ReconciliationResult | null>(null);
+  const [claudeLoading, setClaudeLoading] = useState(false);
+  const [claudeError, setClaudeError] = useState('');
 
   // Load bank accounts for the ext txn modal (filter by legal entity)
   const loadExtBankAccounts = useCallback((legalEntity: string) => {
@@ -3711,18 +3715,30 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
           <Button
             icon={<RobotOutlined />}
             size="large"
+            loading={claudeLoading}
             onClick={async () => {
               try {
+                setClaudeError('');
+                setClaudeLoading(true);
+
+                // Fetch API key
                 const res = await fetch(`${APEX_BASE}/settings/claudekey`);
                 const data = await res.json();
-                if (data.apiKey) {
-                  setClaudeApiKey(data.apiKey);
-                  setClaudeReconOpen(true);
-                } else {
-                  message.error('Claude API key not configured. Go to Admin → Claude AI Key Settings');
+                if (!data.apiKey) {
+                  setClaudeError('Claude API key not configured. Go to Admin → Claude AI Key Settings');
+                  return;
                 }
+
+                // Run reconciliation
+                const result = await reconcileWithClaude(stmtLines, sysTxns, data.apiKey);
+                setClaudeResult(result);
+                setClaudeReconOpen(true);
               } catch (err) {
-                message.error('Failed to load Claude API key');
+                const errMsg = err instanceof Error ? err.message : 'Unknown error';
+                setClaudeError(errMsg);
+                message.error('Reconciliation failed: ' + errMsg);
+              } finally {
+                setClaudeLoading(false);
               }
             }}
             disabled={stmtLines.length === 0 || sysTxns.length === 0}
@@ -5376,15 +5392,38 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         })()}
       </Modal>
 
-      {/* ── Claude AI Reconciliation Modal ───────────────────────────────── */}
-      <ClaudeReconciliationModal
+      {/* ── Claude AI Reconciliation Viewer Modal ───────────────────────────────── */}
+      <Modal
         open={claudeReconOpen}
-        onClose={() => setClaudeReconOpen(false)}
-        stmtLines={stmtLines}
-        sysTxns={sysTxns}
-        claudeApiKey={claudeApiKey}
-        bankAccountName={selectedStatement?.bankAccountName || 'Unknown'}
-      />
+        onCancel={() => {
+          setClaudeReconOpen(false);
+          setClaudeResult(null);
+          setClaudeError('');
+        }}
+        width={1200}
+        footer={null}
+        bodyStyle={{ maxHeight: '80vh', overflowY: 'auto' }}
+        title={
+          <Space>
+            <RobotOutlined style={{ color: REDWOOD.info }} />
+            Claude AI Bank Reconciliation
+          </Space>
+        }
+      >
+        <ReconciliationViewer
+          result={claudeResult}
+          loading={claudeLoading}
+          error={claudeError}
+          stmtLines={stmtLines}
+          sysTxns={sysTxns}
+          bankAccountName={selectedStatement?.bankAccountName || 'Unknown'}
+          onClose={() => {
+            setClaudeReconOpen(false);
+            setClaudeResult(null);
+            setClaudeError('');
+          }}
+        />
+      </Modal>
     </>
   );
 };
