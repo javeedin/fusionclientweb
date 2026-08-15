@@ -4378,13 +4378,11 @@ const OnhandPanel: React.FC<{ org?: string; subinv?: string; ccy?: string; onAdd
           return;
         }
 
-        // Capture URL for first item search
-        if (itemNumbers.length > 0) {
-          const qry = `OrganizationCode=${org}${subinv ? `;SubinventoryCode=${subinv}` : ''};ItemNumber=${itemNumbers[0]}`;
-          capturedUrl = `${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(qry)}&expand=lots&onlyData=true&limit=100`;
-        }
-
         // Fetch on-hand for each item with expand=lots (single call per item, includes lot details)
+        // Capture example URL from first item, show total count
+        const exampleQry = `OrganizationCode=${org}${subinv ? `;SubinventoryCode=${subinv}` : ''};ItemNumber=${itemNumbers[0]}`;
+        capturedUrl = `${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(exampleQry)}&expand=lots&onlyData=true&limit=100\n\n[Pattern: Making ${itemNumbers.length} parallel calls with expand=lots (one per item)]`;
+
         await Promise.all(itemNumbers.map(async (itemNum: string) => {
           const qry = `OrganizationCode=${org}${subinv ? `;SubinventoryCode=${subinv}` : ''};ItemNumber=${itemNum}`;
           const r = await fetch(`${FUSION_BASE}/inventoryOnhandBalances?q=${encodeURIComponent(qry)}&expand=lots&onlyData=true&limit=100`, { headers: getHeaders() });
