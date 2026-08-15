@@ -445,7 +445,6 @@ const CustomerSiteActivities: React.FC = () => {
   const buildDetailsTabItems = () => {
     return detailsTabs.map(({ key, site }) => {
       const siteChildStates = childStates[key] || {};
-      const filterBalances = balanceFilter[key] !== false; // default true
 
       // Build child activity tabs
       const childTabItems = CHILD_NAMES.map(cn => {
