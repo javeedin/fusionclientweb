@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   Layout, Card, Form, Input, Button, Space, Typography, Table, Tabs,
-  Breadcrumb, Spin, message, Empty, Modal, Tag, Badge,
+  Breadcrumb, Spin, message, Empty, Modal, Tag, Badge, Checkbox,
 } from 'antd';
 import {
   HomeOutlined, SearchOutlined, DownloadOutlined,
@@ -113,6 +113,42 @@ function buildColumns(items: Row[], extraFirst?: { key: string; title: string })
   return cols;
 }
 
+// Build columns for customer list (hide IDs, specific order)
+function buildCustomerListColumns(): ColumnsType<Row> {
+  const HIDDEN_KEYS = new Set(['BillToSiteUseId', 'AccountId', 'CustomerId', 'links']);
+  const ORDERED_KEYS = [
+    'AccountNumber', 'CustomerName', 'TotalOpenReceivablesForSite', 'TotalTransactionsDueForSite',
+    'BillToSiteAddress', 'BillToSiteNumber', 'CreationDate'
+  ];
+
+  const cols: ColumnsType<Row> = [];
+
+  ORDERED_KEYS.forEach(key => {
+    let title = key
+      .replace(/([A-Z])/g, ' $1')
+      .trim()
+      .replace('For Site', '')
+      .trim();
+
+    cols.push({
+      title,
+      dataIndex: key,
+      key,
+      ellipsis: true,
+      sorter: (a, b) => {
+        const aVal = a[key];
+        const bVal = b[key];
+        if (typeof aVal === 'number' && typeof bVal === 'number') return aVal - bVal;
+        return String(aVal || '').localeCompare(String(bVal || ''));
+      },
+      render: (v: unknown) => formatVal(key, v),
+      width: key.includes('Address') ? 250 : key.includes('Total') ? 180 : 150,
+    });
+  });
+
+  return cols;
+}
+
 function exportToExcel(data: Row[], filename: string) {
   const cleaned = data.map(row => {
     const r: Row = {};
@@ -202,6 +238,7 @@ const CustomerSiteActivities: React.FC = () => {
   const [detailsTabs, setDetailsTabs] = useState<Array<{ key: string; site: Row }>>([]);
   const [activeDetailTab, setActiveDetailTab] = useState<string>('');
   const [childStates, setChildStates] = useState<Record<string, Record<string, ChildState>>>({});
+  const [balanceFilter, setBalanceFilter] = useState<Record<string, boolean>>({});
 
   const [apiDebug, setApiDebug] = useState<ApiDebug | null>(null);
   const [apiDebugVisible, setApiDebugVisible] = useState(false);
@@ -216,7 +253,7 @@ const CustomerSiteActivities: React.FC = () => {
 
     const LIMIT = 500;
     const fusionBase = getFusionBase();
-    const baseUrl = `${fusionBase}?limit=${LIMIT}${filters.length ? `&q=${encodeURIComponent(filters.join(' AND '))}` : ''}`;
+    const baseUrl = `${fusionBase}?onlyData=true&limit=${LIMIT}${filters.length ? `&q=${encodeURIComponent(filters.join(' AND '))}` : ''}`;
     const firstUrl = `${baseUrl}&offset=0`;
 
     setApiDebug({ url: firstUrl, status: null, response: '' });
@@ -250,13 +287,13 @@ const CustomerSiteActivities: React.FC = () => {
       setApiDebug({ url: firstUrl, status: lastStatus, response: JSON.stringify(lastJson, null, 2) });
       setFusionData(allItems);
 
-      // Add Details column to each row
-      const columnsWithDetails = buildColumns(allItems);
-      columnsWithDetails.push({
+      // Build columns with Details action
+      const cols = buildCustomerListColumns();
+      cols.unshift({
         title: 'Action',
         key: 'action',
-        fixed: 'right',
-        width: 100,
+        fixed: 'left',
+        width: 90,
         render: (_: unknown, record: Row) => (
           <Button
             type="primary"
@@ -268,7 +305,7 @@ const CustomerSiteActivities: React.FC = () => {
           </Button>
         ),
       });
-      setFusionColumns(columnsWithDetails);
+      setFusionColumns(cols);
       if (!allItems.length) message.info('No results found');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -353,26 +390,79 @@ const CustomerSiteActivities: React.FC = () => {
   const buildDetailsTabItems = () => {
     return detailsTabs.map(({ key, site }) => {
       const siteChildStates = childStates[key] || {};
+      const filterBalances = balanceFilter[key] !== false; // default true
+
       const childTabItems = CHILD_NAMES.map(cn => {
         const state = siteChildStates[cn] || { loading: false, data: [], columns: [] };
+
+        // Filter data by balance if enabled
+        const filteredData = filterBalances
+          ? state.data.filter(row => {
+              const balance = row['TotalOpenReceivablesForSite'];
+              return balance !== null && balance !== undefined && balance !== 0;
+            })
+          : state.data;
+
+        // Build columns with sorting
+        let cols = buildColumns(filteredData);
+        cols = cols.map(col => ({
+          ...col,
+          sorter: (a: Row, b: Row) => {
+            const aVal = a[col.dataIndex as string];
+            const bVal = b[col.dataIndex as string];
+            if (typeof aVal === 'number' && typeof bVal === 'number') return aVal - bVal;
+            return String(aVal || '').localeCompare(String(bVal || ''));
+          },
+        }));
+
+        // Calculate totals
+        const totals: Record<string, number> = {};
+        filteredData.forEach(row => {
+          Object.keys(row).forEach(k => {
+            if (typeof row[k] === 'number') {
+              totals[k] = (totals[k] || 0) + row[k];
+            }
+          });
+        });
+
         return {
           key: cn,
           label: (
             <span>
               {CHILD_LABEL_MAP[cn]}
-              {state.data.length > 0 && <Badge count={state.data.length} size="small" style={{ marginLeft: 6, background: REDWOOD.info }} />}
+              {filteredData.length > 0 && <Badge count={filteredData.length} size="small" style={{ marginLeft: 6, background: REDWOOD.info }} />}
               {state.loading && <SyncOutlined spin style={{ marginLeft: 6, fontSize: 11 }} />}
             </span>
           ),
           children: (
             <div>
               {!state.loading && state.data.length > 0 && (
-                <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'flex-end' }}>
-                  <Button size="small" icon={<DownloadOutlined />} onClick={() => exportToExcel(state.data, cn)}>Export to Excel</Button>
+                <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Checkbox
+                    checked={filterBalances}
+                    onChange={(e) => setBalanceFilter(prev => ({ ...prev, [key]: e.target.checked }))}
+                  >
+                    Records with Balances
+                  </Checkbox>
+                  <Button size="small" icon={<DownloadOutlined />} onClick={() => exportToExcel(filteredData, cn)}>Export to Excel</Button>
                 </div>
               )}
-              <FilteredTable data={state.data} columns={state.columns} loading={state.loading}
-                emptyText="No data available" />
+              <Table
+                dataSource={filteredData}
+                columns={cols}
+                rowKey={(_r, i) => String(i)}
+                loading={state.loading}
+                size="small"
+                scroll={{ x: 'max-content' }}
+                pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `Total ${t} records` }}
+                footer={() =>
+                  Object.keys(totals).length > 0 ? (
+                    <div style={{ fontWeight: 600, color: REDWOOD.primary }}>
+                      Totals: {Object.entries(totals).map(([k, v]) => `${k}: ${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`).join(' | ')}
+                    </div>
+                  ) : undefined
+                }
+              />
             </div>
           ),
         };
