@@ -1,15 +1,19 @@
-import { buildApexUrl } from '../../config/api.helper';
+import { getFusionAuthHeaders } from '../../config/api.helper';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Row, Col, Input, Tag, Collapse, Badge, Spin, Alert, Button, Drawer, Space, Divider, message,
 } from 'antd';
 import { HomeOutlined, ApartmentOutlined, SearchOutlined, ApiOutlined, CopyOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
+import { getCurrentCompany } from '../../config/company.config';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
 
-const ORDS_BASE = buildApexUrl('test/FUSIONCLIENTERP');
+const getFusionBase = () => {
+  const company = getCurrentCompany();
+  return company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05` : '';
+};
 
 const REDWOOD = {
   primary: '#C74634', primaryDark: '#A33B2C', primaryLight: '#E85D4A',
@@ -82,9 +86,11 @@ const Subinventories: React.FC = () => {
   const [apiResponse, setApiResponse] = useState('');
 
   useEffect(() => {
-    const url = `${ORDS_BASE}/inventory/inventorywarehousesubinventory`;
+    const fusionBase = getFusionBase();
+    const url = `${fusionBase}/inventorySublocations?limit=500&onlyData=true`;
+    const headers = getFusionAuthHeaders();
     setApiUrl(url);
-    fetch(url)
+    fetch(url, { headers })
       .then(r => {
         if (!r.ok) {
           return r.text().then(text => {
@@ -97,7 +103,20 @@ const Subinventories: React.FC = () => {
           return d;
         });
       })
-      .then(d => { setRows(Array.isArray(d) ? d : (d.items ?? [])); })
+      .then(d => {
+        const items = Array.isArray(d) ? d : (d.items ?? []);
+        const rows = items.map((item: any) => ({
+          business_unit_code: item.BusinessUnitCode || '',
+          business_unit_name: item.BusinessUnitName || '',
+          warehouse_code: item.WarehouseCode || '',
+          warehouse_name: item.WarehouseName || '',
+          subinventory_code: item.SubinventoryCode || '',
+          subinventory_name: item.SubinventoryName || '',
+          locator_id: item.LocatorId || '',
+          instance_name: item.InstanceName || '',
+        }));
+        setRows(rows);
+      })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
