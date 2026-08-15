@@ -847,15 +847,235 @@ const CustomerSiteActivities: React.FC = () => {
       row += 1;
     });
 
+    row += 1;
+
+    // 2 · MONTHLY ACTIVITY
+    ws2.getCell(row, 1).value = '2 · MONTHLY ACTIVITY — LAST 12 MONTHS';
+    ws2.getCell(row, 1).fill = headerFill as any;
+    ws2.getCell(row, 1).font = sectionFont as any;
+    ws2.mergeCells(row, 1, row, 5);
+    row += 1;
+
+    const headers4 = ['Month', 'Invoices', 'Gross invoiced', 'Credit memos', 'Net sales'];
+    headers4.forEach((h, i) => {
+      ws2.getCell(row, i + 1).value = h;
+      ws2.getCell(row, i + 1).fill = tableHeaderFill as any;
+      ws2.getCell(row, i + 1).font = tableHeaderFont as any;
+    });
+    row += 1;
+
+    const sortedMonths = Object.keys(overview.monthlyData).sort().reverse().slice(0, 12);
+    sortedMonths.forEach(month => {
+      const data = overview.monthlyData[month];
+      ws2.getCell(row, 1).value = month;
+      ws2.getCell(row, 2).value = data.invoices;
+      ws2.getCell(row, 3).value = data.amount;
+      ws2.getCell(row, 3).numFmt = '#,##0.00';
+      ws2.getCell(row, 4).value = data.creditAmount;
+      ws2.getCell(row, 4).numFmt = '#,##0.00';
+      ws2.getCell(row, 5).value = data.amount + data.creditAmount;
+      ws2.getCell(row, 5).numFmt = '#,##0.00';
+      row += 1;
+    });
+    row += 1;
+
+    // 3 · CREDIT TERMS MIX
+    ws2.getCell(row, 1).value = '3 · HOW THEY BUY — CREDIT TERMS MIX (days between invoice date and due date)';
+    ws2.getCell(row, 1).fill = headerFill as any;
+    ws2.getCell(row, 1).font = sectionFont as any;
+    ws2.mergeCells(row, 1, row, 3);
+    row += 1;
+
+    const headers5 = ['Payment terms', 'Invoices (lifetime)', '% of invoices'];
+    headers5.forEach((h, i) => {
+      ws2.getCell(row, i + 1).value = h;
+      ws2.getCell(row, i + 1).fill = tableHeaderFill as any;
+      ws2.getCell(row, i + 1).font = tableHeaderFont as any;
+    });
+    row += 1;
+
+    const totalInvCount = Object.values(overview.creditTermsBuckets).reduce((a, b) => a + b, 0);
+    Object.entries(overview.creditTermsBuckets).forEach(([term, count]) => {
+      ws2.getCell(row, 1).value = term;
+      ws2.getCell(row, 2).value = count;
+      const pct = totalInvCount > 0 ? count / totalInvCount : 0;
+      ws2.getCell(row, 3).value = pct;
+      ws2.getCell(row, 3).numFmt = '0.0%';
+      row += 1;
+    });
+    row += 1;
+
+    // 4 · BASKET SIZE
+    ws2.getCell(row, 1).value = '4 · BASKET SIZE — INVOICE VALUE DISTRIBUTION';
+    ws2.getCell(row, 1).fill = headerFill as any;
+    ws2.getCell(row, 1).font = sectionFont as any;
+    ws2.mergeCells(row, 1, row, 3);
+    row += 1;
+
+    const headers6 = ['Value range', 'Invoices (lifetime)', '% of invoices'];
+    headers6.forEach((h, i) => {
+      ws2.getCell(row, i + 1).value = h;
+      ws2.getCell(row, i + 1).fill = tableHeaderFill as any;
+      ws2.getCell(row, i + 1).font = tableHeaderFont as any;
+    });
+    row += 1;
+
+    Object.entries(overview.basketBuckets).forEach(([range, count]) => {
+      ws2.getCell(row, 1).value = range;
+      ws2.getCell(row, 2).value = count;
+      const pct = totalInvCount > 0 ? count / totalInvCount : 0;
+      ws2.getCell(row, 3).value = pct;
+      ws2.getCell(row, 3).numFmt = '0.0%';
+      row += 1;
+    });
+    row += 1;
+
+    // 5 · PAYMENT BEHAVIOUR
+    ws2.getCell(row, 1).value = '5 · PAYMENT BEHAVIOUR — WHEN INVOICES ACTUALLY SETTLE';
+    ws2.getCell(row, 1).fill = headerFill as any;
+    ws2.getCell(row, 1).font = sectionFont as any;
+    ws2.mergeCells(row, 1, row, 2);
+    row += 1;
+
+    ws2.getCell(row, 1).value = 'On-time payment rate %';
+    ws2.getCell(row, 2).value = overview.onTimeRate / 100;
+    ws2.getCell(row, 2).numFmt = '0.0%';
+    row += 1;
+
+    ws2.getCell(row, 1).value = 'Average settlement days';
+    ws2.getCell(row, 2).value = overview.avgSettlementDays;
+    row += 2;
+
+    // 6 · RETURNS ANALYSIS
+    ws2.getCell(row, 1).value = '6 · RETURNS & CREDIT MEMO ANALYSIS — INVOICES VS RETURNS';
+    ws2.getCell(row, 1).fill = headerFill as any;
+    ws2.getCell(row, 1).font = sectionFont as any;
+    ws2.mergeCells(row, 1, row, 2);
+    row += 1;
+
+    ws2.getCell(row, 1).value = 'Return ratio %';
+    ws2.getCell(row, 2).value = overview.returnsRatio / 100;
+    ws2.getCell(row, 2).numFmt = '0.0%';
+    row += 1;
+
+    ws2.getCell(row, 1).value = 'Average credit memo value';
+    ws2.getCell(row, 2).value = overview.avgCreditMemo;
+    ws2.getCell(row, 2).numFmt = '#,##0.00';
+    row += 2;
+
+    // 7 · THIRD PARTY SETTLEMENTS
+    ws2.getCell(row, 1).value = '7 · SETTLEMENTS MADE BY THIRD PARTIES ("Paid by Others")';
+    ws2.getCell(row, 1).fill = headerFill as any;
+    ws2.getCell(row, 1).font = sectionFont as any;
+    ws2.mergeCells(row, 1, row, 2);
+    row += 1;
+
+    const paidByOthersCount = overview.settledInvoices.filter((item: any) => item['ReceiptType'] === 'Paid by Others').length;
+    ws2.getCell(row, 1).value = 'Paid by others count';
+    ws2.getCell(row, 2).value = paidByOthersCount;
+    row += 2;
+
+    // 8 · KEY INSIGHTS
+    ws2.getCell(row, 1).value = '8 · KEY INSIGHTS';
+    ws2.getCell(row, 1).fill = headerFill as any;
+    ws2.getCell(row, 1).font = sectionFont as any;
+    ws2.mergeCells(row, 1, row, 2);
+    row += 1;
+
+    const insights = [];
+    if (overview.paymentRate > 0.8) insights.push('✓ Strong payment discipline with >80% settlement rate');
+    if (overview.onTimeRate > 80) insights.push('✓ Excellent on-time payment behavior (>80%)');
+    if (overview.pastDueBalance > 0) insights.push(`⚠ Past due balance of MUR ${overview.pastDueBalance.toLocaleString('en-US', { maximumFractionDigits: 0 })}`);
+    if (overview.returnsRatio > 5) insights.push(`⚠ Return ratio of ${overview.returnsRatio.toFixed(1)}% is notable`);
+    if (insights.length === 0) insights.push('Customer account profile appears normal');
+
+    insights.forEach(insight => {
+      ws2.getCell(row, 1).value = insight;
+      row += 1;
+    });
+
     ws2.columns = [
-      { width: 12 },
-      { width: 12 },
+      { width: 35 },
       { width: 18 },
       { width: 15 },
-      { width: 12 },
-      { width: 15 },
+      { width: 18 },
       { width: 15 }
     ];
+
+    // ────── AR INVOICES DETAIL SHEET ──────
+    if (childStates[overviewCustomerKey]?.transactionPaymentSchedules?.data) {
+      const ws3 = wb.addWorksheet('AR Invoices');
+      const invoicesData = childStates[overviewCustomerKey].transactionPaymentSchedules.data;
+
+      row = 1;
+      const invoiceHeaders = ['Invoice #', 'Date', 'Due Date', 'Amount', 'Balance', 'Status', 'Days Late'];
+      invoiceHeaders.forEach((h, i) => {
+        ws3.getCell(row, i + 1).value = h;
+        ws3.getCell(row, i + 1).fill = tableHeaderFill as any;
+        ws3.getCell(row, i + 1).font = tableHeaderFont as any;
+      });
+      row += 1;
+
+      invoicesData.slice(0, 100).forEach((inv: any) => {
+        ws3.getCell(row, 1).value = inv['TransactionNumber'] || '';
+        ws3.getCell(row, 2).value = inv['TransactionDate'] ? new Date(inv['TransactionDate'] as string) : null;
+        ws3.getCell(row, 2).numFmt = 'dd-mmm-yyyy';
+        ws3.getCell(row, 3).value = inv['PaymentScheduleDueDate'] ? new Date(inv['PaymentScheduleDueDate'] as string) : null;
+        ws3.getCell(row, 3).numFmt = 'dd-mmm-yyyy';
+        ws3.getCell(row, 4).value = inv['TotalOriginalAmount'] || 0;
+        ws3.getCell(row, 4).numFmt = '#,##0.00';
+        ws3.getCell(row, 5).value = inv['TotalBalanceAmount'] || 0;
+        ws3.getCell(row, 5).numFmt = '#,##0.00';
+        ws3.getCell(row, 6).value = inv['InstallmentStatus'] || '';
+        ws3.getCell(row, 7).value = inv['PaymentDaysLate'] || 0;
+        row += 1;
+      });
+
+      ws3.columns = [
+        { width: 18 },
+        { width: 14 },
+        { width: 14 },
+        { width: 14 },
+        { width: 14 },
+        { width: 12 },
+        { width: 12 }
+      ];
+    }
+
+    // ────── CREDIT MEMOS DETAIL SHEET ──────
+    if (childStates[overviewCustomerKey]?.creditMemos?.data) {
+      const ws4 = wb.addWorksheet('Credit Memos');
+      const creditsData = childStates[overviewCustomerKey].creditMemos.data;
+
+      row = 1;
+      const creditHeaders = ['Credit #', 'Date', 'Amount', 'Balance', 'Status'];
+      creditHeaders.forEach((h, i) => {
+        ws4.getCell(row, i + 1).value = h;
+        ws4.getCell(row, i + 1).fill = tableHeaderFill as any;
+        ws4.getCell(row, i + 1).font = tableHeaderFont as any;
+      });
+      row += 1;
+
+      creditsData.slice(0, 100).forEach((cm: any) => {
+        ws4.getCell(row, 1).value = cm['TransactionNumber'] || '';
+        ws4.getCell(row, 2).value = cm['CreditMemoDate'] ? new Date(cm['CreditMemoDate'] as string) : null;
+        ws4.getCell(row, 2).numFmt = 'dd-mmm-yyyy';
+        ws4.getCell(row, 3).value = cm['TotalOriginalAmount'] || 0;
+        ws4.getCell(row, 3).numFmt = '#,##0.00';
+        ws4.getCell(row, 4).value = cm['TotalBalanceAmount'] || 0;
+        ws4.getCell(row, 4).numFmt = '#,##0.00';
+        ws4.getCell(row, 5).value = cm['CreditMemoStatus'] || '';
+        row += 1;
+      });
+
+      ws4.columns = [
+        { width: 18 },
+        { width: 14 },
+        { width: 14 },
+        { width: 14 },
+        { width: 12 }
+      ];
+    }
 
     // Save and download
     const buf = await wb.xlsx.writeBuffer();
