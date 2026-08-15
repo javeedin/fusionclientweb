@@ -78,6 +78,14 @@ const procurementItems: MenuItemType[] = [
     path: '/procurement/sales-orders',
   },
   {
+    key: 'customers', group: 'Order Management',
+    icon: <TeamOutlined />,
+    label: 'Customers',
+    description: 'Search and manage customer records via BIP report',
+    color: REDWOOD.teal,
+    path: '/procurement/customers',
+  },
+  {
     key: 'price-list', group: 'Order Management',
     icon: <TagsOutlined />,
     label: 'Price List',

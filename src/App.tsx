@@ -145,6 +145,7 @@ const ManageShipmentLines     = lazy(() => import('./pages/procurement').then(m 
 const ConfirmPicks            = lazy(() => import('./pages/procurement').then(m => ({ default: m.ConfirmPicks })));
 const ReviewInventoryTransactions = lazy(() => import('./pages/procurement').then(m => ({ default: m.ReviewInventoryTransactions })));
 const SalesOrders             = lazy(() => import('./pages/procurement').then(m => ({ default: m.SalesOrders })));
+const Customers               = lazy(() => import('./pages/procurement').then(m => ({ default: m.Customers })));
 const PriceList               = lazy(() => import('./pages/procurement').then(m => ({ default: m.PriceList })));
 const PurchaseOrderLoading    = lazy(() => import('./pages/procurement').then(m => ({ default: m.PurchaseOrderLoading })));
 const ItemLoading             = lazy(() => import('./pages/procurement').then(m => ({ default: m.ItemLoading })));
@@ -317,6 +318,7 @@ function App() {
               <Route path="procurement/confirm-picks" element={<ConfirmPicks />} />
               <Route path="procurement/inventory-transactions" element={<ReviewInventoryTransactions />} />
               <Route path="procurement/sales-orders" element={<SalesOrders />} />
+              <Route path="procurement/customers" element={<Customers />} />
               <Route path="procurement/price-list" element={<PriceList />} />
               <Route path="procurement/po-loading" element={<PurchaseOrderLoading />} />
               <Route path="procurement/item-loading" element={<ItemLoading />} />
