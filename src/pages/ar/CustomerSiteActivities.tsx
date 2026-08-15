@@ -270,12 +270,13 @@ const CustomerSiteActivities: React.FC = () => {
   const [shouldCancelOverview, setShouldCancelOverview] = useState(false);
 
   // ── Load page data ──────────────────────────────────────────────
-  const loadPage = useCallback(async (pageNum: number) => {
+  const loadPage = useCallback(async (pageNum: number, overrideFilters?: Record<string, string>) => {
     const offset = (pageNum - 1) * PAGE_SIZE;
+    const currentFilters = overrideFilters || searchFilters;
     const filters: string[] = [];
-    if (searchFilters.CustomerName) filters.push(`CustomerName LIKE '${searchFilters.CustomerName}%'`);
-    if (searchFilters.AccountNumber) filters.push(`AccountNumber LIKE '${searchFilters.AccountNumber}%'`);
-    if (searchFilters.BillToSiteNumber) filters.push(`BillToSiteNumber LIKE '${searchFilters.BillToSiteNumber}%'`);
+    if (currentFilters.CustomerName) filters.push(`CustomerName LIKE '${currentFilters.CustomerName}%'`);
+    if (currentFilters.AccountNumber) filters.push(`AccountNumber LIKE '${currentFilters.AccountNumber}%'`);
+    if (currentFilters.BillToSiteNumber) filters.push(`BillToSiteNumber LIKE '${currentFilters.BillToSiteNumber}%'`);
 
     const fusionBase = getFusionBase();
     const url = `${fusionBase}?onlyData=true&limit=${PAGE_SIZE}${filters.length ? `&q=${encodeURIComponent(filters.join(' AND '))}` : ''}&offset=${offset}`;
@@ -343,17 +344,18 @@ const CustomerSiteActivities: React.FC = () => {
   // ── Search Fusion ────────────────────────────────────────────────
   const handleSearch = useCallback(async () => {
     const values = form.getFieldsValue();
-    setSearchFilters({
+    const newFilters = {
       CustomerName: values.CustomerName || '',
       AccountNumber: values.AccountNumber || '',
       BillToSiteNumber: values.BillToSiteNumber || '',
-    });
+    };
+    setSearchFilters(newFilters);
     setCurrentPage(1);
     setTotalRecords(0);
     setHasMore(false);
 
-    // Load first page with new filters
-    await loadPage(1);
+    // Load first page with new filters - pass filters directly to avoid async state issue
+    await loadPage(1, newFilters);
   }, [form, loadPage]);
 
   // ── Open details tab for a specific site ──────────────────────
