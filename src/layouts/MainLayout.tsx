@@ -27,8 +27,8 @@ import { ShowAndTellPanel } from '../features/showAndTell';
 import { useAuth } from '../context/AuthContext';
 import { useGlValidation } from '../context/GlValidationContext';
 import { useNotifications } from '../context/NotificationContext';
-import { getFusionInstanceKey, getFusionInstance } from '../config/fusionInstance';
 import { getCurrentCompany } from '../config/company.config';
+import { getFusionInstanceUrl } from '../config/api.helper';
 import ProfileModal from '../components/ProfileModal';
 import SupportTicketButton from '../components/SupportTicketButton';
 import ScreenRecorder from '../components/ScreenRecorder';
@@ -77,6 +77,8 @@ const MainLayout: React.FC = () => {
   // Signed-in Oracle Fusion user (captured by the Fusion Client login). Reads
   // sessionStorage and stays in sync via the 'fusion-user-changed' event.
   const [fusionUser, setFusionUser] = useState<string | null>(() => sessionStorage.getItem('fusion_user'));
+  const [instanceInfo, setInstanceInfo] = useState<{ label: string; url: string } | null>(null);
+
   useEffect(() => {
     const sync = () => setFusionUser(sessionStorage.getItem('fusion_user'));
     window.addEventListener('fusion-user-changed', sync);
@@ -85,6 +87,35 @@ const MainLayout: React.FC = () => {
       window.removeEventListener('fusion-user-changed', sync);
       window.removeEventListener('storage', sync);
     };
+  }, []);
+
+  // Update instance info when company or instance URL changes
+  useEffect(() => {
+    const updateInstanceInfo = () => {
+      const company = getCurrentCompany();
+      const actualInstanceUrl = getFusionInstanceUrl();
+
+      if (actualInstanceUrl && company.fusionInstances?.length > 0) {
+        // Find matching instance in current company's instances
+        const matchedInstance = company.fusionInstances.find(inst =>
+          actualInstanceUrl.includes(inst.url.split('//')[1]) // Compare hostnames
+        );
+        if (matchedInstance) {
+          setInstanceInfo({ label: matchedInstance.name, url: matchedInstance.url });
+        } else {
+          // Fallback: use the company name + actual URL
+          setInstanceInfo({ label: company.name, url: actualInstanceUrl });
+        }
+      } else if (company.fusionInstances?.length > 0) {
+        // No actual URL yet, use default instance
+        setInstanceInfo({ label: company.fusionInstances[0].name, url: company.fusionInstances[0].url });
+      }
+    };
+
+    updateInstanceInfo();
+    // Re-check when storage changes
+    window.addEventListener('storage', updateInstanceInfo);
+    return () => window.removeEventListener('storage', updateInstanceInfo);
   }, []);
   const [showInstallButton, setShowInstallButton] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -353,11 +384,13 @@ const MainLayout: React.FC = () => {
               </Tag>
             </Tooltip>
           )}
-          <Tooltip title={`Fusion Instance: ${getFusionInstance().label} (${getFusionInstance().host})`} placement="bottomLeft">
-            <Tag icon={<CloudServerOutlined />} style={{ marginLeft: 6, marginRight: 0, fontWeight: 600, background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)' }}>
-              {getFusionInstance().label}
-            </Tag>
-          </Tooltip>
+          {instanceInfo && (
+            <Tooltip title={`Fusion Instance: ${instanceInfo.label} (${instanceInfo.url})`} placement="bottomLeft">
+              <Tag icon={<CloudServerOutlined />} style={{ marginLeft: 6, marginRight: 0, fontWeight: 600, background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)' }}>
+                {instanceInfo.label}
+              </Tag>
+            </Tooltip>
+          )}
           <Tooltip title={user?.name || 'User Profile'}>
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight" trigger={['click']}>
               <Avatar
