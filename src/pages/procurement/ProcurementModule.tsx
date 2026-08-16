@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Layout, Breadcrumb, Typography, Card, Row, Col, Input, Button, Form, Alert, Divider, message, Tag, Select, Tooltip, Checkbox } from 'antd';
 import { FUSION_INSTANCES, getFusionInstanceKey, setFusionInstanceKey, getFusionInstance } from '../../config/fusionInstance';
 import { useAuth } from '../../context/AuthContext';
@@ -368,7 +368,7 @@ const procurementItems: MenuItemType[] = [
   },
 ];
 
-const TaskCard: React.FC<{ item: MenuItemType; onClick: () => void }> = ({ item, onClick }) => (
+const TaskCard: React.FC<{ item: MenuItemType; onClick: () => void }> = React.memo(({ item, onClick }) => (
   <div
     className={`fc-tile${item.path ? '' : ' fc-tile-disabled'}`}
     onClick={item.path ? onClick : undefined}
@@ -391,7 +391,7 @@ const TaskCard: React.FC<{ item: MenuItemType; onClick: () => void }> = ({ item,
       </div>
     </div>
   </div>
-);
+));
 
 // ── Password Gate ────────────────────────────────────────────────────────────
 const PasswordGate: React.FC<{ onSuccess: () => void }> = ({ onSuccess }) => {
@@ -581,6 +581,20 @@ const ProcurementHome: React.FC = () => {
   const navigate = useNavigate();
   const fusionUser = sessionStorage.getItem('fusion_user');
 
+  // Memoize grouped items to avoid recalculating on every render
+  const groupedItems = useMemo(() => {
+    return GROUP_ORDER.map(group => {
+      const items = procurementItems.filter(i => i.group === group);
+      if (items.length === 0) return null;
+      return {
+        group,
+        items,
+        meta: GROUP_META[group] ?? { icon: null, color: REDWOOD.primary },
+        active: items.filter(i => i.path).length,
+      };
+    }).filter(Boolean);
+  }, []);
+
   return (
     <Layout style={{ minHeight: 'calc(100vh - 64px)', background: REDWOOD.neutral100 }}>
       <Content>
@@ -635,33 +649,27 @@ const ProcurementHome: React.FC = () => {
             .fc-tile-disabled:hover .fc-chip { transform: none; }
           `}</style>
 
-          {GROUP_ORDER.map(group => {
-            const items = procurementItems.filter(i => i.group === group);
-            if (items.length === 0) return null;
-            const meta = GROUP_META[group] ?? { icon: null, color: REDWOOD.primary };
-            const active = items.filter(i => i.path).length;
-            return (
-              <div key={group} style={{ marginBottom: 26 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                  <span style={{
-                    width: 28, height: 28, borderRadius: 8, flexShrink: 0,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: meta.color + '18', color: meta.color, fontSize: 15,
-                  }}>{meta.icon}</span>
-                  <Text strong style={{ fontSize: 14, color: REDWOOD.neutral900, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{group}</Text>
-                  <Tag style={{ borderRadius: 10, border: 'none', background: meta.color + '18', color: meta.color, fontSize: 11, fontWeight: 600 }}>{active}</Tag>
-                  <div style={{ flex: 1, height: 1, background: `linear-gradient(90deg, ${meta.color}30, transparent)` }} />
-                </div>
-                <Row gutter={[14, 14]}>
-                  {items.map(item => (
-                    <Col key={item.key} xs={24} sm={12} lg={8}>
-                      <TaskCard item={item} onClick={() => item.path && navigate(item.path)} />
-                    </Col>
-                  ))}
-                </Row>
+          {groupedItems.map(({ group, items, meta, active }) => (
+            <div key={group} style={{ marginBottom: 26 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <span style={{
+                  width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: meta.color + '18', color: meta.color, fontSize: 15,
+                }}>{meta.icon}</span>
+                <Text strong style={{ fontSize: 14, color: REDWOOD.neutral900, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{group}</Text>
+                <Tag style={{ borderRadius: 10, border: 'none', background: meta.color + '18', color: meta.color, fontSize: 11, fontWeight: 600 }}>{active}</Tag>
+                <div style={{ flex: 1, height: 1, background: `linear-gradient(90deg, ${meta.color}30, transparent)` }} />
               </div>
-            );
-          })}
+              <Row gutter={[14, 14]}>
+                {items.map(item => (
+                  <Col key={item.key} xs={24} sm={12} lg={8}>
+                    <TaskCard item={item} onClick={() => item.path && navigate(item.path)} />
+                  </Col>
+                ))}
+              </Row>
+            </div>
+          ))}
         </div>
       </Content>
     </Layout>
