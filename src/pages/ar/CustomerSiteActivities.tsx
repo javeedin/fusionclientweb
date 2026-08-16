@@ -3430,10 +3430,22 @@ Generated: ${new Date().toLocaleString()}
                     justifyContent: 'space-between',
                     fontSize: 10,
                     fontWeight: 700,
+                    marginBottom: 4,
                   }}>
                     <div>Total:</div>
                     <div style={{ color: REDWOOD.primary }}>
                       {(Number(invoiceDetail['EnteredAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
+                    </div>
+                  </div>
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 10,
+                    fontWeight: 700,
+                  }}>
+                    <div>Balance:</div>
+                    <div style={{ color: REDWOOD.primary }}>
+                      {(Number(invoiceDetail['InvoiceBalanceAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
                     </div>
                   </div>
                 </div>
