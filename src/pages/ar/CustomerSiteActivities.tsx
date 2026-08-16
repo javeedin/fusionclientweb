@@ -269,6 +269,11 @@ const CustomerSiteActivities: React.FC = () => {
   const [overviewProgress, setOverviewProgress] = useState('');
   const [shouldCancelOverview, setShouldCancelOverview] = useState(false);
 
+  // AR Invoices filter state
+  const [arInvoicesFilters, setArInvoicesFilters] = useState<Record<string, 'Open' | 'Closed' | 'ALL'>>({});
+  const [arInvoicesLoadingStatus, setArInvoicesLoadingStatus] = useState<Record<string, { loading: boolean; progress: string; shouldCancel: boolean }>>({});
+  const arInvoicesCancelRef = React.useRef<Record<string, boolean>>({});
+
   // ── Load page data ──────────────────────────────────────────────
   const loadPage = useCallback(async (pageNum: number, overrideFilters?: Record<string, string>) => {
     const offset = (pageNum - 1) * PAGE_SIZE;
@@ -398,7 +403,9 @@ const CustomerSiteActivities: React.FC = () => {
           let lastJson: unknown = null;
 
           while (hasMore) {
-            const url = `${fusionBase}/${siteId}/child/${childName}?limit=${LIMIT}&offset=${offset}`;
+            // For AR Invoices, apply Open filter by default
+            const statusFilter = childName === 'transactionPaymentSchedules' ? `&q=InstallmentStatus='Open'` : '';
+            const url = `${fusionBase}/${siteId}/child/${childName}?limit=${LIMIT}&offset=${offset}${statusFilter}`;
             apiDebugUrls.push(url);
 
             const res = await fetch(url, { headers: getFusionAuthHeaders() });
@@ -443,6 +450,9 @@ const CustomerSiteActivities: React.FC = () => {
     });
     setChildStates(prev => ({ ...prev, [tabKey]: finalStates }));
 
+    // Set default filter status for AR Invoices
+    setArInvoicesFilters(prev => ({ ...prev, [tabKey]: 'Open' }));
+
     // Store API debug info
     setDetailApiDebug(prev => ({
       ...prev,
@@ -461,6 +471,70 @@ const CustomerSiteActivities: React.FC = () => {
       setActiveDetailTab(detailsTabs[0]?.key || 'sites');
     }
   };
+
+  // Reload AR Invoices with status filter
+  const reloadArInvoices = useCallback(async (tabKey: string, status: 'Open' | 'Closed' | 'ALL') => {
+    const site = detailsTabs.find(t => t.key === tabKey)?.site;
+    if (!site) return;
+
+    const siteId = site['BillToSiteUseId'];
+    setArInvoicesLoadingStatus(prev => ({ ...prev, [tabKey]: { loading: true, progress: 'Loading AR Invoices...', shouldCancel: false } }));
+    arInvoicesCancelRef.current[tabKey] = false;
+
+    try {
+      const LIMIT = 500;
+      let offset = 0;
+      let hasMore = true;
+      const allItems: Row[] = [];
+
+      while (hasMore && !arInvoicesCancelRef.current[tabKey]) {
+        setArInvoicesLoadingStatus(prev => ({
+          ...prev,
+          [tabKey]: { ...prev[tabKey], progress: `Loading AR Invoices (${allItems.length} records)...` }
+        }));
+
+        const fusionBase = getFusionBase();
+        const statusFilter = status === 'ALL' ? '' : `&q=InstallmentStatus='${status}'`;
+        const url = `${fusionBase}/${siteId}/child/transactionPaymentSchedules?limit=${LIMIT}&offset=${offset}${statusFilter}`;
+
+        const res = await fetch(url, { headers: getFusionAuthHeaders() });
+        if (!res.ok) break;
+
+        const json = await res.json();
+        const page: Row[] = (json.items || []).map((item: Row) => {
+          const r: Row = {};
+          Object.keys(item).filter(k => k !== 'links').forEach(k => { r[k] = item[k]; });
+          return r;
+        });
+
+        allItems.push(...page);
+        hasMore = !!json.hasMore && page.length === LIMIT;
+        offset += LIMIT;
+      }
+
+      // Only update if not cancelled
+      if (!arInvoicesCancelRef.current[tabKey]) {
+        // Update child state with new data
+        setChildStates(prev => {
+          const updated = { ...prev, [tabKey]: { ...prev[tabKey] } };
+          updated[tabKey].transactionPaymentSchedules = {
+            loading: false,
+            data: allItems,
+            columns: buildColumns(allItems),
+          };
+          return updated;
+        });
+
+        setArInvoicesFilters(prev => ({ ...prev, [tabKey]: status }));
+      }
+    } finally {
+      if (!arInvoicesCancelRef.current[tabKey]) {
+        setArInvoicesLoadingStatus(prev => ({ ...prev, [tabKey]: { loading: false, progress: '', shouldCancel: false } }));
+      } else {
+        setArInvoicesLoadingStatus(prev => ({ ...prev, [tabKey]: { loading: false, progress: 'Cancelled', shouldCancel: false } }));
+      }
+    }
+  }, [detailsTabs]);
 
   // Compute overview data with progress tracking
   React.useEffect(() => {
@@ -1119,18 +1193,21 @@ const CustomerSiteActivities: React.FC = () => {
         // Build columns with sorting
         let cols = buildColumns(filteredData);
 
-        // Add Aging Bucket column for AR Invoices tab
+        // For AR Invoices tab: insert Aging Bucket column after Total Balance Amount
         if (cn === 'transactionPaymentSchedules') {
-          cols.push({
-            title: 'Aging Bucket',
-            key: 'agingBucket',
-            width: 100,
-            render: (_: unknown, record: Row) => {
-              const bucket = getAgingBucket(record['PaymentDaysLate']);
-              const bucketColor = bucket === 'Current' ? REDWOOD.success : bucket === '31-60' ? '#faad14' : bucket === '61-90' ? '#ff7a45' : REDWOOD.error;
-              return <Tag color={bucketColor}>{bucket}</Tag>;
-            },
-          });
+          const balanceColIndex = cols.findIndex(c => c.dataIndex === 'TotalBalanceAmount');
+          if (balanceColIndex !== -1) {
+            cols.splice(balanceColIndex + 1, 0, {
+              title: 'Aging Bucket',
+              key: 'agingBucket',
+              width: 100,
+              render: (_: unknown, record: Row) => {
+                const bucket = getAgingBucket(record['PaymentDaysLate']);
+                const bucketColor = bucket === 'Current' ? REDWOOD.success : bucket === '31-60' ? '#faad14' : bucket === '61-90' ? '#ff7a45' : REDWOOD.error;
+                return <Tag color={bucketColor}>{bucket}</Tag>;
+              },
+            });
+          }
         }
 
         cols = cols.map(col => ({
@@ -1153,6 +1230,11 @@ const CustomerSiteActivities: React.FC = () => {
           });
         });
 
+        // AR Invoices filter UI
+        const currentStatus = arInvoicesFilters[key] || 'Open';
+        const loadingStatus = arInvoicesLoadingStatus[key];
+        const isLoading = loadingStatus?.loading || false;
+
         return {
           key: cn,
           label: (
@@ -1164,6 +1246,54 @@ const CustomerSiteActivities: React.FC = () => {
           ),
           children: (
             <div>
+              {cn === 'transactionPaymentSchedules' && (
+                <div style={{ marginBottom: 16, padding: '12px', background: '#fafafa', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '12px', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Text strong style={{ fontSize: 13 }}>Filter by Status:</Text>
+                    <Space size={0}>
+                      {(['Open', 'Closed', 'ALL'] as const).map(status => (
+                        <Button
+                          key={status}
+                          type={currentStatus === status ? 'primary' : 'default'}
+                          size="small"
+                          onClick={() => reloadArInvoices(key, status)}
+                          disabled={isLoading}
+                          style={{ borderRadius: currentStatus === status ? '2px' : '2px' }}
+                        >
+                          {status}
+                        </Button>
+                      ))}
+                    </Space>
+                    <Button
+                      type="text"
+                      icon={<SyncOutlined spin={isLoading} />}
+                      size="small"
+                      onClick={() => reloadArInvoices(key, currentStatus)}
+                      disabled={isLoading}
+                      title="Refresh data"
+                    />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {isLoading && (
+                      <>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {loadingStatus.progress}
+                        </Text>
+                        <Button
+                          type="primary"
+                          danger
+                          size="small"
+                          onClick={() => {
+                            arInvoicesCancelRef.current[key] = true;
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
               {!state.loading && state.data.length > 0 && (
                 <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
                   <Button size="small" icon={<DownloadOutlined />} onClick={() => exportToExcel(filteredData, cn)}>Export to Excel</Button>
