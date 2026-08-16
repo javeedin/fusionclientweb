@@ -3254,8 +3254,21 @@ Generated: ${new Date().toLocaleString()}
       <Modal
         open={invoiceDetailVisible}
         onCancel={() => setInvoiceDetailVisible(false)}
-        width={1200}
-        title={<Space><FileTextOutlined style={{ color: REDWOOD.primary }} /> AR Invoice Details</Space>}
+        width="90%"
+        style={{ maxWidth: 1400 }}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ color: REDWOOD.primary }}>⊖ AR Invoice</span>
+            <span style={{ fontWeight: 700, color: REDWOOD.primary, fontSize: 16 }}>{invoiceDetail?.TransactionNumber}</span>
+          </div>
+        }
+        extra={
+          <Space>
+            <Button type="link" icon={<ShoppingOutlined />}>View Accounting (4)</Button>
+            <Button type="link">All fields</Button>
+            <Button type="link" icon={<SyncOutlined />}>Reload</Button>
+          </Space>
+        }
         footer={[
           <Button key="close" onClick={() => setInvoiceDetailVisible(false)}>Close</Button>,
         ]}
@@ -3263,159 +3276,243 @@ Generated: ${new Date().toLocaleString()}
         {invoiceDetailLoading ? (
           <Spin style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }} />
         ) : invoiceDetail ? (
-          <div style={{ fontFamily: 'Arial, sans-serif', fontSize: 12 }}>
+          <div style={{ fontFamily: 'Arial, sans-serif', fontSize: 13 }}>
             {/* General Information Section */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ background: '#1F4E78', color: '#fff', padding: '8px 12px', fontWeight: 700, marginBottom: 8, borderRadius: 4, fontSize: 11 }}>
-                GENERAL INFORMATION
-              </div>
-              <Row gutter={[32, 12]}>
-                <Col xs={12}>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Business Unit</div>
-                    <div style={{ fontWeight: 600 }}>{invoiceDetail['BusinessUnitName'] || '-'}</div>
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ color: REDWOOD.primary, fontWeight: 700, fontSize: 13, marginBottom: 12 }}>General Information</div>
+              <Row gutter={[48, 16]}>
+                <Col xs={12} sm={6}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>Business Unit</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['BusinessUnit'] || '-'}</div>
                   </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Transaction Date</div>
-                    <div style={{ fontWeight: 600 }}>
+                </Col>
+                <Col xs={12} sm={6}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>Transaction Source</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['TransactionSource'] || '-'}</div>
+                  </div>
+                </Col>
+                <Col xs={12} sm={6}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>Transaction Type</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['TransactionType'] || '-'}</div>
+                  </div>
+                </Col>
+                <Col xs={12} sm={6}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>Transaction Number</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['TransactionNumber'] || '-'}</div>
+                  </div>
+                </Col>
+                <Col xs={12} sm={6}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>Sales Order</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['CrossReference'] || '-'}</div>
+                  </div>
+                </Col>
+                <Col xs={12} sm={6}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>Status</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['InvoiceStatus'] || '-'}</div>
+                  </div>
+                </Col>
+                <Col xs={12} sm={6}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>Transaction Date</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>
                       {invoiceDetail['TransactionDate']
-                        ? new Date(invoiceDetail['TransactionDate']).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                        ? new Date(invoiceDetail['TransactionDate']).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' })
                         : '-'}
                     </div>
                   </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Accounting Date</div>
-                    <div style={{ fontWeight: 600 }}>
+                </Col>
+                <Col xs={12} sm={6}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>Accounting Date</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>
                       {invoiceDetail['AccountingDate']
-                        ? new Date(invoiceDetail['AccountingDate']).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                        ? new Date(invoiceDetail['AccountingDate']).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' })
                         : '-'}
                     </div>
                   </div>
                 </Col>
-                <Col xs={12}>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Transaction Type</div>
-                    <div style={{ fontWeight: 600 }}>{invoiceDetail['TransactionType'] || '-'}</div>
+                <Col xs={12} sm={6}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>Currency</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['InvoiceCurrencyCode'] || '-'}</div>
                   </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Transaction Number</div>
-                    <div style={{ fontWeight: 600 }}>{invoiceDetail['TransactionNumber'] || '-'}</div>
-                  </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Status</div>
-                    <Tag color={invoiceDetail['InstallmentStatus'] === 'Open' ? 'orange' : 'green'}>
-                      {invoiceDetail['InstallmentStatus'] || '-'}
-                    </Tag>
+                </Col>
+                <Col xs={12} sm={6}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>Comments</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['Comments'] || '—'}</div>
                   </div>
                 </Col>
               </Row>
             </div>
 
-            <Divider style={{ margin: '12px 0' }} />
+            <Row gutter={[24, 0]}>
+              <Col xs={24} sm={14}>
+                {/* Customer Section */}
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ color: REDWOOD.primary, fontWeight: 700, fontSize: 13, marginBottom: 12 }}>Customer</div>
+                  <Row gutter={[48, 16]}>
+                    <Col xs={12} sm={12}>
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, color: '#666' }}>Bill-to Name</div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['BillToCustomerName'] || '-'}</div>
+                      </div>
+                    </Col>
+                    <Col xs={12} sm={12}>
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, color: '#666' }}>Ship-to Name</div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['ShipToCustomerName'] || '-'}</div>
+                      </div>
+                    </Col>
+                    <Col xs={12} sm={12}>
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, color: '#666' }}>Bill-to Site</div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['BillToSite'] || '-'}</div>
+                      </div>
+                    </Col>
+                    <Col xs={12} sm={12}>
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, color: '#666' }}>Ship-to Site</div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['ShipToSite'] || '-'}</div>
+                      </div>
+                    </Col>
+                  </Row>
+                </div>
 
-            {/* Transaction Total */}
-            <div style={{ marginBottom: 16, padding: '12px', background: '#FFFFCC', borderRadius: 4, textAlign: 'center' }}>
-              <div style={{ fontSize: 10, color: '#666', marginBottom: 4 }}>TOTAL INVOICE AMOUNT</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: REDWOOD.primary }}>
-                {(Number(invoiceDetail['TotalOriginalAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-            </div>
+                {/* Payment Section */}
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ color: REDWOOD.primary, fontWeight: 700, fontSize: 13, marginBottom: 12 }}>Payment</div>
+                  <Row gutter={[48, 16]}>
+                    <Col xs={12} sm={12}>
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, color: '#666' }}>Payment Terms</div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{invoiceDetail['PaymentTerms'] || '-'}</div>
+                      </div>
+                    </Col>
+                    <Col xs={12} sm={12}>
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, color: '#666' }}>Due Date</div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>
+                          {invoiceDetail['DueDate']
+                            ? new Date(invoiceDetail['DueDate']).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' })
+                            : '-'}
+                        </div>
+                      </div>
+                    </Col>
+                  </Row>
+                </div>
+              </Col>
 
-            {/* Customer Section */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ background: '#1F4E78', color: '#fff', padding: '8px 12px', fontWeight: 700, marginBottom: 8, borderRadius: 4, fontSize: 11 }}>
-                CUSTOMER INFORMATION
-              </div>
-              <Row gutter={[32, 12]}>
-                <Col xs={12}>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Bill-to Name</div>
-                    <div style={{ fontWeight: 600 }}>{invoiceDetail['BillToCustomerName'] || '-'}</div>
-                  </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Bill-to Site</div>
-                    <div style={{ fontWeight: 600 }}>{invoiceDetail['BillToSiteNumber'] || '-'}</div>
-                  </div>
-                </Col>
-                <Col xs={12}>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Ship-to Name</div>
-                    <div style={{ fontWeight: 600 }}>{invoiceDetail['ShipToCustomerName'] || '-'}</div>
-                  </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Ship-to Site</div>
-                    <div style={{ fontWeight: 600 }}>{invoiceDetail['ShipToSiteNumber'] || '-'}</div>
-                  </div>
-                </Col>
-              </Row>
-            </div>
-
-            <Divider style={{ margin: '12px 0' }} />
-
-            {/* Payment Section */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ background: '#1F4E78', color: '#fff', padding: '8px 12px', fontWeight: 700, marginBottom: 8, borderRadius: 4, fontSize: 11 }}>
-                PAYMENT INFORMATION
-              </div>
-              <Row gutter={[32, 12]}>
-                <Col xs={12}>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Payment Terms</div>
-                    <div style={{ fontWeight: 600 }}>{invoiceDetail['TermsName'] || '-'}</div>
-                  </div>
-                </Col>
-                <Col xs={12}>
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#666' }}>Due Date</div>
-                    <div style={{ fontWeight: 600 }}>
-                      {invoiceDetail['PaymentScheduleDueDate']
-                        ? new Date(invoiceDetail['PaymentScheduleDueDate']).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })
-                        : '-'}
+              <Col xs={24} sm={10}>
+                {/* Transaction Total Box */}
+                <div style={{
+                  border: `1px solid #E5E5E5`,
+                  borderRadius: 4,
+                  padding: 16,
+                  background: '#FAFAFA',
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: '#333' }}>Transaction Total</div>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, color: '#666' }}>Lines</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>
+                        {(Number(invoiceDetail['EnteredAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, color: '#666' }}>Tax</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, color: '#666' }}>Freight</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <span style={{ fontSize: 12, color: '#666' }}>Charges</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
                     </div>
                   </div>
-                </Col>
-              </Row>
-            </div>
-
-            <Divider style={{ margin: '12px 0' }} />
+                  <div style={{
+                    borderTop: `2px solid #999`,
+                    paddingTop: 12,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>Total</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: REDWOOD.primary }}>
+                      {(Number(invoiceDetail['EnteredAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
+                    </div>
+                  </div>
+                </div>
+              </Col>
+            </Row>
 
             {/* Invoice Lines Section */}
             {invoiceDetail['receivablesInvoiceLines'] && invoiceDetail['receivablesInvoiceLines'].length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ background: '#1F4E78', color: '#fff', padding: '8px 12px', fontWeight: 700, marginBottom: 8, borderRadius: 4, fontSize: 11 }}>
-                  INVOICE LINE ITEMS
+              <div style={{ marginTop: 24 }}>
+                <div style={{ color: REDWOOD.primary, fontWeight: 700, fontSize: 13, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>☰</span>
+                  <span>Invoice Lines</span>
+                  <span style={{ fontSize: 12, color: '#666', fontWeight: 400 }}>{invoiceDetail['receivablesInvoiceLines'].length}</span>
                 </div>
-                <div style={{ overflowX: 'auto', maxHeight: 400, overflowY: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, border: `1px solid #E5E5E5` }}>
                     <thead>
-                      <tr style={{ background: '#D9E1F2', fontWeight: 700, position: 'sticky', top: 0 }}>
-                        <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Line</th>
-                        <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Item</th>
-                        <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Description</th>
-                        <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>UOM</th>
-                        <th style={{ padding: 6, textAlign: 'right', borderBottom: `1px solid #999` }}>Quantity</th>
-                        <th style={{ padding: 6, textAlign: 'right', borderBottom: `1px solid #999` }}>Unit Price</th>
-                        <th style={{ padding: 6, textAlign: 'right', borderBottom: `1px solid #999` }}>Amount</th>
+                      <tr style={{ background: '#F5F5F5', borderBottom: `1px solid #E5E5E5` }}>
+                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Line</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Item</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Description</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>UOM</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Quantity</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Unit Price</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Amount</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Sales Order</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Date</th>
                       </tr>
                     </thead>
                     <tbody>
                       {invoiceDetail['receivablesInvoiceLines'].map((line: any, idx: number) => (
                         <tr key={idx} style={{ borderBottom: `1px solid #E5E5E5`, background: idx % 2 === 0 ? '#fff' : '#F9F9F9' }}>
-                          <td style={{ padding: 6 }}>{line['LineNumber'] || '-'}</td>
-                          <td style={{ padding: 6 }}>{line['ItemNumber'] || '-'}</td>
-                          <td style={{ padding: 6 }}>{line['Description'] || '-'}</td>
-                          <td style={{ padding: 6 }}>{line['UnitOfMeasure'] || '-'}</td>
-                          <td style={{ padding: 6, textAlign: 'right' }}>
-                            {(Number(line['Quantity']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          <td style={{ padding: '12px 8px' }}>
+                            <span style={{ color: REDWOOD.info, fontWeight: 600 }}>{line['LineNumber'] || '-'}</span>
                           </td>
-                          <td style={{ padding: 6, textAlign: 'right' }}>
-                            {(Number(line['UnitPrice']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          <td style={{ padding: '12px 8px', color: REDWOOD.info, fontWeight: 600 }}>{line['ItemNumber'] || '-'}</td>
+                          <td style={{ padding: '12px 8px' }}>{line['Description'] || '-'}</td>
+                          <td style={{ padding: '12px 8px' }}>{line['UnitOfMeasure'] || '-'}</td>
+                          <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                            {(Number(line['Quantity']) || 0).toLocaleString('en-US')}
                           </td>
-                          <td style={{ padding: 6, textAlign: 'right', fontWeight: 600 }}>
-                            {(Number(line['Amount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                            {(Number(line['UnitSellingPrice']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
+                          </td>
+                          <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 600 }}>
+                            {(Number(line['LineAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
+                          </td>
+                          <td style={{ padding: '12px 8px' }}>{line['SalesOrder'] || '-'}</td>
+                          <td style={{ padding: '12px 8px' }}>
+                            {line['SalesOrderDate']
+                              ? new Date(line['SalesOrderDate']).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })
+                              : '-'}
                           </td>
                         </tr>
                       ))}
+                      <tr style={{ background: '#F5F5F5', borderTop: `2px solid #999` }}>
+                        <td colSpan={5} style={{ padding: '12px 8px', fontWeight: 700 }}>Total</td>
+                        <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700 }}>
+                          {invoiceDetail['receivablesInvoiceLines'].reduce((sum: number, line: any) => sum + (Number(line['Quantity']) || 0), 0).toLocaleString('en-US')}
+                        </td>
+                        <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: REDWOOD.primary }}>
+                          {invoiceDetail['receivablesInvoiceLines'].reduce((sum: number, line: any) => sum + (Number(line['LineAmount']) || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
+                        </td>
+                        <td colSpan={2} />
+                      </tr>
                     </tbody>
                   </table>
                 </div>
