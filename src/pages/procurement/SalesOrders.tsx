@@ -5585,7 +5585,9 @@ const ChargesModal: React.FC<{ open: boolean; onClose: () => void; orderKey: str
 };
 
 // Credit Check Panel — displays customer balance with aging
-const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: string | null; data: any; onFetch: () => void }> = ({ hdr, loading, error, data, onFetch }) => {
+const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: string | null; data: any; onFetch: () => void; apiUrl?: string; apiResponse?: string }> = ({ hdr, loading, error, data, onFetch, apiUrl = '', apiResponse = '' }) => {
+  const [apiDrawerOpen, setApiDrawerOpen] = React.useState(false);
+
   const computeAging = (activities: any[]): { current: number; over30: number; over60: number; over90: number } => {
     const today = dayjs();
     const aging = { current: 0, over30: 0, over60: 0, over90: 0 };
@@ -5612,6 +5614,16 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
           Get Customer Balance
         </Button>
         {hdr.accountNumber && <Text type="secondary" style={{ fontSize: 12 }}>Account: <strong>{hdr.accountNumber}</strong></Text>}
+        {apiUrl && (
+          <Button
+            type="text"
+            size="small"
+            icon={<ApiOutlined style={{ color: REDWOOD.info }} />}
+            onClick={() => setApiDrawerOpen(true)}
+            title="View API Details"
+            style={{ color: REDWOOD.info }}
+          />
+        )}
       </Space>
 
       {error && (
@@ -5699,6 +5711,73 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
       {!data && !error && (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Click 'Get Customer Balance' to fetch customer activities and credit information" style={{ marginTop: 24 }} />
       )}
+
+      {/* API Inspector Drawer */}
+      <Drawer
+        title="API Details — Customer Balance"
+        placement="right"
+        onClose={() => setApiDrawerOpen(false)}
+        open={apiDrawerOpen}
+        width={700}
+        bodyStyle={{ padding: '24px', overflowY: 'auto', maxHeight: 'calc(100vh - 100px)' }}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          {/* API URL */}
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ApiOutlined />
+              GET Endpoint
+            </div>
+            <div style={{
+              backgroundColor: '#f5f5f5',
+              padding: '12px',
+              borderRadius: '6px',
+              fontFamily: 'monospace',
+              fontSize: '12px',
+              wordBreak: 'break-all',
+              border: `1px solid ${REDWOOD.neutral300}`,
+              maxHeight: 200,
+              overflow: 'auto'
+            }}>
+              {apiUrl || 'N/A'}
+            </div>
+          </div>
+
+          <Divider />
+
+          {/* API Response */}
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>📦</span>
+              Response Data
+            </div>
+            <div style={{
+              backgroundColor: '#f5f5f5',
+              padding: '12px',
+              borderRadius: '6px',
+              fontFamily: 'monospace',
+              fontSize: '11px',
+              wordBreak: 'break-word',
+              border: `1px solid ${REDWOOD.neutral300}`,
+              maxHeight: 400,
+              overflow: 'auto',
+              whiteSpace: 'pre-wrap'
+            }}>
+              {apiResponse || 'No response yet'}
+            </div>
+          </div>
+
+          <div style={{ fontSize: 12, color: REDWOOD.neutral600, padding: '12px', backgroundColor: '#f5f5f5', borderRadius: 6 }}>
+            <Text strong>Troubleshooting Tips:</Text>
+            <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 20 }}>
+              <li>Check if the account number ({hdr.accountNumber}) is correct</li>
+              <li>Verify API credentials and permissions</li>
+              <li>Ensure the customer exists in Fusion with transactions</li>
+              <li>Check browser console for detailed error messages</li>
+            </ul>
+          </div>
+        </Space>
+      </Drawer>
     </div>
   );
 };
@@ -5775,6 +5854,8 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
   const [creditCheckData, setCreditCheckData] = useState<any>(null);
   const [creditCheckLoading, setCreditCheckLoading] = useState(false);
   const [creditCheckError, setCreditCheckError] = useState<string | null>(null);
+  const [creditCheckApiUrl, setCreditCheckApiUrl] = useState('');
+  const [creditCheckApiResponse, setCreditCheckApiResponse] = useState('');
   const [resvReloadKey, setResvReloadKey] = useState(0);
   const [autoShipOpen, setAutoShipOpen] = useState(false);
   const [autoInvoiceOpen, setAutoInvoiceOpen] = useState(false);
@@ -6628,23 +6709,29 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     }
     setCreditCheckLoading(true);
     setCreditCheckError(null);
+    setCreditCheckApiUrl('');
+    setCreditCheckApiResponse('');
     try {
       const url = `${FUSION_BASE}/receivablesCustomerAccountSiteActivities?limit=50&q=AccountNumber=${encodeURIComponent(hdr.accountNumber)}`;
       console.log('Fetching customer balance from:', url);
+      setCreditCheckApiUrl(url);
       const r = await fetch(url, { headers: getHeaders() });
       if (r.ok) {
         const data = await r.json();
         console.log('Customer balance data:', data);
+        setCreditCheckApiResponse(JSON.stringify(data, null, 2));
         setCreditCheckData(data);
       } else {
         const errText = await r.text();
         const errMsg = `HTTP ${r.status}: ${r.statusText}`;
+        setCreditCheckApiResponse(`Error: ${errMsg}\n\n${errText.slice(0, 1000)}`);
         console.error('Credit check failed:', errMsg, errText.slice(0, 500));
         setCreditCheckError(errMsg);
         message.error(`Failed to fetch customer balance: ${errMsg}`);
       }
     } catch (e: any) {
       const errMsg = e?.message || String(e);
+      setCreditCheckApiResponse(`Exception: ${errMsg}`);
       console.error('Error fetching customer balance:', errMsg);
       setCreditCheckError(errMsg);
       message.error(`Error fetching customer balance: ${errMsg}`);
@@ -8522,7 +8609,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
               children: <div style={{ padding: 8 }}><NotesAttachmentsPanel orderKey={String(editMode ? (editOrder?.OrderKey ?? editOrder?.HeaderId) : createdOrderKey)} /></div>,
             }] : []),
             { key: 'credit', label: <span><ReconciliationOutlined style={{ marginRight: 5 }} />Customer Credit Check</span>,
-              children: <CreditCheckPanel hdr={hdr} loading={creditCheckLoading} error={creditCheckError} data={creditCheckData} onFetch={fetchCustomerBalance} /> },
+              children: <CreditCheckPanel hdr={hdr} loading={creditCheckLoading} error={creditCheckError} data={creditCheckData} onFetch={fetchCustomerBalance} apiUrl={creditCheckApiUrl} apiResponse={creditCheckApiResponse} /> },
             { key: 'validations', label: <span><InfoCircleOutlined style={{ marginRight: 5 }} />Order Validations</span>,
               children: <div style={{ padding: 8 }}><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Order validations — item, warehouse and customer checks will appear here before submission." style={{ padding: 24 }} /></div> },
           ]} />
