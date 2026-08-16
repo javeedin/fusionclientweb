@@ -1295,11 +1295,12 @@ const CustomerSiteActivities: React.FC = () => {
           },
         }));
 
-        // Calculate totals
+        // Calculate totals (exclude ID columns)
         const totals: Record<string, number> = {};
+        const idPatterns = ['Id', 'ID', 'Number', 'Date'];
         filteredData.forEach(row => {
           Object.keys(row).forEach(k => {
-            if (typeof row[k] === 'number') {
+            if (typeof row[k] === 'number' && !idPatterns.some(pattern => k.includes(pattern))) {
               totals[k] = (totals[k] || 0) + row[k];
             }
           });
@@ -1437,9 +1438,22 @@ const CustomerSiteActivities: React.FC = () => {
                 pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `Total ${t} records` }}
                 footer={() =>
                   Object.keys(totals).length > 0 ? (
-                    <div style={{ fontWeight: 600, color: REDWOOD.primary }}>
-                      Totals: {Object.entries(totals).map(([k, v]) => `${k}: ${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`).join(' | ')}
-                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <tbody>
+                        <tr style={{ fontWeight: 600, background: '#fafafa', borderTop: `1px solid ${REDWOOD.border}` }}>
+                          <td style={{ padding: '8px', color: REDWOOD.primary, fontWeight: 600 }}>TOTAL</td>
+                          {cols.slice(1).map(col => {
+                            const dataIndex = col.dataIndex as string;
+                            const value = totals[dataIndex];
+                            return (
+                              <td key={dataIndex} style={{ padding: '8px', textAlign: 'right', color: REDWOOD.primary, fontWeight: 600 }}>
+                                {value !== undefined ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      </tbody>
+                    </table>
                   ) : undefined
                 }
               />
