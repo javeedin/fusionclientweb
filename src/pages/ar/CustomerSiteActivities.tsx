@@ -929,37 +929,29 @@ const CustomerSiteActivities: React.FC = () => {
     try {
       const company = getCurrentCompany();
       const baseUrl = company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/receivablesInvoices` : '';
-      const url = `${baseUrl}?q=TransactionNumber=${transactionNumber}&limit=500&expand=receivablesInvoiceLines&onlyData=true`;
 
+      // First, get the invoice ID by transaction number
+      const queryUrl = `${baseUrl}?q=TransactionNumber=${transactionNumber}&limit=500&onlyData=true`;
+      const queryRes = await fetch(queryUrl, { headers: getFusionAuthHeaders() });
+      if (!queryRes.ok) throw new Error(`HTTP ${queryRes.status}`);
+
+      const queryJson = await queryRes.json();
+      const invoiceId = queryJson.items?.[0]?.['ReceivablesInvoiceId'];
+      if (!invoiceId) {
+        message.error('Invoice not found');
+        return;
+      }
+
+      // Now fetch the invoice with all line and tax data in one call
+      const url = `${baseUrl}/${invoiceId}?expand=receivablesInvoiceLines.receivablesInvoiceLineTaxLines&onlyData=true`;
       setInvoiceDetailApiUrl(url);
+
       const res = await fetch(url, { headers: getFusionAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const json = await res.json();
-      let invoice = json.items?.[0];
-      if (invoice) {
-        // Fetch tax data for each line
-        if (invoice['receivablesInvoiceLines'] && invoice['receivablesInvoiceLines'].length > 0) {
-          const invoiceId = invoice['ReceivablesInvoiceId'];
-          const taxPromises = invoice['receivablesInvoiceLines'].map((line: any) => {
-            const lineId = line['ReceivablesInvoiceLineId'];
-            const taxUrl = `${baseUrl}/${invoiceId}/child/receivablesInvoiceLines/${lineId}/child/receivablesInvoiceLineTaxLines`;
-            return fetch(taxUrl, { headers: getFusionAuthHeaders() })
-              .then(r => r.ok ? r.json() : { items: [] })
-              .then(taxJson => ({ lineId, taxes: taxJson.items || [] }))
-              .catch(() => ({ lineId, taxes: [] }));
-          });
-
-          const taxDataArray = await Promise.all(taxPromises);
-          const taxMap = new Map(taxDataArray.map(t => [t.lineId, t.taxes]));
-
-          // Attach tax data to each line
-          invoice['receivablesInvoiceLines'] = invoice['receivablesInvoiceLines'].map((line: any) => ({
-            ...line,
-            receivablesInvoiceLineTaxLines: taxMap.get(line['ReceivablesInvoiceLineId']) || []
-          }));
-        }
-        setInvoiceDetail(invoice);
+      if (json) {
+        setInvoiceDetail(json);
       } else {
         message.error('Invoice not found');
       }
