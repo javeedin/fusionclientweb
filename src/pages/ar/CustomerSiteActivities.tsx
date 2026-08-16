@@ -3449,73 +3449,73 @@ Generated: ${new Date().toLocaleString()}
                   <span style={{ fontSize: 12, color: '#666', fontWeight: 400 }}>{invoiceDetail['receivablesInvoiceLines'].length}</span>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, border: `1px solid #E5E5E5` }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, border: `1px solid #E5E5E5` }}>
                     <thead>
                       <tr style={{ background: '#F5F5F5', borderBottom: `1px solid #E5E5E5` }}>
-                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Line</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Item</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Description</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>UOM</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Quantity</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Unit Price</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Amount</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Tax Code</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Tax Amount</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Sales Order</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Date</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Status</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Line</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Item</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Description</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>UOM</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Quantity</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Unit Price</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Amount</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Tax Code</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Tax Amount</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Sales Order</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Date</th>
+                        <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {invoiceDetail['receivablesInvoiceLines'].map((line: any, idx: number) => (
                         <tr key={idx} style={{ borderBottom: `1px solid #E5E5E5`, background: idx % 2 === 0 ? '#fff' : '#F9F9F9' }}>
-                          <td style={{ padding: '12px 8px' }}>
+                          <td style={{ padding: '6px 4px' }}>
                             <span style={{ color: REDWOOD.info, fontWeight: 600 }}>{line['LineNumber'] || '-'}</span>
                           </td>
-                          <td style={{ padding: '12px 8px', color: REDWOOD.info, fontWeight: 600 }}>{line['ItemNumber'] || '-'}</td>
-                          <td style={{ padding: '12px 8px' }}>{line['Description'] || '-'}</td>
-                          <td style={{ padding: '12px 8px' }}>{line['UnitOfMeasure'] || '-'}</td>
-                          <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                          <td style={{ padding: '6px 4px', color: REDWOOD.info, fontWeight: 600 }}>{line['ItemNumber'] || '-'}</td>
+                          <td style={{ padding: '6px 4px' }}>{line['Description'] || '-'}</td>
+                          <td style={{ padding: '6px 4px' }}>{line['UnitOfMeasure'] || '-'}</td>
+                          <td style={{ padding: '6px 4px', textAlign: 'right' }}>
                             {(Number(line['Quantity']) || 0).toLocaleString('en-US')}
                           </td>
-                          <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                          <td style={{ padding: '6px 4px', textAlign: 'right' }}>
                             {(Number(line['UnitSellingPrice']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
-                          <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 600 }}>
+                          <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 600 }}>
                             {(Number(line['LineAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
-                          <td style={{ padding: '12px 8px' }}>
+                          <td style={{ padding: '6px 4px' }}>
                             {(() => {
                               const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
                               return taxLines.length > 0 ? taxLines.map((t: any) => t['TaxCode'] || '-').join(', ') : '-';
                             })()}
                           </td>
-                          <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                          <td style={{ padding: '6px 4px', textAlign: 'right' }}>
                             {(() => {
                               const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
                               const taxSum = taxLines.reduce((sum: number, tax: any) => sum + (Number(tax['TaxAmount']) || 0), 0);
                               return taxSum > 0 ? taxSum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
                             })()}
                           </td>
-                          <td style={{ padding: '12px 8px' }}>{line['SalesOrder'] || '-'}</td>
-                          <td style={{ padding: '12px 8px' }}>
+                          <td style={{ padding: '6px 4px' }}>{line['SalesOrder'] || '-'}</td>
+                          <td style={{ padding: '6px 4px' }}>
                             {line['SalesOrderDate']
                               ? new Date(line['SalesOrderDate']).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })
                               : '-'}
                           </td>
-                          <td style={{ padding: '12px 8px' }}>{line['LineStatus'] || line['Status'] || '-'}</td>
+                          <td style={{ padding: '6px 4px' }}>{line['LineStatus'] || line['Status'] || '-'}</td>
                         </tr>
                       ))}
                       <tr style={{ background: '#F5F5F5', borderTop: `2px solid #999` }}>
-                        <td colSpan={5} style={{ padding: '12px 8px', fontWeight: 700 }}>Total</td>
-                        <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700 }}>
+                        <td colSpan={5} style={{ padding: '6px 4px', fontWeight: 700 }}>Total</td>
+                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 700 }}>
                           {invoiceDetail['receivablesInvoiceLines'].reduce((sum: number, line: any) => sum + (Number(line['Quantity']) || 0), 0).toLocaleString('en-US')}
                         </td>
-                        <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: REDWOOD.primary }}>
+                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 700, color: REDWOOD.primary }}>
                           {invoiceDetail['receivablesInvoiceLines'].reduce((sum: number, line: any) => sum + (Number(line['LineAmount']) || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
                         </td>
                         <td />
-                        <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: REDWOOD.primary }}>
+                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 700, color: REDWOOD.primary }}>
                           {invoiceDetail['receivablesInvoiceLines'].reduce((sum: number, line: any) => {
                             const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
                             const lineTaxSum = taxLines.reduce((tsum: number, tax: any) => tsum + (Number(tax['TaxAmount']) || 0), 0);
