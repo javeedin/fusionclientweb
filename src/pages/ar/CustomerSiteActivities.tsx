@@ -19,13 +19,15 @@ const { Content } = Layout;
 const { Title, Text } = Typography;
 
 const REDWOOD = {
-  primary:    '#C74634',
-  success:    '#1D7B4D',
-  info:       '#0572CE',
-  neutral100: '#F7F7F7',
-  neutral200: '#E5E5E5',
-  surface:    '#FFFFFF',
-  border:     '#E5E5E5',
+  primary:      '#C74634',
+  primaryDark:  '#A33B2C',
+  success:      '#1D7B4D',
+  error:        '#F54545',
+  info:         '#0572CE',
+  neutral100:   '#F7F7F7',
+  neutral200:   '#E5E5E5',
+  surface:      '#FFFFFF',
+  border:       '#E5E5E5',
 };
 
 const getFusionBase = () => {
@@ -115,9 +117,21 @@ function makeColWithFilter(key: string, title: string, extra?: Partial<ColumnTyp
 function buildColumns(items: Row[], extraFirst?: { key: string; title: string }): ColumnsType<Row> {
   if (!items.length) return [];
   const keys = Object.keys(items[0]).filter(k => k !== 'links' && k !== '_customerName');
-  const cols: ColumnsType<Row> = keys.map(key =>
-    makeColWithFilter(key, key.replace(/([A-Z])/g, ' $1').trim())
-  );
+  const cols: ColumnsType<Row> = keys.map(key => {
+    const title = key.replace(/([A-Z])/g, ' $1').trim();
+    const col = makeColWithFilter(key, title);
+    // Assign default width based on content type
+    if (key.includes('Id') || key.includes('ID')) {
+      col.width = 100;
+    } else if (key.includes('Date') || key.includes('Number')) {
+      col.width = 120;
+    } else if (key.includes('Amount') || key.includes('Balance') || key.includes('Total')) {
+      col.width = 140;
+    } else {
+      col.width = 130;
+    }
+    return col;
+  });
   if (extraFirst) {
     cols.unshift(makeColWithFilter(extraFirst.key, extraFirst.title, { width: 180, fixed: 'left' as const }));
   }
