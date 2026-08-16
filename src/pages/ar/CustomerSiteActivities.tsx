@@ -929,7 +929,7 @@ const CustomerSiteActivities: React.FC = () => {
     try {
       const company = getCurrentCompany();
       const baseUrl = company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/receivablesInvoices` : '';
-      const url = `${baseUrl}?q=TransactionNumber=${transactionNumber}&limit=500&expand=receivablesInvoiceLines(receivablesInvoiceLineTaxLines)&onlyData=true`;
+      const url = `${baseUrl}?q=TransactionNumber=${transactionNumber}&limit=500&expand=receivablesInvoiceLines&onlyData=true`;
 
       setInvoiceDetailApiUrl(url);
       const res = await fetch(url, { headers: getFusionAuthHeaders() });
@@ -3448,6 +3448,7 @@ Generated: ${new Date().toLocaleString()}
                         <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Quantity</th>
                         <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Unit Price</th>
                         <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Amount</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Tax</th>
                         <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Sales Order</th>
                         <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Date</th>
                         <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Status</th>
@@ -3471,6 +3472,13 @@ Generated: ${new Date().toLocaleString()}
                           <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 600 }}>
                             {(Number(line['LineAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
                           </td>
+                          <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                            {(() => {
+                              const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
+                              const taxSum = taxLines.reduce((sum: number, tax: any) => sum + (Number(tax['TaxAmount']) || 0), 0);
+                              return taxSum > 0 ? taxSum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + invoiceDetail['InvoiceCurrencyCode'] : '-';
+                            })()}
+                          </td>
                           <td style={{ padding: '12px 8px' }}>{line['SalesOrder'] || '-'}</td>
                           <td style={{ padding: '12px 8px' }}>
                             {line['SalesOrderDate']
@@ -3488,7 +3496,14 @@ Generated: ${new Date().toLocaleString()}
                         <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: REDWOOD.primary }}>
                           {invoiceDetail['receivablesInvoiceLines'].reduce((sum: number, line: any) => sum + (Number(line['LineAmount']) || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
                         </td>
-                        <td colSpan={3} />
+                        <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: REDWOOD.primary }}>
+                          {invoiceDetail['receivablesInvoiceLines'].reduce((sum: number, line: any) => {
+                            const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
+                            const lineTaxSum = taxLines.reduce((tsum: number, tax: any) => tsum + (Number(tax['TaxAmount']) || 0), 0);
+                            return sum + lineTaxSum;
+                          }, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
+                        </td>
+                        <td colSpan={2} />
                       </tr>
                     </tbody>
                   </table>
