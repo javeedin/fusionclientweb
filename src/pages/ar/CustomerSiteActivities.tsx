@@ -183,6 +183,20 @@ function SiteResultsTable({ data, columns, loading, currentPage = 1, hasMore = f
     return data.filter(row => Object.values(row).some(v => v !== null && v !== undefined && String(v).toLowerCase().includes(q)));
   }, [data, filter]);
 
+  // Calculate totals (exclude ID and Date columns)
+  const totals = useMemo(() => {
+    const result: Record<string, number> = {};
+    const idPatterns = ['Id', 'ID', 'Number', 'Date'];
+    filtered.forEach(row => {
+      Object.keys(row).forEach(k => {
+        if (typeof row[k] === 'number' && !idPatterns.some(pattern => k.includes(pattern))) {
+          result[k] = (result[k] || 0) + row[k];
+        }
+      });
+    });
+    return result;
+  }, [filtered]);
+
   if (!data.length && !loading) return <Empty description="Enter search criteria and click Search" />;
 
   return (
@@ -211,6 +225,26 @@ function SiteResultsTable({ data, columns, loading, currentPage = 1, hasMore = f
         size="small"
         scroll={{ x: 'max-content' }}
         pagination={false}
+        footer={() =>
+          Object.keys(totals).length > 0 ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <tbody>
+                <tr style={{ fontWeight: 600, background: '#fafafa', borderTop: `1px solid ${REDWOOD.border}` }}>
+                  <td style={{ padding: '8px', color: REDWOOD.primary, fontWeight: 600 }}>TOTAL</td>
+                  {columns.slice(1).map(col => {
+                    const dataIndex = col.dataIndex as string;
+                    const value = totals[dataIndex];
+                    return (
+                      <td key={dataIndex} style={{ padding: '8px', textAlign: 'right', color: REDWOOD.primary, fontWeight: 600 }}>
+                        {value !== undefined ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}
+                      </td>
+                    );
+                  })}
+                </tr>
+              </tbody>
+            </table>
+          ) : undefined
+        }
       />
     </div>
   );
