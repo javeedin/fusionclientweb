@@ -3277,113 +3277,106 @@ Generated: ${new Date().toLocaleString()}
           <Spin style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }} />
         ) : invoiceDetail ? (
           <div style={{ fontFamily: 'Arial, sans-serif', fontSize: 13 }}>
-            {/* Header Section with General Information and Transaction Total */}
-            <div style={{ display: 'flex', marginBottom: 16, gap: 24 }}>
-              {/* Left: General Information - 6 columns */}
-              <div style={{ flex: 1 }}>
-                <div style={{ color: REDWOOD.primary, fontWeight: 700, fontSize: 12, marginBottom: 6 }}>General Information</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', gap: '4px 8px', fontSize: 11 }}>
-                  <div>
-                    <div style={{ color: '#999', marginBottom: 0 }}>Business Unit</div>
-                    <div style={{ fontWeight: 500 }}>{invoiceDetail['BusinessUnit'] || '-'}</div>
+            {/* Header Section - 3 column layout */}
+            <Row gutter={[32, 0]} style={{ marginBottom: 20 }}>
+              {/* Left: General Information - Single Column */}
+              <Col xs={24} sm={10}>
+                <div style={{ color: REDWOOD.primary, fontWeight: 700, fontSize: 12, marginBottom: 10 }}>General Information</div>
+                <div style={{ fontSize: 12 }}>
+                  <div style={{ display: 'flex', marginBottom: 6, justifyContent: 'space-between', gap: 12 }}>
+                    <span style={{ color: '#999', minWidth: 120 }}>Business Unit</span>
+                    <span style={{ fontWeight: 600 }}>{invoiceDetail['BusinessUnit'] || '-'}</span>
                   </div>
-                  <div>
-                    <div style={{ color: '#999', marginBottom: 0 }}>Transaction Source</div>
-                    <div style={{ fontWeight: 500 }}>{invoiceDetail['TransactionSource'] || '-'}</div>
+                  <div style={{ display: 'flex', marginBottom: 6, justifyContent: 'space-between', gap: 12 }}>
+                    <span style={{ color: '#999', minWidth: 120 }}>Transaction Source</span>
+                    <span style={{ fontWeight: 600 }}>{invoiceDetail['TransactionSource'] || '-'}</span>
                   </div>
-                  <div>
-                    <div style={{ color: '#999', marginBottom: 0 }}>Transaction Type</div>
-                    <div style={{ fontWeight: 500 }}>{invoiceDetail['TransactionType'] || '-'}</div>
+                  <div style={{ display: 'flex', marginBottom: 6, justifyContent: 'space-between', gap: 12 }}>
+                    <span style={{ color: '#999', minWidth: 120 }}>Transaction Type</span>
+                    <span style={{ fontWeight: 600 }}>{invoiceDetail['TransactionType'] || '-'}</span>
                   </div>
-                  <div>
-                    <div style={{ color: '#999', marginBottom: 0 }}>Currency</div>
-                    <div style={{ fontWeight: 500 }}>{invoiceDetail['InvoiceCurrencyCode'] || '-'}</div>
+                  <div style={{ display: 'flex', marginBottom: 6, justifyContent: 'space-between', gap: 12 }}>
+                    <span style={{ color: '#999', minWidth: 120 }}>Transaction Number</span>
+                    <span style={{ fontWeight: 600 }}>{invoiceDetail['TransactionNumber'] || '-'}</span>
                   </div>
-                  <div>
-                    <div style={{ color: '#999', marginBottom: 0 }}>Status</div>
-                    <div style={{ fontWeight: 500 }}>{invoiceDetail['InvoiceStatus'] || '-'}</div>
+                  <div style={{ display: 'flex', marginBottom: 6, justifyContent: 'space-between', gap: 12 }}>
+                    <span style={{ color: '#999', minWidth: 120 }}>Sales Order</span>
+                    <span style={{ fontWeight: 600 }}>{invoiceDetail['CrossReference'] || '-'}</span>
                   </div>
-                  <div>
-                    <div style={{ color: '#999', marginBottom: 0 }}>Comments</div>
-                    <div style={{ fontWeight: 500 }}>{invoiceDetail['Comments'] || '—'}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: '#999', marginBottom: 0 }}>Transaction Number</div>
-                    <div style={{ fontWeight: 500 }}>{invoiceDetail['TransactionNumber'] || '-'}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: '#999', marginBottom: 0 }}>Sales Order</div>
-                    <div style={{ fontWeight: 500 }}>{invoiceDetail['CrossReference'] || '-'}</div>
+                  <div style={{ display: 'flex', marginBottom: 0, justifyContent: 'space-between', gap: 12 }}>
+                    <span style={{ color: '#999', minWidth: 120 }}>Status</span>
+                    <span style={{ fontWeight: 600 }}>{invoiceDetail['InvoiceStatus'] || '-'}</span>
                   </div>
                 </div>
-              </div>
+              </Col>
 
-              {/* Right: Dates and Transaction Total Box */}
-              <div style={{ width: 280, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {/* Dates */}
-                <div style={{ fontSize: 11 }}>
-                  <div style={{ display: 'flex', marginBottom: 6, justifyContent: 'space-between' }}>
+              {/* Middle: Dates */}
+              <Col xs={24} sm={6}>
+                <div style={{ fontSize: 12 }}>
+                  <div style={{ display: 'flex', marginBottom: 16, justifyContent: 'space-between', gap: 12 }}>
                     <span style={{ color: '#999' }}>Transaction Date</span>
-                    <span style={{ fontWeight: 500 }}>
+                    <span style={{ fontWeight: 600 }}>
                       {invoiceDetail['TransactionDate']
-                        ? new Date(invoiceDetail['TransactionDate']).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' })
+                        ? new Date(invoiceDetail['TransactionDate']).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })
                         : '-'}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                     <span style={{ color: '#999' }}>Accounting Date</span>
-                    <span style={{ fontWeight: 500 }}>
+                    <span style={{ fontWeight: 600 }}>
                       {invoiceDetail['AccountingDate']
-                        ? new Date(invoiceDetail['AccountingDate']).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' })
+                        ? new Date(invoiceDetail['AccountingDate']).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })
                         : '-'}
                     </span>
                   </div>
                 </div>
+              </Col>
 
-                {/* Transaction Total Box */}
+              {/* Right: Transaction Total Box */}
+              <Col xs={24} sm={8}>
                 <div style={{
                   border: `1px solid #E5E5E5`,
                   borderRadius: 4,
-                  padding: '8px 12px',
+                  padding: '12px',
                   background: '#FAFAFA',
                 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: '#333' }}>Transaction Total</div>
-                  <div style={{ fontSize: 10, marginBottom: 6 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, color: '#333' }}>Transaction Total</div>
+                  <div style={{ fontSize: 11, marginBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
                       <span style={{ color: '#666' }}>Lines</span>
-                      <span style={{ fontWeight: 600 }}>
+                      <span style={{ fontWeight: 600, textAlign: 'right' }}>
                         {(Number(invoiceDetail['EnteredAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
                       </span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
                       <span style={{ color: '#666' }}>Tax</span>
-                      <span style={{ fontWeight: 600 }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
+                      <span style={{ fontWeight: 600, textAlign: 'right' }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
                       <span style={{ color: '#666' }}>Freight</span>
-                      <span style={{ fontWeight: 600 }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
+                      <span style={{ fontWeight: 600, textAlign: 'right' }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
                       <span style={{ color: '#666' }}>Charges</span>
-                      <span style={{ fontWeight: 600 }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
+                      <span style={{ fontWeight: 600, textAlign: 'right' }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
                     </div>
                   </div>
                   <div style={{
                     borderTop: `1px solid #E5E5E5`,
-                    paddingTop: 6,
+                    paddingTop: 8,
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    fontSize: 11,
+                    fontSize: 12,
                   }}>
                     <div style={{ fontWeight: 700 }}>Total</div>
-                    <div style={{ fontWeight: 700, color: REDWOOD.primary, fontSize: 12 }}>
+                    <div style={{ fontWeight: 700, color: REDWOOD.primary, fontSize: 13 }}>
                       {(Number(invoiceDetail['EnteredAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
+              </Col>
+            </Row>
 
             {/* Customer Section */}
             <div style={{ marginBottom: 12, fontSize: 11 }}>
