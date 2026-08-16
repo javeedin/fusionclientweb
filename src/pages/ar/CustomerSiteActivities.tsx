@@ -1596,14 +1596,14 @@ Generated on ${new Date().toLocaleString()}
         const tabFilterKey = `${key}_${cn}`;
         const columnFilterValue = columnFilters[tabFilterKey] || '';
 
-        // Apply column filter to data
-        const filteredData = useMemo(() => {
-          if (!columnFilterValue.trim()) return state.data;
+        // Apply column filter to data (no useMemo in map - calculate directly)
+        let filteredData = state.data;
+        if (columnFilterValue.trim()) {
           const q = columnFilterValue.toLowerCase();
-          return state.data.filter(row =>
+          filteredData = state.data.filter(row =>
             Object.values(row).some(v => v !== null && v !== undefined && String(v).toLowerCase().includes(q))
           );
-        }, [state.data, columnFilterValue]);
+        }
 
         // Build columns with sorting
         let cols = buildColumns(filteredData);
