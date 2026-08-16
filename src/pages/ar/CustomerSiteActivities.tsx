@@ -3491,7 +3491,12 @@ Generated: ${new Date().toLocaleString()}
                             {(() => {
                               const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
                               const taxSum = taxLines.reduce((sum: number, tax: any) => sum + (Number(tax['TaxAmount']) || 0), 0);
-                              return taxSum > 0 ? taxSum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+                              const taxRate = taxLines.length > 0 ? taxLines[0]['TaxRate'] : null;
+                              if (taxSum > 0) {
+                                const rateDisplay = taxRate ? ` (${taxRate}%)` : '';
+                                return taxSum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + rateDisplay;
+                              }
+                              return '-';
                             })()}
                           </td>
                           <td style={{ padding: '6px 4px' }}>{line['SalesOrder'] || '-'}</td>
