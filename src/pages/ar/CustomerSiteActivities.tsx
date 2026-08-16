@@ -114,9 +114,18 @@ function makeColWithFilter(key: string, title: string, extra?: Partial<ColumnTyp
   };
 }
 
-function buildColumns(items: Row[], extraFirst?: { key: string; title: string }): ColumnsType<Row> {
+function buildColumns(items: Row[], extraFirst?: { key: string; title: string }, filterNulls = false): ColumnsType<Row> {
   if (!items.length) return [];
-  const keys = Object.keys(items[0]).filter(k => k !== 'links' && k !== '_customerName');
+  let keys = Object.keys(items[0]).filter(k => k !== 'links' && k !== '_customerName');
+
+  // For Standard Receipts, filter out columns that are all null
+  if (filterNulls) {
+    keys = keys.filter(k => {
+      // Keep column if at least one item has a non-null value
+      return items.some(item => item[k] !== null && item[k] !== undefined);
+    });
+  }
+
   const cols: ColumnsType<Row> = keys.map(key => {
     const title = key.replace(/([A-Z])/g, ' $1').trim();
     const col = makeColWithFilter(key, title);
