@@ -936,8 +936,29 @@ const CustomerSiteActivities: React.FC = () => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const json = await res.json();
-      const invoice = json.items?.[0];
+      let invoice = json.items?.[0];
       if (invoice) {
+        // Fetch tax data for each line
+        if (invoice['receivablesInvoiceLines'] && invoice['receivablesInvoiceLines'].length > 0) {
+          const invoiceId = invoice['ReceivablesInvoiceId'];
+          const taxPromises = invoice['receivablesInvoiceLines'].map((line: any) => {
+            const lineId = line['ReceivablesInvoiceLineId'];
+            const taxUrl = `${baseUrl}/${invoiceId}/child/receivablesInvoiceLines/${lineId}/child/receivablesInvoiceLineTaxLines`;
+            return fetch(taxUrl, { headers: getFusionAuthHeaders() })
+              .then(r => r.ok ? r.json() : { items: [] })
+              .then(taxJson => ({ lineId, taxes: taxJson.items || [] }))
+              .catch(() => ({ lineId, taxes: [] }));
+          });
+
+          const taxDataArray = await Promise.all(taxPromises);
+          const taxMap = new Map(taxDataArray.map(t => [t.lineId, t.taxes]));
+
+          // Attach tax data to each line
+          invoice['receivablesInvoiceLines'] = invoice['receivablesInvoiceLines'].map((line: any) => ({
+            ...line,
+            receivablesInvoiceLineTaxLines: taxMap.get(line['ReceivablesInvoiceLineId']) || []
+          }));
+        }
         setInvoiceDetail(invoice);
       } else {
         message.error('Invoice not found');
@@ -3401,7 +3422,17 @@ Generated: ${new Date().toLocaleString()}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2, gap: 4 }}>
                       <span>Tax:</span>
-                      <span style={{ fontWeight: 600 }}>0.00</span>
+                      <span style={{ fontWeight: 600 }}>
+                        {(() => {
+                          const lines = invoiceDetail['receivablesInvoiceLines'] || [];
+                          const totalTax = lines.reduce((sum: number, line: any) => {
+                            const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
+                            const lineTax = taxLines.reduce((tsum: number, tax: any) => tsum + (Number(tax['TaxAmount']) || 0), 0);
+                            return sum + lineTax;
+                          }, 0);
+                          return totalTax.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        })()}
+                      </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2, gap: 4 }}>
                       <span>Freight:</span>
@@ -3448,7 +3479,8 @@ Generated: ${new Date().toLocaleString()}
                         <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Quantity</th>
                         <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Unit Price</th>
                         <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Amount</th>
-                        <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Tax</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Tax Code</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Tax Amount</th>
                         <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Sales Order</th>
                         <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Date</th>
                         <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Status</th>
@@ -3471,6 +3503,12 @@ Generated: ${new Date().toLocaleString()}
                           </td>
                           <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 600 }}>
                             {(Number(line['LineAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
+                          </td>
+                          <td style={{ padding: '12px 8px' }}>
+                            {(() => {
+                              const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
+                              return taxLines.length > 0 ? taxLines.map((t: any) => t['TaxCode'] || '-').join(', ') : '-';
+                            })()}
                           </td>
                           <td style={{ padding: '12px 8px', textAlign: 'right' }}>
                             {(() => {
@@ -3496,6 +3534,7 @@ Generated: ${new Date().toLocaleString()}
                         <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: REDWOOD.primary }}>
                           {invoiceDetail['receivablesInvoiceLines'].reduce((sum: number, line: any) => sum + (Number(line['LineAmount']) || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
                         </td>
+                        <td />
                         <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: REDWOOD.primary }}>
                           {invoiceDetail['receivablesInvoiceLines'].reduce((sum: number, line: any) => {
                             const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
