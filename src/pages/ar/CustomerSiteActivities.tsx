@@ -291,6 +291,11 @@ const CustomerSiteActivities: React.FC = () => {
   const [accountStatementData, setAccountStatementData] = useState<Row | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<{ name: string; accountNumber: string } | null>(null);
 
+  // Invoice Detail modal state
+  const [invoiceDetailVisible, setInvoiceDetailVisible] = useState(false);
+  const [invoiceDetailLoading, setInvoiceDetailLoading] = useState(false);
+  const [invoiceDetail, setInvoiceDetail] = useState<Row | null>(null);
+
   // ── Search Fusion ────────────────────────────────────────────────
   const handleSearch = useCallback(async () => {
     const values = form.getFieldsValue();
@@ -530,6 +535,27 @@ Balance Due: ${formatVal('amount', accountStatementData?.balance)}
     message.info('Opening default email client...');
   }, [selectedCustomer, accountStatementData]);
 
+  // ── Show Invoice Detail ──────────────────────────────────────────
+  const showInvoiceDetail = useCallback(async (transactionNumber: string) => {
+    setInvoiceDetailVisible(true);
+    setInvoiceDetailLoading(true);
+    setInvoiceDetail(null);
+    try {
+      const url = `${ORACLE_FUSION_CONFIG.baseUrl}/receivablesInvoices?q=TransactionNumber=${transactionNumber}&limit=1&expand=receivablesInvoiceLines&onlyData=true`;
+      const res = await fetch(url, { headers: { Authorization: FUSION_AUTH } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const invoice = (json.items || [])[0];
+      setInvoiceDetail(invoice || null);
+      if (!invoice) message.info('Invoice details could not be fetched');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      message.error(`Failed to fetch invoice details: ${msg}`);
+    } finally {
+      setInvoiceDetailLoading(false);
+    }
+  }, []);
+
   const rowSelection: TableRowSelection<Row> = {
     selectedRowKeys,
     onChange: keys => setSelectedRowKeys(keys),
@@ -606,8 +632,36 @@ Balance Due: ${formatVal('amount', accountStatementData?.balance)}
             </div>
           )}
 
-          <FilteredTable data={state.data} columns={state.columns} loading={state.loading}
-            emptyText="Select customers in the first tab and click Load Activities" />
+          {/* Customize columns for AR Invoices to make TransactionNumber clickable */}
+          {isArInvoices && state.columns.length > 0 && (
+            <FilteredTable
+              data={state.data}
+              columns={state.columns.map(col => {
+                if (col.key === 'TransactionNumber') {
+                  return {
+                    ...col,
+                    render: (v: unknown) => (
+                      <Button
+                        type="link"
+                        style={{ padding: 0, color: REDWOOD.primary, textDecoration: 'underline' }}
+                        onClick={() => showInvoiceDetail(String(v))}
+                      >
+                        {formatVal('TransactionNumber', v)}
+                      </Button>
+                    ),
+                  };
+                }
+                return col;
+              })}
+              loading={state.loading}
+              emptyText="Select customers in the first tab and click Load Activities"
+            />
+          )}
+
+          {!isArInvoices && (
+            <FilteredTable data={state.data} columns={state.columns} loading={state.loading}
+              emptyText="Select customers in the first tab and click Load Activities" />
+          )}
 
           {isArInvoices && state.data.length > 0 && agingBuckets && (
             <Card style={{ borderColor: REDWOOD.border, marginTop: 20, marginBottom: 16 }} title={<Text strong>Aging Analysis</Text>}>
@@ -945,6 +999,143 @@ Balance Due: ${formatVal('amount', accountStatementData?.balance)}
               </Text>
             </div>
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={invoiceDetailVisible}
+        onCancel={() => setInvoiceDetailVisible(false)}
+        width={1000}
+        title={invoiceDetail ? `⊖ AR Invoice ${invoiceDetail['TransactionNumber']}` : 'AR Invoice Detail'}
+        footer={[
+          <Button key="close" onClick={() => setInvoiceDetailVisible(false)}>Close</Button>,
+        ]}
+      >
+        {invoiceDetailLoading ? (
+          <div style={{ textAlign: 'center', padding: '40px' }}>
+            <Spin />
+          </div>
+        ) : invoiceDetail ? (
+          <div style={{ fontSize: 11 }}>
+            <Row gutter={[16, 0]} style={{ marginBottom: 20 }}>
+              <Col xs={24} sm={14}>
+                {/* General Information */}
+                <div style={{ marginBottom: 16 }}>
+                  <Text strong style={{ fontSize: 12, color: REDWOOD.neutral600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    General Information
+                  </Text>
+                  {['BusinessUnit', 'TransactionSource', 'TransactionType', 'TransactionNumber', 'CrossReference', 'InvoiceStatus', 'TransactionDate', 'AccountingDate'].map(field => (
+                    <div key={field} style={{ display: 'flex', marginBottom: 4 }}>
+                      <span style={{ width: 100, fontWeight: 600, color: REDWOOD.neutral600 }}>
+                        {field.replace(/([A-Z])/g, ' $1').trim()}:
+                      </span>
+                      <span>{formatVal(field, invoiceDetail[field])}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Customer Information */}
+                <div style={{ marginBottom: 16 }}>
+                  <Text strong style={{ fontSize: 12, color: REDWOOD.neutral600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Customer
+                  </Text>
+                  {['BillToCustomerName', 'BillToSiteName', 'ShipToCustomerName', 'ShipToSiteName'].map(field => (
+                    <div key={field} style={{ display: 'flex', marginBottom: 4 }}>
+                      <span style={{ width: 100, fontWeight: 600, color: REDWOOD.neutral600 }}>
+                        {field.replace(/([A-Z])/g, ' $1').trim()}:
+                      </span>
+                      <span>{formatVal(field, invoiceDetail[field])}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Payment Information */}
+                <div>
+                  <Text strong style={{ fontSize: 12, color: REDWOOD.neutral600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Payment
+                  </Text>
+                  {['PaymentTerms', 'DueDate'].map(field => (
+                    <div key={field} style={{ display: 'flex', marginBottom: 4 }}>
+                      <span style={{ width: 100, fontWeight: 600, color: REDWOOD.neutral600 }}>
+                        {field.replace(/([A-Z])/g, ' $1').trim()}:
+                      </span>
+                      <span>{formatVal(field, invoiceDetail[field])}</span>
+                    </div>
+                  ))}
+                </div>
+              </Col>
+
+              <Col xs={24} sm={10}>
+                {/* Transaction Total Box */}
+                <Card
+                  style={{
+                    borderColor: REDWOOD.border,
+                    background: '#fafafa',
+                    padding: 0,
+                  }}
+                  styles={{ body: { padding: '12px' } }}
+                >
+                  <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 12, color: REDWOOD.neutral600 }}>
+                    TRANSACTION TOTAL
+                  </Text>
+                  <Row gutter={[0, 8]}>
+                    <Col span={16}><Text>Lines:</Text></Col>
+                    <Col span={8} style={{ textAlign: 'right' }}>
+                      <Text strong>{formatVal('amount', invoiceDetail['LineAmount'])}</Text>
+                    </Col>
+                    <Col span={16}><Text>Tax:</Text></Col>
+                    <Col span={8} style={{ textAlign: 'right' }}>
+                      <Text>{formatVal('amount', invoiceDetail['TaxAmount'])}</Text>
+                    </Col>
+                    <Col span={16}><Text>Freight:</Text></Col>
+                    <Col span={8} style={{ textAlign: 'right' }}>
+                      <Text>{formatVal('amount', invoiceDetail['FreightAmount'])}</Text>
+                    </Col>
+                    <Col span={16}><Text>Charges:</Text></Col>
+                    <Col span={8} style={{ textAlign: 'right' }}>
+                      <Text>{formatVal('amount', invoiceDetail['ChargesAmount'])}</Text>
+                    </Col>
+                    <Divider style={{ margin: '8px 0' }} />
+                    <Col span={16}><Text strong style={{ fontSize: 12 }}>Total:</Text></Col>
+                    <Col span={8} style={{ textAlign: 'right' }}>
+                      <Text strong style={{ fontSize: 12, color: REDWOOD.primary }}>
+                        {formatVal('amount', invoiceDetail['EnteredAmount'])}
+                      </Text>
+                    </Col>
+                  </Row>
+                </Card>
+              </Col>
+            </Row>
+
+            {/* Invoice Lines Table */}
+            {invoiceDetail['receivablesInvoiceLines'] && (invoiceDetail['receivablesInvoiceLines'] as Row[]).length > 0 && (
+              <div style={{ marginTop: 20 }}>
+                <Text strong style={{ fontSize: 12, color: REDWOOD.neutral600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Invoice Lines
+                </Text>
+                <Table
+                  dataSource={invoiceDetail['receivablesInvoiceLines'] as Row[]}
+                  columns={[
+                    { title: 'Line', dataIndex: 'LineNumber', key: 'LineNumber', width: 50 },
+                    { title: 'Item', dataIndex: 'ItemNumber', key: 'ItemNumber', width: 80 },
+                    { title: 'Description', dataIndex: 'Description', key: 'Description', ellipsis: true },
+                    { title: 'UOM', dataIndex: 'UnitOfMeasure', key: 'UnitOfMeasure', width: 60 },
+                    { title: 'Quantity', dataIndex: 'Quantity', key: 'Quantity', width: 80, render: v => formatVal('quantity', v) },
+                    { title: 'Unit Price', dataIndex: 'UnitSellingPrice', key: 'UnitSellingPrice', width: 90, render: v => formatVal('amount', v) },
+                    { title: 'Amount', dataIndex: 'LineAmount', key: 'LineAmount', width: 90, render: v => formatVal('amount', v) },
+                    { title: 'Sales Order', dataIndex: 'CrossReference', key: 'CrossReference', width: 90 },
+                    { title: 'Date', dataIndex: 'TransactionDate', key: 'TransactionDate', width: 100, render: v => formatVal('date', v) },
+                  ]}
+                  rowKey={(_, i) => String(i)}
+                  size="small"
+                  pagination={false}
+                  scroll={{ x: 'max-content' }}
+                />
+              </div>
+            )}
+          </div>
+        ) : (
+          <Empty description="Could not load invoice details" />
         )}
       </Modal>
     </Layout>
