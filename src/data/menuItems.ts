@@ -69,7 +69,6 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
   { key: 'ar-manage-receipts',     label: 'Manage Receipts',             module: 'AR',   moduleLabel: 'Accounts Receivable',     path: '/ar/manage-receipts',             description: 'Search and manage cash receipts', keywords: 'receipt cash collection payment receivable' },
   { key: 'ar-manage-credit-memos', label: 'Manage Credit Memos',         module: 'AR',   moduleLabel: 'Accounts Receivable',     path: '/ar/manage-credit-memos',         description: 'Search and view AR credit memos synced from Oracle Fusion', keywords: 'credit memo cm ar transaction receivable credit reason discount' },
   { key: 'ar-sync-cm-applications', label: 'Sync CM Applications',       module: 'AR',   moduleLabel: 'Accounts Receivable',     path: '/ar/sync-cm-applications',        description: 'Sync AR credit memo applications per customer from Oracle Fusion', keywords: 'credit memo application sync customer cm applied fusion' },
-  { key: 'ar-customer-balances',    label: 'Customer Balances',          module: 'AR',   moduleLabel: 'Accounts Receivable',     path: '/ar/customer-site-activities',    description: 'View customer receivables overview, aging analysis, and payment behavior', keywords: 'customer balance receivable aging payment history site activities' },
 
   // ── Cash Management ─────────────────────────────────────────────────────────
   { key: 'cash',                  label: 'Cash Management',             module: 'CASH', moduleLabel: 'Cash Management',         path: '/cash',                           description: 'Cash module home' },
@@ -121,6 +120,7 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
 
   // ── Fusion Supply Chain / Sales & Order Management ────────────────────────────
   { key: 'fsc-sales-orders',      label: 'Sales Orders',               module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/procurement/sales-orders',                         description: 'Search sales orders and drill into header & lines', keywords: 'sales order so customer' },
+  { key: 'fsc-customer-balances',  label: 'Customer Balances',          module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/ar/customer-site-activities',                      description: 'View customer receivables overview, aging analysis, and payment behavior', keywords: 'customer balance receivable aging payment history site activities' },
   { key: 'fsc-price-list',        label: 'Price List',                 module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/procurement/price-list',                           description: 'Manage and review price lists', keywords: 'price list pricing discount' },
 
   // ── Fusion Supply Chain / Receiving & Fulfillment ─────────────────────────────
