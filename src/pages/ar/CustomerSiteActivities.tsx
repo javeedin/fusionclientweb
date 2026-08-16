@@ -923,27 +923,15 @@ const CustomerSiteActivities: React.FC = () => {
   };
 
   // ── Fetch and show Invoice Details ────────────────────────────────
-  const showInvoiceDetail = useCallback(async (transactionNumber: string) => {
+  const showInvoiceDetail = useCallback(async (transactionId: string) => {
     setInvoiceDetailLoading(true);
     setInvoiceDetailVisible(true);
     try {
       const company = getCurrentCompany();
       const baseUrl = company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/receivablesInvoices` : '';
 
-      // First, get the invoice ID by transaction number
-      const queryUrl = `${baseUrl}?q=TransactionNumber=${transactionNumber}&limit=500&onlyData=true`;
-      const queryRes = await fetch(queryUrl, { headers: getFusionAuthHeaders() });
-      if (!queryRes.ok) throw new Error(`HTTP ${queryRes.status}`);
-
-      const queryJson = await queryRes.json();
-      const invoiceId = queryJson.items?.[0]?.['ReceivablesInvoiceId'];
-      if (!invoiceId) {
-        message.error('Invoice not found');
-        return;
-      }
-
-      // Now fetch the invoice with all line and tax data in one call
-      const url = `${baseUrl}/${invoiceId}?expand=receivablesInvoiceLines.receivablesInvoiceLineTaxLines&onlyData=true`;
+      // Fetch the invoice with all line and tax data using TransactionId
+      const url = `${baseUrl}/${transactionId}?expand=receivablesInvoiceLines.receivablesInvoiceLineTaxLines&onlyData=true`;
       setInvoiceDetailApiUrl(url);
 
       const res = await fetch(url, { headers: getFusionAuthHeaders() });
@@ -1805,7 +1793,7 @@ Generated: ${new Date().toLocaleString()}
               <Button
                 type="link"
                 style={{ padding: 0, color: REDWOOD.primary, textDecoration: 'underline' }}
-                onClick={() => showInvoiceDetail(String(record['TransactionNumber']))}
+                onClick={() => showInvoiceDetail(String(record['TransactionId']))}
               >
                 {record['TransactionNumber'] || ''}
               </Button>
@@ -3181,7 +3169,7 @@ Generated: ${new Date().toLocaleString()}
                           <Button
                             type="link"
                             style={{ padding: 0, color: REDWOOD.primary, textDecoration: 'underline' }}
-                            onClick={() => showInvoiceDetail(inv['TransactionNumber'])}
+                            onClick={() => showInvoiceDetail(inv['TransactionId'])}
                           >
                             {inv['TransactionNumber'] || ''}
                           </Button>
