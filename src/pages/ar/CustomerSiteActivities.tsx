@@ -17,13 +17,15 @@ const { Content } = Layout;
 const { Title, Text } = Typography;
 
 const REDWOOD = {
-  primary:    '#C74634',
-  success:    '#1D7B4D',
-  info:       '#0572CE',
-  neutral100: '#F7F7F7',
-  neutral200: '#E5E5E5',
-  surface:    '#FFFFFF',
-  border:     '#E5E5E5',
+  primary:      '#C74634',
+  primaryDark:  '#A33B2C',
+  success:      '#1D7B4D',
+  error:        '#F54545',
+  info:         '#0572CE',
+  neutral100:   '#F7F7F7',
+  neutral200:   '#E5E5E5',
+  surface:      '#FFFFFF',
+  border:       '#E5E5E5',
 };
 
 const FUSION_AUTH = 'Basic ' + btoa(`${ORACLE_FUSION_CONFIG.username}:${ORACLE_FUSION_CONFIG.password}`);
@@ -49,6 +51,16 @@ interface ChildState {
 }
 
 interface ApiDebug { url: string; status: number | null; response: string; }
+
+// Aging bucket calculator
+const getAgingBucket = (days: number | null | undefined): string => {
+  if (days === null || days === undefined || days === '') return '-';
+  const d = Number(days);
+  if (d <= 30) return 'Current';
+  if (d <= 60) return '31-60';
+  if (d <= 90) return '61-90';
+  return '90+';
+};
 
 function formatVal(key: string, val: unknown): React.ReactNode {
   if (val === null || val === undefined || val === '') return '-';
@@ -101,9 +113,21 @@ function makeColWithFilter(key: string, title: string, extra?: Partial<ColumnTyp
 function buildColumns(items: Row[], extraFirst?: { key: string; title: string }): ColumnsType<Row> {
   if (!items.length) return [];
   const keys = Object.keys(items[0]).filter(k => k !== 'links' && k !== '_customerName');
-  const cols: ColumnsType<Row> = keys.map(key =>
-    makeColWithFilter(key, key.replace(/([A-Z])/g, ' $1').trim())
-  );
+  const cols: ColumnsType<Row> = keys.map(key => {
+    const title = key.replace(/([A-Z])/g, ' $1').trim();
+    const col = makeColWithFilter(key, title);
+    // Assign default width based on content type
+    if (key.includes('Id') || key.includes('ID')) {
+      col.width = 100;
+    } else if (key.includes('Date') || key.includes('Number')) {
+      col.width = 120;
+    } else if (key.includes('Amount') || key.includes('Balance') || key.includes('Total')) {
+      col.width = 140;
+    } else {
+      col.width = 130;
+    }
+    return col;
+  });
   if (extraFirst) {
     cols.unshift(makeColWithFilter(extraFirst.key, extraFirst.title, { width: 180, fixed: 'left' as const }));
   }
@@ -173,6 +197,20 @@ function FilteredTable({ data, columns, loading, emptyText }: { data: Row[]; col
     return data.filter(row => Object.values(row).some(v => v !== null && v !== undefined && String(v).toLowerCase().includes(q)));
   }, [data, filter]);
 
+  // Calculate totals (exclude ID and Date columns)
+  const totals = useMemo(() => {
+    const result: Record<string, number> = {};
+    const idPatterns = ['Id', 'ID', 'Number', 'Date'];
+    filtered.forEach(row => {
+      Object.keys(row).forEach(k => {
+        if (typeof row[k] === 'number' && !idPatterns.some(pattern => k.includes(pattern))) {
+          result[k] = (result[k] || 0) + row[k];
+        }
+      });
+    });
+    return result;
+  }, [filtered]);
+
   if (loading) return <div style={{ textAlign: 'center', padding: 40 }}><Spin size="large" /></div>;
   if (!data.length) return <Empty description={emptyText || 'No data'} />;
 
@@ -185,7 +223,43 @@ function FilteredTable({ data, columns, loading, emptyText }: { data: Row[]; col
       </div>
       <Table dataSource={filtered} columns={columns} rowKey={(_r, i) => String(i)}
         size="small" scroll={{ x: 'max-content' }}
-        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `Total ${t} records` }} />
+        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `Total ${t} records` }}
+        footer={() =>
+          Object.keys(totals).length > 0 ? (
+            <div style={{
+              display: 'flex',
+              padding: '8px 0',
+              fontWeight: 600,
+              background: '#fafafa',
+              borderTop: `1px solid ${REDWOOD.border}`,
+              color: REDWOOD.primary,
+            }}>
+              {columns.map((col, idx) => {
+                const dataIndex = col.dataIndex as string;
+                const value = totals[dataIndex];
+                const isFirstCol = idx === 0;
+                const isNumericCol = value !== undefined;
+
+                return (
+                  <div
+                    key={dataIndex}
+                    style={{
+                      flex: col.width ? `0 0 ${col.width}px` : 1,
+                      padding: '8px 12px',
+                      textAlign: isNumericCol ? 'right' : 'left',
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {isFirstCol ? 'TOTAL' : (isNumericCol ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-')}
+                  </div>
+                );
+              })}
+            </div>
+          ) : undefined
+        }
+      />
     </div>
   );
 }
@@ -204,6 +278,10 @@ const CustomerSiteActivities: React.FC = () => {
 
   const [apiDebug, setApiDebug] = useState<ApiDebug | null>(null);
   const [apiDebugVisible, setApiDebugVisible] = useState(false);
+
+  // Filter states for AR Invoices and Credit Memos
+  const [arInvoicesFilters, setArInvoicesFilters] = useState<Record<string, 'Open' | 'Closed' | 'ALL'>>({});
+  const [creditMemosFilters, setCreditMemosFilters] = useState<Record<string, 'Open' | 'Closed' | 'ALL'>>({});
 
   // ── Search Fusion ────────────────────────────────────────────────
   const handleSearch = useCallback(async () => {
@@ -319,6 +397,37 @@ const CustomerSiteActivities: React.FC = () => {
 
   const childTabItems = CHILD_NAMES.map(cn => {
     const state = childStates[cn] || { loading: false, data: [], columns: [] };
+    const isArInvoices = cn === 'transactionPaymentSchedules';
+    const isCreditMemos = cn === 'creditMemos';
+    const arCurrentStatus = arInvoicesFilters[selectedRowKeys[0]?.toString() || ''] || 'Open';
+    const cmCurrentStatus = creditMemosFilters[selectedRowKeys[0]?.toString() || ''] || 'Open';
+
+    // Calculate aging data for AR Invoices
+    const agingBuckets = isArInvoices ? { Current: 0, '31-60': 0, '61-90': 0, '90+': 0 } : null;
+    if (isArInvoices && agingBuckets) {
+      state.data.forEach((row: Row) => {
+        const days = row['PaymentDaysLate'];
+        const amount = (row['TotalBalanceAmount'] || 0) as number;
+        const b = getAgingBucket(days);
+        if (b !== '-' && agingBuckets.hasOwnProperty(b)) {
+          (agingBuckets as Record<string, number>)[b] += amount;
+        }
+      });
+    }
+
+    // Calculate monthly data for AR Invoices
+    const monthlyData: Record<string, { count: number; amount: number }> = {};
+    if (isArInvoices) {
+      state.data.forEach((row: Row) => {
+        const dateStr = row['TransactionDate'] as string;
+        if (!dateStr) return;
+        const monthKey = dateStr.substring(0, 7);
+        if (!monthlyData[monthKey]) monthlyData[monthKey] = { count: 0, amount: 0 };
+        monthlyData[monthKey].count += 1;
+        monthlyData[monthKey].amount += Number(row['TotalOriginalAmount']) || 0;
+      });
+    }
+
     return {
       key: cn,
       label: (
@@ -335,8 +444,111 @@ const CustomerSiteActivities: React.FC = () => {
               <Button size="small" icon={<DownloadOutlined />} onClick={() => exportToExcel(state.data, cn)}>Export to Excel</Button>
             </div>
           )}
+
+          {(isArInvoices || isCreditMemos) && (
+            <div style={{ marginBottom: 16, padding: '12px', background: '#fafafa', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <Text strong style={{ fontSize: 13 }}>Filter by Status:</Text>
+              <Space size={0}>
+                {(['Open', 'Closed', 'ALL'] as const).map(status => (
+                  <Button
+                    key={status}
+                    type={isArInvoices ? (arCurrentStatus === status ? 'primary' : 'default') : (cmCurrentStatus === status ? 'primary' : 'default')}
+                    size="small"
+                    onClick={() => {
+                      if (isArInvoices) setArInvoicesFilters(prev => ({ ...prev, [selectedRowKeys[0]?.toString() || '']: status }));
+                      if (isCreditMemos) setCreditMemosFilters(prev => ({ ...prev, [selectedRowKeys[0]?.toString() || '']: status }));
+                    }}
+                  >
+                    {status}
+                  </Button>
+                ))}
+              </Space>
+            </div>
+          )}
+
           <FilteredTable data={state.data} columns={state.columns} loading={state.loading}
             emptyText="Select customers in the first tab and click Load Activities" />
+
+          {isArInvoices && state.data.length > 0 && agingBuckets && (
+            <Card style={{ borderColor: REDWOOD.border, marginTop: 20, marginBottom: 16 }} title={<Text strong>Aging Analysis</Text>}>
+              <Row gutter={[16, 16]}>
+                {['Current', '31-60', '61-90', '90+'].map((bucket: string) => {
+                  const total = Object.values(agingBuckets).reduce((a, b) => a + b, 0);
+                  const amount = agingBuckets[bucket as keyof typeof agingBuckets];
+                  const percentage = total > 0 ? (amount / total) * 100 : 0;
+                  const bucketColor = bucket === 'Current' ? REDWOOD.success : bucket === '31-60' ? '#faad14' : bucket === '61-90' ? '#ff7a45' : REDWOOD.error;
+                  return (
+                    <Col xs={24} sm={12} md={6} key={bucket}>
+                      <div style={{
+                        padding: 12,
+                        borderRadius: 6,
+                        background: bucket === 'Current' ? '#f6ffed' : bucket === '31-60' ? '#fffbe6' : bucket === '61-90' ? '#fff7e6' : '#fff1f0',
+                        borderLeft: `4px solid ${bucketColor}`,
+                      }}>
+                        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>{bucket} Days</Text>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: bucketColor }}>
+                          {formatVal('amount', amount)}
+                        </div>
+                        <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+                          {percentage.toFixed(1)}%
+                        </Text>
+                      </div>
+                    </Col>
+                  );
+                })}
+              </Row>
+            </Card>
+          )}
+
+          {isArInvoices && state.data.length > 0 && Object.keys(monthlyData).length > 0 && (
+            <Card style={{ borderColor: REDWOOD.border }} title={<Text strong>Monthly Activity Trend</Text>}>
+              {(() => {
+                const sortedMonths = Object.keys(monthlyData).sort().reverse().slice(0, 12);
+                const maxAmount = Math.max(...sortedMonths.map(m => monthlyData[m].amount), 1);
+                return (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 200, marginBottom: 20, justifyContent: 'space-around' }}>
+                      {sortedMonths.slice(0, 6).map(month => {
+                        const pct = (monthlyData[month].amount / maxAmount) * 100;
+                        return (
+                          <div key={month} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                            <div style={{
+                              width: '100%',
+                              height: pct + '%',
+                              background: `linear-gradient(180deg, ${REDWOOD.primary} 0%, ${REDWOOD.primaryDark} 100%)`,
+                              borderRadius: '4px 4px 0 0',
+                              minHeight: 4,
+                            }} title={formatVal('amount', monthlyData[month].amount)} />
+                            <Text style={{ fontSize: 11, textAlign: 'center' }}>{month}</Text>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <Row gutter={[16, 16]}>
+                      {sortedMonths.map(month => (
+                        <Col xs={24} sm={12} md={8} key={month}>
+                          <div style={{
+                            padding: 12,
+                            borderRadius: 6,
+                            background: '#f5f5f5',
+                            border: `1px solid ${REDWOOD.border}`,
+                          }}>
+                            <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>{month}</Text>
+                            <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                              Invoices: {monthlyData[month].count}
+                            </Text>
+                            <Text style={{ fontSize: 12, display: 'block', marginTop: 4, fontWeight: 600, color: REDWOOD.primary }}>
+                              {formatVal('amount', monthlyData[month].amount)}
+                            </Text>
+                          </div>
+                        </Col>
+                      ))}
+                    </Row>
+                  </div>
+                );
+              })()}
+            </Card>
+          )}
         </div>
       ),
     };
