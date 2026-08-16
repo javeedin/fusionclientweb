@@ -238,7 +238,7 @@ function SiteResultsTable({ data, columns, loading, currentPage = 1, hasMore = f
         loading={loading}
         size="small"
         scroll={{ x: 'max-content' }}
-        pagination={false}
+        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `Total ${t} records` }}
         footer={() =>
           Object.keys(totals).length > 0 ? (
             <div style={{
