@@ -5881,6 +5881,17 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       .then(d => { setEffDescribe(p => ({ ...p, header: d })); const ctx = parseEffContexts(d, 'DOO_HEADERS_ADD_INFO'); const use = ctx.length ? ctx : FALLBACK_HDR_EFF; setHdrEffCtxs(use); setHdrEffCtxSel(prev => prev ?? use[0]?.voName); })
       .catch(() => { setHdrEffCtxs(FALLBACK_HDR_EFF); setHdrEffCtxSel(prev => prev ?? FALLBACK_HDR_EFF[0]?.voName); });
   }, []);
+
+  // Populate creditLimit in hdrEffVals when header.creditLimit is provided
+  useEffect(() => {
+    if (hdr.creditLimit !== undefined && hdr.creditLimit !== null) {
+      setHdrEffVals(prev => ({
+        ...prev,
+        creditLimit: String(hdr.creditLimit)
+      }));
+    }
+  }, [hdr.creditLimit]);
+
   const hdrEffActive = hdrEffCtxs.find(c => c.voName === hdrEffCtxSel);
   // Build the header additionalInformation child from the filled segments.
   const effHeaderChild = () => {
