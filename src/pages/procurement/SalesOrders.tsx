@@ -3021,7 +3021,7 @@ interface OrderHeader {
   orderType?: string; orderDate?: Dayjs | null; customerName?: string; accountNumber?: string;
   billToSite?: string; shipToSite?: string; billToAddress?: string; shipToAddress?: string;
   paymentTerms?: string; salesRep?: string; warehouse?: string; subinventory?: string; remarks?: string;
-  custAccountId?: string; partyId?: string;
+  custAccountId?: string; partyId?: string; creditLimit?: number;
   // Currency conversion details
   currencyRateType?: string; currencyDate?: Dayjs | null;
   // Branch Sales order details

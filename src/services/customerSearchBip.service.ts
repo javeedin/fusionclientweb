@@ -10,6 +10,7 @@ export interface CustomerSearchResult {
   city?: string;
   country?: string;
   creditLimit?: number;
+  prCreditLimit?: number;
   customerClassCode?: string;
   status?: string;
   custAccountId?: string;
@@ -95,6 +96,7 @@ const parseCustomerSearchXml = (xmlString: string): CustomerSearchResult[] => {
       city: getText('CITY') || undefined,
       country: getText('COUNTRY') || undefined,
       creditLimit: getNumber('CREDIT_LIMIT'),
+      prCreditLimit: getNumber('PR_CREDIT_LIMIT'),
       customerClassCode: getText('CUSTOMER_CLASS_CODE') || undefined,
       status: getText('STATUS') || undefined,
       custAccountId: getText('CUST_ACCOUNT_ID') || undefined,
@@ -188,5 +190,6 @@ export const convertBipCustomerToFill = (customer: CustomerSearchResult) => {
     shipToAddress: join(customer.address1, customer.address2, customer.city, customer.country),
     custAccountId: customer.custAccountId,
     partyId: customer.partyId,
+    creditLimit: customer.prCreditLimit || customer.creditLimit,
   };
 };
