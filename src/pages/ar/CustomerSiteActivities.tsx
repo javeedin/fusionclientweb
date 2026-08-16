@@ -358,6 +358,9 @@ const CustomerSiteActivities: React.FC = () => {
   const [accountStatementData, setAccountStatementData] = useState<any>(null);
   const [selectedCustomerForStatement, setSelectedCustomerForStatement] = useState<any>(null);
 
+  // Child tab API debugging
+  const [childApiDebugVisible, setChildApiDebugVisible] = useState<{ tabKey: string; childName: string } | null>(null);
+
   // ── Load page data ──────────────────────────────────────────────
   const loadPage = useCallback(async (pageNum: number, overrideFilters?: Record<string, string>) => {
     const offset = (pageNum - 1) * PAGE_SIZE;
@@ -1608,9 +1611,18 @@ Balance Due: ${formatVal('amount', accountStatementData.balance)}
                   </div>
                 </div>
               )}
-              {!state.loading && state.data.length > 0 && (
-                <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-                  <Button size="small" icon={<DownloadOutlined />} onClick={() => exportToExcel(filteredData, cn)}>Export to Excel</Button>
+              {!state.loading && (
+                <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+                  {state.data.length > 0 && (
+                    <Button size="small" icon={<DownloadOutlined />} onClick={() => exportToExcel(filteredData, cn)}>Export to Excel</Button>
+                  )}
+                  <Button
+                    size="small"
+                    icon={<ApiOutlined />}
+                    onClick={() => setChildApiDebugVisible({ tabKey: key, childName: cn })}
+                    style={{ color: detailApiDebug[key]?.responses[cn] ? REDWOOD.info : undefined }}
+                    title="View API debug info"
+                  />
                 </div>
               )}
               <Table
@@ -2751,6 +2763,51 @@ Balance Due: ${formatVal('amount', accountStatementData.balance)}
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={!!childApiDebugVisible}
+        onCancel={() => setChildApiDebugVisible(null)}
+        footer={null}
+        width={1000}
+        title={<Space><ApiOutlined style={{ color: REDWOOD.info }} /> API Debug - {childApiDebugVisible?.childName}</Space>}
+      >
+        {childApiDebugVisible && detailApiDebug[childApiDebugVisible.tabKey] ? (
+          <div style={{ fontFamily: 'monospace', fontSize: 12 }}>
+            <div style={{ marginBottom: 16 }}>
+              <Text strong style={{ fontSize: 13, marginBottom: 8, display: 'block' }}>URLs Called:</Text>
+              {detailApiDebug[childApiDebugVisible.tabKey].urls.map((url, idx) => (
+                <div key={idx} style={{ marginBottom: 8, padding: '8px', background: '#f5f5f5', borderRadius: 4 }}>
+                  <Tag color="blue">GET {idx + 1}</Tag>
+                  <Text copyable style={{ fontSize: 11, wordBreak: 'break-all' }}>{url}</Text>
+                </div>
+              ))}
+            </div>
+            <Divider />
+            <div style={{ marginBottom: 8 }}>
+              <Text type="secondary">Status for {childApiDebugVisible.childName}: </Text>
+              {detailApiDebug[childApiDebugVisible.tabKey].statuses[childApiDebugVisible.childName] === null ? <Tag>Pending…</Tag>
+                : detailApiDebug[childApiDebugVisible.tabKey].statuses[childApiDebugVisible.childName]! > 0 ? <Tag color={detailApiDebug[childApiDebugVisible.tabKey].statuses[childApiDebugVisible.childName]! < 300 ? 'green' : 'red'}>{detailApiDebug[childApiDebugVisible.tabKey].statuses[childApiDebugVisible.childName]}</Tag>
+                : <Tag color="red">Error</Tag>}
+            </div>
+            <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+              <Text strong>Response</Text>
+              <Button
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={() => {
+                  navigator.clipboard.writeText(detailApiDebug[childApiDebugVisible.tabKey].responses[childApiDebugVisible.childName]);
+                  message.success('Copied');
+                }}
+              >
+                Copy
+              </Button>
+            </div>
+            <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 6, maxHeight: 500, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              {detailApiDebug[childApiDebugVisible.tabKey].responses[childApiDebugVisible.childName] || 'No response'}
+            </pre>
+          </div>
+        ) : <Empty description="No API debug information available" />}
       </Modal>
     </Layout>
   );
