@@ -5588,20 +5588,70 @@ const ChargesModal: React.FC<{ open: boolean; onClose: () => void; orderKey: str
 const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: string | null; data: any; onFetch: () => void; apiUrl?: string; apiResponse?: string }> = ({ hdr, loading, error, data, onFetch, apiUrl = '', apiResponse = '' }) => {
   const [apiDrawerOpen, setApiDrawerOpen] = React.useState(false);
 
+  // Get currency symbol from header
+  const currencyCode = hdr.txnCurrency || 'USD';
+  const getCurrencySymbol = (code: string): string => {
+    const symbols: { [key: string]: string } = {
+      'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥', 'AED': 'د.إ', 'SAR': '﷼', 'INR': '₹',
+      'CAD': 'C$', 'AUD': 'A$', 'CHF': 'CHF', 'CNY': '¥', 'MXN': '$'
+    };
+    return symbols[code] || code + ' ';
+  };
+  const currencySymbol = getCurrencySymbol(currencyCode);
+
   const computeAging = (schedules: any[]): { current: number; over30: number; over60: number; over90: number } => {
     const today = dayjs();
     const aging = { current: 0, over30: 0, over60: 0, over90: 0 };
-    schedules?.forEach((schedule: any) => {
-      const amount = num(schedule.ScheduleAmount ?? schedule.Amount ?? 0);
-      if (!amount) return;
-      const dueDate = dayjs(schedule.ScheduledPaymentDate ?? schedule.DueDate);
+
+    if (!schedules || schedules.length === 0) {
+      console.warn('No transaction schedules to compute aging');
+      return aging;
+    }
+
+    schedules.forEach((schedule: any, idx: number) => {
+      // Try multiple field name combinations
+      const amount = num(
+        schedule.ScheduleAmount ??
+        schedule.Amount ??
+        schedule.InstallmentAmount ??
+        schedule.RemainingAmount ??
+        0
+      );
+
+      if (!amount) {
+        console.debug(`Schedule ${idx} has no amount:`, { fields: Object.keys(schedule), amount });
+        return;
+      }
+
+      // Try multiple date field names
+      const dateStr =
+        schedule.ScheduledPaymentDate ??
+        schedule.DueDate ??
+        schedule.ScheduleDate ??
+        schedule.PaymentDate;
+
+      if (!dateStr) {
+        console.debug(`Schedule ${idx} has no date field`);
+        return;
+      }
+
+      const dueDate = dayjs(dateStr);
+      if (!dueDate.isValid()) {
+        console.debug(`Schedule ${idx} has invalid date: ${dateStr}`);
+        return;
+      }
+
       const days = today.diff(dueDate, 'day');
+      console.debug(`Schedule ${idx}: amount=${amount}, daysOverdue=${days}`);
+
       if (days <= 0) aging.current += amount;
       else if (days <= 30) aging.current += amount;
       else if (days <= 60) aging.over30 += amount;
       else if (days <= 90) aging.over60 += amount;
       else aging.over90 += amount;
     });
+
+    console.log('Computed aging:', aging);
     return aging;
   };
 
@@ -5645,8 +5695,9 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
                   <div style={{ borderRight: `1px solid ${REDWOOD.neutral300}`, paddingRight: 24, paddingBottom: 16 }}>
                     <div style={{ fontSize: 12, color: REDWOOD.neutral600, marginBottom: 4 }}>TOTAL OPEN BALANCE</div>
                     <div style={{ fontSize: 32, fontWeight: 700, color: REDWOOD.primary }}>
-                      ${(data.items?.[0]?.TotalOpenReceivablesForSite ?? totalBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {currencySymbol}{(data.items?.[0]?.TotalOpenReceivablesForSite ?? totalBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
+                    <div style={{ fontSize: 11, color: REDWOOD.neutral600, marginTop: 8 }}>{currencyCode}</div>
                   </div>
                 </Col>
                 <Col xs={24} sm={12}>
@@ -5656,25 +5707,25 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
                       <Col xs={12} sm={12}>
                         <div style={{ fontSize: 11, color: '#1890ff', marginBottom: 2 }}>Current (≤30d)</div>
                         <div style={{ fontSize: 18, fontWeight: 700, color: '#1890ff' }}>
-                          ${aging.current.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {currencySymbol}{aging.current.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </Col>
                       <Col xs={12} sm={12}>
                         <div style={{ fontSize: 11, color: '#FAAD14', marginBottom: 2 }}>Over 30 Days</div>
                         <div style={{ fontSize: 18, fontWeight: 700, color: '#FAAD14' }}>
-                          ${aging.over30.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {currencySymbol}{aging.over30.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </Col>
                       <Col xs={12} sm={12}>
                         <div style={{ fontSize: 11, color: '#FF4D4F', marginBottom: 2 }}>Over 60 Days</div>
                         <div style={{ fontSize: 18, fontWeight: 700, color: '#FF4D4F' }}>
-                          ${aging.over60.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {currencySymbol}{aging.over60.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </Col>
                       <Col xs={12} sm={12}>
                         <div style={{ fontSize: 11, color: '#FF7875', marginBottom: 2 }}>Over 90 Days</div>
                         <div style={{ fontSize: 18, fontWeight: 700, color: '#FF7875' }}>
-                          ${aging.over90.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {currencySymbol}{aging.over90.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </Col>
                     </Row>
