@@ -1,11 +1,12 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   Layout, Card, Form, Input, Button, Space, Typography, Table, Tabs,
-  Breadcrumb, Spin, message, Empty, Modal, Tag, Badge,
+  Breadcrumb, Spin, message, Empty, Modal, Tag, Badge, Divider, Row, Col,
 } from 'antd';
 import {
   HomeOutlined, SearchOutlined, DownloadOutlined,
   EyeOutlined, ApiOutlined, CopyOutlined, SyncOutlined, FilterOutlined,
+  FileTextOutlined, MailOutlined, PrinterOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import type { ColumnsType, TableRowSelection, ColumnType } from 'antd/es/table/interface';
@@ -21,9 +22,11 @@ const REDWOOD = {
   primaryDark:  '#A33B2C',
   success:      '#1D7B4D',
   error:        '#F54545',
+  warning:      '#B07700',
   info:         '#0572CE',
   neutral100:   '#F7F7F7',
   neutral200:   '#E5E5E5',
+  neutral600:   '#6B6B6B',
   surface:      '#FFFFFF',
   border:       '#E5E5E5',
 };
@@ -283,6 +286,11 @@ const CustomerSiteActivities: React.FC = () => {
   const [arInvoicesFilters, setArInvoicesFilters] = useState<Record<string, 'Open' | 'Closed' | 'ALL'>>({});
   const [creditMemosFilters, setCreditMemosFilters] = useState<Record<string, 'Open' | 'Closed' | 'ALL'>>({});
 
+  // Account Statement modal state
+  const [accountStatementVisible, setAccountStatementVisible] = useState(false);
+  const [accountStatementData, setAccountStatementData] = useState<Row | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<{ name: string; accountNumber: string } | null>(null);
+
   // ── Search Fusion ────────────────────────────────────────────────
   const handleSearch = useCallback(async () => {
     const values = form.getFieldsValue();
@@ -389,6 +397,138 @@ const CustomerSiteActivities: React.FC = () => {
     setChildStates(finalStates);
     setLoadingActivities(false);
   }, [selectedRowKeys, fusionData]);
+
+  // ── Handle Account Statement ────────────────────────────────────────
+  const handleShowAccountStatement = useCallback(async () => {
+    if (!selectedRowKeys.length) { message.warning('Select at least one customer site first'); return; }
+
+    const selected = fusionData.filter(r => selectedRowKeys.includes(String(r['BillToSiteUseId'])));
+    if (!selected.length) return;
+
+    const firstSite = selected[0];
+    setSelectedCustomer({
+      name: firstSite['CustomerName'] as string,
+      accountNumber: firstSite['AccountNumber'] as string,
+    });
+
+    // Compile statement data from all activities
+    const statementData: Row = {
+      statementDate: new Date().toISOString().split('T')[0],
+      customerName: firstSite['CustomerName'],
+      accountNumber: firstSite['AccountNumber'],
+      billToSiteNumber: firstSite['BillToSiteNumber'],
+      currency: firstSite['Currency'] || 'MUR',
+    };
+
+    // Calculate totals from loaded activities - handle different field names
+    const invoiceData = childStates['transactionPaymentSchedules']?.data || [];
+    const invoiceTotal = invoiceData.reduce((sum: number, row: Row) => {
+      const balance = row['TotalBalanceAmount'] as number || row['TotalOriginalAmount'] as number || 0;
+      return sum + (typeof balance === 'number' ? balance : 0);
+    }, 0);
+
+    const receiptData = childStates['standardReceipts']?.data || [];
+    const paymentTotal = receiptData.reduce((sum: number, row: Row) => {
+      const amount = row['ReceiptAmount'] as number || row['ApplicationAmount'] as number || 0;
+      return sum + (typeof amount === 'number' ? amount : 0);
+    }, 0);
+
+    const creditMemoData = childStates['creditMemos']?.data || [];
+    const creditMemoTotal = creditMemoData.reduce((sum: number, row: Row) => {
+      const amount = row['TotalBalanceAmount'] as number || row['TotalOriginalAmount'] as number || 0;
+      return sum + (typeof amount === 'number' ? Math.abs(amount) : 0);
+    }, 0);
+
+    const adjustmentData = childStates['transactionAdjustments']?.data || [];
+    const adjustmentTotal = adjustmentData.reduce((sum: number, row: Row) => {
+      const amount = row['AdjustmentAmount'] as number || 0;
+      return sum + (typeof amount === 'number' ? amount : 0);
+    }, 0);
+
+    const openBalance = invoiceTotal - paymentTotal - creditMemoTotal + adjustmentTotal;
+
+    statementData.invoiceCount = invoiceData.length;
+    statementData.invoiceTotal = invoiceTotal;
+    statementData.paymentTotal = paymentTotal;
+    statementData.paymentCount = receiptData.length;
+    statementData.creditMemoTotal = creditMemoTotal;
+    statementData.creditMemoCount = creditMemoData.length;
+    statementData.adjustmentTotal = adjustmentTotal;
+    statementData.adjustmentCount = adjustmentData.length;
+    statementData.balance = openBalance;
+    statementData.avgDaysLate = firstSite['AverageDaysLate'] || 0;
+
+    setAccountStatementData(statementData);
+    setAccountStatementVisible(true);
+  }, [selectedRowKeys, fusionData, childStates]);
+
+  // ── Generate PDF for Account Statement ──────────────────────────────
+  const generateAccountStatementPDF = useCallback(() => {
+    if (!accountStatementData || !selectedCustomer) return;
+
+    const docWidth = 210;
+    const docHeight = 297;
+    const margin = 15;
+    const lineHeight = 7;
+    let yPos = margin;
+
+    const doc: any = {
+      content: '',
+      addText: (text: string, x: number, y: number, size: number = 12, bold: boolean = false) => {
+        doc.content += `${text}\n`;
+      },
+      save: (filename: string) => {
+        const blob = new Blob([doc.content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      },
+    };
+
+    doc.content = `ACCOUNT STATEMENT\n`;
+    doc.content += `=====================================\n\n`;
+    doc.content += `Customer: ${selectedCustomer.name}\n`;
+    doc.content += `Account Number: ${selectedCustomer.accountNumber}\n`;
+    doc.content += `Statement Date: ${new Date(accountStatementData.statementDate as string).toLocaleDateString()}\n\n`;
+    doc.content += `SUMMARY\n`;
+    doc.content += `-------------------------------------\n`;
+    doc.content += `Invoices:        ${formatVal('amount', accountStatementData.invoiceTotal)}\n`;
+    doc.content += `Payments:        -${formatVal('amount', accountStatementData.paymentTotal)}\n`;
+    doc.content += `Credit Memos:    -${formatVal('amount', accountStatementData.creditMemoTotal)}\n`;
+    doc.content += `Adjustments:     ${formatVal('amount', accountStatementData.adjustmentTotal)}\n`;
+    doc.content += `-------------------------------------\n`;
+    doc.content += `Balance Due:     ${formatVal('amount', accountStatementData.balance)}\n`;
+
+    doc.save(`AccountStatement_${selectedCustomer.accountNumber}.txt`);
+    message.success('Account statement downloaded');
+  }, [accountStatementData, selectedCustomer]);
+
+  // ── Send Account Statement by Email ───────────────────────────────
+  const sendAccountStatementByEmail = useCallback(() => {
+    if (!selectedCustomer) return;
+
+    const emailSubject = `Account Statement - ${selectedCustomer.accountNumber}`;
+    const emailBody = `
+Customer: ${selectedCustomer.name}
+Account Number: ${selectedCustomer.accountNumber}
+Statement Date: ${new Date(accountStatementData?.statementDate as string).toLocaleDateString()}
+
+SUMMARY:
+Invoices: ${formatVal('amount', accountStatementData?.invoiceTotal)}
+Payments: -${formatVal('amount', accountStatementData?.paymentTotal)}
+Credit Memos: -${formatVal('amount', accountStatementData?.creditMemoTotal)}
+Adjustments: ${formatVal('amount', accountStatementData?.adjustmentTotal)}
+
+Balance Due: ${formatVal('amount', accountStatementData?.balance)}
+    `;
+
+    const mailtoLink = `mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+    window.location.href = mailtoLink;
+    message.info('Opening default email client...');
+  }, [selectedCustomer, accountStatementData]);
 
   const rowSelection: TableRowSelection<Row> = {
     selectedRowKeys,
@@ -602,6 +742,12 @@ const CustomerSiteActivities: React.FC = () => {
                   onClick={handleLoadActivities}>
                   Load Activities
                 </Button>
+                <Button icon={<FileTextOutlined />}
+                  style={{ color: REDWOOD.primary, borderColor: REDWOOD.primary }}
+                  onClick={handleShowAccountStatement}
+                  disabled={Object.keys(childStates).every(k => childStates[k].data.length === 0)}>
+                  Account Statement
+                </Button>
               </Space>
             </div>
           )}
@@ -678,6 +824,128 @@ const CustomerSiteActivities: React.FC = () => {
             </pre>
           </div>
         ) : <Empty description="Click Search to populate" />}
+      </Modal>
+
+      <Modal
+        open={accountStatementVisible}
+        onCancel={() => setAccountStatementVisible(false)}
+        width={700}
+        title={<Space><FileTextOutlined style={{ color: REDWOOD.primary }} /> Account Statement</Space>}
+        footer={[
+          <Button key="close" onClick={() => setAccountStatementVisible(false)}>Close</Button>,
+          <Button key="print" icon={<PrinterOutlined />} onClick={() => window.print()}>Print</Button>,
+          <Button key="email" icon={<MailOutlined />} onClick={sendAccountStatementByEmail}>Email</Button>,
+          <Button key="download" type="primary" icon={<DownloadOutlined />} onClick={generateAccountStatementPDF}
+            style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}>
+            Download PDF
+          </Button>,
+        ]}
+      >
+        {accountStatementData && selectedCustomer && (
+          <div style={{ fontFamily: 'sans-serif' }}>
+            <div style={{ textAlign: 'center', marginBottom: 24 }}>
+              <Title level={3} style={{ margin: '0 0 12px 0' }}>ACCOUNT STATEMENT</Title>
+              <Divider style={{ margin: 0 }} />
+            </div>
+
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+              <Col span={12}>
+                <div>
+                  <Text strong>Customer:</Text>
+                  <div style={{ color: REDWOOD.neutral600 }}>{selectedCustomer.name}</div>
+                </div>
+              </Col>
+              <Col span={12}>
+                <div>
+                  <Text strong>Account Number:</Text>
+                  <div style={{ color: REDWOOD.neutral600 }}>{selectedCustomer.accountNumber}</div>
+                </div>
+              </Col>
+            </Row>
+
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+              <Col span={12}>
+                <div>
+                  <Text strong>Statement Date:</Text>
+                  <div style={{ color: REDWOOD.neutral600 }}>
+                    {new Date(accountStatementData.statementDate as string).toLocaleDateString('en-US', {
+                      year: 'numeric', month: 'long', day: '2-digit'
+                    })}
+                  </div>
+                </div>
+              </Col>
+              <Col span={12}>
+                <div>
+                  <Text strong>Due Amount:</Text>
+                  <div style={{
+                    color: (accountStatementData.balance as number) > 0 ? REDWOOD.error : REDWOOD.success,
+                    fontSize: 16,
+                    fontWeight: 600
+                  }}>
+                    {formatVal('amount', accountStatementData.balance)}
+                  </div>
+                </div>
+              </Col>
+            </Row>
+
+            <Card style={{ borderColor: REDWOOD.border, marginBottom: 16 }}>
+              <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 12 }}>ACCOUNT SUMMARY</Text>
+              <Row gutter={[16, 16]} style={{ marginBottom: 12 }}>
+                <Col xs={12}>
+                  <div style={{ padding: 8, background: '#fafafa', borderRadius: 4, borderLeft: `3px solid ${REDWOOD.primary}` }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Total Invoices</Text>
+                    <div><Text strong style={{ fontSize: 14 }}>{accountStatementData.invoiceCount}</Text></div>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Amount: {formatVal('amount', accountStatementData.invoiceTotal)}</Text>
+                  </div>
+                </Col>
+                <Col xs={12}>
+                  <div style={{ padding: 8, background: '#fafafa', borderRadius: 4, borderLeft: `3px solid ${REDWOOD.success}` }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Total Payments</Text>
+                    <div><Text strong style={{ fontSize: 14, color: REDWOOD.success }}>{accountStatementData.paymentCount}</Text></div>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Amount: {formatVal('amount', accountStatementData.paymentTotal)}</Text>
+                  </div>
+                </Col>
+              </Row>
+              <Row gutter={[16, 16]} style={{ marginBottom: 12 }}>
+                <Col xs={12}>
+                  <div style={{ padding: 8, background: '#fafafa', borderRadius: 4, borderLeft: `3px solid ${REDWOOD.info}` }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Credit Memos</Text>
+                    <div><Text strong style={{ fontSize: 14 }}>{accountStatementData.creditMemoCount}</Text></div>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Amount: {formatVal('amount', accountStatementData.creditMemoTotal)}</Text>
+                  </div>
+                </Col>
+                <Col xs={12}>
+                  <div style={{ padding: 8, background: '#fafafa', borderRadius: 4, borderLeft: `3px solid ${REDWOOD.warning}` }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Adjustments</Text>
+                    <div><Text strong style={{ fontSize: 14 }}>{accountStatementData.adjustmentCount}</Text></div>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Amount: {formatVal('amount', accountStatementData.adjustmentTotal)}</Text>
+                  </div>
+                </Col>
+              </Row>
+              <Divider style={{ margin: '12px 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 12, fontSize: 16, fontWeight: 600 }}>
+                <Text strong>Open Receivables:</Text>
+                <Text strong style={{ color: (accountStatementData.balance as number) > 0 ? REDWOOD.error : REDWOOD.success }}>
+                  {formatVal('amount', accountStatementData.balance)}
+                </Text>
+              </div>
+              {(accountStatementData.avgDaysLate as number) > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 8, marginTop: 8, borderTop: `1px solid ${REDWOOD.border}` }}>
+                  <Text type="secondary">Average Days Late:</Text>
+                  <Text style={{ color: (accountStatementData.avgDaysLate as number) > 30 ? REDWOOD.warning : REDWOOD.neutral600 }}>
+                    {accountStatementData.avgDaysLate} days
+                  </Text>
+                </div>
+              )}
+            </Card>
+
+            <div style={{ fontSize: 12, color: REDWOOD.neutral600, textAlign: 'center', borderTop: `1px solid ${REDWOOD.border}`, paddingTop: 12 }}>
+              <Text type="secondary">
+                This statement reflects all recorded transactions as of the statement date.
+              </Text>
+            </div>
+          </div>
+        )}
       </Modal>
     </Layout>
   );
