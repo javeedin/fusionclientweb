@@ -1214,26 +1214,56 @@ const CustomerSiteActivities: React.FC = () => {
 
     const emailSubject = `Account Statement - ${selectedCustomerForStatement.accountNumber}`;
     const emailBody = `
-${selectedCustomerForStatement.name} — RECEIVABLES OVERVIEW
-Account ${selectedCustomerForStatement.accountNumber} · Bill-To Site ${selectedCustomerForStatement.billToSiteNumber}
+STATEMENT OF ACCOUNT
 
-Statement Date: ${new Date(accountStatementData.statementDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' })}
+${selectedCustomerForStatement.name}
+Account: ${selectedCustomerForStatement.accountNumber}
+Bill-to Site: ${selectedCustomerForStatement.billToSiteNumber}
+Currency: MUR
 
-1. CURRENT BALANCE POSITION
-Open invoice balance:        ${accountStatementData.openInvoiceBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${accountStatementData.openInvoiceCount} items)
-Unapplied credit memos:      ${accountStatementData.openCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${accountStatementData.openCreditCount} items)
-NET OPEN RECEIVABLES:        ${accountStatementData.netOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-Of which past due:           ${accountStatementData.pastDueBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+STATEMENT DATE: ${new Date(accountStatementData.statementDate).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+Documents Outstanding: ${accountStatementData.openInvoiceCount}
+Oldest Item Past Due: ${accountStatementData.oldestDaysPastDue > 0 ? accountStatementData.oldestDaysPastDue + ' days' : '-'}
 
-2. AGEING OF OPEN RECEIVABLES
-${Object.entries(accountStatementData.ageingBuckets || {}).map(([bucket, data]) => {
-  const pct = accountStatementData.openInvoiceBalance > 0 ? ((data.amount / accountStatementData.openInvoiceBalance) * 100).toFixed(1) : '0.0';
-  return `${bucket.padEnd(20)}: ${data.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(15)} (${pct}% - ${data.count} invoices)`;
-}).join('\n')}
+TOTAL AMOUNT DUE: ${accountStatementData.netOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
 
 ---
-This statement reflects all recorded transactions as of the statement date.
-Generated on ${new Date().toLocaleString()}
+
+AGEING SUMMARY:
+${['Not yet due', '1-30 days', '31-60 days', '61-90 days', '91-180 days', '180+ days'].map(bucket => {
+  const data = accountStatementData.ageingBuckets[bucket as keyof typeof accountStatementData.ageingBuckets];
+  const pct = accountStatementData.openInvoiceBalance > 0
+    ? ((data.amount / accountStatementData.openInvoiceBalance) * 100).toFixed(1)
+    : '0.0';
+  return `${bucket.padEnd(20)}: ${data.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(15)} (${pct.padStart(5)}%)`;
+}).join('\n')}
+${'Total invoices due'.padEnd(20)}: ${accountStatementData.openInvoiceBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(15)} (100.0%)
+
+---
+
+OUTSTANDING INVOICES (oldest due date first):
+${(accountStatementData.invoices || []).map((inv: any) => {
+  const docDate = inv['TransactionDate'] ? new Date(inv['TransactionDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-';
+  const dueDate = inv['PaymentScheduleDueDate'] ? new Date(inv['PaymentScheduleDueDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-';
+  const amount = (Number(inv['TotalBalanceAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${inv['TransactionNumber']?.padEnd(15) || ''} | Doc: ${docDate} | Due: ${dueDate} | Amount: ${amount}`;
+}).join('\n')}
+${'Total outstanding invoices'.padEnd(40)} ${accountStatementData.openInvoiceBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+
+${accountStatementData.creditMemos && accountStatementData.creditMemos.length > 0 ? `---
+
+UNAPPLIED CREDITS ON ACCOUNT:
+${(accountStatementData.creditMemos || []).map((cm: any) => {
+  const cmDate = cm['CreditMemoDate'] ? new Date(cm['CreditMemoDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-';
+  const amount = Math.abs(Number(cm['TotalBalanceAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${cm['TransactionNumber']?.padEnd(15) || ''} | Date: ${cmDate} | Amount: (${amount})`;
+}).join('\n')}
+${'Total unapplied credits'.padEnd(40)} (${accountStatementData.openCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+: ''}
+
+---
+This statement reflects all recorded transactions as of ${new Date(accountStatementData.statementDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' })}.
+Generated: ${new Date().toLocaleString()}
     `;
 
     const mailtoLink = `mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
