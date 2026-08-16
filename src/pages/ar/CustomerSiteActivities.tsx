@@ -487,8 +487,7 @@ const CustomerSiteActivities: React.FC = () => {
             if (childName === 'standardReceipts') {
               const company = getCurrentCompany();
               const baseUrl = company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/standardReceipts` : '';
-              const query = `CustomerAccountNumber=${encodeURIComponent(customerAccountNumber)}`;
-              url = `${baseUrl}?limit=${LIMIT}&offset=${offset}&q=${encodeURIComponent(query)}`;
+              url = `${baseUrl}?limit=${LIMIT}&offset=${offset}&q=CustomerAccountNumber=${customerAccountNumber}`;
             } else {
               // For AR Invoices and Credit Memos, apply Open filter by default
               let statusFilter = '';
