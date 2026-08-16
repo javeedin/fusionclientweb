@@ -3485,10 +3485,7 @@ Generated: ${new Date().toLocaleString()}
                             {(Number(line['LineAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
                           <td style={{ padding: '6px 4px' }}>
-                            {(() => {
-                              const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
-                              return taxLines.length > 0 ? taxLines.map((t: any) => t['TaxClassificationCode'] || '-').join(', ') : '-';
-                            })()}
+                            {line['TaxClassificationCode'] || '-'}
                           </td>
                           <td style={{ padding: '6px 4px', textAlign: 'right' }}>
                             {(() => {
