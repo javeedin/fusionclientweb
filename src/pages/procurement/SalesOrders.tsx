@@ -5608,15 +5608,16 @@ const ChargesModal: React.FC<{ open: boolean; onClose: () => void; orderKey: str
 const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: string | null; data: any; onFetch: () => void; apiUrl?: string; apiResponse?: string }> = ({ hdr, loading, error, data, onFetch, apiUrl = '', apiResponse = '' }) => {
   const [apiDrawerOpen, setApiDrawerOpen] = React.useState(false);
 
-  const computeAging = (activities: any[]): { current: number; over30: number; over60: number; over90: number } => {
+  const computeAging = (schedules: any[]): { current: number; over30: number; over60: number; over90: number } => {
     const today = dayjs();
     const aging = { current: 0, over30: 0, over60: 0, over90: 0 };
-    activities?.forEach((act: any) => {
-      const amount = num(act.TransactionAmount ?? act.Amount ?? 0);
+    schedules?.forEach((schedule: any) => {
+      const amount = num(schedule.ScheduleAmount ?? schedule.Amount ?? 0);
       if (!amount) return;
-      const txnDate = dayjs(act.TransactionDate ?? act.Date);
-      const days = today.diff(txnDate, 'day');
-      if (days <= 30) aging.current += amount;
+      const dueDate = dayjs(schedule.ScheduledPaymentDate ?? schedule.DueDate);
+      const days = today.diff(dueDate, 'day');
+      if (days <= 0) aging.current += amount;
+      else if (days <= 30) aging.current += amount;
       else if (days <= 60) aging.over30 += amount;
       else if (days <= 90) aging.over60 += amount;
       else aging.over90 += amount;
@@ -5624,8 +5625,10 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
     return aging;
   };
 
-  const totalBalance = data?.items?.reduce((sum: number, item: any) => sum + num(item.TransactionAmount ?? item.Amount ?? 0), 0) ?? 0;
-  const aging = data?.items ? computeAging(data.items) : { current: 0, over30: 0, over60: 0, over90: 0 };
+  const totalBalance = data?.items?.[0]?.TotalOpenReceivablesForSite ?? 0;
+  const aging = data?.transactionSchedules && data.transactionSchedules.length > 0
+    ? computeAging(data.transactionSchedules)
+    : { current: 0, over30: 0, over60: 0, over90: 0 };
 
   return (
     <div style={{ padding: 16 }}>
@@ -5654,77 +5657,52 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
 
       {data && (
         <>
-          {/* Balance Summary with Aging */}
-          <Row gutter={16} style={{ marginBottom: 24 }}>
-            <Col xs={24} sm={12} md={6}>
-              <Card size="small" style={{ textAlign: 'center', background: REDWOOD.neutral100 }}>
-                <Statistic title="Total Balance" value={totalBalance} prefix="$" precision={2} />
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <Card size="small" style={{ textAlign: 'center', background: '#E6F7FF' }}>
-                <Statistic title="Current (≤30d)" value={aging.current} prefix="$" precision={2} valueStyle={{ color: '#1890ff' }} />
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <Card size="small" style={{ textAlign: 'center', background: '#FFF7E6' }}>
-                <Statistic title="Over 30 Days" value={aging.over30} prefix="$" precision={2} valueStyle={{ color: '#FAAD14' }} />
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={6}>
-              <Card size="small" style={{ textAlign: 'center', background: '#FFE7E7' }}>
-                <Statistic title="Over 60 Days" value={aging.over60} prefix="$" precision={2} valueStyle={{ color: '#FF4D4F' }} />
-              </Card>
-            </Col>
-          </Row>
-
-          {/* Transactions Table */}
-          {data.items && data.items.length > 0 && (
-            <div style={{ marginTop: 24 }}>
-              <Text strong style={{ fontSize: 14, marginBottom: 8, display: 'block' }}>Recent Transactions ({data.items.length})</Text>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ background: REDWOOD.neutral100, borderBottom: `1px solid ${REDWOOD.neutral300}` }}>
-                      <th style={{ padding: 8, textAlign: 'left', fontWeight: 600 }}>Transaction #</th>
-                      <th style={{ padding: 8, textAlign: 'left', fontWeight: 600 }}>Date</th>
-                      <th style={{ padding: 8, textAlign: 'right', fontWeight: 600 }}>Amount</th>
-                      <th style={{ padding: 8, textAlign: 'left', fontWeight: 600 }}>Status</th>
-                      <th style={{ padding: 8, textAlign: 'center', fontWeight: 600 }}>Aging</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.items.slice(0, 20).map((item: any, idx: number) => {
-                      const amount = num(item.TransactionAmount ?? item.Amount ?? 0);
-                      const txnDate = dayjs(item.TransactionDate ?? item.Date);
-                      const days = dayjs().diff(txnDate, 'day');
-                      let agingTag = '';
-                      let agingColor = 'green';
-                      if (days > 90) { agingTag = 'Over 90d'; agingColor = 'red'; }
-                      else if (days > 60) { agingTag = 'Over 60d'; agingColor = 'orange'; }
-                      else if (days > 30) { agingTag = 'Over 30d'; agingColor = 'volcano'; }
-                      else { agingTag = 'Current'; agingColor = 'green'; }
-
-                      return (
-                        <tr key={idx} style={{ borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
-                          <td style={{ padding: 8 }}><Text code>{item.TransactionNumber ?? item.Number ?? '—'}</Text></td>
-                          <td style={{ padding: 8 }}>{txnDate.format('MMM DD, YYYY')}</td>
-                          <td style={{ padding: 8, textAlign: 'right' }}><strong>${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
-                          <td style={{ padding: 8 }}>{item.TransactionType ?? item.Type ?? '—'}</td>
-                          <td style={{ padding: 8, textAlign: 'center' }}><Tag color={agingColor}>{agingTag}</Tag></td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              {data.items.length > 20 && <Text type="secondary" style={{ fontSize: 11, marginTop: 8, display: 'block' }}>Showing first 20 of {data.items.length} transactions</Text>}
+          {/* Summary Report */}
+          <Card style={{ marginBottom: 24, border: `2px solid ${REDWOOD.primary}` }}>
+            <div style={{ padding: '12px 0' }}>
+              <Row gutter={40} align="middle">
+                <Col xs={24} sm={12}>
+                  <div style={{ borderRight: `1px solid ${REDWOOD.neutral300}`, paddingRight: 24, paddingBottom: 16 }}>
+                    <div style={{ fontSize: 12, color: REDWOOD.neutral600, marginBottom: 4 }}>TOTAL OPEN BALANCE</div>
+                    <div style={{ fontSize: 32, fontWeight: 700, color: REDWOOD.primary }}>
+                      ${(data.items?.[0]?.TotalOpenReceivablesForSite ?? totalBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: REDWOOD.neutral800, marginBottom: 12 }}>AGING BREAKDOWN</div>
+                    <Row gutter={16}>
+                      <Col xs={12} sm={12}>
+                        <div style={{ fontSize: 11, color: '#1890ff', marginBottom: 2 }}>Current (≤30d)</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#1890ff' }}>
+                          ${aging.current.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </Col>
+                      <Col xs={12} sm={12}>
+                        <div style={{ fontSize: 11, color: '#FAAD14', marginBottom: 2 }}>Over 30 Days</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#FAAD14' }}>
+                          ${aging.over30.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </Col>
+                      <Col xs={12} sm={12}>
+                        <div style={{ fontSize: 11, color: '#FF4D4F', marginBottom: 2 }}>Over 60 Days</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#FF4D4F' }}>
+                          ${aging.over60.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </Col>
+                      <Col xs={12} sm={12}>
+                        <div style={{ fontSize: 11, color: '#FF7875', marginBottom: 2 }}>Over 90 Days</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#FF7875' }}>
+                          ${aging.over90.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </Col>
+                    </Row>
+                  </div>
+                </Col>
+              </Row>
             </div>
-          )}
-
-          {(!data.items || data.items.length === 0) && (
-            <Empty description="No transactions found for this customer" style={{ marginTop: 24 }} />
-          )}
+          </Card>
         </>
       )}
 
@@ -6765,6 +6743,29 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       if (r.ok) {
         const data = await r.json();
         console.log('Customer balance data:', data);
+
+        // Extract BillToSiteUseId from first item to fetch transaction payment schedules
+        if (data.items && data.items.length > 0) {
+          const billToSiteUseId = data.items[0].BillToSiteUseId;
+          if (billToSiteUseId) {
+            try {
+              const txnUrl = `${FUSION_BASE}/receivablesCustomerAccountSiteActivities/${billToSiteUseId}/child/transactionPaymentSchedules?limit=500&offset=0&q=InstallmentStatus='Open'`;
+              console.log('Fetching transaction payment schedules from:', txnUrl);
+              const txnR = await fetch(txnUrl, { headers: getHeaders() });
+              if (txnR.ok) {
+                const txnData = await txnR.json();
+                console.log('Transaction payment schedules:', txnData);
+                // Merge transaction data with site data for aging calculation
+                data.transactionSchedules = txnData.items ?? [];
+              } else {
+                console.warn('Failed to fetch transaction schedules:', txnR.status);
+              }
+            } catch (txnErr) {
+              console.warn('Error fetching transaction schedules:', txnErr);
+            }
+          }
+        }
+
         setCreditCheckApiResponse(JSON.stringify(data, null, 2));
         setCreditCheckData(data);
       } else {
