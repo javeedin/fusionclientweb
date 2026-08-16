@@ -1545,6 +1545,21 @@ const CustomerSiteActivities: React.FC = () => {
         agingSummary.Total += amount;
       });
 
+      // Calculate balances from actual detail data
+      const arInvoicesData = siteChildStates['transactionPaymentSchedules']?.data || [];
+      const creditMemosData = siteChildStates['creditMemos']?.data || [];
+
+      const openInvoicesBalance = arInvoicesData
+        .filter(row => row['InstallmentStatus'] === 'Open')
+        .reduce((sum, row) => sum + (Number(row['TotalBalanceAmount']) || 0), 0);
+
+      const openCreditBalance = creditMemosData
+        .filter(row => row['CreditMemoStatus'] === 'Open')
+        .reduce((sum, row) => sum + (Number(row['TotalBalanceAmount']) || 0), 0);
+
+      const calculatedTotalOpen = openInvoicesBalance + openCreditBalance;
+      const invoicesTotalAmount = arInvoicesData.reduce((sum, row) => sum + (Number(row['TotalOriginalAmount']) || 0), 0);
+
       // Overview tab
       const overviewTab = {
         key: 'overview',
@@ -1560,30 +1575,42 @@ const CustomerSiteActivities: React.FC = () => {
               <Col xs={24} sm={12} md={6}>
                 <Card style={{ borderColor: REDWOOD.border }}>
                   <div style={{ textAlign: 'center' }}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>Total Open Receivables</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Total Open Balance</Text>
                     <div style={{ fontSize: 24, fontWeight: 700, color: REDWOOD.primary, marginTop: 8 }}>
-                      {formatVal('amount', site['TotalOpenReceivablesForSite'])}
+                      {formatVal('amount', calculatedTotalOpen)}
                     </div>
+                    <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+                      Invoices: {formatVal('amount', openInvoicesBalance)}
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                      Credits: {formatVal('amount', openCreditBalance)}
+                    </Text>
                   </div>
                 </Card>
               </Col>
               <Col xs={24} sm={12} md={6}>
                 <Card style={{ borderColor: REDWOOD.border }}>
                   <div style={{ textAlign: 'center' }}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>Total Transactions Due</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Total Invoiced</Text>
                     <div style={{ fontSize: 24, fontWeight: 700, color: REDWOOD.info, marginTop: 8 }}>
-                      {formatVal('amount', site['TotalTransactionsDueForSite'])}
+                      {formatVal('amount', invoicesTotalAmount)}
                     </div>
+                    <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+                      {arInvoicesData.length} invoices
+                    </Text>
                   </div>
                 </Card>
               </Col>
               <Col xs={24} sm={12} md={6}>
                 <Card style={{ borderColor: REDWOOD.border }}>
                   <div style={{ textAlign: 'center' }}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>Total Invoices</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>Open Invoices</Text>
                     <div style={{ fontSize: 24, fontWeight: 700, color: REDWOOD.success, marginTop: 8 }}>
-                      {arInvoicesState.data.length}
+                      {arInvoicesData.filter(r => r['InstallmentStatus'] === 'Open').length}
                     </div>
+                    <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+                      Closed: {arInvoicesData.filter(r => r['InstallmentStatus'] === 'Closed').length}
+                    </Text>
                   </div>
                 </Card>
               </Col>
@@ -1592,10 +1619,13 @@ const CustomerSiteActivities: React.FC = () => {
                   <div style={{ textAlign: 'center' }}>
                     <Text type="secondary" style={{ fontSize: 12 }}>Avg Days Late</Text>
                     <div style={{ fontSize: 24, fontWeight: 700, color: REDWOOD.warning, marginTop: 8 }}>
-                      {arInvoicesState.data.length > 0
-                        ? Math.round(arInvoicesState.data.reduce((sum, r) => sum + (Number(r['PaymentDaysLate']) || 0), 0) / arInvoicesState.data.length)
+                      {arInvoicesData.length > 0
+                        ? Math.round(arInvoicesData.reduce((sum, r) => sum + (Number(r['PaymentDaysLate']) || 0), 0) / arInvoicesData.length)
                         : 0}
                     </div>
+                    <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+                      Credit Memos: {creditMemosData.length}
+                    </Text>
                   </div>
                 </Card>
               </Col>
