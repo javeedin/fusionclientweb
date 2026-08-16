@@ -577,6 +577,27 @@ const PasswordGate: React.FC<{ onSuccess: () => void }> = ({ onSuccess }) => {
 };
 
 // ── Module Home ───────────────────────────────────────────────────────────────
+// Memoized CSS to avoid recreation on every render
+const MODULE_CSS = `
+  .fc-tile { position: relative; background: ${REDWOOD.surface}; border: 1px solid ${REDWOOD.neutral200};
+    border-radius: 12px; overflow: hidden; cursor: pointer; height: 100%;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+  .fc-tile:hover { transform: translateY(-3px); box-shadow: 0 10px 26px rgba(0,0,0,0.10);
+    border-color: var(--fc-accent); }
+  .fc-tile .fc-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    opacity: 0; transition: opacity .18s ease; }
+  .fc-tile:hover .fc-accent { opacity: 1; }
+  .fc-tile .fc-chip { width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; color: #fff; font-size: 19px;
+    transition: transform .18s ease; }
+  .fc-tile:hover .fc-chip { transform: scale(1.06) rotate(-3deg); }
+  .fc-tile .fc-chev { opacity: 0; transition: opacity .18s ease, transform .18s ease; }
+  .fc-tile:hover .fc-chev { opacity: 1; transform: translateX(3px); }
+  .fc-tile-disabled { cursor: default; opacity: .6; }
+  .fc-tile-disabled:hover { transform: none; box-shadow: none; border-color: ${REDWOOD.neutral200}; }
+  .fc-tile-disabled:hover .fc-chip { transform: none; }
+`;
+
 const ProcurementHome: React.FC = () => {
   const navigate = useNavigate();
   const fusionUser = sessionStorage.getItem('fusion_user');
@@ -629,25 +650,7 @@ const ProcurementHome: React.FC = () => {
             </div>
           </div>
 
-          <style>{`
-            .fc-tile { position: relative; background: ${REDWOOD.surface}; border: 1px solid ${REDWOOD.neutral200};
-              border-radius: 12px; overflow: hidden; cursor: pointer; height: 100%;
-              transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
-            .fc-tile:hover { transform: translateY(-3px); box-shadow: 0 10px 26px rgba(0,0,0,0.10);
-              border-color: var(--fc-accent); }
-            .fc-tile .fc-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-              opacity: 0; transition: opacity .18s ease; }
-            .fc-tile:hover .fc-accent { opacity: 1; }
-            .fc-tile .fc-chip { width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0;
-              display: flex; align-items: center; justify-content: center; color: #fff; font-size: 19px;
-              transition: transform .18s ease; }
-            .fc-tile:hover .fc-chip { transform: scale(1.06) rotate(-3deg); }
-            .fc-tile .fc-chev { opacity: 0; transition: opacity .18s ease, transform .18s ease; }
-            .fc-tile:hover .fc-chev { opacity: 1; transform: translateX(3px); }
-            .fc-tile-disabled { cursor: default; opacity: .6; }
-            .fc-tile-disabled:hover { transform: none; box-shadow: none; border-color: ${REDWOOD.neutral200}; }
-            .fc-tile-disabled:hover .fc-chip { transform: none; }
-          `}</style>
+          <style>{MODULE_CSS}</style>
 
           {groupedItems.map(({ group, items, meta, active }) => (
             <div key={group} style={{ marginBottom: 26 }}>
