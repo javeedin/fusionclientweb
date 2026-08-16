@@ -361,6 +361,9 @@ const CustomerSiteActivities: React.FC = () => {
   // Child tab API debugging
   const [childApiDebugVisible, setChildApiDebugVisible] = useState<{ tabKey: string; childName: string } | null>(null);
 
+  // Column filters for each tab
+  const [columnFilters, setColumnFilters] = useState<Record<string, Record<string, string>>>({});
+
   // ── Load page data ──────────────────────────────────────────────
   const loadPage = useCallback(async (pageNum: number, overrideFilters?: Record<string, string>) => {
     const offset = (pageNum - 1) * PAGE_SIZE;
@@ -1527,7 +1530,17 @@ Balance Due: ${formatVal('amount', accountStatementData.balance)}
       // Build child activity tabs
       const childTabItems = CHILD_NAMES.map(cn => {
         const state = siteChildStates[cn] || { loading: false, data: [], columns: [] };
-        const filteredData = state.data;
+        const tabFilterKey = `${key}_${cn}`;
+        const columnFilterValue = columnFilters[tabFilterKey] || '';
+
+        // Apply column filter to data
+        const filteredData = useMemo(() => {
+          if (!columnFilterValue.trim()) return state.data;
+          const q = columnFilterValue.toLowerCase();
+          return state.data.filter(row =>
+            Object.values(row).some(v => v !== null && v !== undefined && String(v).toLowerCase().includes(q))
+          );
+        }, [state.data, columnFilterValue]);
 
         // Build columns with sorting
         let cols = buildColumns(filteredData);
@@ -1685,6 +1698,20 @@ Balance Due: ${formatVal('amount', accountStatementData.balance)}
                       </>
                     )}
                   </div>
+                </div>
+              )}
+              {!state.loading && state.data.length > 0 && (
+                <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <Input
+                    placeholder="Filter by any column..."
+                    prefix={<SearchOutlined style={{ color: '#aaa' }} />}
+                    value={columnFilterValue}
+                    onChange={e => setColumnFilters(prev => ({ ...prev, [tabFilterKey]: e.target.value }))}
+                    allowClear
+                    style={{ width: 200, height: 28 }}
+                    size="small"
+                  />
+                  <Text type="secondary" style={{ fontSize: 12 }}>{filteredData.length} / {state.data.length} rows</Text>
                 </div>
               )}
               {!state.loading && (
