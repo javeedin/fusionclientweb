@@ -227,22 +227,37 @@ function SiteResultsTable({ data, columns, loading, currentPage = 1, hasMore = f
         pagination={false}
         footer={() =>
           Object.keys(totals).length > 0 ? (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <tbody>
-                <tr style={{ fontWeight: 600, background: '#fafafa', borderTop: `1px solid ${REDWOOD.border}` }}>
-                  <td style={{ padding: '8px', color: REDWOOD.primary, fontWeight: 600 }}>TOTAL</td>
-                  {columns.slice(1).map(col => {
-                    const dataIndex = col.dataIndex as string;
-                    const value = totals[dataIndex];
-                    return (
-                      <td key={dataIndex} style={{ padding: '8px', textAlign: 'right', color: REDWOOD.primary, fontWeight: 600 }}>
-                        {value !== undefined ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}
-                      </td>
-                    );
-                  })}
-                </tr>
-              </tbody>
-            </table>
+            <div style={{
+              display: 'flex',
+              padding: '8px 0',
+              fontWeight: 600,
+              background: '#fafafa',
+              borderTop: `1px solid ${REDWOOD.border}`,
+              color: REDWOOD.primary,
+            }}>
+              {columns.map((col, idx) => {
+                const dataIndex = col.dataIndex as string;
+                const value = totals[dataIndex];
+                const isFirstCol = idx === 0;
+                const isNumericCol = value !== undefined;
+
+                return (
+                  <div
+                    key={dataIndex}
+                    style={{
+                      flex: col.width ? `0 0 ${col.width}px` : 1,
+                      padding: '8px 12px',
+                      textAlign: isNumericCol ? 'right' : 'left',
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {isFirstCol ? 'TOTAL' : (isNumericCol ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-')}
+                  </div>
+                );
+              })}
+            </div>
           ) : undefined
         }
       />
@@ -1472,22 +1487,37 @@ const CustomerSiteActivities: React.FC = () => {
                 pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `Total ${t} records` }}
                 footer={() =>
                   Object.keys(totals).length > 0 ? (
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <tbody>
-                        <tr style={{ fontWeight: 600, background: '#fafafa', borderTop: `1px solid ${REDWOOD.border}` }}>
-                          <td style={{ padding: '8px', color: REDWOOD.primary, fontWeight: 600 }}>TOTAL</td>
-                          {cols.slice(1).map(col => {
-                            const dataIndex = col.dataIndex as string;
-                            const value = totals[dataIndex];
-                            return (
-                              <td key={dataIndex} style={{ padding: '8px', textAlign: 'right', color: REDWOOD.primary, fontWeight: 600 }}>
-                                {value !== undefined ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      </tbody>
-                    </table>
+                    <div style={{
+                      display: 'flex',
+                      padding: '8px 0',
+                      fontWeight: 600,
+                      background: '#fafafa',
+                      borderTop: `1px solid ${REDWOOD.border}`,
+                      color: REDWOOD.primary,
+                    }}>
+                      {cols.map((col, idx) => {
+                        const dataIndex = col.dataIndex as string;
+                        const value = totals[dataIndex];
+                        const isFirstCol = idx === 0;
+                        const isNumericCol = value !== undefined;
+
+                        return (
+                          <div
+                            key={dataIndex}
+                            style={{
+                              flex: col.width ? `0 0 ${col.width}px` : 1,
+                              padding: '8px 12px',
+                              textAlign: isNumericCol ? 'right' : 'left',
+                              minWidth: 0,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
+                            {isFirstCol ? 'TOTAL' : (isNumericCol ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-')}
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : undefined
                 }
               />
