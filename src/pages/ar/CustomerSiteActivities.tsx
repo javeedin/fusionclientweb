@@ -1498,7 +1498,12 @@ const CustomerSiteActivities: React.FC = () => {
                 loading={state.loading}
                 size="small"
                 scroll={{ x: 'max-content' }}
-                pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `Total ${t} records` }}
+                pagination={{
+                  pageSize: 20,
+                  showSizeChanger: true,
+                  pageSizeOptions: [20, 50, 100, 200, 500, filteredData.length > 0 ? filteredData.length : 1000],
+                  showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} records`,
+                }}
                 footer={() =>
                   Object.keys(totals).length > 0 ? (
                     <div style={{
