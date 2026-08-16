@@ -1469,8 +1469,8 @@ const CustomerSiteActivities: React.FC = () => {
         <div style={{ padding: '16px 24px', background: REDWOOD.surface, borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
           <Breadcrumb items={[
             { title: <Link to="/"><HomeOutlined /> Home</Link> },
-            { title: <Link to="/ar">Accounts Receivable</Link> },
-            { title: 'Customer Site Activities' },
+            { title: 'Fusion Supply Chain' },
+            { title: 'Customer Balances' },
           ]} />
         </div>
 
