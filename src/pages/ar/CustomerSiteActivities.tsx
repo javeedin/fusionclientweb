@@ -3397,7 +3397,7 @@ Generated: ${new Date().toLocaleString()}
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2, gap: 4 }}>
                       <span>Lines:</span>
                       <span style={{ fontWeight: 600 }}>
-                        {(Number(invoiceDetail['EnteredAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {(Number(invoiceDetail['EnteredAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
                       </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2, gap: 4 }}>
@@ -3410,17 +3410,17 @@ Generated: ${new Date().toLocaleString()}
                             const lineTax = taxLines.reduce((tsum: number, tax: any) => tsum + (Number(tax['TaxAmount']) || 0), 0);
                             return sum + lineTax;
                           }, 0);
-                          return totalTax.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                          return totalTax.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + invoiceDetail['InvoiceCurrencyCode'];
                         })()}
                       </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2, gap: 4 }}>
                       <span>Freight:</span>
-                      <span style={{ fontWeight: 600 }}>0.00</span>
+                      <span style={{ fontWeight: 600 }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, gap: 4 }}>
                       <span>Charges:</span>
-                      <span style={{ fontWeight: 600 }}>0.00</span>
+                      <span style={{ fontWeight: 600 }}>0.00 {invoiceDetail['InvoiceCurrencyCode']}</span>
                     </div>
                   </div>
                   <div style={{
@@ -3433,7 +3433,7 @@ Generated: ${new Date().toLocaleString()}
                   }}>
                     <div>Total:</div>
                     <div style={{ color: REDWOOD.primary }}>
-                      {(Number(invoiceDetail['EnteredAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {(Number(invoiceDetail['EnteredAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
                     </div>
                   </div>
                 </div>
@@ -3479,10 +3479,10 @@ Generated: ${new Date().toLocaleString()}
                             {(Number(line['Quantity']) || 0).toLocaleString('en-US')}
                           </td>
                           <td style={{ padding: '12px 8px', textAlign: 'right' }}>
-                            {(Number(line['UnitSellingPrice']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
+                            {(Number(line['UnitSellingPrice']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
                           <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 600 }}>
-                            {(Number(line['LineAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
+                            {(Number(line['LineAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
                           <td style={{ padding: '12px 8px' }}>
                             {(() => {
@@ -3494,7 +3494,7 @@ Generated: ${new Date().toLocaleString()}
                             {(() => {
                               const taxLines = line['receivablesInvoiceLineTaxLines'] || [];
                               const taxSum = taxLines.reduce((sum: number, tax: any) => sum + (Number(tax['TaxAmount']) || 0), 0);
-                              return taxSum > 0 ? taxSum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + invoiceDetail['InvoiceCurrencyCode'] : '-';
+                              return taxSum > 0 ? taxSum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
                             })()}
                           </td>
                           <td style={{ padding: '12px 8px' }}>{line['SalesOrder'] || '-'}</td>
