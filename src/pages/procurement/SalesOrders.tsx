@@ -5887,7 +5887,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     if (hdr.creditLimit !== undefined && hdr.creditLimit !== null) {
       setHdrEffVals(prev => ({
         ...prev,
-        creditLimit: String(hdr.creditLimit)
+        creditlimit: String(hdr.creditLimit)
       }));
     }
   }, [hdr.creditLimit]);
