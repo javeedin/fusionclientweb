@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   Layout, Breadcrumb, Card, Table, Form, Input, Select, DatePicker, Button,
-  Tag, Typography, Space, Tooltip, Spin, Row, Col, message, Modal, Empty, Tabs, InputNumber, Upload, Checkbox, Dropdown, Steps, Collapse, Segmented, Radio, Drawer, Divider,
+  Tag, Typography, Space, Tooltip, Spin, Row, Col, message, Modal, Empty, Tabs, InputNumber, Upload, Checkbox, Dropdown, Steps, Collapse, Segmented, Radio, Drawer, Divider, Statistic,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -5604,6 +5604,125 @@ const ChargesModal: React.FC<{ open: boolean; onClose: () => void; orderKey: str
   );
 };
 
+// Credit Check Panel — displays customer balance with aging
+const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: string | null; data: any; onFetch: () => void }> = ({ hdr, loading, error, data, onFetch }) => {
+  const computeAging = (activities: any[]): { current: number; over30: number; over60: number; over90: number } => {
+    const today = dayjs();
+    const aging = { current: 0, over30: 0, over60: 0, over90: 0 };
+    activities?.forEach((act: any) => {
+      const amount = num(act.TransactionAmount ?? act.Amount ?? 0);
+      if (!amount) return;
+      const txnDate = dayjs(act.TransactionDate ?? act.Date);
+      const days = today.diff(txnDate, 'day');
+      if (days <= 30) aging.current += amount;
+      else if (days <= 60) aging.over30 += amount;
+      else if (days <= 90) aging.over60 += amount;
+      else aging.over90 += amount;
+    });
+    return aging;
+  };
+
+  const totalBalance = data?.items?.reduce((sum: number, item: any) => sum + num(item.TransactionAmount ?? item.Amount ?? 0), 0) ?? 0;
+  const aging = data?.items ? computeAging(data.items) : { current: 0, over30: 0, over60: 0, over90: 0 };
+
+  return (
+    <div style={{ padding: 16 }}>
+      <Space style={{ marginBottom: 16 }} size="large" align="center">
+        <Button type="primary" icon={<ReconciliationOutlined />} loading={loading} onClick={onFetch} disabled={!hdr.accountNumber}>
+          Get Customer Balance
+        </Button>
+        {hdr.accountNumber && <Text type="secondary" style={{ fontSize: 12 }}>Account: <strong>{hdr.accountNumber}</strong></Text>}
+      </Space>
+
+      {error && (
+        <div style={{ marginBottom: 16, padding: 12, background: '#FFF1F0', border: '1px solid #FFCCC7', borderRadius: 6, color: REDWOOD.error }}>
+          <Text strong>Error:</Text> {error}
+        </div>
+      )}
+
+      {data && (
+        <>
+          {/* Balance Summary with Aging */}
+          <Row gutter={16} style={{ marginBottom: 24 }}>
+            <Col xs={24} sm={12} md={6}>
+              <Card size="small" style={{ textAlign: 'center', background: REDWOOD.neutral100 }}>
+                <Statistic title="Total Balance" value={totalBalance} prefix="$" precision={2} />
+              </Card>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Card size="small" style={{ textAlign: 'center', background: '#E6F7FF' }}>
+                <Statistic title="Current (≤30d)" value={aging.current} prefix="$" precision={2} valueStyle={{ color: '#1890ff' }} />
+              </Card>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Card size="small" style={{ textAlign: 'center', background: '#FFF7E6' }}>
+                <Statistic title="Over 30 Days" value={aging.over30} prefix="$" precision={2} valueStyle={{ color: '#FAAD14' }} />
+              </Card>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Card size="small" style={{ textAlign: 'center', background: '#FFE7E7' }}>
+                <Statistic title="Over 60 Days" value={aging.over60} prefix="$" precision={2} valueStyle={{ color: '#FF4D4F' }} />
+              </Card>
+            </Col>
+          </Row>
+
+          {/* Transactions Table */}
+          {data.items && data.items.length > 0 && (
+            <div style={{ marginTop: 24 }}>
+              <Text strong style={{ fontSize: 14, marginBottom: 8, display: 'block' }}>Recent Transactions ({data.items.length})</Text>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: REDWOOD.neutral100, borderBottom: `1px solid ${REDWOOD.neutral300}` }}>
+                      <th style={{ padding: 8, textAlign: 'left', fontWeight: 600 }}>Transaction #</th>
+                      <th style={{ padding: 8, textAlign: 'left', fontWeight: 600 }}>Date</th>
+                      <th style={{ padding: 8, textAlign: 'right', fontWeight: 600 }}>Amount</th>
+                      <th style={{ padding: 8, textAlign: 'left', fontWeight: 600 }}>Status</th>
+                      <th style={{ padding: 8, textAlign: 'center', fontWeight: 600 }}>Aging</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.items.slice(0, 20).map((item: any, idx: number) => {
+                      const amount = num(item.TransactionAmount ?? item.Amount ?? 0);
+                      const txnDate = dayjs(item.TransactionDate ?? item.Date);
+                      const days = dayjs().diff(txnDate, 'day');
+                      let agingTag = '';
+                      let agingColor = 'green';
+                      if (days > 90) { agingTag = 'Over 90d'; agingColor = 'red'; }
+                      else if (days > 60) { agingTag = 'Over 60d'; agingColor = 'orange'; }
+                      else if (days > 30) { agingTag = 'Over 30d'; agingColor = 'volcano'; }
+                      else { agingTag = 'Current'; agingColor = 'green'; }
+
+                      return (
+                        <tr key={idx} style={{ borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
+                          <td style={{ padding: 8 }}><Text code>{item.TransactionNumber ?? item.Number ?? '—'}</Text></td>
+                          <td style={{ padding: 8 }}>{txnDate.format('MMM DD, YYYY')}</td>
+                          <td style={{ padding: 8, textAlign: 'right' }}><strong>${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
+                          <td style={{ padding: 8 }}>{item.TransactionType ?? item.Type ?? '—'}</td>
+                          <td style={{ padding: 8, textAlign: 'center' }}><Tag color={agingColor}>{agingTag}</Tag></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {data.items.length > 20 && <Text type="secondary" style={{ fontSize: 11, marginTop: 8, display: 'block' }}>Showing first 20 of {data.items.length} transactions</Text>}
+            </div>
+          )}
+
+          {(!data.items || data.items.length === 0) && (
+            <Empty description="No transactions found for this customer" style={{ marginTop: 24 }} />
+          )}
+        </>
+      )}
+
+      {!data && !error && (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Click 'Get Customer Balance' to fetch customer activities and credit information" style={{ marginTop: 24 }} />
+      )}
+    </div>
+  );
+};
+
 const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editOrder?: any; returnMode?: boolean; onCopy?: (order: any, lines: any[]) => void }> = ({ header, initialDraft, editOrder, returnMode, onCopy }) => {
   const auth = useAuth();
   const editMode = !!editOrder;
@@ -5672,6 +5791,10 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
   // Draft workflow (Save→Confirm→Reserve/Unreserve): busy flag + last action result.
   const [workBusy, setWorkBusy] = useState<null | 'confirm' | 'reserve' | 'unreserve'>(null);
   const [confirmed, setConfirmed] = useState(false);
+  // Credit check data
+  const [creditCheckData, setCreditCheckData] = useState<any>(null);
+  const [creditCheckLoading, setCreditCheckLoading] = useState(false);
+  const [creditCheckError, setCreditCheckError] = useState<string | null>(null);
   const [resvReloadKey, setResvReloadKey] = useState(0);
   const [autoShipOpen, setAutoShipOpen] = useState(false);
   const [autoInvoiceOpen, setAutoInvoiceOpen] = useState(false);
@@ -6542,6 +6665,38 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       message.error(`Error fetching suppliers: ${e}`);
     }
   }, []);
+
+  const fetchCustomerBalance = useCallback(async () => {
+    if (!hdr.accountNumber) {
+      message.warning('Please select a customer first');
+      return;
+    }
+    setCreditCheckLoading(true);
+    setCreditCheckError(null);
+    try {
+      const url = `${FUSION_BASE}/receivablesCustomerAccountSiteActivities?limit=50&q=AccountNumber=${encodeURIComponent(hdr.accountNumber)}`;
+      console.log('Fetching customer balance from:', url);
+      const r = await fetch(url, { headers: getHeaders() });
+      if (r.ok) {
+        const data = await r.json();
+        console.log('Customer balance data:', data);
+        setCreditCheckData(data);
+      } else {
+        const errText = await r.text();
+        const errMsg = `HTTP ${r.status}: ${r.statusText}`;
+        console.error('Credit check failed:', errMsg, errText.slice(0, 500));
+        setCreditCheckError(errMsg);
+        message.error(`Failed to fetch customer balance: ${errMsg}`);
+      }
+    } catch (e: any) {
+      const errMsg = e?.message || String(e);
+      console.error('Error fetching customer balance:', errMsg);
+      setCreditCheckError(errMsg);
+      message.error(`Error fetching customer balance: ${errMsg}`);
+    } finally {
+      setCreditCheckLoading(false);
+    }
+  }, [hdr.accountNumber]);
 
   const onOrderTypeChange = (orderTypeCode: string) => {
     const lookupDetail = orderTypeLookup.get(orderTypeCode);
@@ -8387,7 +8542,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
               children: <div style={{ padding: 8 }}><NotesAttachmentsPanel orderKey={String(editMode ? (editOrder?.OrderKey ?? editOrder?.HeaderId) : createdOrderKey)} /></div>,
             }] : []),
             { key: 'credit', label: <span><ReconciliationOutlined style={{ marginRight: 5 }} />Customer Credit Check</span>,
-              children: <div style={{ padding: 8 }}><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Customer credit check — connect the credit web service to show limit, exposure and available credit." style={{ padding: 24 }} /></div> },
+              children: <CreditCheckPanel hdr={hdr} loading={creditCheckLoading} error={creditCheckError} data={creditCheckData} onFetch={fetchCustomerBalance} /> },
             { key: 'validations', label: <span><InfoCircleOutlined style={{ marginRight: 5 }} />Order Validations</span>,
               children: <div style={{ padding: 8 }}><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Order validations — item, warehouse and customer checks will appear here before submission." style={{ padding: 24 }} /></div> },
           ]} />
