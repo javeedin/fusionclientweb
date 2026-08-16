@@ -469,10 +469,12 @@ const CustomerSiteActivities: React.FC = () => {
     CHILD_NAMES.forEach(cn => { allResults[cn] = []; });
 
     const fusionBase = getFusionBase();
+    const customerAccountNumber = site['CustomerAccountNumber'];
+
     await Promise.all(
       CHILD_NAMES.map(async childName => {
         try {
-          const LIMIT = 500;
+          const LIMIT = childName === 'standardReceipts' ? 200 : 500;
           let offset = 0;
           let hasMore = true;
           const allItems: Row[] = [];
@@ -480,14 +482,22 @@ const CustomerSiteActivities: React.FC = () => {
           let lastJson: unknown = null;
 
           while (hasMore) {
-            // For AR Invoices and Credit Memos, apply Open filter by default
-            let statusFilter = '';
-            if (childName === 'transactionPaymentSchedules') {
-              statusFilter = `&q=InstallmentStatus='Open'`;
-            } else if (childName === 'creditMemos') {
-              statusFilter = `&q=CreditMemoStatus='Open'`;
+            // For Standard Receipts, use CustomerAccountNumber filter
+            let url: string;
+            if (childName === 'standardReceipts') {
+              const company = getCurrentCompany();
+              const baseUrl = company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/standardReceipts` : '';
+              url = `${baseUrl}?limit=${LIMIT}&offset=${offset}&q=CustomerAccountNumber='${customerAccountNumber}'`;
+            } else {
+              // For AR Invoices and Credit Memos, apply Open filter by default
+              let statusFilter = '';
+              if (childName === 'transactionPaymentSchedules') {
+                statusFilter = `&q=InstallmentStatus='Open'`;
+              } else if (childName === 'creditMemos') {
+                statusFilter = `&q=CreditMemoStatus='Open'`;
+              }
+              url = `${fusionBase}/${siteId}/child/${childName}?limit=${LIMIT}&offset=${offset}${statusFilter}`;
             }
-            const url = `${fusionBase}/${siteId}/child/${childName}?limit=${LIMIT}&offset=${offset}${statusFilter}`;
             apiDebugUrls.push(url);
 
             const res = await fetch(url, { headers: getFusionAuthHeaders() });
@@ -528,7 +538,9 @@ const CustomerSiteActivities: React.FC = () => {
     const finalStates: Record<string, ChildState> = {};
     CHILD_NAMES.forEach(cn => {
       const data = allResults[cn];
-      finalStates[cn] = { loading: false, data, columns: buildColumns(data) };
+      // Filter null columns for Standard Receipts
+      const filterNulls = cn === 'standardReceipts';
+      finalStates[cn] = { loading: false, data, columns: buildColumns(data, undefined, filterNulls) };
     });
     setChildStates(prev => ({ ...prev, [tabKey]: finalStates }));
 
