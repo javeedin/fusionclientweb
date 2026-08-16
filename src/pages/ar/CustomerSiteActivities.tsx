@@ -3,6 +3,8 @@ import {
   Layout, Card, Form, Input, Button, Space, Typography, Table, Tabs,
   Breadcrumb, Spin, message, Empty, Modal, Tag, Badge, Checkbox, Row, Col, Divider,
 } from 'antd';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   HomeOutlined, SearchOutlined, DownloadOutlined,
   EyeOutlined, ApiOutlined, CopyOutlined, SyncOutlined, FilterOutlined, ShoppingOutlined,
@@ -935,10 +937,10 @@ const CustomerSiteActivities: React.FC = () => {
     const openInvoiceCount = openInvoices.length;
 
     const openCredits = creditMemos.filter(row => row['CreditMemoStatus'] === 'Open');
-    const openCreditBalance = openCredits.reduce((sum: number, row: any) => sum + (Number(row['TotalBalanceAmount']) || 0), 0);
+    const openCreditBalance = openCredits.reduce((sum: number, row: any) => sum + Math.abs(Number(row['TotalBalanceAmount']) || 0), 0);
     const openCreditCount = openCredits.length;
 
-    const netOpen = openInvoiceBalance + openCreditBalance;
+    const netOpen = openInvoiceBalance - openCreditBalance;
 
     // Calculate past due vs not yet due
     const pastDueInvoices = openInvoices.filter(row => {
@@ -947,6 +949,13 @@ const CustomerSiteActivities: React.FC = () => {
     });
     const pastDueBalance = pastDueInvoices.reduce((sum: number, row: any) => sum + (Number(row['TotalBalanceAmount']) || 0), 0);
     const notYetDueBalance = openInvoiceBalance - pastDueBalance;
+
+    // Get oldest item past due
+    let oldestDaysPastDue = 0;
+    openInvoices.forEach(row => {
+      const daysLate = Number(row['PaymentDaysLate']) || 0;
+      if (daysLate > oldestDaysPastDue) oldestDaysPastDue = daysLate;
+    });
 
     // Calculate ageing buckets
     const ageingBuckets = {
@@ -972,6 +981,20 @@ const CustomerSiteActivities: React.FC = () => {
       ageingBuckets[bucket as keyof typeof ageingBuckets].count += 1;
     });
 
+    // Sort invoices by due date (oldest first)
+    const sortedInvoices = [...openInvoices].sort((a, b) => {
+      const dateA = new Date(a['PaymentScheduleDueDate'] as string).getTime();
+      const dateB = new Date(b['PaymentScheduleDueDate'] as string).getTime();
+      return dateA - dateB;
+    });
+
+    // Sort credit memos by date (newest first)
+    const sortedCredits = [...openCredits].sort((a, b) => {
+      const dateA = new Date(a['CreditMemoDate'] as string).getTime();
+      const dateB = new Date(b['CreditMemoDate'] as string).getTime();
+      return dateB - dateA;
+    });
+
     setAccountStatementData({
       statementDate: new Date().toISOString().split('T')[0],
       openInvoiceBalance,
@@ -981,7 +1004,10 @@ const CustomerSiteActivities: React.FC = () => {
       netOpen,
       pastDueBalance,
       notYetDueBalance,
+      oldestDaysPastDue,
       ageingBuckets,
+      invoices: sortedInvoices,
+      creditMemos: sortedCredits,
     });
 
     setAccountStatementVisible(true);
@@ -991,126 +1017,195 @@ const CustomerSiteActivities: React.FC = () => {
   const generateAccountStatementPDF = useCallback(() => {
     if (!accountStatementData || !selectedCustomerForStatement) return;
 
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    let yPosition = 15;
+
+    // Header
+    doc.setFont('Helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('STATEMENT OF ACCOUNT', 14, yPosition);
+    yPosition += 8;
+
+    doc.setFont('Helvetica', 'italic');
+    doc.setFontSize(9);
+    doc.text('Unreconciled statement — all documents shown remain unsettled at the statement date', 14, yPosition);
+    yPosition += 12;
+
+    // Account Info
+    doc.setFont('Helvetica', 'normal');
+    doc.setFontSize(10);
+    const infoColX = 14;
+    const infoValueX = 60;
+    const rightColX = pageWidth - 80;
+
+    doc.text('Account name', infoColX, yPosition);
+    doc.setFont('Helvetica', 'bold');
+    doc.text(selectedCustomerForStatement.name, infoValueX, yPosition);
+    doc.setFont('Helvetica', 'normal');
+    yPosition += 6;
+
+    doc.text('Account number', infoColX, yPosition);
+    doc.setFont('Helvetica', 'bold');
+    doc.text(selectedCustomerForStatement.accountNumber, infoValueX, yPosition);
+    doc.setFont('Helvetica', 'normal');
+    yPosition += 6;
+
+    doc.text('Bill-to site', infoColX, yPosition);
+    doc.setFont('Helvetica', 'bold');
+    doc.text(selectedCustomerForStatement.billToSiteNumber, infoValueX, yPosition);
+    doc.setFont('Helvetica', 'normal');
+    yPosition += 6;
+
+    doc.text('Currency', infoColX, yPosition);
+    doc.setFont('Helvetica', 'bold');
+    doc.text('MUR', infoValueX, yPosition);
+    doc.setFont('Helvetica', 'normal');
+    yPosition += 10;
+
+    // Right column info
+    doc.setFontSize(9);
+    const rightY = yPosition - 18;
+    doc.text('Statement date', rightColX, rightY);
+    doc.setFont('Helvetica', 'bold');
+    doc.text(new Date(accountStatementData.statementDate).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }), rightColX + 50, rightY);
+    doc.setFont('Helvetica', 'normal');
+
+    doc.text('Documents outstanding', rightColX, rightY + 6);
+    doc.setFont('Helvetica', 'bold');
+    doc.text(String(accountStatementData.openInvoiceCount), rightColX + 50, rightY + 6);
+    doc.setFont('Helvetica', 'normal');
+
+    doc.text('Oldest item past due', rightColX, rightY + 12);
+    doc.setFont('Helvetica', 'bold');
+    doc.text(accountStatementData.oldestDaysPastDue > 0 ? `${accountStatementData.oldestDaysPastDue} days` : '-', rightColX + 50, rightY + 12);
+    doc.setFont('Helvetica', 'normal');
+
+    yPosition += 12;
+
+    // AGEING SUMMARY
+    doc.setFontSize(10);
+    doc.setFont('Helvetica', 'bold');
+    doc.setTextColor(255, 255, 255);
+    doc.setFillColor(31, 78, 120);
+    doc.rect(14, yPosition - 4, pageWidth - 28, 5, 'F');
+    doc.text('AGEING SUMMARY', 14, yPosition);
+    doc.setTextColor(0, 0, 0);
+    yPosition += 6;
+
     const ageingBuckets = accountStatementData.ageingBuckets || {};
+    const bucketOrder = ['Not yet due', '1-30 days', '31-60 days', '61-90 days', '91-180 days', '180+ days'];
 
-    // Create HTML content for PDF
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
-          .header { text-align: center; margin-bottom: 20px; }
-          .title { font-size: 24px; font-weight: bold; color: #C74634; margin-bottom: 10px; }
-          .subtitle { font-size: 13px; color: #666; margin-bottom: 8px; }
-          .divider { border-top: 2px solid #C74634; margin: 15px 0; }
-          .section-title { font-size: 14px; font-weight: bold; background: #1F4E78; color: white; padding: 8px; margin-top: 20px; margin-bottom: 8px; }
-          .info-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #E5E5E5; }
-          .label { font-weight: 600; width: 50%; }
-          .value { text-align: right; width: 50%; }
-          table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-          th { text-align: left; padding: 8px; font-weight: 600; background: #D9E1F2; border-bottom: 2px solid #E5E5E5; }
-          td { padding: 6px 8px; border-bottom: 1px solid #E5E5E5; }
-          td.amount { text-align: right; }
-          td.count { text-align: right; }
-          tr.total { background: #FFFFEA; font-weight: 700; }
-          tr.total td { border-top: 2px solid #E5E5E5; }
-          .footer { margin-top: 30px; font-size: 11px; color: #999; text-align: center; border-top: 1px solid #E5E5E5; padding-top: 15px; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div class="title">RECEIVABLES OVERVIEW</div>
-          <div class="subtitle">${selectedCustomerForStatement.name}</div>
-          <div class="subtitle">Account ${selectedCustomerForStatement.accountNumber} · Bill-To Site ${selectedCustomerForStatement.billToSiteNumber}</div>
-        </div>
+    const ageingRow1: string[] = [];
+    const ageingRow2: string[] = [];
+    const ageingRow3: string[] = [];
 
-        <div class="divider"></div>
+    bucketOrder.forEach(bucket => {
+      const data = ageingBuckets[bucket as keyof typeof ageingBuckets];
+      if (data) {
+        ageingRow1.push(data.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+        const pct = accountStatementData.openInvoiceBalance > 0
+          ? ((data.amount / accountStatementData.openInvoiceBalance) * 100).toFixed(1)
+          : '0.0';
+        ageingRow2.push(`${pct}%`);
+      }
+    });
+    ageingRow1.push(accountStatementData.openInvoiceBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    ageingRow2.push('100.0%');
 
-        <div class="section-title">1 · CURRENT BALANCE POSITION</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th style="text-align: right;">Amount</th>
-              <th style="text-align: right;">Count</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Open invoice balance</td>
-              <td class="amount">${accountStatementData.openInvoiceBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td class="count">${accountStatementData.openInvoiceCount}</td>
-            </tr>
-            <tr>
-              <td>Unapplied credit memos</td>
-              <td class="amount">${accountStatementData.openCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td class="count">${accountStatementData.openCreditCount}</td>
-            </tr>
-            <tr class="total">
-              <td>NET OPEN RECEIVABLES</td>
-              <td class="amount">${accountStatementData.netOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td class="count">${accountStatementData.openInvoiceCount + accountStatementData.openCreditCount}</td>
-            </tr>
-            <tr>
-              <td>— of which past due</td>
-              <td class="amount" style="color: #F54545;">${accountStatementData.pastDueBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td class="count">—</td>
-            </tr>
-          </tbody>
-        </table>
+    autoTable(doc, {
+      startY: yPosition,
+      head: [['Not yet due', '1 - 30 days', '31 - 60 days', '61 - 90 days', '91 - 180 days', 'Over 180 days', 'Total invoices due']],
+      body: [ageingRow1, ageingRow2],
+      styles: { font: 'Helvetica', fontSize: 9, cellPadding: 3, textColor: [0, 0, 0] },
+      headStyles: { fillColor: [31, 78, 120], textColor: [255, 255, 255], fontStyle: 'bold' },
+      bodyStyles: { textColor: [0, 0, 0] },
+    });
 
-        <div class="section-title">2 · AGEING OF OPEN RECEIVABLES</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Ageing bucket</th>
-              <th style="text-align: right;">Amount</th>
-              <th style="text-align: right;">% of open</th>
-              <th style="text-align: right;">Invoices</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${Object.entries(ageingBuckets).map(([bucket, data]) => {
-              const pct = accountStatementData.openInvoiceBalance > 0 ? ((data.amount / accountStatementData.openInvoiceBalance) * 100).toFixed(1) : '0.0';
-              return `
-            <tr>
-              <td>${bucket}</td>
-              <td class="amount">${data.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td class="count">${pct}%</td>
-              <td class="count">${data.count}</td>
-            </tr>
-              `;
-            }).join('')}
-            <tr class="total">
-              <td>Total</td>
-              <td class="amount">${accountStatementData.openInvoiceBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td class="count">100.0%</td>
-              <td class="count">${accountStatementData.openInvoiceCount}</td>
-            </tr>
-          </tbody>
-        </table>
+    yPosition = (doc as any).lastAutoTable.finalY + 8;
 
-        <div class="footer">
-          <p>This statement reflects all recorded transactions as of ${new Date(accountStatementData.statementDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' })}.<br>
-          Generated on ${new Date().toLocaleString()}</p>
-        </div>
-      </body>
-      </html>
-    `;
+    // DOCUMENT DETAIL
+    doc.setFont('Helvetica', 'bold');
+    doc.setTextColor(255, 255, 255);
+    doc.setFillColor(31, 78, 120);
+    doc.rect(14, yPosition - 4, pageWidth - 28, 5, 'F');
+    doc.text('DOCUMENT DETAIL — OUTSTANDING INVOICES (oldest due date first)', 14, yPosition);
+    doc.setTextColor(0, 0, 0);
+    yPosition += 6;
 
-    // Convert HTML to PDF by opening in new window for printing
-    const printWindow = window.open('', '', 'width=900,height=700');
-    if (printWindow) {
-      printWindow.document.write(htmlContent);
-      printWindow.document.close();
-      printWindow.onload = () => {
-        printWindow.print();
-        printWindow.close();
-      };
+    const invoiceRows = (accountStatementData.invoices || []).map((inv: any) => [
+      inv['TransactionDate'] ? new Date(inv['TransactionDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-',
+      inv['PaymentScheduleDueDate'] ? new Date(inv['PaymentScheduleDueDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-',
+      'Invoice',
+      inv['TransactionNumber'] || '',
+      (Number(inv['TotalOriginalAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      (Number(inv['TotalBalanceAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      (Number(inv['PaymentDaysLate']) || 0) > 0 ? 'Not due' : 'Due',
+    ]);
+
+    invoiceRows.push(['', '', '', 'Total outstanding invoices', '', accountStatementData.openInvoiceBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), '']);
+
+    autoTable(doc, {
+      startY: yPosition,
+      head: [['Document date', 'Due date', 'Type', 'Document no.', 'Original amount', 'Balance due', 'Days past due']],
+      body: invoiceRows,
+      styles: { font: 'Helvetica', fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [217, 225, 242], textColor: [0, 0, 0], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+    });
+
+    yPosition = (doc as any).lastAutoTable.finalY + 8;
+
+    // UNAPPLIED CREDITS
+    if (accountStatementData.creditMemos && accountStatementData.creditMemos.length > 0) {
+      doc.setFont('Helvetica', 'bold');
+      doc.setTextColor(255, 255, 255);
+      doc.setFillColor(31, 78, 120);
+      doc.rect(14, yPosition - 4, pageWidth - 28, 5, 'F');
+      doc.text('UNAPPLIED CREDITS ON ACCOUNT (available to offset the balance above)', 14, yPosition);
+      doc.setTextColor(0, 0, 0);
+      yPosition += 6;
+
+      const creditRows = (accountStatementData.creditMemos || []).map((cm: any) => [
+        cm['CreditMemoDate'] ? new Date(cm['CreditMemoDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-',
+        'On Account Credit Memo',
+        cm['TransactionNumber'] || '',
+        `(${Math.abs(Number(cm['TotalOriginalAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`,
+        `(${Math.abs(Number(cm['TotalBalanceAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`,
+      ]);
+
+      creditRows.push(['', '', 'Total unapplied credits', `(${accountStatementData.openCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`, `(${accountStatementData.openCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`]);
+
+      autoTable(doc, {
+        startY: yPosition,
+        head: [['Date', 'Type', 'Document number', 'Original amount', 'Balance due']],
+        body: creditRows,
+        styles: { font: 'Helvetica', fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [217, 225, 242], textColor: [0, 0, 0], fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [245, 245, 245] },
+      });
+
+      yPosition = (doc as any).lastAutoTable.finalY + 8;
     }
 
-    message.success('Opening print dialog for PDF...');
+    // TOTAL AMOUNT DUE
+    doc.setFont('Helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text('TOTAL AMOUNT DUE', 14, yPosition);
+    doc.setFillColor(255, 255, 200);
+    doc.rect(pageWidth - 60, yPosition - 4, 45, 6, 'F');
+    doc.text(
+      accountStatementData.netOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      pageWidth - 10,
+      yPosition,
+      { align: 'right' }
+    );
+
+    // Save PDF
+    const fileName = `Statement_${selectedCustomerForStatement.accountNumber}_${new Date().toISOString().split('T')[0]}.pdf`;
+    doc.save(fileName);
+    message.success('PDF downloaded successfully!');
   }, [accountStatementData, selectedCustomerForStatement]);
 
   // ── Send Account Statement by Email ───────────────────────────────
@@ -2821,11 +2916,10 @@ Generated on ${new Date().toLocaleString()}
       <Modal
         open={accountStatementVisible}
         onCancel={() => setAccountStatementVisible(false)}
-        width={900}
-        title={<Space><FileTextOutlined style={{ color: REDWOOD.primary }} /> Receivables Overview</Space>}
+        width={1200}
+        title={<Space><FileTextOutlined style={{ color: REDWOOD.primary }} /> Account Statement</Space>}
         footer={[
           <Button key="close" onClick={() => setAccountStatementVisible(false)}>Close</Button>,
-          <Button key="print" icon={<PrinterOutlined />} onClick={() => window.print()}>Print</Button>,
           <Button key="email" icon={<MailOutlined />} onClick={sendAccountStatementByEmail}>Email</Button>,
           <Button key="download" type="primary" icon={<DownloadOutlined />} onClick={generateAccountStatementPDF}
             style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}>
@@ -2834,109 +2928,239 @@ Generated on ${new Date().toLocaleString()}
         ]}
       >
         {accountStatementData && selectedCustomerForStatement && (
-          <div style={{ fontFamily: 'sans-serif' }}>
-            <div style={{ textAlign: 'center', marginBottom: 24 }}>
-              <Title level={3} style={{ margin: '0 0 8px 0', color: REDWOOD.primary }}>RECEIVABLES OVERVIEW</Title>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {selectedCustomerForStatement.name}
-              </Text>
-              <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                Account {selectedCustomerForStatement.accountNumber} · Bill-To Site {selectedCustomerForStatement.billToSiteNumber}
+          <div style={{ fontFamily: 'Arial, sans-serif', fontSize: 12 }}>
+            {/* Header */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>STATEMENT OF ACCOUNT</div>
+              <div style={{ fontSize: 10, fontStyle: 'italic', color: '#666', marginBottom: 12 }}>
+                Unreconciled statement — all documents shown remain unsettled at the statement date
               </div>
-              <Divider style={{ margin: '12px 0' }} />
-            </div>
 
-            {/* 1. CURRENT BALANCE POSITION */}
-            <div style={{ marginBottom: 24 }}>
-              <Title level={5} style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>1 · CURRENT BALANCE POSITION</Title>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
-                    <th style={{ textAlign: 'left', padding: 8, fontWeight: 600 }}>Item</th>
-                    <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Amount</th>
-                    <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Count</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
-                    <td style={{ padding: 8 }}>Open invoice balance</td>
-                    <td style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>
-                      {accountStatementData.openInvoiceBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ textAlign: 'right', padding: 8 }}>{accountStatementData.openInvoiceCount}</td>
-                  </tr>
-                  <tr style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
-                    <td style={{ padding: 8 }}>Unapplied credit memos</td>
-                    <td style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>
-                      {accountStatementData.openCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ textAlign: 'right', padding: 8 }}>{accountStatementData.openCreditCount}</td>
-                  </tr>
-                  <tr style={{ background: REDWOOD.neutral100, borderBottom: `1px solid ${REDWOOD.border}` }}>
-                    <td style={{ padding: 8, fontWeight: 700 }}>NET OPEN RECEIVABLES</td>
-                    <td style={{ textAlign: 'right', padding: 8, fontWeight: 700, color: REDWOOD.primary }}>
+              <Row gutter={[32, 8]}>
+                <Col xs={12}>
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: '#666' }}>Account name</div>
+                    <div style={{ fontWeight: 600 }}>{selectedCustomerForStatement.name}</div>
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: '#666' }}>Account number</div>
+                    <div style={{ fontWeight: 600 }}>{selectedCustomerForStatement.accountNumber}</div>
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: '#666' }}>Bill-to site</div>
+                    <div style={{ fontWeight: 600 }}>{selectedCustomerForStatement.billToSiteNumber}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#666' }}>Currency</div>
+                    <div style={{ fontWeight: 600 }}>MUR</div>
+                  </div>
+                </Col>
+                <Col xs={12}>
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: '#666' }}>Statement date</div>
+                    <div style={{ fontWeight: 600 }}>
+                      {new Date(accountStatementData.statementDate).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: '#666' }}>Documents outstanding</div>
+                    <div style={{ fontWeight: 600 }}>{accountStatementData.openInvoiceCount}</div>
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: '#666' }}>Oldest item past due</div>
+                    <div style={{ fontWeight: 600 }}>
+                      {accountStatementData.oldestDaysPastDue > 0 ? `${accountStatementData.oldestDaysPastDue} days` : '-'}
+                    </div>
+                  </div>
+                  <div style={{ padding: 12, background: '#FFFFCC', textAlign: 'center', borderRadius: 4 }}>
+                    <div style={{ fontSize: 10, color: '#666', marginBottom: 4 }}>TOTAL AMOUNT DUE</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: REDWOOD.primary }}>
                       {accountStatementData.netOpen.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ textAlign: 'right', padding: 8, fontWeight: 700 }}>
-                      {accountStatementData.openInvoiceCount + accountStatementData.openCreditCount}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style={{ padding: 8 }}>— of which past due</td>
-                    <td style={{ textAlign: 'right', padding: 8, color: REDWOOD.error, fontWeight: 600 }}>
-                      {accountStatementData.pastDueBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ textAlign: 'right', padding: 8 }}>—</td>
-                  </tr>
-                </tbody>
-              </table>
+                    </div>
+                  </div>
+                </Col>
+              </Row>
             </div>
 
-            {/* 2. AGEING OF OPEN RECEIVABLES */}
-            <div style={{ marginBottom: 24 }}>
-              <Title level={5} style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>2 · AGEING OF OPEN RECEIVABLES</Title>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <Divider style={{ margin: '12px 0' }} />
+
+            {/* AGEING SUMMARY */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ background: '#1F4E78', color: '#fff', padding: '8px 12px', fontWeight: 700, marginBottom: 8, borderRadius: 4 }}>
+                AGEING SUMMARY
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                 <thead>
-                  <tr style={{ borderBottom: `2px solid ${REDWOOD.border}` }}>
-                    <th style={{ textAlign: 'left', padding: 8, fontWeight: 600 }}>Ageing bucket</th>
-                    <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Amount</th>
-                    <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>% of open</th>
-                    <th style={{ textAlign: 'right', padding: 8, fontWeight: 600 }}>Invoices</th>
+                  <tr style={{ background: '#D9E1F2', fontWeight: 700 }}>
+                    <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Not yet due</th>
+                    <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>1 - 30 days</th>
+                    <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>31 - 60 days</th>
+                    <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>61 - 90 days</th>
+                    <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>91 - 180 days</th>
+                    <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Over 180 days</th>
+                    <th style={{ padding: 6, textAlign: 'right', borderBottom: `1px solid #999` }}>Total invoices due</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(accountStatementData.ageingBuckets || {}).map(([bucket, data]) => {
-                    const pct = accountStatementData.openInvoiceBalance > 0
-                      ? ((data.amount / accountStatementData.openInvoiceBalance) * 100).toFixed(1)
-                      : '0.0';
-                    return (
-                      <tr key={bucket} style={{ borderBottom: `1px solid ${REDWOOD.border}` }}>
-                        <td style={{ padding: 8 }}>{bucket}</td>
-                        <td style={{ textAlign: 'right', padding: 8 }}>
-                          {data.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                        <td style={{ textAlign: 'right', padding: 8 }}>{pct}%</td>
-                        <td style={{ textAlign: 'right', padding: 8 }}>{data.count}</td>
-                      </tr>
-                    );
-                  })}
-                  <tr style={{ background: REDWOOD.neutral100, fontWeight: 700 }}>
-                    <td style={{ padding: 8 }}>Total</td>
-                    <td style={{ textAlign: 'right', padding: 8 }}>
+                  <tr style={{ borderBottom: `1px solid #E5E5E5` }}>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {(accountStatementData.ageingBuckets['Not yet due']?.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {(accountStatementData.ageingBuckets['1-30 days']?.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {(accountStatementData.ageingBuckets['31-60 days']?.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {(accountStatementData.ageingBuckets['61-90 days']?.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {(accountStatementData.ageingBuckets['91-180 days']?.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {(accountStatementData.ageingBuckets['180+ days']?.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right', fontWeight: 700 }}>
                       {accountStatementData.openInvoiceBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
-                    <td style={{ textAlign: 'right', padding: 8 }}>100.0%</td>
-                    <td style={{ textAlign: 'right', padding: 8 }}>{accountStatementData.openInvoiceCount}</td>
+                  </tr>
+                  <tr style={{ background: '#FFFFCC', fontWeight: 700 }}>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {accountStatementData.notYetDueBalance > 0
+                        ? ((accountStatementData.notYetDueBalance / accountStatementData.openInvoiceBalance) * 100).toFixed(1)
+                        : '0.0'}%
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {((accountStatementData.ageingBuckets['1-30 days']?.amount || 0) / accountStatementData.openInvoiceBalance * 100).toFixed(1)}%
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {((accountStatementData.ageingBuckets['31-60 days']?.amount || 0) / accountStatementData.openInvoiceBalance * 100).toFixed(1)}%
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {((accountStatementData.ageingBuckets['61-90 days']?.amount || 0) / accountStatementData.openInvoiceBalance * 100).toFixed(1)}%
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {((accountStatementData.ageingBuckets['91-180 days']?.amount || 0) / accountStatementData.openInvoiceBalance * 100).toFixed(1)}%
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>
+                      {((accountStatementData.ageingBuckets['180+ days']?.amount || 0) / accountStatementData.openInvoiceBalance * 100).toFixed(1)}%
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'right' }}>100.0%</td>
                   </tr>
                 </tbody>
               </table>
             </div>
 
-            <div style={{ fontSize: 12, color: '#999', textAlign: 'center', borderTop: `1px solid ${REDWOOD.border}`, paddingTop: 12 }}>
-              <Text type="secondary">
-                Statement date: {new Date(accountStatementData.statementDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' })} ·
-                Generated: {new Date().toLocaleString()}
-              </Text>
+            {/* DOCUMENT DETAIL */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ background: '#1F4E78', color: '#fff', padding: '8px 12px', fontWeight: 700, marginBottom: 8, borderRadius: 4, fontSize: 11 }}>
+                DOCUMENT DETAIL — OUTSTANDING INVOICES (oldest due date first)
+              </div>
+              <div style={{ overflowX: 'auto', maxHeight: 300, overflowY: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                  <thead>
+                    <tr style={{ background: '#D9E1F2', fontWeight: 700, position: 'sticky', top: 0 }}>
+                      <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Document date</th>
+                      <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Due date</th>
+                      <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Type</th>
+                      <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Document no.</th>
+                      <th style={{ padding: 6, textAlign: 'right', borderBottom: `1px solid #999` }}>Original amount</th>
+                      <th style={{ padding: 6, textAlign: 'right', borderBottom: `1px solid #999` }}>Balance due</th>
+                      <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Days past due</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(accountStatementData.invoices || []).map((inv: any, idx: number) => (
+                      <tr key={idx} style={{ borderBottom: `1px solid #E5E5E5`, background: idx % 2 === 0 ? '#fff' : '#F9F9F9' }}>
+                        <td style={{ padding: 6 }}>
+                          {inv['TransactionDate']
+                            ? new Date(inv['TransactionDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                            : '-'}
+                        </td>
+                        <td style={{ padding: 6 }}>
+                          {inv['PaymentScheduleDueDate']
+                            ? new Date(inv['PaymentScheduleDueDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                            : '-'}
+                        </td>
+                        <td style={{ padding: 6 }}>Invoice</td>
+                        <td style={{ padding: 6 }}>{inv['TransactionNumber'] || ''}</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>
+                          {(Number(inv['TotalOriginalAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td style={{ padding: 6, textAlign: 'right', fontWeight: 600 }}>
+                          {(Number(inv['TotalBalanceAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td style={{ padding: 6, color: Number(inv['PaymentDaysLate']) > 0 ? REDWOOD.error : REDWOOD.success }}>
+                          {Number(inv['PaymentDaysLate']) > 0 ? 'Due' : 'Not due'}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: '#FFFFCC', fontWeight: 700, borderTop: `2px solid #999` }}>
+                      <td colSpan={4} style={{ padding: 6 }}>Total outstanding invoices</td>
+                      <td style={{ padding: 6, textAlign: 'right' }}>—</td>
+                      <td style={{ padding: 6, textAlign: 'right' }}>
+                        {accountStatementData.openInvoiceBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ padding: 6 }}>—</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* UNAPPLIED CREDITS */}
+            {accountStatementData.creditMemos && accountStatementData.creditMemos.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ background: '#1F4E78', color: '#fff', padding: '8px 12px', fontWeight: 700, marginBottom: 8, borderRadius: 4, fontSize: 11 }}>
+                  UNAPPLIED CREDITS ON ACCOUNT (available to offset the balance above)
+                </div>
+                <div style={{ overflowX: 'auto', maxHeight: 200, overflowY: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                    <thead>
+                      <tr style={{ background: '#D9E1F2', fontWeight: 700, position: 'sticky', top: 0 }}>
+                        <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Date</th>
+                        <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Type</th>
+                        <th style={{ padding: 6, textAlign: 'left', borderBottom: `1px solid #999` }}>Document number</th>
+                        <th style={{ padding: 6, textAlign: 'right', borderBottom: `1px solid #999` }}>Original amount</th>
+                        <th style={{ padding: 6, textAlign: 'right', borderBottom: `1px solid #999` }}>Balance due</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(accountStatementData.creditMemos || []).map((cm: any, idx: number) => (
+                        <tr key={idx} style={{ borderBottom: `1px solid #E5E5E5`, background: idx % 2 === 0 ? '#fff' : '#F9F9F9' }}>
+                          <td style={{ padding: 6 }}>
+                            {cm['CreditMemoDate']
+                              ? new Date(cm['CreditMemoDate'] as string).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                              : '-'}
+                          </td>
+                          <td style={{ padding: 6 }}>On Account Credit Memo</td>
+                          <td style={{ padding: 6 }}>{cm['TransactionNumber'] || ''}</td>
+                          <td style={{ padding: 6, textAlign: 'right' }}>
+                            ({Math.abs(Number(cm['TotalOriginalAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                          </td>
+                          <td style={{ padding: 6, textAlign: 'right', fontWeight: 600 }}>
+                            ({Math.abs(Number(cm['TotalBalanceAmount']) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                          </td>
+                        </tr>
+                      ))}
+                      <tr style={{ background: '#FFFFCC', fontWeight: 700, borderTop: `2px solid #999` }}>
+                        <td colSpan={3} style={{ padding: 6 }}>Total unapplied credits</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>
+                          ({accountStatementData.openCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                        </td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>
+                          ({accountStatementData.openCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div style={{ fontSize: 10, color: '#999', textAlign: 'center', paddingTop: 12, borderTop: `1px solid ${REDWOOD.border}` }}>
+              Generated on {new Date().toLocaleString()}
             </div>
           </div>
         )}
