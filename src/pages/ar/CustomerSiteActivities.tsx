@@ -370,6 +370,8 @@ const CustomerSiteActivities: React.FC = () => {
   const [invoiceDetailVisible, setInvoiceDetailVisible] = useState(false);
   const [invoiceDetailLoading, setInvoiceDetailLoading] = useState(false);
   const [invoiceDetail, setInvoiceDetail] = useState<any>(null);
+  const [invoiceDetailApiUrl, setInvoiceDetailApiUrl] = useState('');
+  const [invoiceDetailApiDebugVisible, setInvoiceDetailApiDebugVisible] = useState(false);
 
   // ── Load page data ──────────────────────────────────────────────
   const loadPage = useCallback(async (pageNum: number, overrideFilters?: Record<string, string>) => {
@@ -927,8 +929,9 @@ const CustomerSiteActivities: React.FC = () => {
     try {
       const company = getCurrentCompany();
       const baseUrl = company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/receivablesInvoices` : '';
-      const url = `${baseUrl}?q=TransactionNumber=${transactionNumber}&limit=1&expand=receivablesInvoiceLines&onlyData=true`;
+      const url = `${baseUrl}?q=TransactionNumber=${transactionNumber}&limit=1&expand=receivablesInvoiceLines&onlyData=true&limit=500`;
 
+      setInvoiceDetailApiUrl(url);
       const res = await fetch(url, { headers: getFusionAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -3264,6 +3267,7 @@ Generated: ${new Date().toLocaleString()}
         }
         extra={
           <Space>
+            <Button type="link" icon={<ApiOutlined />} onClick={() => setInvoiceDetailApiDebugVisible(true)}>API</Button>
             <Button type="link" icon={<ShoppingOutlined />}>View Accounting (4)</Button>
             <Button type="link">All fields</Button>
             <Button type="link" icon={<SyncOutlined />}>Reload</Button>
@@ -3489,6 +3493,41 @@ Generated: ${new Date().toLocaleString()}
         ) : (
           <Empty description="No invoice details available" />
         )}
+      </Modal>
+
+      <Modal
+        open={invoiceDetailApiDebugVisible}
+        onCancel={() => setInvoiceDetailApiDebugVisible(false)}
+        footer={null}
+        width={900}
+        title={<Space><ApiOutlined style={{ color: REDWOOD.info }} /> API Debug - Invoice Detail</Space>}
+      >
+        <div style={{ fontFamily: 'monospace', fontSize: 11 }}>
+          <Text strong style={{ fontSize: 12, marginBottom: 8, display: 'block' }}>API URL:</Text>
+          <div style={{
+            background: '#f5f5f5',
+            padding: 12,
+            borderRadius: 4,
+            marginBottom: 16,
+            wordBreak: 'break-all',
+            border: `1px solid #E5E5E5`,
+          }}>
+            {invoiceDetailApiUrl}
+          </div>
+          <Text strong style={{ fontSize: 12, marginBottom: 8, display: 'block' }}>Response:</Text>
+          <div style={{
+            background: '#f5f5f5',
+            padding: 12,
+            borderRadius: 4,
+            maxHeight: 400,
+            overflow: 'auto',
+            border: `1px solid #E5E5E5`,
+          }}>
+            <pre style={{ margin: 0, fontSize: 10 }}>
+              {JSON.stringify(invoiceDetail, null, 2)}
+            </pre>
+          </div>
+        </div>
       </Modal>
 
       <Modal
