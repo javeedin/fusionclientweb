@@ -3307,9 +3307,13 @@ Generated: ${new Date().toLocaleString()}
                     <span style={{ color: '#999', minWidth: 65 }}>SO:</span>
                     <span style={{ fontWeight: 600 }}>{invoiceDetail['CrossReference'] || '-'}</span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 3 }}>
                     <span style={{ color: '#999', minWidth: 65 }}>Status:</span>
                     <span style={{ fontWeight: 600 }}>{invoiceDetail['InvoiceStatus'] || '-'}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <span style={{ color: '#999', minWidth: 65 }}>Sales Person:</span>
+                    <span style={{ fontWeight: 600 }}>{invoiceDetail['SalesPersonNumber'] || '-'}</span>
                   </div>
                 </div>
               </Col>
@@ -3446,6 +3450,7 @@ Generated: ${new Date().toLocaleString()}
                         <th style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, fontSize: 12 }}>Amount</th>
                         <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Sales Order</th>
                         <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Date</th>
+                        <th style={{ padding: '12px 8px', textAlign: 'left', fontWeight: 700, fontSize: 12 }}>Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3472,6 +3477,7 @@ Generated: ${new Date().toLocaleString()}
                               ? new Date(line['SalesOrderDate']).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })
                               : '-'}
                           </td>
+                          <td style={{ padding: '12px 8px' }}>{line['LineStatus'] || line['Status'] || '-'}</td>
                         </tr>
                       ))}
                       <tr style={{ background: '#F5F5F5', borderTop: `2px solid #999` }}>
@@ -3482,7 +3488,7 @@ Generated: ${new Date().toLocaleString()}
                         <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: REDWOOD.primary }}>
                           {invoiceDetail['receivablesInvoiceLines'].reduce((sum: number, line: any) => sum + (Number(line['LineAmount']) || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {invoiceDetail['InvoiceCurrencyCode']}
                         </td>
-                        <td colSpan={2} />
+                        <td colSpan={3} />
                       </tr>
                     </tbody>
                   </table>
