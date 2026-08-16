@@ -3279,41 +3279,41 @@ Generated: ${new Date().toLocaleString()}
           <div style={{ fontFamily: 'Arial, sans-serif', fontSize: 13 }}>
             {/* Header Section with General Information and Transaction Total */}
             <div style={{ display: 'flex', marginBottom: 16, gap: 24 }}>
-              {/* Left: General Information - 3-4 columns */}
+              {/* Left: General Information - 6 columns */}
               <div style={{ flex: 1 }}>
-                <div style={{ color: REDWOOD.primary, fontWeight: 700, fontSize: 12, marginBottom: 8 }}>General Information</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px 16px', fontSize: 11 }}>
+                <div style={{ color: REDWOOD.primary, fontWeight: 700, fontSize: 12, marginBottom: 6 }}>General Information</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', gap: '4px 8px', fontSize: 11 }}>
                   <div>
-                    <div style={{ color: '#999', marginBottom: 1 }}>Business Unit</div>
+                    <div style={{ color: '#999', marginBottom: 0 }}>Business Unit</div>
                     <div style={{ fontWeight: 500 }}>{invoiceDetail['BusinessUnit'] || '-'}</div>
                   </div>
                   <div>
-                    <div style={{ color: '#999', marginBottom: 1 }}>Transaction Source</div>
+                    <div style={{ color: '#999', marginBottom: 0 }}>Transaction Source</div>
                     <div style={{ fontWeight: 500 }}>{invoiceDetail['TransactionSource'] || '-'}</div>
                   </div>
                   <div>
-                    <div style={{ color: '#999', marginBottom: 1 }}>Transaction Type</div>
+                    <div style={{ color: '#999', marginBottom: 0 }}>Transaction Type</div>
                     <div style={{ fontWeight: 500 }}>{invoiceDetail['TransactionType'] || '-'}</div>
                   </div>
                   <div>
-                    <div style={{ color: '#999', marginBottom: 1 }}>Currency</div>
+                    <div style={{ color: '#999', marginBottom: 0 }}>Currency</div>
                     <div style={{ fontWeight: 500 }}>{invoiceDetail['InvoiceCurrencyCode'] || '-'}</div>
                   </div>
                   <div>
-                    <div style={{ color: '#999', marginBottom: 1 }}>Transaction Number</div>
-                    <div style={{ fontWeight: 500 }}>{invoiceDetail['TransactionNumber'] || '-'}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: '#999', marginBottom: 1 }}>Sales Order</div>
-                    <div style={{ fontWeight: 500 }}>{invoiceDetail['CrossReference'] || '-'}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: '#999', marginBottom: 1 }}>Status</div>
+                    <div style={{ color: '#999', marginBottom: 0 }}>Status</div>
                     <div style={{ fontWeight: 500 }}>{invoiceDetail['InvoiceStatus'] || '-'}</div>
                   </div>
                   <div>
-                    <div style={{ color: '#999', marginBottom: 1 }}>Comments</div>
+                    <div style={{ color: '#999', marginBottom: 0 }}>Comments</div>
                     <div style={{ fontWeight: 500 }}>{invoiceDetail['Comments'] || '—'}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: '#999', marginBottom: 0 }}>Transaction Number</div>
+                    <div style={{ fontWeight: 500 }}>{invoiceDetail['TransactionNumber'] || '-'}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: '#999', marginBottom: 0 }}>Sales Order</div>
+                    <div style={{ fontWeight: 500 }}>{invoiceDetail['CrossReference'] || '-'}</div>
                   </div>
                 </div>
               </div>
