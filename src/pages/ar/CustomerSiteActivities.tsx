@@ -929,7 +929,7 @@ const CustomerSiteActivities: React.FC = () => {
     try {
       const company = getCurrentCompany();
       const baseUrl = company.fusionBaseUrl ? `${company.fusionBaseUrl}/fscmRestApi/resources/11.13.18.05/receivablesInvoices` : '';
-      const url = `${baseUrl}?q=TransactionNumber=${transactionNumber}&limit=500&expand=receivablesInvoiceLines&onlyData=true`;
+      const url = `${baseUrl}?q=TransactionNumber=${transactionNumber}&limit=500&expand=receivablesInvoiceLines(receivablesInvoiceLineTaxLines)&onlyData=true`;
 
       setInvoiceDetailApiUrl(url);
       const res = await fetch(url, { headers: getFusionAuthHeaders() });
