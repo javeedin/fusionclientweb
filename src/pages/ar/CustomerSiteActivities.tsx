@@ -1443,6 +1443,90 @@ const CustomerSiteActivities: React.FC = () => {
                   ) : undefined
                 }
               />
+
+              {cn === 'transactionPaymentSchedules' && filteredData.length > 0 && (
+                <div style={{ marginTop: 24 }}>
+                  <Card style={{ borderColor: REDWOOD.border, marginBottom: 16 }} title={<Text strong>Aging Analysis</Text>}>
+                    <Row gutter={[16, 16]}>
+                      {['Current', '31-60', '61-90', '90+'].map(bucket => {
+                        const arData = siteChildStates['transactionPaymentSchedules']?.data || [];
+                        const agingBuckets = { Current: 0, '31-60': 0, '61-90': 0, '90+': 0 };
+                        arData.forEach(row => {
+                          const days = row['PaymentDaysLate'];
+                          const amount = row['TotalBalanceAmount'] || 0;
+                          const b = getAgingBucket(days);
+                          if (b !== '-' && agingBuckets.hasOwnProperty(b)) {
+                            (agingBuckets as Record<string, number>)[b] += amount;
+                          }
+                        });
+                        const total = Object.values(agingBuckets).reduce((a, b) => a + b, 0);
+                        const amount = agingBuckets[bucket as keyof typeof agingBuckets];
+                        const percentage = total > 0 ? (amount / total) * 100 : 0;
+                        const bucketColor = bucket === 'Current' ? REDWOOD.success : bucket === '31-60' ? '#faad14' : bucket === '61-90' ? '#ff7a45' : REDWOOD.error;
+                        return (
+                          <Col xs={24} sm={12} md={6} key={bucket}>
+                            <div style={{
+                              padding: 12,
+                              borderRadius: 6,
+                              background: bucket === 'Current' ? '#f6ffed' : bucket === '31-60' ? '#fffbe6' : bucket === '61-90' ? '#fff7e6' : '#fff1f0',
+                              borderLeft: `4px solid ${bucketColor}`,
+                            }}>
+                              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>{bucket} Days</Text>
+                              <div style={{
+                                fontSize: 18,
+                                fontWeight: 700,
+                                color: bucketColor,
+                              }}>
+                                {formatVal('amount', amount)}
+                              </div>
+                              <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+                                {percentage.toFixed(1)}%
+                              </Text>
+                            </div>
+                          </Col>
+                        );
+                      })}
+                    </Row>
+                  </Card>
+
+                  <Card style={{ borderColor: REDWOOD.border }} title={<Text strong>Monthly Activity</Text>}>
+                    <Row gutter={[16, 16]}>
+                      {(() => {
+                        const monthlyData: Record<string, { count: number; amount: number }> = {};
+                        const arData = siteChildStates['transactionPaymentSchedules']?.data || [];
+                        arData.forEach(row => {
+                          const dateStr = row['TransactionDate'] as string;
+                          if (!dateStr) return;
+                          const monthKey = dateStr.substring(0, 7); // YYYY-MM
+                          if (!monthlyData[monthKey]) monthlyData[monthKey] = { count: 0, amount: 0 };
+                          monthlyData[monthKey].count += 1;
+                          monthlyData[monthKey].amount += Number(row['TotalOriginalAmount']) || 0;
+                        });
+
+                        const sortedMonths = Object.keys(monthlyData).sort().reverse().slice(0, 6);
+                        return sortedMonths.map(month => (
+                          <Col xs={24} sm={12} md={8} key={month}>
+                            <div style={{
+                              padding: 12,
+                              borderRadius: 6,
+                              background: '#f5f5f5',
+                              border: `1px solid ${REDWOOD.border}`,
+                            }}>
+                              <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>{month}</Text>
+                              <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                                Invoices: {monthlyData[month].count}
+                              </Text>
+                              <Text style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                                Amount: {formatVal('amount', monthlyData[month].amount)}
+                              </Text>
+                            </div>
+                          </Col>
+                        ));
+                      })()}
+                    </Row>
+                  </Card>
+                </div>
+              )}
             </div>
           ),
         };
