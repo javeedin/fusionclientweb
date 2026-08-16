@@ -274,6 +274,11 @@ const CustomerSiteActivities: React.FC = () => {
   const [arInvoicesLoadingStatus, setArInvoicesLoadingStatus] = useState<Record<string, { loading: boolean; progress: string; shouldCancel: boolean }>>({});
   const arInvoicesCancelRef = React.useRef<Record<string, boolean>>({});
 
+  // Credit Memos filter state
+  const [creditMemosFilters, setCreditMemosFilters] = useState<Record<string, 'Open' | 'Closed' | 'ALL'>>({});
+  const [creditMemosLoadingStatus, setCreditMemosLoadingStatus] = useState<Record<string, { loading: boolean; progress: string; shouldCancel: boolean }>>({});
+  const creditMemosCancelRef = React.useRef<Record<string, boolean>>({});
+
   // ── Load page data ──────────────────────────────────────────────
   const loadPage = useCallback(async (pageNum: number, overrideFilters?: Record<string, string>) => {
     const offset = (pageNum - 1) * PAGE_SIZE;
@@ -403,8 +408,13 @@ const CustomerSiteActivities: React.FC = () => {
           let lastJson: unknown = null;
 
           while (hasMore) {
-            // For AR Invoices, apply Open filter by default
-            const statusFilter = childName === 'transactionPaymentSchedules' ? `&q=InstallmentStatus='Open'` : '';
+            // For AR Invoices and Credit Memos, apply Open filter by default
+            let statusFilter = '';
+            if (childName === 'transactionPaymentSchedules') {
+              statusFilter = `&q=InstallmentStatus='Open'`;
+            } else if (childName === 'creditMemos') {
+              statusFilter = `&q=CreditMemoStatus='Open'`;
+            }
             const url = `${fusionBase}/${siteId}/child/${childName}?limit=${LIMIT}&offset=${offset}${statusFilter}`;
             apiDebugUrls.push(url);
 
@@ -450,8 +460,9 @@ const CustomerSiteActivities: React.FC = () => {
     });
     setChildStates(prev => ({ ...prev, [tabKey]: finalStates }));
 
-    // Set default filter status for AR Invoices
+    // Set default filter statuses
     setArInvoicesFilters(prev => ({ ...prev, [tabKey]: 'Open' }));
+    setCreditMemosFilters(prev => ({ ...prev, [tabKey]: 'Open' }));
 
     // Store API debug info
     setDetailApiDebug(prev => ({
@@ -532,6 +543,70 @@ const CustomerSiteActivities: React.FC = () => {
         setArInvoicesLoadingStatus(prev => ({ ...prev, [tabKey]: { loading: false, progress: '', shouldCancel: false } }));
       } else {
         setArInvoicesLoadingStatus(prev => ({ ...prev, [tabKey]: { loading: false, progress: 'Cancelled', shouldCancel: false } }));
+      }
+    }
+  }, [detailsTabs]);
+
+  // Reload Credit Memos with status filter
+  const reloadCreditMemos = useCallback(async (tabKey: string, status: 'Open' | 'Closed' | 'ALL') => {
+    const site = detailsTabs.find(t => t.key === tabKey)?.site;
+    if (!site) return;
+
+    const siteId = site['BillToSiteUseId'];
+    setCreditMemosLoadingStatus(prev => ({ ...prev, [tabKey]: { loading: true, progress: 'Loading Credit Memos...', shouldCancel: false } }));
+    creditMemosCancelRef.current[tabKey] = false;
+
+    try {
+      const LIMIT = 500;
+      let offset = 0;
+      let hasMore = true;
+      const allItems: Row[] = [];
+
+      while (hasMore && !creditMemosCancelRef.current[tabKey]) {
+        setCreditMemosLoadingStatus(prev => ({
+          ...prev,
+          [tabKey]: { ...prev[tabKey], progress: `Loading Credit Memos (${allItems.length} records)...` }
+        }));
+
+        const fusionBase = getFusionBase();
+        const statusFilter = status === 'ALL' ? '' : `&q=CreditMemoStatus='${status}'`;
+        const url = `${fusionBase}/${siteId}/child/creditMemos?limit=${LIMIT}&offset=${offset}${statusFilter}`;
+
+        const res = await fetch(url, { headers: getFusionAuthHeaders() });
+        if (!res.ok) break;
+
+        const json = await res.json();
+        const page: Row[] = (json.items || []).map((item: Row) => {
+          const r: Row = {};
+          Object.keys(item).filter(k => k !== 'links').forEach(k => { r[k] = item[k]; });
+          return r;
+        });
+
+        allItems.push(...page);
+        hasMore = !!json.hasMore && page.length === LIMIT;
+        offset += LIMIT;
+      }
+
+      // Only update if not cancelled
+      if (!creditMemosCancelRef.current[tabKey]) {
+        // Update child state with new data
+        setChildStates(prev => {
+          const updated = { ...prev, [tabKey]: { ...prev[tabKey] } };
+          updated[tabKey].creditMemos = {
+            loading: false,
+            data: allItems,
+            columns: buildColumns(allItems),
+          };
+          return updated;
+        });
+
+        setCreditMemosFilters(prev => ({ ...prev, [tabKey]: status }));
+      }
+    } finally {
+      if (!creditMemosCancelRef.current[tabKey]) {
+        setCreditMemosLoadingStatus(prev => ({ ...prev, [tabKey]: { loading: false, progress: '', shouldCancel: false } }));
+      } else {
+        setCreditMemosLoadingStatus(prev => ({ ...prev, [tabKey]: { loading: false, progress: 'Cancelled', shouldCancel: false } }));
       }
     }
   }, [detailsTabs]);
@@ -1231,9 +1306,14 @@ const CustomerSiteActivities: React.FC = () => {
         });
 
         // AR Invoices filter UI
-        const currentStatus = arInvoicesFilters[key] || 'Open';
-        const loadingStatus = arInvoicesLoadingStatus[key];
-        const isLoading = loadingStatus?.loading || false;
+        const arCurrentStatus = arInvoicesFilters[key] || 'Open';
+        const arLoadingStatus = arInvoicesLoadingStatus[key];
+        const arIsLoading = arLoadingStatus?.loading || false;
+
+        // Credit Memos filter UI
+        const cmCurrentStatus = creditMemosFilters[key] || 'Open';
+        const cmLoadingStatus = creditMemosLoadingStatus[key];
+        const cmIsLoading = cmLoadingStatus?.loading || false;
 
         return {
           key: cn,
@@ -1254,11 +1334,11 @@ const CustomerSiteActivities: React.FC = () => {
                       {(['Open', 'Closed', 'ALL'] as const).map(status => (
                         <Button
                           key={status}
-                          type={currentStatus === status ? 'primary' : 'default'}
+                          type={arCurrentStatus === status ? 'primary' : 'default'}
                           size="small"
                           onClick={() => reloadArInvoices(key, status)}
-                          disabled={isLoading}
-                          style={{ borderRadius: currentStatus === status ? '2px' : '2px' }}
+                          disabled={arIsLoading}
+                          style={{ borderRadius: arCurrentStatus === status ? '2px' : '2px' }}
                         >
                           {status}
                         </Button>
@@ -1266,18 +1346,18 @@ const CustomerSiteActivities: React.FC = () => {
                     </Space>
                     <Button
                       type="text"
-                      icon={<SyncOutlined spin={isLoading} />}
+                      icon={<SyncOutlined spin={arIsLoading} />}
                       size="small"
-                      onClick={() => reloadArInvoices(key, currentStatus)}
-                      disabled={isLoading}
+                      onClick={() => reloadArInvoices(key, arCurrentStatus)}
+                      disabled={arIsLoading}
                       title="Refresh data"
                     />
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {isLoading && (
+                    {arIsLoading && (
                       <>
                         <Text type="secondary" style={{ fontSize: 12 }}>
-                          {loadingStatus.progress}
+                          {arLoadingStatus.progress}
                         </Text>
                         <Button
                           type="primary"
@@ -1285,6 +1365,54 @@ const CustomerSiteActivities: React.FC = () => {
                           size="small"
                           onClick={() => {
                             arInvoicesCancelRef.current[key] = true;
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+              {cn === 'creditMemos' && (
+                <div style={{ marginBottom: 16, padding: '12px', background: '#fafafa', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '12px', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Text strong style={{ fontSize: 13 }}>Filter by Status:</Text>
+                    <Space size={0}>
+                      {(['Open', 'Closed', 'ALL'] as const).map(status => (
+                        <Button
+                          key={status}
+                          type={cmCurrentStatus === status ? 'primary' : 'default'}
+                          size="small"
+                          onClick={() => reloadCreditMemos(key, status)}
+                          disabled={cmIsLoading}
+                          style={{ borderRadius: cmCurrentStatus === status ? '2px' : '2px' }}
+                        >
+                          {status}
+                        </Button>
+                      ))}
+                    </Space>
+                    <Button
+                      type="text"
+                      icon={<SyncOutlined spin={cmIsLoading} />}
+                      size="small"
+                      onClick={() => reloadCreditMemos(key, cmCurrentStatus)}
+                      disabled={cmIsLoading}
+                      title="Refresh data"
+                    />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {cmIsLoading && (
+                      <>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {cmLoadingStatus.progress}
+                        </Text>
+                        <Button
+                          type="primary"
+                          danger
+                          size="small"
+                          onClick={() => {
+                            creditMemosCancelRef.current[key] = true;
                           }}
                         >
                           Cancel
