@@ -291,6 +291,9 @@ const CustomerSearchBipModal: React.FC<CustomerSearchBipModalProps> = ({
                               <span><Text strong>Party:</Text> {customer.partyNumber}</span>
                               {customer.city && <span><Text strong>City:</Text> {customer.city}</span>}
                               {customer.country && <span><Text strong>Country:</Text> {customer.country}</span>}
+                              {customer.prCreditLimit !== undefined && (
+                                <span><Text strong>Credit Limit:</Text> {customer.prCreditLimit?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                              )}
                               {customer.status && (
                                 <span>
                                   <Tag color={customer.status === 'A' ? 'green' : 'red'}>

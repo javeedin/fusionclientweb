@@ -3021,7 +3021,7 @@ interface OrderHeader {
   orderType?: string; orderDate?: Dayjs | null; customerName?: string; accountNumber?: string;
   billToSite?: string; shipToSite?: string; billToAddress?: string; shipToAddress?: string;
   paymentTerms?: string; salesRep?: string; warehouse?: string; subinventory?: string; remarks?: string;
-  custAccountId?: string; partyId?: string;
+  custAccountId?: string; partyId?: string; creditLimit?: number;
   // Currency conversion details
   currencyRateType?: string; currencyDate?: Dayjs | null;
   // Branch Sales order details
@@ -5861,6 +5861,17 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       .then(d => { setEffDescribe(p => ({ ...p, header: d })); const ctx = parseEffContexts(d, 'DOO_HEADERS_ADD_INFO'); const use = ctx.length ? ctx : FALLBACK_HDR_EFF; setHdrEffCtxs(use); setHdrEffCtxSel(prev => prev ?? use[0]?.voName); })
       .catch(() => { setHdrEffCtxs(FALLBACK_HDR_EFF); setHdrEffCtxSel(prev => prev ?? FALLBACK_HDR_EFF[0]?.voName); });
   }, []);
+
+  // Populate creditLimit in hdrEffVals when header.creditLimit is provided
+  useEffect(() => {
+    if (hdr.creditLimit !== undefined && hdr.creditLimit !== null) {
+      setHdrEffVals(prev => ({
+        ...prev,
+        creditlimit: String(hdr.creditLimit)
+      }));
+    }
+  }, [hdr.creditLimit]);
+
   const hdrEffActive = hdrEffCtxs.find(c => c.voName === hdrEffCtxSel);
   // Build the header additionalInformation child from the filled segments.
   const effHeaderChild = () => {
