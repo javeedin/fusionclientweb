@@ -479,7 +479,7 @@ const CustomerSiteActivities: React.FC = () => {
     CHILD_NAMES.forEach(cn => { allResults[cn] = []; });
 
     const fusionBase = getFusionBase();
-    const customerAccountNumber = site['CustomerAccountNumber'];
+    const customerAccountNumber = site['AccountNumber'] || site['CustomerAccountNumber'];
 
     await Promise.all(
       CHILD_NAMES.map(async childName => {
@@ -956,28 +956,104 @@ const CustomerSiteActivities: React.FC = () => {
   const generateAccountStatementPDF = useCallback(() => {
     if (!accountStatementData || !selectedCustomerForStatement) return;
 
-    let content = `ACCOUNT STATEMENT\n`;
-    content += `=====================================\n\n`;
-    content += `Customer: ${selectedCustomerForStatement.name}\n`;
-    content += `Account Number: ${selectedCustomerForStatement.accountNumber}\n`;
-    content += `Statement Date: ${new Date(accountStatementData.statementDate).toLocaleDateString()}\n\n`;
-    content += `SUMMARY\n`;
-    content += `-------------------------------------\n`;
-    content += `Invoices (${accountStatementData.invoiceCount}):        ${formatVal('amount', accountStatementData.invoiceTotal)}\n`;
-    content += `Payments (${accountStatementData.paymentCount}):        -${formatVal('amount', accountStatementData.paymentTotal)}\n`;
-    content += `Credit Memos (${accountStatementData.creditMemoCount}):    -${formatVal('amount', accountStatementData.creditMemoTotal)}\n`;
-    content += `Adjustments (${accountStatementData.adjustmentCount}):     ${formatVal('amount', accountStatementData.adjustmentTotal)}\n`;
-    content += `-------------------------------------\n`;
-    content += `Balance Due:     ${formatVal('amount', accountStatementData.balance)}\n`;
+    // Create HTML content for PDF
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
+          .header { text-align: center; margin-bottom: 20px; }
+          .title { font-size: 24px; font-weight: bold; color: #C74634; margin-bottom: 10px; }
+          .divider { border-top: 2px solid #C74634; margin: 15px 0; }
+          .section-title { font-size: 14px; font-weight: bold; background: #F7F7F7; padding: 8px; margin-top: 15px; }
+          .info-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #E5E5E5; }
+          .label { font-weight: bold; width: 40%; }
+          .value { text-align: right; width: 60%; }
+          .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px; }
+          .summary-box { padding: 12px; background: #FAFAFA; border-left: 3px solid #C74634; }
+          .summary-label { font-size: 12px; color: #666; }
+          .summary-value { font-size: 18px; font-weight: bold; color: #1A1A1A; }
+          .summary-amount { font-size: 12px; color: #666; margin-top: 4px; }
+          .balance-section { margin-top: 15px; padding: 12px; background: #fff; border: 1px solid #E5E5E5; }
+          .balance-row { display: flex; justify-content: space-between; font-size: 16px; font-weight: bold; }
+          .footer { margin-top: 30px; font-size: 11px; color: #999; text-align: center; border-top: 1px solid #E5E5E5; padding-top: 15px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="title">ACCOUNT STATEMENT</div>
+        </div>
 
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `AccountStatement_${selectedCustomerForStatement.accountNumber}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    message.success('Account statement downloaded');
+        <div class="divider"></div>
+
+        <div>
+          <div class="info-row">
+            <div class="label">Customer Name:</div>
+            <div class="value">${selectedCustomerForStatement.name}</div>
+          </div>
+          <div class="info-row">
+            <div class="label">Account Number:</div>
+            <div class="value">${selectedCustomerForStatement.accountNumber}</div>
+          </div>
+          <div class="info-row">
+            <div class="label">Statement Date:</div>
+            <div class="value">${new Date(accountStatementData.statementDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' })}</div>
+          </div>
+        </div>
+
+        <div class="section-title">ACCOUNT SUMMARY</div>
+
+        <div class="summary-grid">
+          <div class="summary-box">
+            <div class="summary-label">Total Invoices</div>
+            <div class="summary-value">${accountStatementData.invoiceCount}</div>
+            <div class="summary-amount">Amount: ${formatVal('amount', accountStatementData.invoiceTotal)}</div>
+          </div>
+          <div class="summary-box">
+            <div class="summary-label">Total Payments</div>
+            <div class="summary-value" style="color: #1D7B4D;">${accountStatementData.paymentCount}</div>
+            <div class="summary-amount">Amount: ${formatVal('amount', accountStatementData.paymentTotal)}</div>
+          </div>
+          <div class="summary-box">
+            <div class="summary-label">Credit Memos</div>
+            <div class="summary-value">${accountStatementData.creditMemoCount}</div>
+            <div class="summary-amount">Amount: ${formatVal('amount', accountStatementData.creditMemoTotal)}</div>
+          </div>
+          <div class="summary-box">
+            <div class="summary-label">Adjustments</div>
+            <div class="summary-value">${accountStatementData.adjustmentCount}</div>
+            <div class="summary-amount">Amount: ${formatVal('amount', accountStatementData.adjustmentTotal)}</div>
+          </div>
+        </div>
+
+        <div class="balance-section">
+          <div class="balance-row" style="color: ${(accountStatementData.balance as number) > 0 ? '#F54545' : '#1D7B4D'};">
+            <div>Open Receivables:</div>
+            <div>${formatVal('amount', accountStatementData.balance)}</div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <p>This statement reflects all recorded transactions as of the statement date.<br>
+          Generated on ${new Date().toLocaleString()}</p>
+        </div>
+      </body>
+      </html>
+    `;
+
+    // Convert HTML to PDF by opening in new window for printing
+    const printWindow = window.open('', '', 'width=900,height=700');
+    if (printWindow) {
+      printWindow.document.write(htmlContent);
+      printWindow.document.close();
+      printWindow.onload = () => {
+        printWindow.print();
+        printWindow.close();
+      };
+    }
+
+    message.success('Opening print dialog for PDF...');
   }, [accountStatementData, selectedCustomerForStatement]);
 
   // ── Send Account Statement by Email ───────────────────────────────
@@ -1983,14 +2059,15 @@ Balance Due: ${formatVal('amount', accountStatementData.balance)}
                       {formatVal('amount', site['TotalOpenReceivablesForSite'])}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                    <Button type="primary" size="large" onClick={() => { setOverviewCustomerKey(key); setReceivablesOverviewVisible(true); }}
-                      style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary, flex: 1 }}>
-                      📊 RECEIVABLES OVERVIEW
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Button type="link" icon={<EyeOutlined />} onClick={() => { setOverviewCustomerKey(key); setReceivablesOverviewVisible(true); }}
+                      style={{ color: REDWOOD.primary, fontSize: 12, padding: '0 8px' }}>
+                      Receivables Overview
                     </Button>
-                    <Button size="large" icon={<FileTextOutlined />} onClick={() => handleShowAccountStatement(key)}
-                      style={{ color: REDWOOD.primary, borderColor: REDWOOD.primary, borderWidth: 1, flex: 1 }}>
-                      ACCOUNT STATEMENT
+                    <span style={{ fontSize: 12, color: REDWOOD.border }}>•</span>
+                    <Button type="link" icon={<FileTextOutlined />} onClick={() => handleShowAccountStatement(key)}
+                      style={{ color: REDWOOD.primary, fontSize: 12, padding: '0 8px' }}>
+                      Account Statement
                     </Button>
                   </div>
                 </div>
