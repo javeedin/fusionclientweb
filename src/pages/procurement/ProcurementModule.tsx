@@ -93,6 +93,14 @@ const procurementItems: MenuItemType[] = [
     color: '#7245A6',
     path: '/procurement/price-list',
   },
+  {
+    key: 'customer-balances', group: 'Order Management',
+    icon: <DollarOutlined />,
+    label: 'Customer Balances',
+    description: 'View customer receivables overview, aging analysis, and payment behavior',
+    color: REDWOOD.warning,
+    path: '/ar/customer-site-activities',
+  },
   // ── Inventory ───────────────────────────────────────────────────────────
   {
     key: 'item-master', group: 'Inventory',
