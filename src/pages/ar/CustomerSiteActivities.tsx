@@ -6,6 +6,7 @@ import {
 import {
   HomeOutlined, SearchOutlined, DownloadOutlined,
   EyeOutlined, ApiOutlined, CopyOutlined, SyncOutlined, FilterOutlined, ShoppingOutlined,
+  FileTextOutlined, MailOutlined, PrinterOutlined, Divider,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import type { ColumnsType, TableRowSelection, ColumnType } from 'antd/es/table/interface';
@@ -23,6 +24,7 @@ const REDWOOD = {
   primaryDark:  '#A33B2C',
   success:      '#1D7B4D',
   error:        '#F54545',
+  warning:      '#B07700',
   info:         '#0572CE',
   neutral100:   '#F7F7F7',
   neutral200:   '#E5E5E5',
@@ -350,6 +352,11 @@ const CustomerSiteActivities: React.FC = () => {
   const [creditMemosFilters, setCreditMemosFilters] = useState<Record<string, 'Open' | 'Closed' | 'ALL'>>({});
   const [creditMemosLoadingStatus, setCreditMemosLoadingStatus] = useState<Record<string, { loading: boolean; progress: string; shouldCancel: boolean }>>({});
   const creditMemosCancelRef = React.useRef<Record<string, boolean>>({});
+
+  // Account Statement modal state
+  const [accountStatementVisible, setAccountStatementVisible] = useState(false);
+  const [accountStatementData, setAccountStatementData] = useState<any>(null);
+  const [selectedCustomerForStatement, setSelectedCustomerForStatement] = useState<any>(null);
 
   // ── Load page data ──────────────────────────────────────────────
   const loadPage = useCallback(async (pageNum: number, overrideFilters?: Record<string, string>) => {
@@ -899,6 +906,100 @@ const CustomerSiteActivities: React.FC = () => {
       returnsRatio, avgCreditMemo, settledInvoices
     };
   };
+
+  // ── Handle Account Statement ────────────────────────────────────────
+  const handleShowAccountStatement = useCallback((customerKey: string) => {
+    const customerSite = detailsTabs.find(t => t.key === customerKey)?.site;
+    if (!customerSite) return;
+
+    setSelectedCustomerForStatement({
+      name: customerSite['CustomerName'],
+      accountNumber: customerSite['AccountNumber'],
+      billToSiteNumber: customerSite['BillToSiteNumber'],
+    });
+
+    // Get data from childStates for this customer
+    const childData = childStates[customerKey];
+    const arInvoices = childData?.transactionPaymentSchedules?.data || [];
+    const creditMemos = childData?.creditMemos?.data || [];
+    const receipts = childData?.standardReceipts?.data || [];
+    const adjustments = childData?.transactionAdjustments?.data || [];
+
+    // Calculate totals
+    const invoiceTotal = arInvoices.reduce((sum: number, row: any) => sum + (Number(row['TotalBalanceAmount']) || 0), 0);
+    const paymentTotal = receipts.reduce((sum: number, row: any) => sum + (Number(row['ReceiptAmount']) || Number(row['ApplicationAmount']) || 0), 0);
+    const creditMemoTotal = creditMemos.reduce((sum: number, row: any) => sum + Math.abs(Number(row['TotalBalanceAmount']) || 0), 0);
+    const adjustmentTotal = adjustments.reduce((sum: number, row: any) => sum + (Number(row['AdjustmentAmount']) || 0), 0);
+
+    const balance = invoiceTotal - paymentTotal - creditMemoTotal + adjustmentTotal;
+
+    setAccountStatementData({
+      statementDate: new Date().toISOString().split('T')[0],
+      invoiceCount: arInvoices.length,
+      invoiceTotal,
+      paymentCount: receipts.length,
+      paymentTotal,
+      creditMemoCount: creditMemos.length,
+      creditMemoTotal,
+      adjustmentCount: adjustments.length,
+      adjustmentTotal,
+      balance,
+    });
+
+    setAccountStatementVisible(true);
+  }, [detailsTabs, childStates]);
+
+  // ── Generate PDF for Account Statement ──────────────────────────────
+  const generateAccountStatementPDF = useCallback(() => {
+    if (!accountStatementData || !selectedCustomerForStatement) return;
+
+    let content = `ACCOUNT STATEMENT\n`;
+    content += `=====================================\n\n`;
+    content += `Customer: ${selectedCustomerForStatement.name}\n`;
+    content += `Account Number: ${selectedCustomerForStatement.accountNumber}\n`;
+    content += `Statement Date: ${new Date(accountStatementData.statementDate).toLocaleDateString()}\n\n`;
+    content += `SUMMARY\n`;
+    content += `-------------------------------------\n`;
+    content += `Invoices (${accountStatementData.invoiceCount}):        ${formatVal('amount', accountStatementData.invoiceTotal)}\n`;
+    content += `Payments (${accountStatementData.paymentCount}):        -${formatVal('amount', accountStatementData.paymentTotal)}\n`;
+    content += `Credit Memos (${accountStatementData.creditMemoCount}):    -${formatVal('amount', accountStatementData.creditMemoTotal)}\n`;
+    content += `Adjustments (${accountStatementData.adjustmentCount}):     ${formatVal('amount', accountStatementData.adjustmentTotal)}\n`;
+    content += `-------------------------------------\n`;
+    content += `Balance Due:     ${formatVal('amount', accountStatementData.balance)}\n`;
+
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `AccountStatement_${selectedCustomerForStatement.accountNumber}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    message.success('Account statement downloaded');
+  }, [accountStatementData, selectedCustomerForStatement]);
+
+  // ── Send Account Statement by Email ───────────────────────────────
+  const sendAccountStatementByEmail = useCallback(() => {
+    if (!selectedCustomerForStatement || !accountStatementData) return;
+
+    const emailSubject = `Account Statement - ${selectedCustomerForStatement.accountNumber}`;
+    const emailBody = `
+Customer: ${selectedCustomerForStatement.name}
+Account Number: ${selectedCustomerForStatement.accountNumber}
+Statement Date: ${new Date(accountStatementData.statementDate).toLocaleDateString()}
+
+SUMMARY:
+Invoices: ${formatVal('amount', accountStatementData.invoiceTotal)}
+Payments: -${formatVal('amount', accountStatementData.paymentTotal)}
+Credit Memos: -${formatVal('amount', accountStatementData.creditMemoTotal)}
+Adjustments: ${formatVal('amount', accountStatementData.adjustmentTotal)}
+
+Balance Due: ${formatVal('amount', accountStatementData.balance)}
+    `;
+
+    const mailtoLink = `mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+    window.location.href = mailtoLink;
+    message.info('Opening default email client...');
+  }, [selectedCustomerForStatement, accountStatementData]);
 
   const exportOverviewToExcel = async () => {
     if (!overviewData || !overviewCustomerKey) return;
@@ -1870,10 +1971,14 @@ const CustomerSiteActivities: React.FC = () => {
                       {formatVal('amount', site['TotalOpenReceivablesForSite'])}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                     <Button type="primary" size="large" onClick={() => { setOverviewCustomerKey(key); setReceivablesOverviewVisible(true); }}
-                      style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary, width: '100%' }}>
+                      style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary, flex: 1 }}>
                       📊 RECEIVABLES OVERVIEW
+                    </Button>
+                    <Button size="large" icon={<FileTextOutlined />} onClick={() => handleShowAccountStatement(key)}
+                      style={{ color: REDWOOD.primary, borderColor: REDWOOD.primary, borderWidth: 1, flex: 1 }}>
+                      ACCOUNT STATEMENT
                     </Button>
                   </div>
                 </div>
@@ -2532,6 +2637,120 @@ const CustomerSiteActivities: React.FC = () => {
 
           return <Tabs items={overviewTabs} style={{ background: REDWOOD.surface }} />;
         })())}
+      </Modal>
+
+      <Modal
+        open={accountStatementVisible}
+        onCancel={() => setAccountStatementVisible(false)}
+        width={700}
+        title={<Space><FileTextOutlined style={{ color: REDWOOD.primary }} /> Account Statement</Space>}
+        footer={[
+          <Button key="close" onClick={() => setAccountStatementVisible(false)}>Close</Button>,
+          <Button key="print" icon={<PrinterOutlined />} onClick={() => window.print()}>Print</Button>,
+          <Button key="email" icon={<MailOutlined />} onClick={sendAccountStatementByEmail}>Email</Button>,
+          <Button key="download" type="primary" icon={<DownloadOutlined />} onClick={generateAccountStatementPDF}
+            style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}>
+            Download
+          </Button>,
+        ]}
+      >
+        {accountStatementData && selectedCustomerForStatement && (
+          <div style={{ fontFamily: 'sans-serif' }}>
+            <div style={{ textAlign: 'center', marginBottom: 24 }}>
+              <Title level={3} style={{ margin: '0 0 12px 0' }}>ACCOUNT STATEMENT</Title>
+              <Divider style={{ margin: 0 }} />
+            </div>
+
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+              <Col span={12}>
+                <div>
+                  <Text strong>Customer:</Text>
+                  <div style={{ color: '#666' }}>{selectedCustomerForStatement.name}</div>
+                </div>
+              </Col>
+              <Col span={12}>
+                <div>
+                  <Text strong>Account Number:</Text>
+                  <div style={{ color: '#666' }}>{selectedCustomerForStatement.accountNumber}</div>
+                </div>
+              </Col>
+            </Row>
+
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+              <Col span={12}>
+                <div>
+                  <Text strong>Statement Date:</Text>
+                  <div style={{ color: '#666' }}>
+                    {new Date(accountStatementData.statementDate).toLocaleDateString('en-US', {
+                      year: 'numeric', month: 'long', day: '2-digit'
+                    })}
+                  </div>
+                </div>
+              </Col>
+              <Col span={12}>
+                <div>
+                  <Text strong>Due Amount:</Text>
+                  <div style={{
+                    color: (accountStatementData.balance as number) > 0 ? REDWOOD.error : REDWOOD.success,
+                    fontSize: 16,
+                    fontWeight: 600
+                  }}>
+                    {formatVal('amount', accountStatementData.balance)}
+                  </div>
+                </div>
+              </Col>
+            </Row>
+
+            <Card style={{ borderColor: REDWOOD.border, marginBottom: 16 }}>
+              <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 12 }}>ACCOUNT SUMMARY</Text>
+              <Row gutter={[16, 16]} style={{ marginBottom: 12 }}>
+                <Col xs={12}>
+                  <div style={{ padding: 8, background: '#fafafa', borderRadius: 4, borderLeft: `3px solid ${REDWOOD.primary}` }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Total Invoices</Text>
+                    <div><Text strong style={{ fontSize: 14 }}>{accountStatementData.invoiceCount}</Text></div>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Amount: {formatVal('amount', accountStatementData.invoiceTotal)}</Text>
+                  </div>
+                </Col>
+                <Col xs={12}>
+                  <div style={{ padding: 8, background: '#fafafa', borderRadius: 4, borderLeft: `3px solid ${REDWOOD.success}` }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Total Payments</Text>
+                    <div><Text strong style={{ fontSize: 14, color: REDWOOD.success }}>{accountStatementData.paymentCount}</Text></div>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Amount: {formatVal('amount', accountStatementData.paymentTotal)}</Text>
+                  </div>
+                </Col>
+              </Row>
+              <Row gutter={[16, 16]} style={{ marginBottom: 12 }}>
+                <Col xs={12}>
+                  <div style={{ padding: 8, background: '#fafafa', borderRadius: 4, borderLeft: `3px solid ${REDWOOD.info}` }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Credit Memos</Text>
+                    <div><Text strong style={{ fontSize: 14 }}>{accountStatementData.creditMemoCount}</Text></div>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Amount: {formatVal('amount', accountStatementData.creditMemoTotal)}</Text>
+                  </div>
+                </Col>
+                <Col xs={12}>
+                  <div style={{ padding: 8, background: '#fafafa', borderRadius: 4, borderLeft: `3px solid ${REDWOOD.warning}` }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>Adjustments</Text>
+                    <div><Text strong style={{ fontSize: 14 }}>{accountStatementData.adjustmentCount}</Text></div>
+                    <Text type="secondary" style={{ fontSize: 10 }}>Amount: {formatVal('amount', accountStatementData.adjustmentTotal)}</Text>
+                  </div>
+                </Col>
+              </Row>
+              <Divider style={{ margin: '12px 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 12, fontSize: 16, fontWeight: 600 }}>
+                <Text strong>Open Receivables:</Text>
+                <Text strong style={{ color: (accountStatementData.balance as number) > 0 ? REDWOOD.error : REDWOOD.success }}>
+                  {formatVal('amount', accountStatementData.balance)}
+                </Text>
+              </div>
+            </Card>
+
+            <div style={{ fontSize: 12, color: '#666', textAlign: 'center', borderTop: `1px solid ${REDWOOD.border}`, paddingTop: 12 }}>
+              <Text type="secondary">
+                This statement reflects all recorded transactions as of the statement date.
+              </Text>
+            </div>
+          </div>
+        )}
       </Modal>
     </Layout>
   );
