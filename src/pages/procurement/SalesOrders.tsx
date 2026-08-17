@@ -13,7 +13,7 @@ import {
   UnorderedListOutlined, ShoppingOutlined, DollarOutlined, PrinterOutlined, DownloadOutlined,
   ReconciliationOutlined, PlusOutlined, SaveOutlined, DeleteOutlined, CloudUploadOutlined,
   DatabaseOutlined, CheckCircleTwoTone, CloseCircleTwoTone, RiseOutlined, TagsOutlined,
-  CheckCircleOutlined, EyeOutlined, EditOutlined,
+  CheckCircleOutlined, EyeOutlined, EditOutlined, CheckOutlined,
   SafetyCertificateOutlined, StopOutlined, SendOutlined, RollbackOutlined,
   FilePdfOutlined, FileExcelOutlined, SnippetsOutlined, ImportOutlined, TableOutlined, DownOutlined,
   ThunderboltOutlined, CarOutlined, InboxOutlined, WarningFilled, AppstoreOutlined,
@@ -5589,16 +5589,12 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
   const [apiDrawerOpen, setApiDrawerOpen] = React.useState(false);
   const [showOpenInvoices, setShowOpenInvoices] = React.useState(false);
 
-  // Get currency symbol from header
+  // Get currency display name from header (use English currency codes)
   const currencyCode = hdr.txnCurrency || 'USD';
-  const getCurrencySymbol = (code: string): string => {
-    const symbols: { [key: string]: string } = {
-      'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥', 'AED': 'د.إ', 'SAR': '﷼', 'INR': '₹',
-      'CAD': 'C$', 'AUD': 'A$', 'CHF': 'CHF', 'CNY': '¥', 'MXN': '$'
-    };
-    return symbols[code] || code + ' ';
+  const getCurrencyDisplay = (code: string): string => {
+    return code || 'USD';
   };
-  const currencySymbol = getCurrencySymbol(currencyCode);
+  const currencyDisplay = getCurrencyDisplay(currencyCode);
 
   const computeAging = (schedules: any[]): { current: number; over30: number; over60: number; over90: number } => {
     const today = dayjs();
@@ -5751,7 +5747,7 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
                 return (
                   <tr key={idx} style={{ borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
                     <td style={{ textAlign: 'left', padding: '12px', color: REDWOOD.primary, fontWeight: 600 }}>
-                      {currencySymbol}{amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {currencyDisplay} {amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td style={{ textAlign: 'left', padding: '12px', color: REDWOOD.neutral800 }}>
                       {dueDate && dueDate.isValid() ? dueDate.format('YYYY-MM-DD') : 'N/A'}
@@ -5789,7 +5785,7 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
                       <div style={{ padding: '8px 12px', background: REDWOOD.neutral100, borderRadius: 4 }}>
                         <div style={{ fontSize: 11, color: REDWOOD.neutral600, marginBottom: 2 }}>Open Balance</div>
                         <div style={{ fontSize: 14, fontWeight: 700, color: REDWOOD.primary }}>
-                          {currencySymbol}{balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {currencyDisplay} {balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </div>
                     </Col>
@@ -5797,7 +5793,7 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
                       <div style={{ padding: '8px 12px', background: '#E6F7FF', borderRadius: 4 }}>
                         <div style={{ fontSize: 11, color: '#1890ff', marginBottom: 2 }}>Credit Limit</div>
                         <div style={{ fontSize: 14, fontWeight: 700, color: '#1890ff' }}>
-                          {currencySymbol}{creditLimit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {currencyDisplay} {creditLimit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </div>
                     </Col>
@@ -5805,7 +5801,7 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
                       <div style={{ padding: '8px 12px', background: '#FFF7E6', borderRadius: 4 }}>
                         <div style={{ fontSize: 11, color: '#FAAD14', marginBottom: 2 }}>Order Total</div>
                         <div style={{ fontSize: 14, fontWeight: 700, color: '#FAAD14' }}>
-                          {currencySymbol}{orderTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {currencyDisplay} {orderTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </div>
                     </Col>
@@ -5815,7 +5811,7 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
                           {creditPassed ? '✓ PASS' : '✗ FAIL'}
                         </div>
                         <div style={{ fontSize: 13, fontWeight: 700, color: creditPassed ? '#52c41a' : REDWOOD.error }}>
-                          {currencySymbol}{availableCredit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {currencyDisplay} {availableCredit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div style={{ fontSize: 10, color: REDWOOD.neutral600 }}>Available</div>
                       </div>
@@ -5829,25 +5825,25 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
                     <Col xs={12} sm={6}>
                       <div style={{ fontSize: 10, color: '#1890ff', marginBottom: 2 }}>Current (≤30d)</div>
                       <div style={{ fontSize: 12, fontWeight: 700, color: '#1890ff' }}>
-                        {currencySymbol}{aging.current.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {currencyDisplay} {aging.current.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </Col>
                     <Col xs={12} sm={6}>
                       <div style={{ fontSize: 10, color: '#FAAD14', marginBottom: 2 }}>Over 30 Days</div>
                       <div style={{ fontSize: 12, fontWeight: 700, color: '#FAAD14' }}>
-                        {currencySymbol}{aging.over30.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {currencyDisplay} {aging.over30.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </Col>
                     <Col xs={12} sm={6}>
                       <div style={{ fontSize: 10, color: '#FF4D4F', marginBottom: 2 }}>Over 60 Days</div>
                       <div style={{ fontSize: 12, fontWeight: 700, color: '#FF4D4F' }}>
-                        {currencySymbol}{aging.over60.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {currencyDisplay} {aging.over60.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </Col>
                     <Col xs={12} sm={6}>
                       <div style={{ fontSize: 10, color: '#FF7875', marginBottom: 2 }}>Over 90 Days</div>
                       <div style={{ fontSize: 12, fontWeight: 700, color: '#FF7875' }}>
-                        {currencySymbol}{aging.over90.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {currencyDisplay} {aging.over90.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </Col>
                   </Row>
@@ -6035,6 +6031,14 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
   const [creditCheckError, setCreditCheckError] = useState<string | null>(null);
   const [creditCheckApiUrl, setCreditCheckApiUrl] = useState('');
   const [creditCheckApiResponse, setCreditCheckApiResponse] = useState('');
+  // Order validations
+  const [validationResults, setValidationResults] = useState<{
+    creditCheck: { passed: boolean; message: string };
+    marginCheck: { passed: boolean; message: string };
+    overdueCheck: { passed: boolean; message: string };
+    returnChequesCheck: { passed: boolean; message: string };
+  } | null>(null);
+  const [validationLoading, setValidationLoading] = useState(false);
   const [resvReloadKey, setResvReloadKey] = useState(0);
   const [autoShipOpen, setAutoShipOpen] = useState(false);
   const [autoInvoiceOpen, setAutoInvoiceOpen] = useState(false);
@@ -6941,6 +6945,126 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
       setCreditCheckLoading(false);
     }
   }, [hdr.accountNumber]);
+
+  const validateOrder = useCallback(async () => {
+    if (!hdr.accountNumber) {
+      message.error('Please select a customer first');
+      return;
+    }
+
+    setValidationLoading(true);
+    const results: any = {};
+
+    try {
+      // Step 1: Fetch customer balance (credit check)
+      const balanceUrl = `${FUSION_BASE}/receivablesCustomerAccountSiteActivities?limit=50&q=AccountNumber=${encodeURIComponent(hdr.accountNumber)}`;
+      const balanceResp = await fetch(balanceUrl, { headers: getHeaders() });
+      let creditCheckPassed = false;
+      let overdueCheckPassed = true;
+      let overdueCount = 0;
+
+      if (balanceResp.ok) {
+        const balanceData = await balanceResp.json();
+
+        if (balanceData.items && balanceData.items.length > 0) {
+          const billToSiteUseId = balanceData.items[0].BillToSiteUseId;
+          const balance = num(balanceData.items[0].TotalOpenReceivablesForSite ?? 0);
+          const creditLimit = num(hdr.creditLimit ?? 0);
+          const orderTotal = lines.reduce((sum: number, line: any) => sum + num(line.lineTotal ?? 0), 0);
+          const availableCredit = creditLimit - balance;
+
+          // Credit Check
+          creditCheckPassed = orderTotal <= availableCredit;
+          results.creditCheck = {
+            passed: creditCheckPassed,
+            message: creditCheckPassed
+              ? `✓ PASS: Available credit ${currencyDisplay} ${availableCredit.toLocaleString('en-US', { maximumFractionDigits: 2 })} >= Order Total ${currencyDisplay} ${orderTotal.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+              : `✗ FAIL: Insufficient credit. Available ${currencyDisplay} ${availableCredit.toLocaleString('en-US', { maximumFractionDigits: 2 })} < Order Total ${currencyDisplay} ${orderTotal.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+          };
+
+          // Check for overdue invoices
+          if (billToSiteUseId) {
+            try {
+              const txnUrl = `${FUSION_BASE}/receivablesCustomerAccountSiteActivities/${billToSiteUseId}/child/transactionPaymentSchedules?limit=500&offset=0&q=InstallmentStatus='Open'`;
+              const txnResp = await fetch(txnUrl, { headers: getHeaders() });
+              if (txnResp.ok) {
+                const txnData = await txnResp.json();
+                const overdueInvoices = (txnData.items ?? []).filter((item: any) => {
+                  const daysLate = num(item.PaymentDaysLate ?? 0);
+                  return daysLate > 0;
+                });
+                overdueCount = overdueInvoices.length;
+                overdueCheckPassed = overdueCount === 0;
+              }
+            } catch (e) {
+              console.warn('Error checking overdue invoices:', e);
+            }
+          }
+
+          results.overdueCheck = {
+            passed: overdueCheckPassed,
+            message: overdueCheckPassed
+              ? '✓ PASS: No overdue invoices'
+              : `✗ FAIL: ${overdueCount} overdue invoice(s) found`
+          };
+        }
+      }
+
+      // Step 2: Margin Check (from lines)
+      let marginCheckPassed = true;
+      let totalMargin = 0;
+      const lineMargins = lines.map(line => {
+        const lineTotal = num(line.lineTotal ?? 0);
+        const costTotal = num(line.qty ?? 0) * num(line.costUnit ?? 0);
+        const margin = lineTotal - costTotal;
+        totalMargin += margin;
+        return { itemNumber: line.itemNumber, margin, marginPct: lineTotal > 0 ? (margin / lineTotal) * 100 : 0 };
+      });
+
+      marginCheckPassed = totalMargin >= 0;
+      results.marginCheck = {
+        passed: marginCheckPassed,
+        message: marginCheckPassed
+          ? `✓ PASS: Total margin ${currencyDisplay} ${totalMargin.toLocaleString('en-US', { maximumFractionDigits: 2 })} is positive`
+          : `✗ FAIL: Negative margin ${currencyDisplay} ${totalMargin.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+      };
+
+      // Step 3: Return Cheques Check
+      let returnChequesCheckPassed = true;
+      let returnChequesCount = 0;
+      try {
+        if (hdr.billToCustomerId) {
+          const chequeUrl = `${FUSION_BASE}/receivablesCustomerAccountSiteActivities/${hdr.billToCustomerId}/child/standardReceiptApplications?limit=500&offset=0`;
+          const chequeResp = await fetch(chequeUrl, { headers: getHeaders() });
+          if (chequeResp.ok) {
+            const chequeData = await chequeResp.json();
+            const returnCheques = (chequeData.items ?? []).filter((item: any) =>
+              item.ReceiptMethod === 'Check' && (item.Status === 'Returned' || item.Status === 'Dishonored')
+            );
+            returnChequesCount = returnCheques.length;
+            returnChequesCheckPassed = returnChequesCount === 0;
+          }
+        }
+      } catch (e) {
+        console.warn('Error checking return cheques:', e);
+      }
+
+      results.returnChequesCheck = {
+        passed: returnChequesCheckPassed,
+        message: returnChequesCheckPassed
+          ? '✓ PASS: No returned or dishonored cheques'
+          : `✗ FAIL: ${returnChequesCount} returned/dishonored cheque(s) found`
+      };
+
+      setValidationResults(results);
+      message.success('Order validation completed');
+    } catch (e: any) {
+      console.error('Validation error:', e);
+      message.error('Error validating order');
+    } finally {
+      setValidationLoading(false);
+    }
+  }, [hdr.accountNumber, hdr.creditLimit, hdr.billToCustomerId, lines, currencyDisplay]);
 
   const fetchBranchSuppliers = useCallback(async (term: string) => {
     if (!term || term.length < 2) {
@@ -8546,6 +8670,10 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
           </Dropdown>
           <input ref={jsonInputRef} type="file" accept=".json,application/json" style={{ display: 'none' }}
             onChange={e => { const f = e.target.files?.[0]; if (f) loadDraftJson(f); e.target.value = ''; }} />
+          <Button icon={<CheckOutlined />} loading={validationLoading} onClick={validateOrder}
+            style={{ borderColor: '#FAAD14', color: '#FAAD14' }}>
+            Validate Order
+          </Button>
           <Button type="primary" icon={<SaveOutlined />} loading={posting} onClick={editMode ? updateOrder : save}
             style={{ background: editMode ? '#B07700' : REDWOOD.success, borderColor: editMode ? '#B07700' : REDWOOD.success }}>
             {editMode ? `Update Order${editOps.length ? ` (${editOps.length})` : ''}` : returnMode ? 'Save Return (Draft)' : 'Save (Draft)'}
@@ -8813,7 +8941,59 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
             { key: 'credit', label: <span><ReconciliationOutlined style={{ marginRight: 5 }} />Customer Credit Check</span>,
               children: <CreditCheckPanel hdr={hdr} loading={creditCheckLoading} error={creditCheckError} data={creditCheckData} onFetch={fetchCustomerBalance} apiUrl={creditCheckApiUrl} apiResponse={creditCheckApiResponse} lines={lines} /> },
             { key: 'validations', label: <span><InfoCircleOutlined style={{ marginRight: 5 }} />Order Validations</span>,
-              children: <div style={{ padding: 8 }}><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Order validations — item, warehouse and customer checks will appear here before submission." style={{ padding: 24 }} /></div> },
+              children: validationResults ? (
+                <div style={{ padding: 24 }}>
+                  <Card style={{ marginBottom: 16, borderTop: `4px solid ${validationResults.creditCheck.passed && validationResults.marginCheck.passed && validationResults.overdueCheck.passed && validationResults.returnChequesCheck.passed ? '#52c41a' : '#ff4d4f'}` }}>
+                    <Row gutter={24} style={{ marginBottom: 16 }}>
+                      <Col xs={24} sm={12}>
+                        <div style={{ padding: 12, background: validationResults.creditCheck.passed ? '#F6FFED' : '#FFF1F0', borderRadius: 4, border: `1px solid ${validationResults.creditCheck.passed ? '#B7EB8F' : '#FFCCC7'}` }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: validationResults.creditCheck.passed ? '#52c41a' : '#ff4d4f' }}>
+                            1. Credit Check
+                          </div>
+                          <div style={{ fontSize: 11, color: REDWOOD.neutral800 }}>
+                            {validationResults.creditCheck.message}
+                          </div>
+                        </div>
+                      </Col>
+                      <Col xs={24} sm={12}>
+                        <div style={{ padding: 12, background: validationResults.marginCheck.passed ? '#F6FFED' : '#FFF1F0', borderRadius: 4, border: `1px solid ${validationResults.marginCheck.passed ? '#B7EB8F' : '#FFCCC7'}` }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: validationResults.marginCheck.passed ? '#52c41a' : '#ff4d4f' }}>
+                            2. Margin Check
+                          </div>
+                          <div style={{ fontSize: 11, color: REDWOOD.neutral800 }}>
+                            {validationResults.marginCheck.message}
+                          </div>
+                        </div>
+                      </Col>
+                    </Row>
+                    <Row gutter={24}>
+                      <Col xs={24} sm={12}>
+                        <div style={{ padding: 12, background: validationResults.overdueCheck.passed ? '#F6FFED' : '#FFF1F0', borderRadius: 4, border: `1px solid ${validationResults.overdueCheck.passed ? '#B7EB8F' : '#FFCCC7'}` }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: validationResults.overdueCheck.passed ? '#52c41a' : '#ff4d4f' }}>
+                            3. Overdue Invoices Check
+                          </div>
+                          <div style={{ fontSize: 11, color: REDWOOD.neutral800 }}>
+                            {validationResults.overdueCheck.message}
+                          </div>
+                        </div>
+                      </Col>
+                      <Col xs={24} sm={12}>
+                        <div style={{ padding: 12, background: validationResults.returnChequesCheck.passed ? '#F6FFED' : '#FFF1F0', borderRadius: 4, border: `1px solid ${validationResults.returnChequesCheck.passed ? '#B7EB8F' : '#FFCCC7'}` }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: validationResults.returnChequesCheck.passed ? '#52c41a' : '#ff4d4f' }}>
+                            4. Return Cheques Check
+                          </div>
+                          <div style={{ fontSize: 11, color: REDWOOD.neutral800 }}>
+                            {validationResults.returnChequesCheck.message}
+                          </div>
+                        </div>
+                      </Col>
+                    </Row>
+                  </Card>
+                </div>
+              ) : (
+                <div style={{ padding: 8 }}><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Click 'Validate Order' button to run order validations." style={{ padding: 24 }} /></div>
+              )
+            },
           ]} />
         </Form>
       </Card>
