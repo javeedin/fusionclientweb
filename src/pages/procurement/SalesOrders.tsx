@@ -5607,6 +5607,7 @@ const ChargesModal: React.FC<{ open: boolean; onClose: () => void; orderKey: str
 // Credit Check Panel — displays customer balance with aging
 const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: string | null; data: any; onFetch: () => void; apiUrl?: string; apiResponse?: string; lines?: any[] }> = ({ hdr, loading, error, data, onFetch, apiUrl = '', apiResponse = '', lines = [] }) => {
   const [apiDrawerOpen, setApiDrawerOpen] = React.useState(false);
+  const [showOpenInvoices, setShowOpenInvoices] = React.useState(false);
 
   // Get currency symbol from header
   const currencyCode = hdr.txnCurrency || 'USD';
@@ -5687,6 +5688,16 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
           Get Customer Balance
         </Button>
         {hdr.accountNumber && <Text type="secondary" style={{ fontSize: 12 }}>Account: <strong>{hdr.accountNumber}</strong></Text>}
+        {data?.transactionSchedules && data.transactionSchedules.length > 0 && (
+          <Button
+            type="default"
+            size="small"
+            onClick={() => setShowOpenInvoices(!showOpenInvoices)}
+            style={{ fontSize: 12 }}
+          >
+            {showOpenInvoices ? 'Hide' : 'Show'} Open Invoices ({data.transactionSchedules.length})
+          </Button>
+        )}
         {apiUrl && (
           <Button
             type="text"
@@ -5704,6 +5715,73 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
           <Text strong>Error:</Text> {error}
         </div>
       )}
+
+      <Modal
+        title={`Open Invoices for Aging Calculation (${data?.transactionSchedules?.length ?? 0})`}
+        open={showOpenInvoices}
+        onCancel={() => setShowOpenInvoices(false)}
+        width={900}
+        footer={null}
+        bodyStyle={{ padding: '24px' }}
+      >
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${REDWOOD.neutral300}` }}>
+                <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, background: REDWOOD.neutral100 }}>Amount</th>
+                <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, background: REDWOOD.neutral100 }}>Due Date</th>
+                <th style={{ textAlign: 'center', padding: '12px', fontWeight: 600, background: REDWOOD.neutral100 }}>Days Overdue</th>
+                <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, background: REDWOOD.neutral100 }}>Aging Bucket</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data?.transactionSchedules?.map((schedule: any, idx: number) => {
+                const amount = num(
+                  schedule.ScheduleAmount ??
+                  schedule.Amount ??
+                  schedule.InstallmentAmount ??
+                  schedule.RemainingAmount ??
+                  0
+                );
+                const dateStr =
+                  schedule.ScheduledPaymentDate ??
+                  schedule.DueDate ??
+                  schedule.ScheduleDate ??
+                  schedule.PaymentDate;
+                const dueDate = dateStr ? dayjs(dateStr) : null;
+                const days = dueDate && dueDate.isValid() ? dayjs().diff(dueDate, 'day') : null;
+
+                let agingBucket = 'N/A';
+                let bucketColor = REDWOOD.neutral600;
+                if (days !== null) {
+                  if (days <= 0) { agingBucket = 'Current'; bucketColor = '#1890ff'; }
+                  else if (days <= 30) { agingBucket = 'Current'; bucketColor = '#1890ff'; }
+                  else if (days <= 60) { agingBucket = 'Over 30'; bucketColor = '#FAAD14'; }
+                  else if (days <= 90) { agingBucket = 'Over 60'; bucketColor = '#FF4D4F'; }
+                  else { agingBucket = 'Over 90'; bucketColor = '#FF7875'; }
+                }
+
+                return (
+                  <tr key={idx} style={{ borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
+                    <td style={{ textAlign: 'left', padding: '12px', color: REDWOOD.primary, fontWeight: 600 }}>
+                      {currencySymbol}{amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ textAlign: 'left', padding: '12px', color: REDWOOD.neutral800 }}>
+                      {dueDate && dueDate.isValid() ? dueDate.format('YYYY-MM-DD') : 'N/A'}
+                    </td>
+                    <td style={{ textAlign: 'center', padding: '12px', color: REDWOOD.neutral800 }}>
+                      {days !== null ? days : 'N/A'}
+                    </td>
+                    <td style={{ textAlign: 'left', padding: '12px', color: bucketColor, fontWeight: 600 }}>
+                      {agingBucket}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Modal>
 
       {data && (
         <>
@@ -5807,11 +5885,11 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
         bodyStyle={{ padding: '24px', overflowY: 'auto', maxHeight: 'calc(100vh - 100px)' }}
       >
         <Space direction="vertical" style={{ width: '100%' }} size="large">
-          {/* API URL */}
+          {/* Customer Account API URL */}
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
               <ApiOutlined />
-              GET Endpoint
+              GET Endpoint #1: Customer Account Balance
             </div>
             <div style={{
               backgroundColor: '#f5f5f5',
@@ -5825,6 +5903,35 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
               overflow: 'auto'
             }}>
               {apiUrl || 'N/A'}
+            </div>
+          </div>
+
+          <Divider />
+
+          {/* Open Invoices API URL */}
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ApiOutlined style={{ color: '#FAAD14' }} />
+              GET Endpoint #2: Open Invoices (for Aging)
+            </div>
+            <div style={{
+              backgroundColor: '#FFFBE6',
+              padding: '12px',
+              borderRadius: '6px',
+              fontFamily: 'monospace',
+              fontSize: '12px',
+              wordBreak: 'break-all',
+              border: `2px solid #FAAD14`,
+              maxHeight: 200,
+              overflow: 'auto',
+              color: '#8B6914'
+            }}>
+              {data?.items?.[0]?.BillToSiteUseId
+                ? `${FUSION_BASE}/receivablesCustomerAccountSiteActivities/${data.items[0].BillToSiteUseId}/child/transactionPaymentSchedules?limit=500&offset=0&q=InstallmentStatus='Open'`
+                : 'N/A (fetch customer balance first)'}
+            </div>
+            <div style={{ fontSize: 11, color: REDWOOD.neutral600, marginTop: 6 }}>
+              ✓ Filters for <Text strong>InstallmentStatus='Open'</Text> to get only unpaid invoices for aging calculation
             </div>
           </div>
 
