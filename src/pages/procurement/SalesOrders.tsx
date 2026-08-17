@@ -5630,8 +5630,9 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
     }
 
     schedules.forEach((schedule: any, idx: number) => {
-      // Try multiple field name combinations
+      // Try multiple field name combinations (TotalBalanceAmount from actual API is first)
       const amount = num(
+        schedule.TotalBalanceAmount ??
         schedule.ScheduleAmount ??
         schedule.Amount ??
         schedule.InstallmentAmount ??
@@ -5644,8 +5645,9 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
         return;
       }
 
-      // Try multiple date field names
+      // Try multiple date field names (PaymentScheduleDueDate from actual API is first)
       const dateStr =
+        schedule.PaymentScheduleDueDate ??
         schedule.ScheduledPaymentDate ??
         schedule.DueDate ??
         schedule.ScheduleDate ??
@@ -5662,7 +5664,8 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
         return;
       }
 
-      const days = today.diff(dueDate, 'day');
+      // Use PaymentDaysLate if available, otherwise calculate
+      const days = num(schedule.PaymentDaysLate ?? today.diff(dueDate, 'day'));
       console.debug(`Schedule ${idx}: amount=${amount}, daysOverdue=${days}`);
 
       if (days <= 0) aging.current += amount;
@@ -5737,6 +5740,7 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
             <tbody>
               {data?.transactionSchedules?.map((schedule: any, idx: number) => {
                 const amount = num(
+                  schedule.TotalBalanceAmount ??
                   schedule.ScheduleAmount ??
                   schedule.Amount ??
                   schedule.InstallmentAmount ??
@@ -5744,12 +5748,15 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
                   0
                 );
                 const dateStr =
+                  schedule.PaymentScheduleDueDate ??
                   schedule.ScheduledPaymentDate ??
                   schedule.DueDate ??
                   schedule.ScheduleDate ??
                   schedule.PaymentDate;
                 const dueDate = dateStr ? dayjs(dateStr) : null;
-                const days = dueDate && dueDate.isValid() ? dayjs().diff(dueDate, 'day') : null;
+                const days = dueDate && dueDate.isValid()
+                  ? dayjs().diff(dueDate, 'day')
+                  : num(schedule.PaymentDaysLate ?? null);
 
                 let agingBucket = 'N/A';
                 let bucketColor = REDWOOD.neutral600;
