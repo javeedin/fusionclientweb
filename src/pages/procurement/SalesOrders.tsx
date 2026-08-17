@@ -5589,6 +5589,9 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
   const [apiDrawerOpen, setApiDrawerOpen] = React.useState(false);
   const [showOpenInvoices, setShowOpenInvoices] = React.useState(false);
 
+  // Get currency display name from header (use English currency codes)
+  const currencyCode = hdr.txnCurrency || 'USD';
+  const currencyDisplay = currencyCode;
 
   const computeAging = (schedules: any[]): { current: number; over30: number; over60: number; over90: number } => {
     const today = dayjs();
