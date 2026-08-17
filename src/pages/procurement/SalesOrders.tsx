@@ -5605,7 +5605,7 @@ const ChargesModal: React.FC<{ open: boolean; onClose: () => void; orderKey: str
 };
 
 // Credit Check Panel — displays customer balance with aging
-const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: string | null; data: any; onFetch: () => void; apiUrl?: string; apiResponse?: string }> = ({ hdr, loading, error, data, onFetch, apiUrl = '', apiResponse = '' }) => {
+const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: string | null; data: any; onFetch: () => void; apiUrl?: string; apiResponse?: string; lines?: any[] }> = ({ hdr, loading, error, data, onFetch, apiUrl = '', apiResponse = '', lines = [] }) => {
   const [apiDrawerOpen, setApiDrawerOpen] = React.useState(false);
 
   // Get currency symbol from header
@@ -5707,53 +5707,89 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
 
       {data && (
         <>
-          {/* Summary Report */}
-          <Card style={{ marginBottom: 24, border: `2px solid ${REDWOOD.primary}` }}>
-            <div style={{ padding: '12px 0' }}>
-              <Row gutter={40} align="middle">
-                <Col xs={24} sm={12}>
-                  <div style={{ borderRight: `1px solid ${REDWOOD.neutral300}`, paddingRight: 24, paddingBottom: 16 }}>
-                    <div style={{ fontSize: 12, color: REDWOOD.neutral600, marginBottom: 4 }}>TOTAL OPEN BALANCE</div>
-                    <div style={{ fontSize: 32, fontWeight: 700, color: REDWOOD.primary }}>
-                      {currencySymbol}{(data.items?.[0]?.TotalOpenReceivablesForSite ?? totalBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ fontSize: 11, color: REDWOOD.neutral600, marginTop: 8 }}>{currencyCode}</div>
-                  </div>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: REDWOOD.neutral800, marginBottom: 12 }}>AGING BREAKDOWN</div>
-                    <Row gutter={16}>
-                      <Col xs={12} sm={12}>
-                        <div style={{ fontSize: 11, color: '#1890ff', marginBottom: 2 }}>Current (≤30d)</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: '#1890ff' }}>
-                          {currencySymbol}{aging.current.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {/* Calculate order total and credit metrics */}
+          {(() => {
+            const orderTotal = lines.reduce((sum: number, line: any) => sum + num(line.lineTotal ?? 0), 0);
+            const creditLimit = num(hdr.creditLimit ?? 0);
+            const balance = num(data.items?.[0]?.TotalOpenReceivablesForSite ?? 0);
+            const availableCredit = creditLimit - balance;
+            const creditPassed = orderTotal <= availableCredit;
+
+            return (
+              <Card style={{ marginBottom: 24, border: `2px solid ${creditPassed ? '#52c41a' : REDWOOD.error}` }}>
+                <div style={{ padding: '8px 0' }}>
+                  {/* Top Row: Balance, Credit Limit, Order Total */}
+                  <Row gutter={24} style={{ marginBottom: 16 }}>
+                    <Col xs={24} sm={6}>
+                      <div style={{ padding: '8px 12px', background: REDWOOD.neutral100, borderRadius: 4 }}>
+                        <div style={{ fontSize: 11, color: REDWOOD.neutral600, marginBottom: 2 }}>Open Balance</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: REDWOOD.primary }}>
+                          {currencySymbol}{balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
-                      </Col>
-                      <Col xs={12} sm={12}>
-                        <div style={{ fontSize: 11, color: '#FAAD14', marginBottom: 2 }}>Over 30 Days</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: '#FAAD14' }}>
-                          {currencySymbol}{aging.over30.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </Col>
+                    <Col xs={24} sm={6}>
+                      <div style={{ padding: '8px 12px', background: '#E6F7FF', borderRadius: 4 }}>
+                        <div style={{ fontSize: 11, color: '#1890ff', marginBottom: 2 }}>Credit Limit</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: '#1890ff' }}>
+                          {currencySymbol}{creditLimit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
-                      </Col>
-                      <Col xs={12} sm={12}>
-                        <div style={{ fontSize: 11, color: '#FF4D4F', marginBottom: 2 }}>Over 60 Days</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: '#FF4D4F' }}>
-                          {currencySymbol}{aging.over60.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </Col>
+                    <Col xs={24} sm={6}>
+                      <div style={{ padding: '8px 12px', background: '#FFF7E6', borderRadius: 4 }}>
+                        <div style={{ fontSize: 11, color: '#FAAD14', marginBottom: 2 }}>Order Total</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: '#FAAD14' }}>
+                          {currencySymbol}{orderTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
-                      </Col>
-                      <Col xs={12} sm={12}>
-                        <div style={{ fontSize: 11, color: '#FF7875', marginBottom: 2 }}>Over 90 Days</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: '#FF7875' }}>
-                          {currencySymbol}{aging.over90.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </Col>
+                    <Col xs={24} sm={6}>
+                      <div style={{ padding: '8px 12px', background: creditPassed ? '#F6FFED' : '#FFF1F0', borderRadius: 4 }}>
+                        <div style={{ fontSize: 11, color: creditPassed ? '#52c41a' : REDWOOD.error, marginBottom: 2 }}>
+                          {creditPassed ? '✓ PASS' : '✗ FAIL'}
                         </div>
-                      </Col>
-                    </Row>
-                  </div>
-                </Col>
-              </Row>
-            </div>
-          </Card>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: creditPassed ? '#52c41a' : REDWOOD.error }}>
+                          {currencySymbol}{availableCredit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div style={{ fontSize: 10, color: REDWOOD.neutral600 }}>Available</div>
+                      </div>
+                    </Col>
+                  </Row>
+
+                  {/* Aging Breakdown */}
+                  <Divider style={{ margin: '12px 0' }} />
+                  <div style={{ fontSize: 11, fontWeight: 600, color: REDWOOD.neutral800, marginBottom: 8 }}>Aging Breakdown</div>
+                  <Row gutter={12}>
+                    <Col xs={12} sm={6}>
+                      <div style={{ fontSize: 10, color: '#1890ff', marginBottom: 2 }}>Current (≤30d)</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#1890ff' }}>
+                        {currencySymbol}{aging.current.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </Col>
+                    <Col xs={12} sm={6}>
+                      <div style={{ fontSize: 10, color: '#FAAD14', marginBottom: 2 }}>Over 30 Days</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#FAAD14' }}>
+                        {currencySymbol}{aging.over30.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </Col>
+                    <Col xs={12} sm={6}>
+                      <div style={{ fontSize: 10, color: '#FF4D4F', marginBottom: 2 }}>Over 60 Days</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#FF4D4F' }}>
+                        {currencySymbol}{aging.over60.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </Col>
+                    <Col xs={12} sm={6}>
+                      <div style={{ fontSize: 10, color: '#FF7875', marginBottom: 2 }}>Over 90 Days</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#FF7875' }}>
+                        {currencySymbol}{aging.over90.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </Col>
+                  </Row>
+                </div>
+              </Card>
+            );
+          })()}
         </>
       )}
 
@@ -8682,7 +8718,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
               children: <div style={{ padding: 8 }}><NotesAttachmentsPanel orderKey={String(editMode ? (editOrder?.OrderKey ?? editOrder?.HeaderId) : createdOrderKey)} /></div>,
             }] : []),
             { key: 'credit', label: <span><ReconciliationOutlined style={{ marginRight: 5 }} />Customer Credit Check</span>,
-              children: <CreditCheckPanel hdr={hdr} loading={creditCheckLoading} error={creditCheckError} data={creditCheckData} onFetch={fetchCustomerBalance} apiUrl={creditCheckApiUrl} apiResponse={creditCheckApiResponse} /> },
+              children: <CreditCheckPanel hdr={hdr} loading={creditCheckLoading} error={creditCheckError} data={creditCheckData} onFetch={fetchCustomerBalance} apiUrl={creditCheckApiUrl} apiResponse={creditCheckApiResponse} lines={lines} /> },
             { key: 'validations', label: <span><InfoCircleOutlined style={{ marginRight: 5 }} />Order Validations</span>,
               children: <div style={{ padding: 8 }}><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Order validations — item, warehouse and customer checks will appear here before submission." style={{ padding: 24 }} /></div> },
           ]} />
