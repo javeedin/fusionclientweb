@@ -5609,12 +5609,6 @@ const CreditCheckPanel: React.FC<{ hdr: OrderHeader; loading: boolean; error: st
   const [apiDrawerOpen, setApiDrawerOpen] = React.useState(false);
   const [showOpenInvoices, setShowOpenInvoices] = React.useState(false);
 
-  // Get currency display name from header (use English currency codes)
-  const currencyCode = hdr.txnCurrency || 'USD';
-  const getCurrencyDisplay = (code: string): string => {
-    return code || 'USD';
-  };
-  const currencyDisplay = getCurrencyDisplay(currencyCode);
 
   const computeAging = (schedules: any[]): { current: number; over30: number; over60: number; over90: number } => {
     const today = dayjs();
@@ -5982,6 +5976,9 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
   const editMode = !!editOrder;
   const [form] = Form.useForm();
   const [hdr, setHdr] = useState<OrderHeader>(initialDraft?.header ?? header);
+  // Currency display (English codes instead of symbols)
+  const currencyCode = hdr.txnCurrency || 'USD';
+  const currencyDisplay = currencyCode;
   const bUnits = usePayablesBUs();
   const orgRows = useInvOrgs();
   const customers = useCustomers();
