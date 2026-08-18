@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from 'react';
-import { notification, Button, Space, Typography } from 'antd';
-import { CheckCircleOutlined, StopOutlined, EyeOutlined, BellOutlined } from '@ant-design/icons';
+import React, { useEffect, useRef, useState } from 'react';
+import { notification, Button, Space, Typography, Modal, Card, Tag, Descriptions, Divider } from 'antd';
+import { CheckCircleOutlined, StopOutlined, EyeOutlined, BellOutlined, ApiOutlined } from '@ant-design/icons';
 import { useNotifications } from '../context/NotificationContext';
 import type { AppNotification } from '../context/NotificationContext';
 
@@ -19,6 +19,8 @@ const ApprovalToastWatcher: React.FC<Props> = ({ onOpenPanel }) => {
     notifications,
   } = useNotifications();
 
+  const [apiInspectorVisible, setApiInspectorVisible] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<any>(null);
   const shownRef = useRef<Set<number>>(new Set());
 
   const getNotifForRequest = (requestId: number): AppNotification | undefined =>
@@ -67,6 +69,12 @@ const ApprovalToastWatcher: React.FC<Props> = ({ onOpenPanel }) => {
         onOpenPanel();
       };
 
+      const handleShowApi = () => {
+        notification.destroy(toastKey);
+        setSelectedRequest(req);
+        setApiInspectorVisible(true);
+      };
+
       notification.open({
         key: toastKey,
         message: (
@@ -105,6 +113,13 @@ const ApprovalToastWatcher: React.FC<Props> = ({ onOpenPanel }) => {
                 Reject
               </Button>
               <Button
+                size="small" icon={<ApiOutlined />}
+                style={{ fontSize: 12, color: '#0572CE', borderColor: '#0572CE' }}
+                onClick={handleShowApi}
+              >
+                API
+              </Button>
+              <Button
                 size="small" icon={<EyeOutlined />}
                 style={{ fontSize: 12 }}
                 onClick={handleView}
@@ -124,7 +139,135 @@ const ApprovalToastWatcher: React.FC<Props> = ({ onOpenPanel }) => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newApprovalRequests]);
 
-  return null;
+  const getApprovalApiDetails = (req: any) => {
+    const requestId = req.requestId;
+    const endpoint = `/approvals/requests/${requestId}/status`;
+    const baseUrl = 'https://your-apex-instance.com'; // Will be populated from APEX_DB_CONFIG
+    const fullUrl = `${baseUrl}${endpoint}`;
+    const method = 'PUT';
+    const body = {
+      status: 'APPROVED', // or 'REJECTED'
+      actorName: 'Current User Name',
+      actorEmail: 'current.user@email.com',
+      comments: ''
+    };
+
+    return { fullUrl, endpoint, method, body };
+  };
+
+  if (!selectedRequest) return null;
+
+  const apiDetails = getApprovalApiDetails(selectedRequest);
+
+  return (
+    <>
+      <Modal
+        title={`API Inspector — Approval Action`}
+        open={apiInspectorVisible}
+        onCancel={() => setApiInspectorVisible(false)}
+        width={900}
+        footer={null}
+      >
+        <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            {/* Transaction Info */}
+            <Card size="small" style={{ background: '#f5f5f5' }}>
+              <Descriptions column={1} size="small">
+                <Descriptions.Item label="Transaction Ref">
+                  <Text strong style={{ color: '#0572CE' }}>{selectedRequest.transactionRef}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Module">
+                  <Tag>{selectedRequest.module}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Type">
+                  <Tag>{selectedRequest.transactionType}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Amount">
+                  <Text strong style={{ fontFamily: 'monospace' }}>
+                    {selectedRequest.currency} {Number(selectedRequest.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </Text>
+                </Descriptions.Item>
+              </Descriptions>
+            </Card>
+
+            <Divider style={{ margin: '8px 0' }} />
+
+            {/* API Endpoint */}
+            <div>
+              <Text strong style={{ fontSize: 12, color: '#666', display: 'block', marginBottom: 8 }}>API ENDPOINT</Text>
+              <Card size="small" style={{ background: '#e6f7ff', borderColor: '#1890ff' }}>
+                <div style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                  <Tag color="blue">PUT</Tag>
+                  {' '}{apiDetails.endpoint}
+                </div>
+              </Card>
+            </div>
+
+            {/* Request Body */}
+            <div>
+              <Text strong style={{ fontSize: 12, color: '#666', display: 'block', marginBottom: 8 }}>REQUEST BODY (JSON)</Text>
+              <Card size="small" style={{ background: '#f5f5f5' }}>
+                <pre style={{
+                  margin: 0,
+                  fontSize: 11,
+                  maxHeight: 250,
+                  overflowY: 'auto',
+                  wordBreak: 'break-all',
+                  whiteSpace: 'pre-wrap',
+                  padding: '8px',
+                  background: '#fff',
+                  borderRadius: 4
+                }}>
+                  {JSON.stringify(
+                    {
+                      status: 'APPROVED',
+                      actorName: 'Current User Name',
+                      actorEmail: 'current.user@email.com',
+                      comments: ''
+                    },
+                    null,
+                    2
+                  )}
+                </pre>
+              </Card>
+            </div>
+
+            {/* Headers */}
+            <div>
+              <Text strong style={{ fontSize: 12, color: '#666', display: 'block', marginBottom: 8 }}>REQUEST HEADERS</Text>
+              <Card size="small" style={{ background: '#f5f5f5' }}>
+                <pre style={{
+                  margin: 0,
+                  fontSize: 11,
+                  padding: '8px',
+                  background: '#fff',
+                  borderRadius: 4
+                }}>
+                  Content-Type: application/json
+                </pre>
+              </Card>
+            </div>
+
+            {/* Response */}
+            <div>
+              <Text strong style={{ fontSize: 12, color: '#666', display: 'block', marginBottom: 8 }}>SUCCESS RESPONSE</Text>
+              <Card size="small" style={{ background: '#f5f5f5' }}>
+                <pre style={{
+                  margin: 0,
+                  fontSize: 11,
+                  padding: '8px',
+                  background: '#fff',
+                  borderRadius: 4
+                }}>
+                  HTTP/1.1 200 OK
+                </pre>
+              </Card>
+            </div>
+          </Space>
+        </div>
+      </Modal>
+    </>
+  );
 };
 
 export default ApprovalToastWatcher;
