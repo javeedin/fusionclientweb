@@ -356,6 +356,10 @@ const ManageJournals: React.FC = () => {
     effectiveDate: string;
   }>>({});
   const [tabSaving, setTabSaving] = useState<Record<string, boolean>>({});
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [tabPosting, setTabPosting] = useState<Record<string, boolean>>({});
   const [selectedLinesByTab, setSelectedLinesByTab] = useState<Record<string, number[]>>({});
   const [showReferencesByTab, setShowReferencesByTab] = useState<Record<string, boolean>>({});
@@ -991,6 +995,8 @@ const ManageJournals: React.FC = () => {
 
     setLoading(true);
     setJournals([]); // Clear existing data
+    setCurrentPage(1); // Reset to first page on new search
+    setPageSize(25); // Reset to default page size
 
     addDebugLog('info', 'Starting search...', values);
 
@@ -1225,7 +1231,15 @@ const ManageJournals: React.FC = () => {
     setAcctDatePreset(null);
     setAcctFromDate(null);
     setAcctToDate(null);
+    setCurrentPage(1);
+    setPageSize(25);
     sessionStorage.removeItem(STORAGE_KEY);
+  };
+
+  // Table pagination/sort/filter change handler
+  const handleTableChange = (pagination: any, filters: any, sorter: any) => {
+    setCurrentPage(pagination.current);
+    setPageSize(pagination.pageSize);
   };
 
   // Open Journal Entry modal
@@ -4956,9 +4970,11 @@ const ManageJournals: React.FC = () => {
                   })
                 : journals}
               loading={loading}
+              onChange={handleTableChange}
               pagination={{
+                current: currentPage,
+                pageSize: pageSize,
                 total: totalCount,
-                pageSize: 25,
                 showSizeChanger: true,
                 showQuickJumper: true,
                 showTotal: (total) => `Total ${total} journals`,
