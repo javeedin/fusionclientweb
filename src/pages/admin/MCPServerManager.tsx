@@ -6,7 +6,7 @@ import {
 } from 'antd';
 import {
   HomeOutlined, PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined,
-  TestOutlined, ExportOutlined, SettingOutlined
+  TestOutlined, ExportOutlined, SettingOutlined, CheckCircleOutlined, ApiOutlined, PlayCircleOutlined
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { mcpServerService } from '../../services/mcp-server.service';
@@ -75,6 +75,8 @@ const MCPServerManager: React.FC = () => {
   const [testResult, setTestResult] = useState<any>(null);
   const [testLoading, setTestLoading] = useState(false);
   const [serverToTest, setServerToTest] = useState<string | null>(null);
+  const [previewTestResult, setPreviewTestResult] = useState<any>(null);
+  const [previewTestLoading, setPreviewTestLoading] = useState(false);
 
   useEffect(() => {
     loadServers();
@@ -206,6 +208,56 @@ const MCPServerManager: React.FC = () => {
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     message.success('Copied to clipboard');
+  };
+
+  const testApiPreview = async (values: any) => {
+    setPreviewTestLoading(true);
+    try {
+      const config = extractConfigFromForm(values, serverType);
+      if (serverType === 'REST') {
+        const restConfig = config as RESTConfig;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+        if (restConfig.authType === 'basic' && restConfig.authUsername && restConfig.authPassword) {
+          const encoded = btoa(`${restConfig.authUsername}:${restConfig.authPassword}`);
+          headers['Authorization'] = `Basic ${encoded}`;
+        } else if (restConfig.authType === 'bearer' && restConfig.bearerToken) {
+          headers['Authorization'] = `Bearer ${restConfig.bearerToken}`;
+        } else if (restConfig.authType === 'apiKey' && restConfig.apiKey) {
+          headers[restConfig.apiKeyHeader || 'X-API-Key'] = restConfig.apiKey;
+        }
+
+        const options: RequestInit = {
+          method: restConfig.method,
+          headers,
+          timeout: restConfig.timeout || 30000,
+        };
+
+        if ((restConfig.method === 'POST' || restConfig.method === 'PUT') && restConfig.payloadTemplate) {
+          options.body = restConfig.payloadTemplate;
+        }
+
+        const response = await fetch(restConfig.endpoint, options);
+        const data = await response.json();
+
+        setPreviewTestResult({
+          success: response.ok,
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers),
+          body: data,
+        });
+        message.success('API test completed');
+      }
+    } catch (error) {
+      setPreviewTestResult({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      message.error('API test failed');
+    } finally {
+      setPreviewTestLoading(false);
+    }
   };
 
   const columns = [
@@ -568,6 +620,96 @@ const MCPServerManager: React.FC = () => {
           <Text type="secondary" style={{ fontSize: 12 }}>
             Note: BIP Report parameters can be added and managed in the test configuration.
           </Text>
+        </>
+      )}
+
+      {serverType === 'REST' && (
+        <>
+          <Divider style={{ marginTop: 32, marginBottom: 16 }} />
+          <Text strong style={{ fontSize: 14, marginBottom: 12, display: 'block' }}>
+            <ApiOutlined /> API Preview
+          </Text>
+
+          <Card
+            size="small"
+            style={{ background: '#fafafa', marginBottom: 16 }}
+            bodyStyle={{ padding: 12 }}
+          >
+            <div style={{ marginBottom: 8 }}>
+              <Text strong style={{ fontSize: 11, color: '#666' }}>METHOD & ENDPOINT</Text>
+              <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
+                <Tag color={form.getFieldValue('method') === 'GET' ? 'blue' : form.getFieldValue('method') === 'POST' ? 'green' : form.getFieldValue('method') === 'PUT' ? 'orange' : 'red'}>
+                  {form.getFieldValue('method') || 'GET'}
+                </Tag>
+                {' '}{form.getFieldValue('endpoint') || 'https://api.example.com/endpoint'}
+              </div>
+            </div>
+
+            {(form.getFieldValue('method') === 'POST' || form.getFieldValue('method') === 'PUT') && form.getFieldValue('payloadTemplate') && (
+              <div style={{ marginBottom: 8 }}>
+                <Text strong style={{ fontSize: 11, color: '#666' }}>REQUEST BODY</Text>
+                <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 10, maxHeight: 150, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {form.getFieldValue('payloadTemplate')}
+                </div>
+              </div>
+            )}
+
+            {form.getFieldValue('authType') !== 'none' && (
+              <div>
+                <Text strong style={{ fontSize: 11, color: '#666' }}>AUTHENTICATION</Text>
+                <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontSize: 11 }}>
+                  {form.getFieldValue('authType') === 'basic' && <div>Basic Auth: {form.getFieldValue('authUsername')}</div>}
+                  {form.getFieldValue('authType') === 'bearer' && <div>Bearer Token: {form.getFieldValue('bearerToken') ? '••••••••' : 'Not set'}</div>}
+                  {form.getFieldValue('authType') === 'apiKey' && <div>API Key Header: {form.getFieldValue('apiKeyHeader') || 'X-API-Key'}</div>}
+                </div>
+              </div>
+            )}
+
+            <Button
+              type="primary"
+              size="small"
+              icon={<PlayCircleOutlined />}
+              loading={previewTestLoading}
+              onClick={() => testApiPreview(form.getFieldsValue())}
+              style={{ marginTop: 12 }}
+            >
+              Test API
+            </Button>
+          </Card>
+
+          {previewTestResult && (
+            <Card
+              size="small"
+              style={{ background: previewTestResult.success ? '#f6ffed' : '#fff2f0', marginBottom: 16 }}
+              bodyStyle={{ padding: 12 }}
+              title={
+                <Text strong style={{ color: previewTestResult.success ? '#52c41a' : '#d4380d' }}>
+                  {previewTestResult.success ? '✓ Test Passed' : '✗ Test Failed'}
+                </Text>
+              }
+            >
+              <div>
+                <Text strong style={{ fontSize: 11 }}>Status:</Text>
+                <div style={{ fontSize: 11, marginBottom: 8 }}>{previewTestResult.status} {previewTestResult.statusText}</div>
+
+                {previewTestResult.body && (
+                  <>
+                    <Text strong style={{ fontSize: 11 }}>Response:</Text>
+                    <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 10, maxHeight: 200, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {JSON.stringify(previewTestResult.body, null, 2)}
+                    </div>
+                  </>
+                )}
+
+                {previewTestResult.error && (
+                  <>
+                    <Text strong style={{ fontSize: 11, color: '#d4380d' }}>Error:</Text>
+                    <div style={{ fontSize: 11, marginTop: 4, color: '#d4380d' }}>{previewTestResult.error}</div>
+                  </>
+                )}
+              </div>
+            </Card>
+          )}
         </>
       )}
 
