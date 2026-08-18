@@ -10,7 +10,7 @@ import {
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { mcpServerService } from '../../services/mcp-server.service';
-import { buildApexAdminUrl } from '../../config/api.helper';
+import { buildApexUrl } from '../../config/api.helper';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -250,8 +250,8 @@ const MCPServerManager: React.FC = () => {
           options.body = restConfig.payloadTemplate;
         }
 
-        // Use APEX admin URL for MCP servers
-        const fullUrl = buildApexAdminUrl('mcp-servers');
+        // Use APEX URL for MCP servers (to save/retrieve server configs from database)
+        const fullUrl = buildApexUrl('mcp-servers');
         const response = await fetch(fullUrl, options);
         let data: any;
         const contentType = response.headers.get('content-type');
@@ -812,9 +812,9 @@ const MCPServerManager: React.FC = () => {
             bodyStyle={{ padding: 12 }}
           >
             <div style={{ marginBottom: 8 }}>
-              <Text strong style={{ fontSize: 11, color: '#666' }}>FULL API URL</Text>
+              <Text strong style={{ fontSize: 11, color: '#666' }}>FULL API URL (Database Endpoint)</Text>
               <div style={{ background: '#e6f7ff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 10, wordBreak: 'break-all', border: '1px solid #1890ff', color: '#0572CE' }}>
-                {buildApexAdminUrl('mcp-servers')}
+                {buildApexUrl('mcp-servers')}
               </div>
             </div>
 
