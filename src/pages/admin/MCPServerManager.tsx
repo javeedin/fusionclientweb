@@ -78,6 +78,7 @@ const MCPServerManager: React.FC = () => {
   const [previewTestResult, setPreviewTestResult] = useState<any>(null);
   const [previewTestLoading, setPreviewTestLoading] = useState(false);
   const [apiInspectorOpen, setApiInspectorOpen] = useState(false);
+  const [searchText, setSearchText] = useState('');
 
   useEffect(() => {
     loadServers();
@@ -210,6 +211,16 @@ const MCPServerManager: React.FC = () => {
     navigator.clipboard.writeText(text);
     message.success('Copied to clipboard');
   };
+
+  const filteredServers = servers.filter(server => {
+    const searchLower = searchText.toLowerCase();
+    return (
+      server.name.toLowerCase().includes(searchLower) ||
+      server.description?.toLowerCase().includes(searchLower) ||
+      (server.type === 'REST' && (server.config as RESTConfig).endpoint?.toLowerCase().includes(searchLower)) ||
+      (server.type === 'SOAP' && (server.config as SOAPConfig).bipReportName?.toLowerCase().includes(searchLower))
+    );
+  });
 
   const testApiPreview = async (values: any) => {
     setPreviewTestLoading(true);
@@ -921,6 +932,23 @@ const MCPServerManager: React.FC = () => {
             </Space>
           </div>
 
+          {/* Search and Refresh */}
+          <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
+            <Input
+              placeholder="Search by name, description, endpoint, or report..."
+              value={searchText}
+              onChange={e => setSearchText(e.target.value)}
+              allowClear
+              style={{ flex: 1, maxWidth: 400 }}
+            />
+            <Button
+              onClick={loadServers}
+              loading={loading}
+            >
+              Refresh
+            </Button>
+          </div>
+
           {/* Servers Table */}
           <Card
             style={{
@@ -933,12 +961,18 @@ const MCPServerManager: React.FC = () => {
             <Spin spinning={loading}>
               <Table
                 columns={columns}
-                dataSource={servers.map(s => ({ ...s, key: s.id }))}
+                dataSource={filteredServers.map(s => ({ ...s, key: s.id }))}
                 pagination={{ pageSize: 10 }}
                 size="small"
               />
             </Spin>
           </Card>
+
+          {filteredServers.length === 0 && searchText && (
+            <Card style={{ textAlign: 'center', marginTop: 24, borderRadius: 12, border: `1px solid ${REDWOOD.neutral200}` }}>
+              <Text type="secondary">No servers found matching "{searchText}"</Text>
+            </Card>
+          )}
 
           {servers.length === 0 && !loading && (
             <Card
