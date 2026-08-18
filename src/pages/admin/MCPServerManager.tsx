@@ -249,8 +249,16 @@ const MCPServerManager: React.FC = () => {
           options.body = restConfig.payloadTemplate;
         }
 
-        const response = await fetch(restConfig.endpoint, options);
-        const data = await response.json();
+        // Use APEX admin URL for MCP servers
+        const fullUrl = buildApexAdminUrl('mcp-servers');
+        const response = await fetch(fullUrl, options);
+        let data: any;
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          data = await response.json();
+        } else {
+          data = await response.text();
+        }
 
         setPreviewTestResult({
           success: response.ok,
@@ -258,15 +266,20 @@ const MCPServerManager: React.FC = () => {
           statusText: response.statusText,
           headers: Object.fromEntries(response.headers),
           body: data,
+          url: fullUrl,
         });
         message.success('API test completed');
+      } else {
+        // SOAP test
+        message.info('SOAP endpoint test not yet implemented');
       }
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       setPreviewTestResult({
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMsg,
       });
-      message.error('API test failed');
+      message.error(`API test failed: ${errorMsg}`);
     } finally {
       setPreviewTestLoading(false);
     }
@@ -798,12 +811,19 @@ const MCPServerManager: React.FC = () => {
             bodyStyle={{ padding: 12 }}
           >
             <div style={{ marginBottom: 8 }}>
+              <Text strong style={{ fontSize: 11, color: '#666' }}>FULL API URL</Text>
+              <div style={{ background: '#e6f7ff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 10, wordBreak: 'break-all', border: '1px solid #1890ff', color: '#0572CE' }}>
+                {buildApexAdminUrl('mcp-servers')}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 8 }}>
               <Text strong style={{ fontSize: 11, color: '#666' }}>METHOD & ENDPOINT</Text>
               <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
                 <Tag color={form.getFieldValue('method') === 'GET' ? 'blue' : form.getFieldValue('method') === 'POST' ? 'green' : form.getFieldValue('method') === 'PUT' ? 'orange' : 'red'}>
-                  {form.getFieldValue('method') || 'GET'}
+                  {form.getFieldValue('method') || 'POST'}
                 </Tag>
-                {' '}{form.getFieldValue('endpoint') || 'https://api.example.com/endpoint'}
+                {' '}{form.getFieldValue('endpoint') || '/mcp-servers'}
               </div>
             </div>
 
@@ -851,22 +871,37 @@ const MCPServerManager: React.FC = () => {
               }
             >
               <div>
-                <Text strong style={{ fontSize: 11 }}>Status:</Text>
-                <div style={{ fontSize: 11, marginBottom: 8 }}>{previewTestResult.status} {previewTestResult.statusText}</div>
+                {previewTestResult.url && (
+                  <>
+                    <Text strong style={{ fontSize: 11 }}>URL Called:</Text>
+                    <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, marginBottom: 8, fontFamily: 'monospace', fontSize: 10, wordBreak: 'break-all', color: '#0572CE' }}>
+                      {previewTestResult.url}
+                    </div>
+                  </>
+                )}
+
+                {previewTestResult.status && (
+                  <>
+                    <Text strong style={{ fontSize: 11 }}>Status:</Text>
+                    <div style={{ fontSize: 11, marginBottom: 8 }}>{previewTestResult.status} {previewTestResult.statusText}</div>
+                  </>
+                )}
 
                 {previewTestResult.body && (
                   <>
-                    <Text strong style={{ fontSize: 11 }}>Response:</Text>
-                    <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 10, maxHeight: 200, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                      {JSON.stringify(previewTestResult.body, null, 2)}
+                    <Text strong style={{ fontSize: 11 }}>Response Body:</Text>
+                    <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 9, maxHeight: 250, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {typeof previewTestResult.body === 'string' ? previewTestResult.body : JSON.stringify(previewTestResult.body, null, 2)}
                     </div>
                   </>
                 )}
 
                 {previewTestResult.error && (
                   <>
-                    <Text strong style={{ fontSize: 11, color: '#d4380d' }}>Error:</Text>
-                    <div style={{ fontSize: 11, marginTop: 4, color: '#d4380d' }}>{previewTestResult.error}</div>
+                    <Text strong style={{ fontSize: 11, color: '#d4380d' }}>Error Message:</Text>
+                    <div style={{ fontSize: 11, marginTop: 4, color: '#d4380d', background: '#fff', padding: '8px', borderRadius: 4, fontFamily: 'monospace', wordBreak: 'break-word' }}>
+                      {previewTestResult.error}
+                    </div>
                   </>
                 )}
               </div>
