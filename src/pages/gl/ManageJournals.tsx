@@ -4975,6 +4975,7 @@ const ManageJournals: React.FC = () => {
                 current: currentPage,
                 pageSize: pageSize,
                 total: totalCount,
+                pageSizeOptions: ['10', '20', '50', '100', '500', '1000'],
                 showSizeChanger: true,
                 showQuickJumper: true,
                 showTotal: (total) => `Total ${total} journals`,
