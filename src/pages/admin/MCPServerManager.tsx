@@ -1070,15 +1070,25 @@ const MCPServerManager: React.FC = () => {
             children: (
               <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
                 {server.type === 'SOAP' ? (
-                  <Card style={{ background: '#f0f2f5' }}>
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <div>
+                      <Text strong style={{ fontSize: 13, color: '#666', display: 'block', marginBottom: 8 }}>FUSION URL</Text>
+                      <Card size="small" style={{ background: '#e6f7ff', borderColor: '#1890ff', marginBottom: 16 }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <Text code copyable style={{ fontSize: 12, wordBreak: 'break-all', display: 'block', padding: '8px', background: '#fff', borderRadius: 4 }}>
+                              {(server.config as SOAPConfig).fusionUrl}
+                            </Text>
+                          </div>
+                        </div>
+                      </Card>
+                    </div>
+
+                    <Divider style={{ margin: '12px 0' }} />
+
                     <Descriptions column={1} size="small">
                       <Descriptions.Item label="Type">
                         <Tag color="blue">SOAP</Tag>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Fusion URL">
-                        <Text code copyable>
-                          {(server.config as SOAPConfig).fusionUrl}
-                        </Text>
                       </Descriptions.Item>
                       <Descriptions.Item label="BIP Report">
                         <Text code>
@@ -1089,24 +1099,24 @@ const MCPServerManager: React.FC = () => {
                         {server.description}
                       </Descriptions.Item>
                     </Descriptions>
-                  </Card>
+                  </Space>
                 ) : (
                   <Space direction="vertical" style={{ width: '100%' }}>
                     <div>
-                      <Text strong style={{ fontSize: 12, color: '#666' }}>REQUEST</Text>
-                      <Card size="small" style={{ background: '#f5f5f5', marginTop: 8 }}>
-                        <div style={{ fontFamily: 'monospace', fontSize: 12, marginBottom: 8 }}>
-                          <div>
-                            <Tag color={
-                              (server.config as RESTConfig).method === 'GET' ? 'blue' :
-                              (server.config as RESTConfig).method === 'POST' ? 'green' :
-                              (server.config as RESTConfig).method === 'PUT' ? 'orange' : 'red'
-                            }>
-                              {(server.config as RESTConfig).method}
-                            </Tag>
-                          </div>
-                          <div style={{ marginTop: 8, wordBreak: 'break-all', padding: '8px', background: '#fff', borderRadius: 4 }}>
-                            {(server.config as RESTConfig).endpoint}
+                      <Text strong style={{ fontSize: 13, color: '#666', display: 'block', marginBottom: 8 }}>API ENDPOINT URL</Text>
+                      <Card size="small" style={{ background: '#e6f4ff', borderColor: '#1890ff', marginBottom: 16 }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                          <Tag color={
+                            (server.config as RESTConfig).method === 'GET' ? 'blue' :
+                            (server.config as RESTConfig).method === 'POST' ? 'green' :
+                            (server.config as RESTConfig).method === 'PUT' ? 'orange' : 'red'
+                          } style={{ flexShrink: 0, marginTop: 2 }}>
+                            {(server.config as RESTConfig).method}
+                          </Tag>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <Text code copyable style={{ fontSize: 12, wordBreak: 'break-all', display: 'block', padding: '8px', background: '#fff', borderRadius: 4 }}>
+                              {(server.config as RESTConfig).endpoint}
+                            </Text>
                           </div>
                         </div>
                       </Card>
