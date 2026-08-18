@@ -4867,7 +4867,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
             if (viewMode === 'bank-to-sys') {
               filteredStmtLines.forEach(bankLine => {
-                const matchedSysTxns = filteredSysTxns.filter(t => Math.abs(t.amount - bankLine.amount) < 0.01);
+                const matchedSysTxns = filteredSysTxns.filter(t => Math.abs(Math.abs(t.amount) - Math.abs(bankLine.amount)) < 0.01);
                 const totalSysAmount = matchedSysTxns.reduce((sum, t) => sum + t.amount, 0);
                 const difference = bankLine.amount - totalSysAmount;
 
@@ -4882,7 +4882,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
               });
             } else {
               filteredSysTxns.forEach(sysTxn => {
-                const matchedBankLines = filteredStmtLines.filter(l => Math.abs(l.amount - sysTxn.amount) < 0.01);
+                const matchedBankLines = filteredStmtLines.filter(l => Math.abs(Math.abs(l.amount) - Math.abs(sysTxn.amount)) < 0.01);
                 const totalBankAmount = matchedBankLines.reduce((sum, l) => sum + l.amount, 0);
                 const difference = totalBankAmount - sysTxn.amount;
 
