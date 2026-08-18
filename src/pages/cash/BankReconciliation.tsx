@@ -4395,7 +4395,9 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         title={<Space><ThunderboltOutlined style={{ color: '#722ed1' }} /><span>Auto Reconciliation</span></Space>}
         open={autoReconOpen}
         onCancel={() => setAutoReconOpen(false)}
-        width={autoReconStep === 'results' ? 900 : 520}
+        width={autoReconStep === 'results' ? 1000 : 520}
+        style={{ height: autoReconStep === 'results' ? 'auto' : 'auto' }}
+        bodyStyle={{ maxHeight: '80vh', overflowY: 'auto' }}
         footer={
           autoReconStep === 'criteria' ? (
             <Space>
@@ -4534,187 +4536,72 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                 }
               />
             ) : (
-              <div>
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, color: '#8c8c8c', marginBottom: 8 }}>
-                    Found <strong>{autoReconMatches.length}</strong> match(es). Uncheck any pairs you don't want to reconcile.
-                  </div>
-                  <Table<AutoReconMatch>
-                    size="small"
-                    dataSource={autoReconMatches.map((m, idx) => ({ ...m, _idx: idx }))}
-                    rowKey="_idx"
-                    pagination={false}
-                    scroll={{ x: 800, y: 250 }}
-                    columns={[
-                      {
-                        title: 'Select',
-                        key: 'select',
-                        width: 50,
-                        align: 'center',
-                        render: (_: any, record: any) => (
-                          <Checkbox
-                            checked={record.confirmed}
-                            disabled={record.status !== 'pending'}
-                            onChange={e => {
-                              const copy = [...autoReconMatches];
-                              copy[record._idx] = { ...record, confirmed: e.target.checked };
-                              setAutoReconMatches(copy);
-                            }}
-                          />
-                        ),
-                      },
-                      {
-                        title: 'Bank Statement Line',
-                        dataIndex: 'stmtLine',
-                        key: 'stmt',
-                        width: 200,
-                        render: (line: StmtLine) => (
-                          <div>
-                            <div style={{ fontSize: 11, fontWeight: 500 }}>{line.description || line.reference || `Line #${line.lineId}`}</div>
-                            <div style={{ fontSize: 10, color: '#8c8c8c' }}>
-                              {line.transactionDate?.slice(0, 10)} • {line.transactionCode} • {Math.abs(line.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </div>
-                          </div>
-                        ),
-                      },
-                      {
-                        title: 'Criteria',
-                        dataIndex: 'matchedBy',
-                        key: 'criteria',
-                        width: 150,
-                        render: (criteria: string[]) => (
-                          <Space size={4}>
-                            {criteria.map(c => <Tag key={c} color="purple" style={{ fontSize: 10, margin: 0 }}>{c}</Tag>)}
-                          </Space>
-                        ),
-                      },
-                      {
-                        title: 'System Transaction',
-                        dataIndex: 'sysTxn',
-                        key: 'sys',
-                        width: 200,
-                        render: (txn: SysTxn) => (
-                          <div>
-                            <div style={{ fontSize: 11, fontWeight: 500 }}>{txn.payee || txn.txnNumber}</div>
-                            <div style={{ fontSize: 10, color: '#8c8c8c' }}>
-                              {txn.txnDate?.slice(0, 10)} • {txn.source?.replace('_', ' ')} • {Math.abs(txn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </div>
-                          </div>
-                        ),
-                      },
-                      {
-                        title: 'Status',
-                        dataIndex: 'status',
-                        key: 'status',
-                        width: 80,
-                        align: 'center',
-                        render: (status: string, record: any) => {
-                          if (status === 'success') return <Tag color="success">Done</Tag>;
-                          if (status === 'error') return <Tag color="error">{record.errorMsg || 'Failed'}</Tag>;
-                          return <Tag color="processing">Pending</Tag>;
-                        },
-                      },
-                    ]}
-                  />
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 8, flexShrink: 0 }}>
+                  Found <strong>{autoReconMatches.length}</strong> match(es). Uncheck to exclude from reconciliation.
                 </div>
-                <Divider style={{ margin: '12px 0' }} />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 280, overflowY: 'auto', marginTop: 12 }}>
+                <div style={{ flex: 1, overflowY: 'auto', borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
                   {autoReconMatches.map((m, idx) => (
                     <div
                       key={idx}
                       style={{
-                        border: `1px solid ${m.status === 'success' ? '#b7eb8f' : m.status === 'error' ? '#ffccc7' : '#d9d9d9'}`,
-                        borderRadius: 8,
-                        padding: '10px 14px',
+                        display: 'flex',
+                        gap: 6,
+                        padding: '4px 8px',
+                        marginBottom: 3,
+                        border: `1px solid ${m.status === 'success' ? '#b7eb8f' : m.status === 'error' ? '#ffccc7' : '#f0f0f0'}`,
+                        borderRadius: 4,
                         background: m.status === 'success' ? '#f6ffed' : m.status === 'error' ? '#fff2f0' : m.confirmed ? '#fff' : '#fafafa',
-                        opacity: m.confirmed ? 1 : 0.5,
+                        opacity: m.confirmed ? 1 : 0.7,
+                        fontSize: 10,
+                        lineHeight: '1.3',
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                        <Checkbox
-                          checked={m.confirmed}
-                          disabled={m.status !== 'pending'}
-                          onChange={e => {
-                            const copy = [...autoReconMatches];
-                            copy[idx] = { ...m, confirmed: e.target.checked };
-                            setAutoReconMatches(copy);
-                          }}
-                        />
-                        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 12, alignItems: 'center' }}>
-                          {/* Statement side */}
-                          <div style={{ background: '#e6f4ff', borderRadius: 6, padding: '6px 10px' }}>
-                            <div style={{ fontSize: 10, color: '#1677ff', fontWeight: 600, marginBottom: 3, textTransform: 'uppercase' }}>Bank Statement Line</div>
-                            <div style={{ fontWeight: 500, fontSize: 12 }}>{m.stmtLine.description || m.stmtLine.reference || `Line #${m.stmtLine.lineId}`}</div>
-                            <div style={{ fontSize: 11, color: '#595959', marginTop: 2 }}>
-                              <Space size={6}>
-                                <span>{m.stmtLine.transactionDate?.slice(0, 10)}</span>
-                                <Tag color={m.stmtLine.transactionCode === 'CR' ? 'volcano' : 'blue'} style={{ margin: 0, fontSize: 10 }}>{m.stmtLine.transactionCode}</Tag>
-                                <strong>{Math.abs(m.stmtLine.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
-                              </Space>
+                      <Checkbox
+                        checked={m.confirmed}
+                        disabled={m.status !== 'pending'}
+                        onChange={e => {
+                          const copy = [...autoReconMatches];
+                          copy[idx] = { ...m, confirmed: e.target.checked };
+                          setAutoReconMatches(copy);
+                        }}
+                        style={{ marginTop: '2px', flexShrink: 0 }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 6, alignItems: 'center' }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 500, fontSize: 9, color: '#1677ff', marginBottom: 1 }}>STMT</div>
+                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {m.stmtLine.description || m.stmtLine.reference || `Line #${m.stmtLine.lineId}`}
                             </div>
-                            {m.stmtLine.reference && <div style={{ fontSize: 10, color: '#8c8c8c', marginTop: 2 }}>Ref: {m.stmtLine.reference}</div>}
+                            <div style={{ fontSize: 9, color: '#8c8c8c' }}>
+                              {m.stmtLine.transactionDate?.slice(0, 10)} {m.stmtLine.transactionCode} {Math.abs(m.stmtLine.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </div>
                           </div>
-
-                          {/* Match badges */}
-                          <div style={{ textAlign: 'center' }}>
-                            {m.status === 'success' && <Tag color="success">Reconciled</Tag>}
-                            {m.status === 'error'   && <Tag color="error">{m.errorMsg || 'Failed'}</Tag>}
+                          <div style={{ textAlign: 'center', flexShrink: 0 }}>
+                            {m.status === 'success' && <Tag color="success" style={{ fontSize: 8, margin: 0 }}>✓</Tag>}
+                            {m.status === 'error' && <Tag color="error" style={{ fontSize: 8, margin: 0 }}>✗</Tag>}
                             {m.status === 'pending' && (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }}>
-                                <span style={{ fontSize: 16, color: '#52c41a' }}>⇄</span>
-                                {m.matchedBy.map(r => <Tag key={r} color="purple" style={{ margin: 0, fontSize: 10 }}>{r}</Tag>)}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
+                                {m.matchedBy.map(r => (
+                                  <Tag key={r} color="purple" style={{ fontSize: 7, margin: 0, padding: '0 3px' }}>
+                                    {r.substring(0, 3)}
+                                  </Tag>
+                                ))}
                               </div>
                             )}
                           </div>
-
-                          {/* System txn side */}
-                          <div style={{ background: '#f9f0ff', borderRadius: 6, padding: '6px 10px' }}>
-                            <div style={{ fontSize: 10, color: '#722ed1', fontWeight: 600, marginBottom: 3, textTransform: 'uppercase' }}>System Transaction</div>
-                            <div style={{ fontWeight: 500, fontSize: 12 }}>{m.sysTxn.payee || m.sysTxn.txnNumber}</div>
-                            <div style={{ fontSize: 11, color: '#595959', marginTop: 2 }}>
-                              <Space size={6}>
-                                <span>{m.sysTxn.txnDate?.slice(0, 10)}</span>
-                                <Tag color="geekblue" style={{ margin: 0, fontSize: 10 }}>{m.sysTxn.source?.replace('_', ' ')}</Tag>
-                                <strong>{Math.abs(m.sysTxn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
-                              </Space>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 500, fontSize: 9, color: '#722ed1', marginBottom: 1 }}>TXN</div>
+                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {m.sysTxn.payee || m.sysTxn.txnNumber || m.sysTxn.reference}
                             </div>
-                            {m.sysTxn.txnNumber && <div style={{ fontSize: 10, color: '#8c8c8c', marginTop: 2 }}>#{m.sysTxn.txnNumber}</div>}
+                            <div style={{ fontSize: 9, color: '#8c8c8c' }}>
+                              {m.sysTxn.txnDate?.slice(0, 10)} {m.sysTxn.source?.substring(0, 2)} {Math.abs(m.sysTxn.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </div>
                           </div>
                         </div>
                       </div>
-
-                      {/* API calls preview for this pair */}
-                      {(() => {
-                        const txnSide = buildTxnSideCall(m.sysTxn, m.stmtLine);
-                        const stmtPostUrl  = `${APEX_BASE}/cash/bankstatements/${m.stmtLine.statementId}/reconcile`;
-                        const stmtPostBody = { lineId: m.stmtLine.lineId, txnType: m.sysTxn.source, txnId: m.sysTxn.txnId, txnNumber: m.sysTxn.txnNumber, reconAmount: m.stmtLine.amount, notes: 'Auto Reconciled' };
-                        return (
-                          <Collapse ghost size="small" style={{ marginTop: 8, borderTop: '1px solid #f0f0f0', paddingTop: 4 }}
-                            items={[{
-                              key: 'api',
-                              label: <Space style={{ fontSize: 11 }}><ApiOutlined style={{ color: REDWOOD.info }} /><span style={{ color: REDWOOD.info }}>API calls for this pair</span></Space>,
-                              children: (
-                                <div style={{ fontSize: 10, fontFamily: 'monospace' }}>
-                                  <div style={{ marginBottom: 4 }}>
-                                    <Tag color="green" style={{ fontSize: 9 }}>POST</Tag>
-                                    <span style={{ color: REDWOOD.info, wordBreak: 'break-all' }}>{stmtPostUrl}</span>
-                                  </div>
-                                  <pre style={{ background: '#1e1e1e', color: '#9cdcfe', padding: 6, borderRadius: 4, fontSize: 10, margin: '0 0 8px', overflowX: 'auto' }}>
-                                    {JSON.stringify(stmtPostBody, null, 2)}
-                                  </pre>
-                                  <div style={{ marginBottom: 4 }}>
-                                    <Tag color="orange" style={{ fontSize: 9 }}>PUT</Tag>
-                                    <span style={{ color: REDWOOD.info, wordBreak: 'break-all' }}>{txnSide.url}</span>
-                                  </div>
-                                  <pre style={{ background: '#1e1e1e', color: '#9cdcfe', padding: 6, borderRadius: 4, fontSize: 10, margin: 0, overflowX: 'auto' }}>
-                                    {JSON.stringify(txnSide.body, null, 2)}
-                                  </pre>
-                                </div>
-                              ),
-                            }]}
-                          />
-                        );
-                      })()}
                     </div>
                   ))}
                 </div>
