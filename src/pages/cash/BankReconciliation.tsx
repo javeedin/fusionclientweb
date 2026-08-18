@@ -4808,6 +4808,55 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       >
         {(() => {
           const [viewMode, setViewMode] = React.useState<'bank-to-sys' | 'sys-to-bank'>('bank-to-sys');
+          const [matchingSysTxns, setMatchingSysTxns] = React.useState<SysTxn[]>([]);
+          const [loadingMatching, setLoadingMatching] = React.useState(false);
+
+          // Auto-fetch system transactions when modal opens if not loaded
+          React.useEffect(() => {
+            const doFetch = async () => {
+              // If sysTxns already loaded, use that
+              if (sysTxns.length > 0) {
+                setMatchingSysTxns(sysTxns);
+                return;
+              }
+
+              // Otherwise, fetch unreconciled system transactions
+              setLoadingMatching(true);
+              try {
+                const q = new URLSearchParams();
+                q.set('recon_status', 'UNRECONCILED');
+                q.set('row_limit', '1000');
+
+                const res = await fetch(`${APEX_BASE}/cash/reconciliation/systxns?${q.toString()}`);
+                const data = await parseApexJson(res);
+                if (data.status === 'success') {
+                  const txns = (data.items ?? []).map((i: any): SysTxn => ({
+                    txnId: Number(i.txnId) || 0,
+                    txnNumber: i.txnNumber || String(i.txnId ?? '') || '',
+                    txnDate: i.txnDate ?? '',
+                    amount: i.amount ?? 0,
+                    currencyCode: i.currencyCode ?? '',
+                    businessUnit: i.businessUnit ?? '',
+                    source: i.source ?? '',
+                    payee: i.payee ?? '',
+                    supplierNumber: i.supplierNumber ?? '',
+                    customerName: i.customerName ?? '',
+                    customerNumber: i.customerNumber ?? '',
+                    bankAccountName: i.bankAccountName ?? '',
+                  }));
+                  setMatchingSysTxns(txns);
+                }
+              } catch (err) {
+                console.error('Failed to fetch system transactions:', err);
+              } finally {
+                setLoadingMatching(false);
+              }
+            };
+
+            if (matchingViewOpen) {
+              doFetch();
+            }
+          }, [matchingViewOpen]);
 
           const handleExportMatching = () => {
             const ws_data: any[] = [];
@@ -4856,8 +4905,8 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
           const buildMatches = () => {
             // Use all UNRECONCILED transactions, not just filtered by search
             const unreconStmts = stmtLines.filter(l => l.reconStatus !== 'RECONCILED');
-            // Use filteredSysTxnsBase which has system transactions without search filter
-            const unreconSysTxns = filteredSysTxnsBase.length > 0 ? filteredSysTxnsBase : sysTxns;
+            // Use matchingSysTxns which are fetched if not already loaded
+            const unreconSysTxns = matchingSysTxns.length > 0 ? matchingSysTxns : filteredSysTxnsBase;
 
             const matches: Array<{
               bankLine?: typeof unreconStmts[0];
