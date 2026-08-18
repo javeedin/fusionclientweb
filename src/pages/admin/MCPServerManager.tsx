@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Layout, Card, Button, Form, Input, Select, Radio, Tabs, Table, Space, Modal, message,
+  Layout, Card, Button, Form, Input, Select, Radio, Tabs, Table, Space, Modal, message, Alert,
   Row, Col, Typography, Breadcrumb, Tag, Divider, Spin, Tooltip, Drawer, Collapse,
   InputNumber, Checkbox, Descriptions
 } from 'antd';
 import {
   HomeOutlined, PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined,
-  TestOutlined, ExportOutlined, SettingOutlined
+  CheckCircleOutlined, ExportOutlined, SettingOutlined
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { mcpServerService } from '../../services/mcp-server.service';
@@ -269,7 +269,7 @@ const MCPServerManager: React.FC = () => {
           </Tooltip>
           <Button
             size="small"
-            icon={<TestOutlined />}
+            icon={<CheckCircleOutlined />}
             onClick={() => handleTestServer(record.id)}
             loading={serverToTest === record.id && testLoading}
           >
@@ -712,7 +712,5 @@ const MCPServerManager: React.FC = () => {
     </Layout>
   );
 };
-
-import { Alert } from 'antd';
 
 export default MCPServerManager;
