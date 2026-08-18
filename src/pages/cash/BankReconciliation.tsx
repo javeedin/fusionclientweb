@@ -882,7 +882,9 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
   const [autoReconOpen,     setAutoReconOpen]     = useState(false);
   const [autoReconCriteria, setAutoReconCriteria] = useState<string[]>(['amount']);
   const [autoReconMatches,  setAutoReconMatches]  = useState<AutoReconMatch[]>([]);
-  const [autoReconStep,     setAutoReconStep]     = useState<'criteria' | 'results'>('criteria');
+  const [autoReconStep,     setAutoReconStep]     = useState<'select' | 'results'>('select');
+  const [selectedStmtForRecon, setSelectedStmtForRecon] = useState<Set<string>>(new Set());
+  const [selectedSysForRecon, setSelectedSysForRecon] = useState<Set<string>>(new Set());
   const [autoReconRunning,  setAutoReconRunning]  = useState(false);
   const [autoReconTxnType,  setAutoReconTxnType]  = useState<string>('ALL');
   const [autoReconApiOpen,  setAutoReconApiOpen]  = useState(false);
@@ -2092,8 +2094,10 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
     }
 
     setAutoReconMatches(matches);
-    setAutoReconStep('results');
+    setAutoReconStep('select');
     setAutoReconRunning(false);
+    setSelectedStmtForRecon(new Set());
+    setSelectedSysForRecon(new Set());
   }, [stmtLines, sysTxns, autoReconCriteria, autoReconTxnType, lastParams, fetchSysTxns, txnSourceFilter]);
 
   const executeAutoRecon = useCallback(async () => {
@@ -4366,44 +4370,48 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
       {/* ── Auto Recon Modal ─────────────────────────────────────────── */}
       <Modal
-        title={<Space><ThunderboltOutlined style={{ color: '#722ed1' }} /><span>Auto Reconciliation</span></Space>}
+        title={<Space><ThunderboltOutlined style={{ color: '#722ed1' }} /><span>Manual Reconciliation</span></Space>}
         open={autoReconOpen}
         onCancel={() => setAutoReconOpen(false)}
-        width={autoReconStep === 'results' ? 1000 : 520}
-        style={{ height: autoReconStep === 'results' ? 'auto' : 'auto' }}
+        width={1200}
         bodyStyle={{ maxHeight: '80vh', overflowY: 'auto' }}
         footer={
-          autoReconStep === 'criteria' ? (
+          autoReconStep === 'select' ? (
             <Space>
-              <Tooltip title="API Inspector — view endpoints used by this popup">
-                <Button
-                  icon={<ApiOutlined />}
-                  onClick={() => setAutoReconApiOpen(true)}
-                  style={{ color: REDWOOD.info, borderColor: REDWOOD.info }}
-                />
-              </Tooltip>
-              <Button onClick={() => setAutoReconOpen(false)}>Cancel</Button>
+              <Button onClick={() => setAutoReconOpen(false)}>Close</Button>
               <Button
                 type="primary"
-                icon={<ThunderboltOutlined />}
                 loading={autoReconRunning}
-                disabled={autoReconCriteria.length === 0}
-                onClick={runAutoRecon}
-                style={{ background: '#722ed1', borderColor: '#722ed1' }}
+                disabled={selectedStmtForRecon.size === 0 || selectedSysForRecon.size === 0}
+                onClick={() => {
+                  const stmtLines_ = Array.from(selectedStmtForRecon);
+                  const sysTxns_ = Array.from(selectedSysForRecon);
+                  const pairs: AutoReconMatch[] = [];
+                  stmtLines_.forEach((stmtKey, idx) => {
+                    const stmt = stmtLines.find(s => String(s.lineId) === stmtKey);
+                    const sysTxnKey = sysTxns_[idx];
+                    const sys = sysTxns.find(t => sysTxnRowKey(t) === sysTxnKey);
+                    if (stmt && sys) {
+                      pairs.push({
+                        stmtLine: stmt,
+                        sysTxn: sys,
+                        matchedBy: ['Manual'],
+                        confirmed: true,
+                        status: 'pending'
+                      });
+                    }
+                  });
+                  setAutoReconMatches(pairs);
+                  setAutoReconStep('results');
+                }}
+                style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}
               >
-                Find Matches
+                Reconcile {Math.min(selectedStmtForRecon.size, selectedSysForRecon.size)} Pair(s)
               </Button>
             </Space>
           ) : (
             <Space>
-              <Tooltip title="API Inspector — view endpoints used by this popup">
-                <Button
-                  icon={<ApiOutlined />}
-                  onClick={() => setAutoReconApiOpen(true)}
-                  style={{ color: REDWOOD.info, borderColor: REDWOOD.info }}
-                />
-              </Tooltip>
-              <Button onClick={() => setAutoReconStep('criteria')}>← Back</Button>
+              <Button onClick={() => setAutoReconStep('select')}>← Back to Selection</Button>
               <Button onClick={() => setAutoReconOpen(false)}>Close</Button>
               <Button
                 type="primary"
@@ -4420,99 +4428,100 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         }
         destroyOnClose
       >
-        {autoReconStep === 'criteria' ? (
-          <div>
-            <div style={{ marginBottom: 16, color: '#8c8c8c', fontSize: 12 }}>
-              Select the criteria used to find matches between bank statement lines and system transactions.
-              All selected criteria must match for a pair to be proposed.
+        {autoReconStep === 'select' ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, height: '500px' }}>
+            {/* Left Column: Statement Lines */}
+            <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid #f0f0f0', borderRadius: 6, overflow: 'hidden' }}>
+              <div style={{ padding: '12px', background: '#fafafa', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 12 }}>
+                Bank Statement Lines ({stmtLines.length})
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+                {stmtLines.map(stmt => (
+                  <div
+                    key={stmt.lineId}
+                    onClick={() => {
+                      const newSet = new Set(selectedStmtForRecon);
+                      const key = String(stmt.lineId);
+                      if (newSet.has(key)) newSet.delete(key);
+                      else newSet.add(key);
+                      setSelectedStmtForRecon(newSet);
+                    }}
+                    style={{
+                      padding: '8px',
+                      marginBottom: '4px',
+                      border: selectedStmtForRecon.has(String(stmt.lineId)) ? '2px solid #0572CE' : '1px solid #f0f0f0',
+                      borderRadius: 4,
+                      background: selectedStmtForRecon.has(String(stmt.lineId)) ? '#e6f7ff' : '#fff',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      lineHeight: 1.4
+                    }}
+                  >
+                    <div style={{ fontWeight: 500, color: '#0572CE', marginBottom: 2 }}>
+                      Line #{stmt.lineId}
+                    </div>
+                    <div style={{ color: '#666', marginBottom: 2 }}>
+                      {stmt.transactionDate?.slice(0, 10)} {stmt.transactionCode}
+                    </div>
+                    <div style={{ fontWeight: 600, color: '#1A1A1A' }}>
+                      {Math.abs(stmt.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>Transaction Source</div>
-              <Segmented
-                value={autoReconTxnType}
-                onChange={v => setAutoReconTxnType(v as string)}
-                options={[
-                  { label: 'All',  value: 'ALL' },
-                  { label: 'AP',   value: 'AP_PAYMENT' },
-                  { label: 'AR',   value: 'AR_RECEIPT' },
-                  { label: 'GL',   value: 'GL_JOURNAL' },
-                  { label: 'CM',   value: 'CM' },
-                ]}
-              />
-            </div>
-
-            <Divider style={{ margin: '12px 0' }} />
-
-            <div style={{ fontWeight: 600, marginBottom: 10 }}>Matching Criteria</div>
-            <Checkbox.Group
-              value={autoReconCriteria}
-              onChange={v => setAutoReconCriteria(v as string[])}
-            >
-              <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                <Checkbox value="amount">
-                  <div>
-                    <div style={{ fontWeight: 500 }}>By Amount</div>
-                    <div style={{ fontSize: 11, color: '#8c8c8c' }}>Statement line amount equals system transaction amount</div>
-                  </div>
-                </Checkbox>
-                <Checkbox value="bankTxnId">
-                  <div>
-                    <div style={{ fontWeight: 500 }}>By Bank Transaction ID</div>
-                    <div style={{ fontSize: 11, color: '#8c8c8c' }}>Bank txn reference on statement matches transaction number or reference</div>
-                  </div>
-                </Checkbox>
-                <Checkbox value="reference">
-                  <div>
-                    <div style={{ fontWeight: 500 }}>By Bank Reference</div>
-                    <div style={{ fontSize: 11, color: '#8c8c8c' }}>Statement reference matches system transaction reference or number</div>
-                  </div>
-                </Checkbox>
-                <Checkbox value="checkNumber">
-                  <div>
-                    <div style={{ fontWeight: 500 }}>By AP Check / Payment Number</div>
-                    <div style={{ fontSize: 11, color: '#8c8c8c' }}>Statement reference or bank txn ref matches AP check/payment number</div>
-                  </div>
-                </Checkbox>
-                <Checkbox value="date">
-                  <div>
-                    <div style={{ fontWeight: 500 }}>By Date</div>
-                    <div style={{ fontSize: 11, color: '#8c8c8c' }}>Transaction dates must match exactly</div>
-                  </div>
-                </Checkbox>
-                <Checkbox value="counterparty">
-                  <div>
-                    <div style={{ fontWeight: 500 }}>By Counterparty / Payee Name</div>
-                    <div style={{ fontSize: 11, color: '#8c8c8c' }}>Statement counterparty contains or matches system transaction payee</div>
-                  </div>
-                </Checkbox>
-              </Space>
-            </Checkbox.Group>
-
-            <div style={{ marginTop: 16, padding: '8px 12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, fontSize: 12 }}>
-              <strong>{stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length}</strong> unreconciled statement lines ·{' '}
-              <strong>{(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length}</strong> unreconciled system transactions available
+            {/* Right Column: System Transactions */}
+            <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid #f0f0f0', borderRadius: 6, overflow: 'hidden' }}>
+              <div style={{ padding: '12px', background: '#fafafa', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 12 }}>
+                System Transactions ({sysTxns.length})
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+                {sysTxns.map(txn => {
+                  const key = sysTxnRowKey(txn);
+                  return (
+                    <div
+                      key={key}
+                      onClick={() => {
+                        const newSet = new Set(selectedSysForRecon);
+                        if (newSet.has(key)) newSet.delete(key);
+                        else newSet.add(key);
+                        setSelectedSysForRecon(newSet);
+                      }}
+                      style={{
+                        padding: '8px',
+                        marginBottom: '4px',
+                        border: selectedSysForRecon.has(key) ? '2px solid #722ed1' : '1px solid #f0f0f0',
+                        borderRadius: 4,
+                        background: selectedSysForRecon.has(key) ? '#f9f0ff' : '#fff',
+                        cursor: 'pointer',
+                        fontSize: 11,
+                        lineHeight: 1.4
+                      }}
+                    >
+                      <div style={{ fontWeight: 500, color: '#722ed1', marginBottom: 2 }}>
+                        {txn.txnNumber}
+                      </div>
+                      <div style={{ color: '#666', marginBottom: 2, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                        {txn.payee || txn.reference}
+                      </div>
+                      <div style={{ fontWeight: 600, color: '#1A1A1A' }}>
+                        {Math.abs(txn.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         ) : (
           <div>
             {autoReconMatches.length === 0 ? (
-              <Empty
-                description={
-                  <div>
-                    <div>No matches found with the selected criteria</div>
-                    <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
-                      Try selecting fewer criteria (e.g. Amount only) or broader date/amount ranges.
-                      Checked <strong>{stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length}</strong> statement lines
-                      against <strong>{sysTxns.filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length}</strong> system transactions.
-                    </div>
-                  </div>
-                }
-              />
+              <Empty description="No pairs selected for reconciliation" />
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                 <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 8, flexShrink: 0 }}>
-                  Found <strong>{autoReconMatches.length}</strong> match(es). Uncheck to exclude from reconciliation.
+                  Selected <strong>{autoReconMatches.length}</strong> pair(s). Uncheck to exclude from reconciliation.
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
                   {autoReconMatches.map((m, idx) => (
