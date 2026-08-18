@@ -50,6 +50,11 @@ const REDWOOD = {
 const APEX_BASE =
   buildApexUrl('');
 
+// Format signed amount (no Math.abs) - shows actual sign for DR (-) and CR (+)
+const formatSignedAmount = (amount: number, decimals = 2): string => {
+  return amount.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+};
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface StmtLine {
   lineId: number;
@@ -1431,12 +1436,20 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       const res  = await fetch(stmtLinesUrl);
       const data = await parseApexJson(res);
       if (data.status === 'success') {
-        setStmtLines((data.items ?? []).map((i: any) => ({
-          ...i,
-          // Oracle may return snake_case or UPPERCASE — normalise to camelCase
-          externalTxnId:  i.externalTxnId  ?? i.external_txn_id  ?? i.EXTERNAL_TXN_ID  ?? undefined,
-          externalTxnRef: i.externalTxnRef ?? i.external_txn_ref ?? i.EXTERNAL_TXN_REF ?? undefined,
-        })) as StmtLine[]);
+        setStmtLines((data.items ?? []).map((i: any) => {
+          const code = i.transactionCode ?? i.TRANSACTION_CODE ?? 'DR';
+          const rawAmount = Number(i.amount ?? i.AMOUNT ?? 0);
+          // Apply sign based on DR/CR: CR (+ve), DR (-ve)
+          const signedAmount = code === 'CR' ? Math.abs(rawAmount) : -Math.abs(rawAmount);
+          return {
+            ...i,
+            amount: signedAmount,
+            transactionCode: code,
+            // Oracle may return snake_case or UPPERCASE — normalise to camelCase
+            externalTxnId:  i.externalTxnId  ?? i.external_txn_id  ?? i.EXTERNAL_TXN_ID  ?? undefined,
+            externalTxnRef: i.externalTxnRef ?? i.external_txn_ref ?? i.EXTERNAL_TXN_REF ?? undefined,
+          };
+        }) as StmtLine[]);
       } else {
         msgApi.error(data.message ?? 'Failed to load statement lines');
       }
@@ -2081,7 +2094,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         const matchedBy: string[] = [];
 
         if (autoReconCriteria.includes('amount')) {
-          if (Math.abs(stmt.amount) !== Math.abs(sys.amount)) continue;
+          if (stmt.amount !== sys.amount) continue;
           matchedBy.push('Amount');
         }
         if (autoReconCriteria.includes('bankTxnId')) {
@@ -4640,7 +4653,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                           <div>
                             <div style={{ fontSize: 11, fontWeight: 500 }}>{line.description || line.reference || `Line #${line.lineId}`}</div>
                             <div style={{ fontSize: 10, color: '#8c8c8c' }}>
-                              {line.transactionDate?.slice(0, 10)} • {line.transactionCode} • {Math.abs(line.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              {line.transactionDate?.slice(0, 10)} • {line.transactionCode} • {formatSignedAmount(line.amount)}
                             </div>
                           </div>
                         ),
@@ -4665,7 +4678,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                           <div>
                             <div style={{ fontSize: 11, fontWeight: 500 }}>{txn.payee || txn.txnNumber}</div>
                             <div style={{ fontSize: 10, color: '#8c8c8c' }}>
-                              {txn.txnDate?.slice(0, 10)} • {txn.source?.replace('_', ' ')} • {Math.abs(txn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              {txn.txnDate?.slice(0, 10)} • {txn.source?.replace('_', ' ')} • {formatSignedAmount(txn.amount)}
                             </div>
                           </div>
                         ),
@@ -4717,15 +4730,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                               <Space size={6}>
                                 <span>{m.stmtLine.transactionDate?.slice(0, 10)}</span>
                                 <Tag color={m.stmtLine.transactionCode === 'CR' ? 'volcano' : 'blue'} style={{ margin: 0, fontSize: 10 }}>{m.stmtLine.transactionCode}</Tag>
-                                <strong>
-                                  {/* Show actual amount with sign if stored as signed, else show with code context */}
-                                  {m.stmtLine.amount < 0 ? '−' : ''}{Math.abs(m.stmtLine.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                </strong>
+                                <strong>{formatSignedAmount(m.stmtLine.amount)}</strong>
                               </Space>
                             </div>
                             {m.stmtLine.reference && <div style={{ fontSize: 10, color: '#8c8c8c', marginTop: 2 }}>Ref: {m.stmtLine.reference}</div>}
                             {m.matchedBy.includes('Amount') && <div style={{ fontSize: 9, color: '#0050b3', marginTop: 3, padding: '2px 4px', background: '#e6f7ff', borderRadius: 2 }}>
-                              Abs Match: {Math.abs(m.stmtLine.amount).toFixed(2)}
+                              Exact Match: {formatSignedAmount(m.stmtLine.amount)}
                             </div>}
                           </div>
 
@@ -4739,11 +4749,9 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                                 {m.matchedBy.map(r => {
                                   // For Amount matches, show the actual values compared
                                   if (r === 'Amount') {
-                                    const stmtAbs = Math.abs(m.stmtLine.amount);
-                                    const sysAbs = Math.abs(m.sysTxn.amount);
-                                    const match = stmtAbs === sysAbs;
+                                    const match = m.stmtLine.amount === m.sysTxn.amount;
                                     return (
-                                      <Tooltip key={r} title={`Stmt: |${m.stmtLine.amount}| = ${stmtAbs.toFixed(2)} vs Sys: |${m.sysTxn.amount}| = ${sysAbs.toFixed(2)} ${match ? '✓' : '✗'}`}>
+                                      <Tooltip key={r} title={`Exact: Stmt ${formatSignedAmount(m.stmtLine.amount)} = Sys ${formatSignedAmount(m.sysTxn.amount)} ${match ? '✓' : '✗'}`}>
                                         <Tag color={match ? 'purple' : 'red'} style={{ margin: 0, fontSize: 10, cursor: 'help' }}>{r}</Tag>
                                       </Tooltip>
                                     );
@@ -4762,15 +4770,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                               <Space size={6}>
                                 <span>{m.sysTxn.txnDate?.slice(0, 10)}</span>
                                 <Tag color="geekblue" style={{ margin: 0, fontSize: 10 }}>{m.sysTxn.source?.replace('_', ' ')}</Tag>
-                                <strong>
-                                  {/* Show actual amount with sign if negative */}
-                                  {m.sysTxn.amount < 0 ? '−' : ''}{Math.abs(m.sysTxn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                </strong>
+                                <strong>{formatSignedAmount(m.sysTxn.amount)}</strong>
                               </Space>
                             </div>
                             {m.sysTxn.txnNumber && <div style={{ fontSize: 10, color: '#8c8c8c', marginTop: 2 }}>#{m.sysTxn.txnNumber}</div>}
                             {m.matchedBy.includes('Amount') && <div style={{ fontSize: 9, color: '#592d00', marginTop: 3, padding: '2px 4px', background: '#fff1f0', borderRadius: 2 }}>
-                              Abs Match: {Math.abs(m.sysTxn.amount).toFixed(2)}
+                              Exact Match: {formatSignedAmount(m.sysTxn.amount)}
                             </div>}
                           </div>
                         </div>
@@ -4887,7 +4892,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
             if (viewMode === 'bank-to-sys') {
               filteredStmtLines.forEach(bankLine => {
-                const matchedSysTxns = filteredSysTxns.filter(t => Math.abs(t.amount - bankLine.amount) < 0.01);
+                const matchedSysTxns = filteredSysTxns.filter(t => t.amount === bankLine.amount);
                 const totalSysAmount = matchedSysTxns.reduce((sum, t) => sum + t.amount, 0);
                 const difference = bankLine.amount - totalSysAmount;
 
@@ -4902,7 +4907,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
               });
             } else {
               filteredSysTxns.forEach(sysTxn => {
-                const matchedBankLines = filteredStmtLines.filter(l => Math.abs(l.amount - sysTxn.amount) < 0.01);
+                const matchedBankLines = filteredStmtLines.filter(l => l.amount === sysTxn.amount);
                 const totalBankAmount = matchedBankLines.reduce((sum, l) => sum + l.amount, 0);
                 const difference = totalBankAmount - sysTxn.amount;
 
