@@ -39,13 +39,23 @@ export const mcpServerService = {
 
   async createServer(payload: MCPServerPayload): Promise<MCPServer> {
     const url = getMcpServersUrl();
+
+    // Format payload to match RR_MCP_REST_PKG.manage_server procedure parameters
+    const dbPayload = {
+      action: 'CREATE',
+      server_name: payload.name,
+      description: payload.description,
+      type: payload.type,
+      config_json: JSON.stringify(payload.config),
+    };
+
     console.log('[MCP Service] POST', url);
-    console.log('[MCP Service] Payload:', JSON.stringify(payload, null, 2));
+    console.log('[MCP Service] Payload:', JSON.stringify(dbPayload, null, 2));
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(dbPayload),
       });
       console.log('[MCP Service] POST Response:', response.status, response.statusText);
       const data = await response.json();
@@ -59,21 +69,60 @@ export const mcpServerService = {
   },
 
   async updateServer(id: string, payload: Partial<MCPServerPayload>): Promise<MCPServer> {
-    const response = await fetch(`${getMcpServersUrl()}/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) throw new Error(`Failed to update MCP server: ${response.statusText}`);
-    return response.json();
+    const url = getMcpServersUrl();
+
+    // Format payload to match RR_MCP_REST_PKG.manage_server procedure parameters
+    const dbPayload = {
+      action: 'UPDATE',
+      server_id: id,
+      ...(payload.name && { server_name: payload.name }),
+      ...(payload.description !== undefined && { description: payload.description }),
+      ...(payload.type && { type: payload.type }),
+      ...(payload.config && { config_json: JSON.stringify(payload.config) }),
+    };
+
+    console.log('[MCP Service] PUT', url);
+    console.log('[MCP Service] Update Payload:', JSON.stringify(dbPayload, null, 2));
+    try {
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dbPayload),
+      });
+      console.log('[MCP Service] PUT Response:', response.status, response.statusText);
+      const data = await response.json();
+      console.log('[MCP Service] PUT Response Body:', data);
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${JSON.stringify(data)}`);
+      return data;
+    } catch (error) {
+      console.error('[MCP Service] PUT Error:', error);
+      throw error;
+    }
   },
 
   async deleteServer(id: string): Promise<void> {
-    const response = await fetch(`${getMcpServersUrl()}/${id}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (!response.ok) throw new Error(`Failed to delete MCP server: ${response.statusText}`);
+    const url = getMcpServersUrl();
+
+    // Format payload to match RR_MCP_REST_PKG.manage_server procedure parameters
+    const dbPayload = {
+      action: 'DELETE',
+      server_id: id,
+    };
+
+    console.log('[MCP Service] DELETE', url);
+    console.log('[MCP Service] Delete Payload:', JSON.stringify(dbPayload, null, 2));
+    try {
+      const response = await fetch(url, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dbPayload),
+      });
+      console.log('[MCP Service] DELETE Response:', response.status, response.statusText);
+      if (!response.ok) throw new Error(`Failed to delete MCP server: ${response.statusText}`);
+    } catch (error) {
+      console.error('[MCP Service] DELETE Error:', error);
+      throw error;
+    }
   },
 
   async testServer(id: string): Promise<any> {
