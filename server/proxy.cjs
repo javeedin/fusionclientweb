@@ -1002,26 +1002,33 @@ app.all(/^\/api\/apex-admin\/(.+)$/, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// MCP Server Management Endpoints
+// MCP Server Management Endpoints (using APEX Database)
 // ═══════════════════════════════════════════════════════════════
 
-// In-memory storage for MCP servers (in production, use a database)
-const mcpServers = new Map();
-let mcpServerIdCounter = 1;
-
-// List all MCP servers
-app.get('/api/mcp-servers', (req, res) => {
+// List all MCP servers from APEX
+app.get('/api/mcp-servers', async (req, res) => {
   try {
-    const servers = Array.from(mcpServers.values());
-    res.json(servers);
+    const response = await fetch(`${APEX_CONFIG.baseUrl}/mcp-servers/list`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('[MCP] APEX List error:', error);
+      return res.status(response.status).json({ error: 'Failed to fetch MCP servers' });
+    }
+
+    const data = await response.json();
+    res.json(data.servers || []);
   } catch (error) {
     console.error('[MCP] List error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Create MCP server
-app.post('/api/mcp-servers', (req, res) => {
+// Create MCP server in APEX
+app.post('/api/mcp-servers', async (req, res) => {
   try {
     const { name, description, type, config } = req.body;
 
@@ -1029,76 +1036,131 @@ app.post('/api/mcp-servers', (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: name, type, config' });
     }
 
-    const serverId = `mcp_${mcpServerIdCounter++}`;
-    const server = {
-      id: serverId,
+    const payload = {
+      action: 'create',
+      server_name: name,
+      description: description || '',
+      server_type: type,
+      config_json: JSON.stringify(config),
+    };
+
+    const response = await fetch(`${APEX_CONFIG.baseUrl}/mcp-servers/manage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('[MCP] APEX Create error:', error);
+      return res.status(response.status).json({ error: 'Failed to create MCP server' });
+    }
+
+    const data = await response.json();
+    console.log(`[MCP] Created server: ${name} (ID: ${data.mcp_server_id})`);
+
+    res.json({
+      id: `mcp_${data.mcp_server_id}`,
       name,
       description,
       type,
       config,
       status: 'active',
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      url: `http://localhost:${PORT}/mcp/${serverId}`,
-    };
-
-    mcpServers.set(serverId, server);
-    console.log(`[MCP] Created server: ${name} (${serverId})`);
-    res.json(server);
+      url: `http://localhost:${PORT}/mcp/mcp_${data.mcp_server_id}`,
+    });
   } catch (error) {
     console.error('[MCP] Create error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Get single MCP server
-app.get('/api/mcp-servers/:id', (req, res) => {
+// Get single MCP server from APEX
+app.get('/api/mcp-servers/:id', async (req, res) => {
   try {
-    const server = mcpServers.get(req.params.id);
-    if (!server) {
+    const serverId = req.params.id.replace('mcp_', '');
+
+    const response = await fetch(`${APEX_CONFIG.baseUrl}/mcp-servers/get?id=${serverId}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
       return res.status(404).json({ error: 'Server not found' });
     }
-    res.json(server);
+
+    const data = await response.json();
+    res.json(data.server);
   } catch (error) {
     console.error('[MCP] Get error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Update MCP server
-app.put('/api/mcp-servers/:id', (req, res) => {
+// Update MCP server in APEX
+app.put('/api/mcp-servers/:id', async (req, res) => {
   try {
-    const server = mcpServers.get(req.params.id);
-    if (!server) {
-      return res.status(404).json({ error: 'Server not found' });
+    const serverId = req.params.id.replace('mcp_', '');
+    const { name, description, type, config } = req.body;
+
+    const payload = {
+      action: 'update',
+      mcp_server_id: serverId,
+      server_name: name,
+      description: description || '',
+      server_type: type,
+      config_json: JSON.stringify(config),
+    };
+
+    const response = await fetch(`${APEX_CONFIG.baseUrl}/mcp-servers/manage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).json({ error: 'Failed to update MCP server' });
     }
 
-    const { name, description, type, config } = req.body;
-    if (name) server.name = name;
-    if (description) server.description = description;
-    if (type) server.type = type;
-    if (config) server.config = config;
-    server.updatedAt = new Date().toISOString();
+    const data = await response.json();
+    console.log(`[MCP] Updated server: ${name} (ID: ${serverId})`);
 
-    mcpServers.set(req.params.id, server);
-    console.log(`[MCP] Updated server: ${server.name} (${req.params.id})`);
-    res.json(server);
+    res.json({
+      id: `mcp_${serverId}`,
+      name,
+      description,
+      type,
+      config,
+      status: 'active',
+      updatedAt: new Date().toISOString(),
+    });
   } catch (error) {
     console.error('[MCP] Update error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Delete MCP server
-app.delete('/api/mcp-servers/:id', (req, res) => {
+// Delete MCP server from APEX
+app.delete('/api/mcp-servers/:id', async (req, res) => {
   try {
-    const server = mcpServers.get(req.params.id);
-    if (!server) {
-      return res.status(404).json({ error: 'Server not found' });
+    const serverId = req.params.id.replace('mcp_', '');
+
+    const payload = {
+      action: 'delete',
+      mcp_server_id: serverId,
+    };
+
+    const response = await fetch(`${APEX_CONFIG.baseUrl}/mcp-servers/manage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).json({ error: 'Failed to delete MCP server' });
     }
 
-    mcpServers.delete(req.params.id);
-    console.log(`[MCP] Deleted server: ${server.name} (${req.params.id})`);
+    console.log(`[MCP] Deleted server (ID: ${serverId})`);
     res.json({ success: true, message: 'Server deleted' });
   } catch (error) {
     console.error('[MCP] Delete error:', error.message);
