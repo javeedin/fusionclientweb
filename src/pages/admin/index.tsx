@@ -10,6 +10,7 @@ import {
   MailOutlined,
   DatabaseOutlined,
   CloudUploadOutlined,
+  LinkOutlined,
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -115,6 +116,14 @@ const adminCards: AdminCard[] = [
     icon: <CloudUploadOutlined />,
     color: REDWOOD.primary,
     path: '/admin/releases',
+  },
+  {
+    key: 'mcp-servers',
+    title: 'MCP Server Manager',
+    description: 'Create and manage MCP (Model Context Protocol) servers to connect Claude with Oracle Fusion SOAP calls and REST APIs. Generate BIP reports and more.',
+    icon: <LinkOutlined />,
+    color: '#722ed1',
+    path: '/admin/mcp-servers',
   },
 ];
 

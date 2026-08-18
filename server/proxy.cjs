@@ -1001,6 +1001,243 @@ app.all(/^\/api\/apex-admin\/(.+)$/, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// MCP Server Management Endpoints
+// ═══════════════════════════════════════════════════════════════
+
+// In-memory storage for MCP servers (in production, use a database)
+const mcpServers = new Map();
+let mcpServerIdCounter = 1;
+
+// List all MCP servers
+app.get('/api/mcp-servers', (req, res) => {
+  try {
+    const servers = Array.from(mcpServers.values());
+    res.json(servers);
+  } catch (error) {
+    console.error('[MCP] List error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create MCP server
+app.post('/api/mcp-servers', (req, res) => {
+  try {
+    const { name, description, type, config } = req.body;
+
+    if (!name || !type || !config) {
+      return res.status(400).json({ error: 'Missing required fields: name, type, config' });
+    }
+
+    const serverId = `mcp_${mcpServerIdCounter++}`;
+    const server = {
+      id: serverId,
+      name,
+      description,
+      type,
+      config,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      url: `http://localhost:${PORT}/mcp/${serverId}`,
+    };
+
+    mcpServers.set(serverId, server);
+    console.log(`[MCP] Created server: ${name} (${serverId})`);
+    res.json(server);
+  } catch (error) {
+    console.error('[MCP] Create error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single MCP server
+app.get('/api/mcp-servers/:id', (req, res) => {
+  try {
+    const server = mcpServers.get(req.params.id);
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+    res.json(server);
+  } catch (error) {
+    console.error('[MCP] Get error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update MCP server
+app.put('/api/mcp-servers/:id', (req, res) => {
+  try {
+    const server = mcpServers.get(req.params.id);
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const { name, description, type, config } = req.body;
+    if (name) server.name = name;
+    if (description) server.description = description;
+    if (type) server.type = type;
+    if (config) server.config = config;
+    server.updatedAt = new Date().toISOString();
+
+    mcpServers.set(req.params.id, server);
+    console.log(`[MCP] Updated server: ${server.name} (${req.params.id})`);
+    res.json(server);
+  } catch (error) {
+    console.error('[MCP] Update error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete MCP server
+app.delete('/api/mcp-servers/:id', (req, res) => {
+  try {
+    const server = mcpServers.get(req.params.id);
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    mcpServers.delete(req.params.id);
+    console.log(`[MCP] Deleted server: ${server.name} (${req.params.id})`);
+    res.json({ success: true, message: 'Server deleted' });
+  } catch (error) {
+    console.error('[MCP] Delete error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Test MCP server connection
+app.post('/api/mcp-servers/:id/test', async (req, res) => {
+  try {
+    const server = mcpServers.get(req.params.id);
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const startTime = Date.now();
+    let result = {};
+
+    if (server.type === 'REST') {
+      try {
+        const { endpoint, method = 'GET', authType, authUsername, authPassword, bearerToken, apiKey, apiKeyHeader = 'X-API-Key' } = server.config;
+
+        const headers = { 'Content-Type': 'application/json' };
+
+        if (authType === 'basic' && authUsername && authPassword) {
+          const auth = Buffer.from(`${authUsername}:${authPassword}`).toString('base64');
+          headers['Authorization'] = `Basic ${auth}`;
+        } else if (authType === 'bearer' && bearerToken) {
+          headers['Authorization'] = `Bearer ${bearerToken}`;
+        } else if (authType === 'apiKey' && apiKey) {
+          headers[apiKeyHeader] = apiKey;
+        }
+
+        const testResponse = await fetch(endpoint, {
+          method,
+          headers,
+          timeout: server.config.timeout || 5000,
+        });
+
+        result = {
+          status: testResponse.status,
+          statusText: testResponse.statusText,
+          headers: Object.fromEntries(testResponse.headers),
+        };
+      } catch (error) {
+        result = { error: error.message };
+      }
+    } else if (server.type === 'SOAP') {
+      try {
+        const { fusionUrl, username, password } = server.config;
+        const soapUrl = `${fusionUrl.replace(/\/$/, '')}/xmlpserver/services/v2/SecurityService`;
+
+        const soapBody = `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:v2="http://xmlns.oracle.com/oxp/service/v2">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <v2:login>
+      <v2:userID>${username}</v2:userID>
+      <v2:password>${password}</v2:password>
+    </v2:login>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+
+        const testResponse = await fetch(soapUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/xml; charset=UTF-8', 'SOAPAction': '' },
+          body: soapBody,
+          timeout: server.config.timeout || 5000,
+        });
+
+        result = {
+          status: testResponse.status,
+          statusText: testResponse.statusText,
+          authenticated: testResponse.status === 200,
+        };
+      } catch (error) {
+        result = { error: error.message };
+      }
+    }
+
+    const responseTime = Date.now() - startTime;
+    res.json({ ...result, responseTime });
+  } catch (error) {
+    console.error('[MCP] Test error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// MCP Server endpoint (callable from Claude)
+app.all('/mcp/:id/*', async (req, res) => {
+  try {
+    const server = mcpServers.get(req.params.id);
+    if (!server) {
+      return res.status(404).json({ error: 'MCP Server not found' });
+    }
+
+    console.log(`[MCP] ${req.params.id} - ${req.method} ${req.path}`);
+
+    if (server.type === 'REST') {
+      const { endpoint, method = 'GET', authType, authUsername, authPassword, bearerToken, apiKey, apiKeyHeader = 'X-API-Key' } = server.config;
+
+      const headers = { 'Content-Type': 'application/json' };
+
+      if (authType === 'basic' && authUsername && authPassword) {
+        const auth = Buffer.from(`${authUsername}:${authPassword}`).toString('base64');
+        headers['Authorization'] = `Basic ${auth}`;
+      } else if (authType === 'bearer' && bearerToken) {
+        headers['Authorization'] = `Bearer ${bearerToken}`;
+      } else if (authType === 'apiKey' && apiKey) {
+        headers[apiKeyHeader] = apiKey;
+      }
+
+      const response = await fetch(endpoint, {
+        method: method || 'GET',
+        headers,
+        body: (method !== 'GET' && req.body) ? JSON.stringify(req.body) : undefined,
+        timeout: server.config.timeout || 30000,
+      });
+
+      const data = await response.text();
+      res.status(response.status);
+      Object.entries(response.headers).forEach(([key, value]) => {
+        res.set(key, value);
+      });
+
+      try {
+        res.json(JSON.parse(data));
+      } catch {
+        res.send(data);
+      }
+    } else if (server.type === 'SOAP') {
+      res.status(501).json({ error: 'SOAP endpoint not yet implemented' });
+    }
+  } catch (error) {
+    console.error('[MCP] Endpoint error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log('='.repeat(50));
@@ -1020,6 +1257,13 @@ app.listen(PORT, () => {
   console.log('  POST /api/soap/test             - Test SOAP connection');
   console.log('  POST /api/soap/bip-report       - SOAP BI Publisher report (decodes Base64)');
   console.log('  POST /api/send-email            - Send OTP email via nodemailer');
+  console.log('  GET  /api/mcp-servers           - List all MCP servers');
+  console.log('  POST /api/mcp-servers           - Create MCP server');
+  console.log('  GET  /api/mcp-servers/:id       - Get MCP server config');
+  console.log('  PUT  /api/mcp-servers/:id       - Update MCP server');
+  console.log('  DELETE /api/mcp-servers/:id     - Delete MCP server');
+  console.log('  POST /api/mcp-servers/:id/test  - Test MCP server');
+  console.log('  ALL  /mcp/:id/*                 - MCP Server endpoint (callable from Claude)');
   console.log('');
   console.log('Oracle Host:', ORACLE_CONFIG.baseUrl);
   console.log('APEX Host:', APEX_CONFIG.baseUrl);
