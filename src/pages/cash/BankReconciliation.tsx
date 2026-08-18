@@ -4440,10 +4440,10 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         destroyOnClose
       >
         <Spin spinning={autoReconRunning && autoReconMatches.length === 0 && stmtLines.length === 0}>
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div style={{ display: 'flex', gap: 8, height: '60vh' }}>
             {/* Bank Statements Table */}
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: REDWOOD.neutral900 }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: REDWOOD.neutral900 }}>
                 📊 Bank Statements ({stmtLines.length})
               </div>
               <Table
@@ -4461,7 +4461,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                       />
                     ),
                     dataIndex: 'select',
-                    width: 40,
+                    width: 32,
                     render: (_, stmt) => (
                       <Checkbox
                         checked={autoReconMatches.some(m => m.stmtLine.lineId === stmt.lineId && m.confirmed)}
@@ -4480,20 +4480,21 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                   {
                     title: 'Date',
                     dataIndex: 'transactionDate',
-                    width: 80,
+                    width: 70,
                     sorter: (a, b) => new Date(a.transactionDate).getTime() - new Date(b.transactionDate).getTime(),
                     render: (date) => date?.slice(0, 10),
                   },
                   {
                     title: 'Description',
                     dataIndex: 'description',
+                    width: 100,
                     ellipsis: true,
-                    render: (desc, stmt) => desc || stmt.reference || `Line #${stmt.lineId}`,
+                    render: (desc, stmt) => desc || stmt.reference || `#${stmt.lineId}`,
                   },
                   {
                     title: 'Type',
                     dataIndex: 'transactionCode',
-                    width: 50,
+                    width: 40,
                     filters: [
                       { text: 'CR', value: 'CR' },
                       { text: 'DR', value: 'DR' },
@@ -4503,14 +4504,15 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                   {
                     title: 'Amount',
                     dataIndex: 'amount',
-                    width: 120,
+                    width: 90,
                     sorter: (a, b) => a.amount - b.amount,
                     defaultSortOrder: 'descend' as const,
+                    align: 'right' as const,
                     render: (amount, stmt) => {
                       const sign = stmt.transactionCode === 'DR' ? -1 : 1;
                       const displayAmount = Math.abs(amount) * sign;
                       return (
-                        <Text strong style={{ color: displayAmount < 0 ? REDWOOD.error : REDWOOD.success }}>
+                        <Text strong style={{ fontSize: 10, color: displayAmount < 0 ? REDWOOD.error : REDWOOD.success }}>
                           {displayAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </Text>
                       );
@@ -4519,15 +4521,14 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                 ]}
                 rowKey={(record) => String(record.lineId)}
                 pagination={false}
-                scroll={{ y: 300 }}
+                scroll={{ y: 500 }}
+                style={{ fontSize: 10 }}
               />
             </div>
 
-            <Divider style={{ margin: '12px 0' }} />
-
             {/* System Transactions Table */}
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: REDWOOD.neutral900 }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: REDWOOD.neutral900 }}>
                 💳 System Transactions ({sysTxns.length})
               </div>
               <Table
@@ -4545,7 +4546,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                       />
                     ),
                     dataIndex: 'select',
-                    width: 40,
+                    width: 32,
                     render: (_, txn) => (
                       <Checkbox
                         checked={autoReconMatches.some(m => m.sysTxn.txnId === txn.txnId && m.confirmed)}
@@ -4564,31 +4565,33 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                   {
                     title: 'Date',
                     dataIndex: 'txnDate',
-                    width: 80,
+                    width: 70,
                     sorter: (a, b) => new Date(a.txnDate).getTime() - new Date(b.txnDate).getTime(),
                     render: (date) => date?.slice(0, 10),
                   },
                   {
-                    title: 'Description/Reference',
+                    title: 'Description',
                     dataIndex: 'payee',
+                    width: 100,
                     ellipsis: true,
-                    render: (payee, txn) => payee || txn.txnNumber || txn.reference || txn.accountDescription,
+                    render: (payee, txn) => payee || txn.txnNumber || txn.reference || txn.accountDescription || '—',
                   },
                   {
                     title: 'Source',
                     dataIndex: 'source',
-                    width: 80,
+                    width: 65,
                     filters: Array.from(new Set(sysTxns.map(t => t.source))).map(source => ({ text: source, value: source })),
                     onFilter: (value, record) => record.source === value,
                   },
                   {
                     title: 'Amount',
                     dataIndex: 'amount',
-                    width: 120,
+                    width: 90,
                     sorter: (a, b) => a.amount - b.amount,
                     defaultSortOrder: 'descend' as const,
+                    align: 'right' as const,
                     render: (amount) => (
-                      <Text strong style={{ color: REDWOOD.primary }}>
+                      <Text strong style={{ fontSize: 10, color: REDWOOD.primary }}>
                         {amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </Text>
                     ),
@@ -4596,10 +4599,11 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                 ]}
                 rowKey={(record) => sysTxnRowKey(record)}
                 pagination={false}
-                scroll={{ y: 300 }}
+                scroll={{ y: 500 }}
+                style={{ fontSize: 10 }}
               />
             </div>
-          </Space>
+          </div>
         </Spin>
       </Modal>
 
