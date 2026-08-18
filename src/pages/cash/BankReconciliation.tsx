@@ -5,7 +5,6 @@ import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input, Select,
   DatePicker, InputNumber, Row, Col, Space, Tag, Tooltip, Tabs, Collapse,
   message, Empty, Divider, Badge, Segmented, Modal, Checkbox, Steps, Popover,
-  Descriptions, Alert,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { TableRowSelection } from 'antd/es/table/interface';
@@ -49,11 +48,6 @@ const REDWOOD = {
 
 const APEX_BASE =
   buildApexUrl('');
-
-// Format signed amount (no Math.abs) - shows actual sign for DR (-) and CR (+)
-const formatSignedAmount = (amount: number, decimals = 2): string => {
-  return amount.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface StmtLine {
@@ -1436,20 +1430,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       const res  = await fetch(stmtLinesUrl);
       const data = await parseApexJson(res);
       if (data.status === 'success') {
-        setStmtLines((data.items ?? []).map((i: any) => {
-          const code = i.transactionCode ?? i.TRANSACTION_CODE ?? 'DR';
-          const rawAmount = Number(i.amount ?? i.AMOUNT ?? 0);
-          // Apply sign based on DR/CR: CR (+ve), DR (-ve)
-          const signedAmount = code === 'CR' ? Math.abs(rawAmount) : -Math.abs(rawAmount);
-          return {
-            ...i,
-            amount: signedAmount,
-            transactionCode: code,
-            // Oracle may return snake_case or UPPERCASE — normalise to camelCase
-            externalTxnId:  i.externalTxnId  ?? i.external_txn_id  ?? i.EXTERNAL_TXN_ID  ?? undefined,
-            externalTxnRef: i.externalTxnRef ?? i.external_txn_ref ?? i.EXTERNAL_TXN_REF ?? undefined,
-          };
-        }) as StmtLine[]);
+        setStmtLines((data.items ?? []).map((i: any) => ({
+          ...i,
+          // Oracle may return snake_case or UPPERCASE — normalise to camelCase
+          externalTxnId:  i.externalTxnId  ?? i.external_txn_id  ?? i.EXTERNAL_TXN_ID  ?? undefined,
+          externalTxnRef: i.externalTxnRef ?? i.external_txn_ref ?? i.EXTERNAL_TXN_REF ?? undefined,
+        })) as StmtLine[]);
       } else {
         msgApi.error(data.message ?? 'Failed to load statement lines');
       }
@@ -2088,40 +2074,46 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
     const usedSysKeys   = new Set<string>();
     const matches: AutoReconMatch[] = [];
 
-    // New approach: Match by ABSOLUTE amount first, group by amount
-    const stmtByAbsAmount = new Map<number, StmtLine[]>();
-    const sysByAbsAmount = new Map<number, SysTxn[]>();
-
     for (const stmt of unmatchedStmt) {
-      const absAmt = Math.abs(stmt.amount);
-      if (!stmtByAbsAmount.has(absAmt)) stmtByAbsAmount.set(absAmt, []);
-      stmtByAbsAmount.get(absAmt)!.push(stmt);
-    }
+      for (const sys of unmatchedSys) {
+        if (usedSysKeys.has(sysTxnRowKey(sys))) continue;
+        const matchedBy: string[] = [];
 
-    for (const sys of unmatchedSys) {
-      const absAmt = Math.abs(sys.amount);
-      if (!sysByAbsAmount.has(absAmt)) sysByAbsAmount.set(absAmt, []);
-      sysByAbsAmount.get(absAmt)!.push(sys);
-    }
-
-    // Auto-match amounts that exist on both sides
-    for (const [absAmount, stmts] of stmtByAbsAmount) {
-      const sysTxns = sysByAbsAmount.get(absAmount) || [];
-      const minCount = Math.min(stmts.length, sysTxns.length);
-
-      for (let i = 0; i < minCount; i++) {
-        const stmt = stmts[i];
-        const sys = sysTxns[i];
-        if (!usedSysKeys.has(sysTxnRowKey(sys))) {
-          matches.push({
-            stmtLine: stmt,
-            sysTxn: sys,
-            matchedBy: ['Amount'],
-            confirmed: true,
-            status: 'pending'
-          });
-          usedSysKeys.add(sysTxnRowKey(sys));
+        if (autoReconCriteria.includes('amount')) {
+          if (Math.abs(stmt.amount) !== Math.abs(sys.amount)) continue;
+          matchedBy.push('Amount');
         }
+        if (autoReconCriteria.includes('bankTxnId')) {
+          const stmtRef = (stmt.bankTxnReference || '').trim();
+          const sysRef  = (sys.reference || sys.txnNumber || '').trim();
+          if (!stmtRef || !sysRef || stmtRef !== sysRef) continue;
+          matchedBy.push('Bank Txn ID');
+        }
+        if (autoReconCriteria.includes('reference')) {
+          const ref = (stmt.reference || '').trim();
+          if (!ref || (ref !== (sys.txnNumber || '').trim() && ref !== (sys.reference || '').trim())) continue;
+          matchedBy.push('Reference');
+        }
+        if (autoReconCriteria.includes('checkNumber')) {
+          const ref = (stmt.reference || stmt.bankTxnReference || '').trim();
+          if (!ref || (ref !== (sys.txnNumber || '').trim() && ref !== (sys.reference || '').trim())) continue;
+          matchedBy.push('Check / Payment No.');
+        }
+        if (autoReconCriteria.includes('date')) {
+          if (stmt.transactionDate?.slice(0, 10) !== sys.txnDate?.slice(0, 10)) continue;
+          matchedBy.push('Date');
+        }
+        if (autoReconCriteria.includes('counterparty')) {
+          const cp = (stmt.counterpartyName || '').trim().toLowerCase();
+          const py = (sys.payee || '').trim().toLowerCase();
+          if (!cp || !py || (!cp.includes(py) && !py.includes(cp))) continue;
+          matchedBy.push('Counterparty');
+        }
+
+        if (matchedBy.length === 0) continue; // no criteria matched (safety guard)
+        matches.push({ stmtLine: stmt, sysTxn: sys, matchedBy, confirmed: true, status: 'pending' });
+        usedSysKeys.add(sysTxnRowKey(sys));
+        break;
       }
     }
 
@@ -2626,12 +2618,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
-        return (
-          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
-            {icon}
-          </span>
-        );
+        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
       },
     },
     colStatus,
@@ -2675,12 +2662,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
-        return (
-          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
-            {icon}
-          </span>
-        );
+        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
       },
     },
     colStatus,
@@ -2755,12 +2737,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
-        return (
-          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
-            {icon}
-          </span>
-        );
+        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
       },
     },
     colUnrecon,
@@ -2803,12 +2780,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
-        return (
-          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
-            {icon}
-          </span>
-        );
+        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
       },
     },
     colStatus,
@@ -2867,12 +2839,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
-        return (
-          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
-            {icon}
-          </span>
-        );
+        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
       },
     },
     colStatus,
@@ -2901,12 +2868,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
-        return (
-          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
-            {icon}
-          </span>
-        );
+        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
       },
     },
     { title: 'Recon',       dataIndex: 'reconciledFlag', key: 'recon', width: 70,
@@ -3088,10 +3050,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
   // Store GL journal status for transactions
   const [glJournalStatus, setGlJournalStatus] = React.useState<Record<string, boolean>>({});
   const [checkingGlStatus, setCheckingGlStatus] = React.useState(false);
-  const [selectedTxnForGlCheck, setSelectedTxnForGlCheck] = React.useState<SysTxn | null>(null);
-  const [glCheckModalVisible, setGlCheckModalVisible] = React.useState(false);
-  const [glCheckTestLoading, setGlCheckTestLoading] = React.useState(false);
-  const [glCheckTestResult, setGlCheckTestResult] = React.useState<{ status?: number; data?: any; error?: string } | null>(null);
 
   // Check GL Status for visible system transactions
   const checkGlJournalStatus = async () => {
@@ -3108,10 +3066,11 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
         try {
           const q = new URLSearchParams({
-            reference2: String(txn.txnId),
-            reference5: refType,
+            reference_2: txn.txnId,
+            reference_5: refType,
+            row_limit: '1',
           });
-          const res = await fetch(`${APEX_BASE}/gl/journals/check?${q}`);
+          const res = await fetch(`${APEX_BASE}/gl/journals?${q}`);
           const data = await res.json();
           statusMap[txn.txnId] = (data.items?.length || 0) > 0;
         } catch (e) {
@@ -3126,40 +3085,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
     } finally {
       setCheckingGlStatus(false);
     }
-  };
-
-  // Test GL Status for a specific transaction
-  const testGlJournalStatus = async (txn: SysTxn) => {
-    if (!txn) return;
-    setGlCheckTestLoading(true);
-    try {
-      const refType = txn.source === 'AP_PAYMENT' ? 'AP-PAYMENT'
-                    : txn.source === 'EXTERNAL_TXN' ? 'BANK_EXTERNAL_TRANSACTIONS'
-                    : txn.source === 'AR_RECEIPT' ? 'AR_RECEIPTS'
-                    : 'GL_JOURNAL';
-
-      const q = new URLSearchParams({
-        reference2: String(txn.txnId),
-        reference5: refType,
-      });
-      const url = `${APEX_BASE}/gl/journals/check?${q}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      setGlCheckTestResult({ status: res.status, data });
-      msgApi.success(`Test completed - Found ${data.items?.length || 0} journals`);
-    } catch (e) {
-      setGlCheckTestResult({ error: String(e) });
-      msgApi.error('Test failed: ' + String(e));
-    } finally {
-      setGlCheckTestLoading(false);
-    }
-  };
-
-  // Open GL check modal
-  const handleOpenGlCheckModal = (txn: SysTxn) => {
-    setSelectedTxnForGlCheck(txn);
-    setGlCheckTestResult(null);
-    setGlCheckModalVisible(true);
   };
 
   const stmtRowSelection: TableRowSelection<StmtLine> = {
@@ -4470,7 +4395,9 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         title={<Space><ThunderboltOutlined style={{ color: '#722ed1' }} /><span>Auto Reconciliation</span></Space>}
         open={autoReconOpen}
         onCancel={() => setAutoReconOpen(false)}
-        width={autoReconStep === 'results' ? 1400 : 520}
+        width={autoReconStep === 'results' ? 1000 : 520}
+        style={{ height: autoReconStep === 'results' ? 'auto' : 'auto' }}
+        bodyStyle={{ maxHeight: '80vh', overflowY: 'auto' }}
         footer={
           autoReconStep === 'criteria' ? (
             <Space>
@@ -4593,337 +4520,94 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
               <strong>{(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length}</strong> unreconciled system transactions available
             </div>
           </div>
-        ) : autoReconMatches.length === 0 ? (
-          <Empty
-            description={
-              <div>
-                <div>No matches found</div>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
-                  Checked {stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length} statement lines against{' '}
-                  {(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length} system transactions by amount.
-                </div>
-              </div>
-            }
-          />
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: 'calc(100vh - 250px)' }}>
-            {/* Summary Stats */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
-              <div style={{ background: '#f5f5f5', padding: '8px 12px', borderRadius: 4, textAlign: 'center' }}>
-                <div style={{ fontSize: 10, color: '#8c8c8c' }}>Total Matches</div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: '#1677ff' }}>{autoReconMatches.filter(m => Math.abs(m.stmtLine.amount) === Math.abs(m.sysTxn.amount)).length}</div>
-              </div>
-              <div style={{ background: '#f5f5f5', padding: '8px 12px', borderRadius: 4, textAlign: 'center' }}>
-                <div style={{ fontSize: 10, color: '#8c8c8c' }}>Stmt Lines</div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>{stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length}</div>
-              </div>
-              <div style={{ background: '#f5f5f5', padding: '8px 12px', borderRadius: 4, textAlign: 'center' }}>
-                <div style={{ fontSize: 10, color: '#8c8c8c' }}>Sys Txns</div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: '#722ed1' }}>{(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length}</div>
-              </div>
-              <div style={{ background: '#f5f5f5', padding: '8px 12px', borderRadius: 4, textAlign: 'center' }}>
-                <div style={{ fontSize: 10, color: '#8c8c8c' }}>Confirmed</div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>{autoReconMatches.filter(m => m.confirmed).length}</div>
-              </div>
-            </div>
-
-            {/* Two Column Layout */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, flex: 1, overflow: 'hidden' }}>
-              {/* Statement Lines */}
-              <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, display: 'flex', flexDirection: 'column', background: '#fafafa' }}>
-                <div style={{ padding: '10px 12px', background: '#e6f4ff', borderBottom: '1px solid #d9d9d9', fontWeight: 600, fontSize: 12, color: '#1677ff' }}>
-                  Bank Statement Lines ({stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length})
-                </div>
-                <div style={{ flex: 1, overflowY: 'auto', padding: 4 }}>
-                  {stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).map((stmt) => {
-                    const matched = autoReconMatches.find(m => m.stmtLine.lineId === stmt.lineId && m.confirmed);
-                    return (
-                      <div
-                        key={stmt.lineId}
-                        style={{
-                          background: matched ? '#f6ffed' : '#fff',
-                          border: matched ? '1px solid #b7eb8f' : '1px solid #e8e8e8',
-                          borderRadius: 3,
-                          padding: '4px 6px',
-                          marginBottom: 3,
-                          cursor: 'pointer',
-                          fontSize: 9,
-                          opacity: matched ? 1 : 0.75,
-                        }}
-                        onClick={() => {
-                          // Would allow manual selection
-                        }}
-                      >
-                        <div style={{ fontWeight: 500, marginBottom: 1 }}>Line #{stmt.lineId}</div>
-                        <div style={{ color: '#595959', marginBottom: 1, fontSize: 8 }}>{stmt.transactionDate?.slice(0, 10)} • {stmt.transactionCode}</div>
-                        <div style={{ fontWeight: 600, color: matched ? '#52c41a' : '#000', marginBottom: 1, fontSize: 9 }}>
-                          {formatSignedAmount(Math.abs(stmt.amount))}
-                        </div>
-                        {stmt.description && <div style={{ color: '#8c8c8c', fontSize: 8 }}>{stmt.description.substring(0, 30)}</div>}
-                        {matched && <div style={{ color: '#52c41a', fontSize: 8, marginTop: 2, fontWeight: 500 }}>✓</div>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* System Transactions */}
-              <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, display: 'flex', flexDirection: 'column', background: '#fafafa' }}>
-                <div style={{ padding: '10px 12px', background: '#f9f0ff', borderBottom: '1px solid #d9d9d9', fontWeight: 600, fontSize: 12, color: '#722ed1' }}>
-                  System Transactions ({(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length})
-                </div>
-                <div style={{ flex: 1, overflowY: 'auto', padding: 4 }}>
-                  {(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType))
-                    .filter(t => !t.reconciledFlag || t.reconciledFlag === 'N')
-                    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
-                    .map((txn) => {
-                      const matched = autoReconMatches.find(m => sysTxnRowKey(m.sysTxn) === sysTxnRowKey(txn) && m.confirmed);
-                      return (
-                        <div
-                          key={sysTxnRowKey(txn)}
-                          style={{
-                            background: matched ? '#f6ffed' : '#fff',
-                            border: matched ? '1px solid #b7eb8f' : '1px solid #e8e8e8',
-                            borderRadius: 3,
-                            padding: '4px 6px',
-                            marginBottom: 3,
-                            cursor: 'pointer',
-                            fontSize: 9,
-                            opacity: matched ? 1 : 0.75,
-                          }}
-                          onClick={() => {
-                            // Would allow manual selection
-                          }}
-                        >
-                          <div style={{ fontWeight: 500, marginBottom: 1 }}>{txn.txnNumber}</div>
-                          <div style={{ color: '#595959', marginBottom: 1, fontSize: 8 }}>{txn.txnDate?.slice(0, 10)} • {txn.source?.replace('_', ' ')}</div>
-                          <div style={{ fontWeight: 600, color: matched ? '#52c41a' : '#000', marginBottom: 1, fontSize: 9 }}>
-                            {formatSignedAmount(Math.abs(txn.amount))}
-                          </div>
-                          {txn.payee && <div style={{ color: '#8c8c8c', fontSize: 8 }}>{txn.payee.substring(0, 30)}</div>}
-                          {matched && <div style={{ color: '#52c41a', fontSize: 8, marginTop: 2, fontWeight: 500 }}>✓</div>}
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-      {/* Old matching details (collapsed) */}
-      {autoReconMatches.length > 0 && (
-        <Collapse
-          style={{ marginTop: 16 }}
-          items={[{
-            key: 'details',
-            label: 'Matching Details Table',
-            children: (
-              <div>
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, color: '#8c8c8c', marginBottom: 8 }}>
-                    Found <strong>{autoReconMatches.length}</strong> match(es). Uncheck any pairs you don't want to reconcile.
+          <div>
+            {autoReconMatches.length === 0 ? (
+              <Empty
+                description={
+                  <div>
+                    <div>No matches found with the selected criteria</div>
+                    <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
+                      Try selecting fewer criteria (e.g. Amount only) or broader date/amount ranges.
+                      Checked <strong>{stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length}</strong> statement lines
+                      against <strong>{sysTxns.filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length}</strong> system transactions.
+                    </div>
                   </div>
-                  <Table<AutoReconMatch>
-                    size="small"
-                    dataSource={autoReconMatches.map((m, idx) => ({ ...m, _idx: idx }))}
-                    rowKey="_idx"
-                    pagination={false}
-                    scroll={{ x: 800, y: 250 }}
-                    columns={[
-                      {
-                        title: 'Select',
-                        key: 'select',
-                        width: 50,
-                        align: 'center',
-                        render: (_: any, record: any) => (
-                          <Checkbox
-                            checked={record.confirmed}
-                            disabled={record.status !== 'pending'}
-                            onChange={e => {
-                              const copy = [...autoReconMatches];
-                              copy[record._idx] = { ...record, confirmed: e.target.checked };
-                              setAutoReconMatches(copy);
-                            }}
-                          />
-                        ),
-                      },
-                      {
-                        title: 'Bank Statement Line',
-                        dataIndex: 'stmtLine',
-                        key: 'stmt',
-                        width: 200,
-                        render: (line: StmtLine) => (
-                          <div>
-                            <div style={{ fontSize: 11, fontWeight: 500 }}>{line.description || line.reference || `Line #${line.lineId}`}</div>
-                            <div style={{ fontSize: 10, color: '#8c8c8c' }}>
-                              {line.transactionDate?.slice(0, 10)} • {line.transactionCode} • {formatSignedAmount(line.amount)}
-                            </div>
-                          </div>
-                        ),
-                      },
-                      {
-                        title: 'Criteria',
-                        dataIndex: 'matchedBy',
-                        key: 'criteria',
-                        width: 150,
-                        render: (criteria: string[]) => (
-                          <Space size={4}>
-                            {criteria.map(c => <Tag key={c} color="purple" style={{ fontSize: 10, margin: 0 }}>{c}</Tag>)}
-                          </Space>
-                        ),
-                      },
-                      {
-                        title: 'System Transaction',
-                        dataIndex: 'sysTxn',
-                        key: 'sys',
-                        width: 200,
-                        render: (txn: SysTxn) => (
-                          <div>
-                            <div style={{ fontSize: 11, fontWeight: 500 }}>{txn.payee || txn.txnNumber}</div>
-                            <div style={{ fontSize: 10, color: '#8c8c8c' }}>
-                              {txn.txnDate?.slice(0, 10)} • {txn.source?.replace('_', ' ')} • {formatSignedAmount(txn.amount)}
-                            </div>
-                          </div>
-                        ),
-                      },
-                      {
-                        title: 'Status',
-                        dataIndex: 'status',
-                        key: 'status',
-                        width: 80,
-                        align: 'center',
-                        render: (status: string, record: any) => {
-                          if (status === 'success') return <Tag color="success">Done</Tag>;
-                          if (status === 'error') return <Tag color="error">{record.errorMsg || 'Failed'}</Tag>;
-                          return <Tag color="processing">Pending</Tag>;
-                        },
-                      },
-                    ]}
-                  />
+                }
+              />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 8, flexShrink: 0 }}>
+                  Found <strong>{autoReconMatches.length}</strong> match(es). Uncheck to exclude from reconciliation.
                 </div>
-                <Divider style={{ margin: '12px 0' }} />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 280, overflowY: 'auto', marginTop: 12 }}>
+                <div style={{ flex: 1, overflowY: 'auto', borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
                   {autoReconMatches.map((m, idx) => (
                     <div
                       key={idx}
                       style={{
-                        border: `1px solid ${m.status === 'success' ? '#b7eb8f' : m.status === 'error' ? '#ffccc7' : '#d9d9d9'}`,
-                        borderRadius: 8,
-                        padding: '10px 14px',
+                        display: 'flex',
+                        gap: 6,
+                        padding: '4px 8px',
+                        marginBottom: 3,
+                        border: `1px solid ${m.status === 'success' ? '#b7eb8f' : m.status === 'error' ? '#ffccc7' : '#f0f0f0'}`,
+                        borderRadius: 4,
                         background: m.status === 'success' ? '#f6ffed' : m.status === 'error' ? '#fff2f0' : m.confirmed ? '#fff' : '#fafafa',
-                        opacity: m.confirmed ? 1 : 0.5,
+                        opacity: m.confirmed ? 1 : 0.7,
+                        fontSize: 10,
+                        lineHeight: '1.3',
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                        <Checkbox
-                          checked={m.confirmed}
-                          disabled={m.status !== 'pending'}
-                          onChange={e => {
-                            const copy = [...autoReconMatches];
-                            copy[idx] = { ...m, confirmed: e.target.checked };
-                            setAutoReconMatches(copy);
-                          }}
-                        />
-                        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 12, alignItems: 'center' }}>
-                          {/* Statement side */}
-                          <div style={{ background: '#e6f4ff', borderRadius: 6, padding: '6px 10px' }}>
-                            <div style={{ fontSize: 10, color: '#1677ff', fontWeight: 600, marginBottom: 3, textTransform: 'uppercase' }}>Bank Statement Line</div>
-                            <div style={{ fontWeight: 500, fontSize: 12 }}>{m.stmtLine.description || m.stmtLine.reference || `Line #${m.stmtLine.lineId}`}</div>
-                            <div style={{ fontSize: 11, color: '#595959', marginTop: 2 }}>
-                              <Space size={6}>
-                                <span>{m.stmtLine.transactionDate?.slice(0, 10)}</span>
-                                <Tag color={m.stmtLine.transactionCode === 'CR' ? 'volcano' : 'blue'} style={{ margin: 0, fontSize: 10 }}>{m.stmtLine.transactionCode}</Tag>
-                                <strong>{formatSignedAmount(m.stmtLine.amount)}</strong>
-                              </Space>
+                      <Checkbox
+                        checked={m.confirmed}
+                        disabled={m.status !== 'pending'}
+                        onChange={e => {
+                          const copy = [...autoReconMatches];
+                          copy[idx] = { ...m, confirmed: e.target.checked };
+                          setAutoReconMatches(copy);
+                        }}
+                        style={{ marginTop: '2px', flexShrink: 0 }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 6, alignItems: 'center' }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 500, fontSize: 9, color: '#1677ff', marginBottom: 1 }}>STMT</div>
+                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {m.stmtLine.description || m.stmtLine.reference || `Line #${m.stmtLine.lineId}`}
                             </div>
-                            {m.stmtLine.reference && <div style={{ fontSize: 10, color: '#8c8c8c', marginTop: 2 }}>Ref: {m.stmtLine.reference}</div>}
-                            {m.matchedBy.includes('Amount') && <div style={{ fontSize: 9, color: '#0050b3', marginTop: 3, padding: '2px 4px', background: '#e6f7ff', borderRadius: 2 }}>
-                              Exact Match: {formatSignedAmount(m.stmtLine.amount)}
-                            </div>}
+                            <div style={{ fontSize: 9, color: '#8c8c8c' }}>
+                              {m.stmtLine.transactionDate?.slice(0, 10)} {m.stmtLine.transactionCode} {Math.abs(m.stmtLine.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </div>
                           </div>
-
-                          {/* Match badges */}
-                          <div style={{ textAlign: 'center' }}>
-                            {m.status === 'success' && <Tag color="success">Reconciled</Tag>}
-                            {m.status === 'error'   && <Tag color="error">{m.errorMsg || 'Failed'}</Tag>}
+                          <div style={{ textAlign: 'center', flexShrink: 0 }}>
+                            {m.status === 'success' && <Tag color="success" style={{ fontSize: 8, margin: 0 }}>✓</Tag>}
+                            {m.status === 'error' && <Tag color="error" style={{ fontSize: 8, margin: 0 }}>✗</Tag>}
                             {m.status === 'pending' && (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }}>
-                                <span style={{ fontSize: 16, color: '#52c41a' }}>⇄</span>
-                                {m.matchedBy.map(r => {
-                                  // For Amount matches, show the actual values compared
-                                  if (r === 'Amount') {
-                                    const match = m.stmtLine.amount === m.sysTxn.amount;
-                                    return (
-                                      <Tooltip key={r} title={`Exact: Stmt ${formatSignedAmount(m.stmtLine.amount)} = Sys ${formatSignedAmount(m.sysTxn.amount)} ${match ? '✓' : '✗'}`}>
-                                        <Tag color={match ? 'purple' : 'red'} style={{ margin: 0, fontSize: 10, cursor: 'help' }}>{r}</Tag>
-                                      </Tooltip>
-                                    );
-                                  }
-                                  return <Tag key={r} color="purple" style={{ margin: 0, fontSize: 10 }}>{r}</Tag>;
-                                })}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
+                                {m.matchedBy.map(r => (
+                                  <Tag key={r} color="purple" style={{ fontSize: 7, margin: 0, padding: '0 3px' }}>
+                                    {r.substring(0, 3)}
+                                  </Tag>
+                                ))}
                               </div>
                             )}
                           </div>
-
-                          {/* System txn side */}
-                          <div style={{ background: '#f9f0ff', borderRadius: 6, padding: '6px 10px' }}>
-                            <div style={{ fontSize: 10, color: '#722ed1', fontWeight: 600, marginBottom: 3, textTransform: 'uppercase' }}>System Transaction</div>
-                            <div style={{ fontWeight: 500, fontSize: 12 }}>{m.sysTxn.payee || m.sysTxn.txnNumber}</div>
-                            <div style={{ fontSize: 11, color: '#595959', marginTop: 2 }}>
-                              <Space size={6}>
-                                <span>{m.sysTxn.txnDate?.slice(0, 10)}</span>
-                                <Tag color="geekblue" style={{ margin: 0, fontSize: 10 }}>{m.sysTxn.source?.replace('_', ' ')}</Tag>
-                                <strong>{formatSignedAmount(m.sysTxn.amount)}</strong>
-                              </Space>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 500, fontSize: 9, color: '#722ed1', marginBottom: 1 }}>TXN</div>
+                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {m.sysTxn.payee || m.sysTxn.txnNumber || m.sysTxn.reference}
                             </div>
-                            {m.sysTxn.txnNumber && <div style={{ fontSize: 10, color: '#8c8c8c', marginTop: 2 }}>#{m.sysTxn.txnNumber}</div>}
-                            {m.matchedBy.includes('Amount') && <div style={{ fontSize: 9, color: '#592d00', marginTop: 3, padding: '2px 4px', background: '#fff1f0', borderRadius: 2 }}>
-                              Exact Match: {formatSignedAmount(m.sysTxn.amount)}
-                            </div>}
+                            <div style={{ fontSize: 9, color: '#8c8c8c' }}>
+                              {m.sysTxn.txnDate?.slice(0, 10)} {m.sysTxn.source?.substring(0, 2)} {Math.abs(m.sysTxn.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </div>
                           </div>
                         </div>
                       </div>
-
-                      {/* API calls preview for this pair */}
-                      {(() => {
-                        const txnSide = buildTxnSideCall(m.sysTxn, m.stmtLine);
-                        const stmtPostUrl  = `${APEX_BASE}/cash/bankstatements/${m.stmtLine.statementId}/reconcile`;
-                        const stmtPostBody = { lineId: m.stmtLine.lineId, txnType: m.sysTxn.source, txnId: m.sysTxn.txnId, txnNumber: m.sysTxn.txnNumber, reconAmount: m.stmtLine.amount, notes: 'Auto Reconciled' };
-                        return (
-                          <Collapse ghost size="small" style={{ marginTop: 8, borderTop: '1px solid #f0f0f0', paddingTop: 4 }}
-                            items={[{
-                              key: 'api',
-                              label: <Space style={{ fontSize: 11 }}><ApiOutlined style={{ color: REDWOOD.info }} /><span style={{ color: REDWOOD.info }}>API calls for this pair</span></Space>,
-                              children: (
-                                <div style={{ fontSize: 10, fontFamily: 'monospace' }}>
-                                  <div style={{ marginBottom: 4 }}>
-                                    <Tag color="green" style={{ fontSize: 9 }}>POST</Tag>
-                                    <span style={{ color: REDWOOD.info, wordBreak: 'break-all' }}>{stmtPostUrl}</span>
-                                  </div>
-                                  <pre style={{ background: '#1e1e1e', color: '#9cdcfe', padding: 6, borderRadius: 4, fontSize: 10, margin: '0 0 8px', overflowX: 'auto' }}>
-                                    {JSON.stringify(stmtPostBody, null, 2)}
-                                  </pre>
-                                  <div style={{ marginBottom: 4 }}>
-                                    <Tag color="orange" style={{ fontSize: 9 }}>PUT</Tag>
-                                    <span style={{ color: REDWOOD.info, wordBreak: 'break-all' }}>{txnSide.url}</span>
-                                  </div>
-                                  <pre style={{ background: '#1e1e1e', color: '#9cdcfe', padding: 6, borderRadius: 4, fontSize: 10, margin: 0, overflowX: 'auto' }}>
-                                    {JSON.stringify(txnSide.body, null, 2)}
-                                  </pre>
-                                </div>
-                              ),
-                            }]}
-                          />
-                        );
-                      })()}
                     </div>
                   ))}
                 </div>
               </div>
             )}
-          ]}
-          />
+          </div>
         )}
       </Modal>
 
@@ -4997,7 +4681,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
             if (viewMode === 'bank-to-sys') {
               filteredStmtLines.forEach(bankLine => {
-                const matchedSysTxns = filteredSysTxns.filter(t => t.amount === bankLine.amount);
+                const matchedSysTxns = filteredSysTxns.filter(t => Math.abs(t.amount - bankLine.amount) < 0.01);
                 const totalSysAmount = matchedSysTxns.reduce((sum, t) => sum + t.amount, 0);
                 const difference = bankLine.amount - totalSysAmount;
 
@@ -5012,7 +4696,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
               });
             } else {
               filteredSysTxns.forEach(sysTxn => {
-                const matchedBankLines = filteredStmtLines.filter(l => l.amount === sysTxn.amount);
+                const matchedBankLines = filteredStmtLines.filter(l => Math.abs(l.amount - sysTxn.amount) < 0.01);
                 const totalBankAmount = matchedBankLines.reduce((sum, l) => sum + l.amount, 0);
                 const difference = totalBankAmount - sysTxn.amount;
 
@@ -5626,138 +5310,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
             setClaudeError('');
           }}
         />
-      </Modal>
-
-      {/* ── GL Journal Status Check Modal ────────────────────────────────── */}
-      <Modal
-        open={glCheckModalVisible}
-        onCancel={() => {
-          setGlCheckModalVisible(false);
-          setSelectedTxnForGlCheck(null);
-          setGlCheckTestResult(null);
-        }}
-        title={selectedTxnForGlCheck ? `GL Status Check - Txn ${selectedTxnForGlCheck.txnId}` : 'GL Status Check'}
-        width={800}
-        footer={[
-          <Button key="close" onClick={() => {
-            setGlCheckModalVisible(false);
-            setSelectedTxnForGlCheck(null);
-            setGlCheckTestResult(null);
-          }}>
-            Close
-          </Button>,
-          <Button
-            key="test"
-            type="primary"
-            loading={glCheckTestLoading}
-            onClick={() => selectedTxnForGlCheck && testGlJournalStatus(selectedTxnForGlCheck)}
-            icon={<SearchOutlined />}
-          >
-            Test GL Lookup
-          </Button>,
-        ]}
-      >
-        {selectedTxnForGlCheck && (
-          <Space direction="vertical" style={{ width: '100%' }} size="large">
-            <Descriptions column={2} size="small" bordered>
-              <Descriptions.Item label="Transaction ID" span={2}>
-                <Typography.Text code>{selectedTxnForGlCheck.txnId}</Typography.Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="Source" span={2}>
-                {selectedTxnForGlCheck.source}
-              </Descriptions.Item>
-              <Descriptions.Item label="Reference 2 (API Param)" span={2}>
-                <Typography.Text code>{selectedTxnForGlCheck.txnId}</Typography.Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="Reference 5 (API Param)" span={2}>
-                <Typography.Text code>
-                  {selectedTxnForGlCheck.source === 'AP_PAYMENT' ? 'AP-PAYMENT'
-                   : selectedTxnForGlCheck.source === 'EXTERNAL_TXN' ? 'BANK_EXTERNAL_TRANSACTIONS'
-                   : selectedTxnForGlCheck.source === 'AR_RECEIPT' ? 'AR_RECEIPTS'
-                   : 'GL_JOURNAL'}
-                </Typography.Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="Current Status" span={2}>
-                {glJournalStatus[selectedTxnForGlCheck.txnId] === undefined
-                  ? <Tag>Unknown</Tag>
-                  : glJournalStatus[selectedTxnForGlCheck.txnId]
-                    ? <Tag color="green">Yes - Found in GL</Tag>
-                    : <Tag color="red">No - Not in GL</Tag>
-                }
-              </Descriptions.Item>
-            </Descriptions>
-
-            {glCheckTestResult && (
-              <Card
-                title={
-                  <Space>
-                    {glCheckTestResult.error ? (
-                      <>
-                        <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
-                        <span>Test Failed</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircleOutlined style={{ color: '#52c41a' }} />
-                        <span>Test Result</span>
-                      </>
-                    )}
-                  </Space>
-                }
-                size="small"
-              >
-                {glCheckTestResult.error ? (
-                  <Alert
-                    message="Error"
-                    description={glCheckTestResult.error}
-                    type="error"
-                    showIcon
-                  />
-                ) : (
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Descriptions size="small">
-                      <Descriptions.Item label="HTTP Status">{glCheckTestResult.status}</Descriptions.Item>
-                      <Descriptions.Item label="Journals Found">
-                        {glCheckTestResult.data?.items?.length || 0}
-                      </Descriptions.Item>
-                    </Descriptions>
-                    {glCheckTestResult.data?.items && glCheckTestResult.data.items.length > 0 && (
-                      <Alert
-                        message="Success"
-                        description={`Found ${glCheckTestResult.data.items.length} matching GL journal(s)`}
-                        type="success"
-                        showIcon
-                      />
-                    )}
-                    {(!glCheckTestResult.data?.items || glCheckTestResult.data.items.length === 0) && (
-                      <Alert
-                        message="No Matches"
-                        description="No GL journals found with these parameters"
-                        type="warning"
-                        showIcon
-                      />
-                    )}
-                  </Space>
-                )}
-              </Card>
-            )}
-
-            <Alert
-              message="API Endpoint"
-              description={
-                <Typography.Paragraph copyable>
-                  {`${APEX_BASE}/gl/journals/check?reference2=${selectedTxnForGlCheck.txnId}&reference5=${
-                    selectedTxnForGlCheck.source === 'AP_PAYMENT' ? 'AP-PAYMENT'
-                    : selectedTxnForGlCheck.source === 'EXTERNAL_TXN' ? 'BANK_EXTERNAL_TRANSACTIONS'
-                    : selectedTxnForGlCheck.source === 'AR_RECEIPT' ? 'AR_RECEIPTS'
-                    : 'GL_JOURNAL'
-                  }`}
-                </Typography.Paragraph>
-              }
-              type="info"
-            />
-          </Space>
-        )}
       </Modal>
     </>
   );
