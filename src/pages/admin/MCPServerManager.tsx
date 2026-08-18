@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { mcpServerService } from '../../services/mcp-server.service';
+import { buildApexAdminUrl } from '../../config/api.helper';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
