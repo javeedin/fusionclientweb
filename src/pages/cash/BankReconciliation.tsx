@@ -923,7 +923,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       stmtLines.forEach(stmt => {
         // Find first unmatched system transaction with same amount (tolerance 0.01)
         const matchedSysTxnIdx = sysTxns.findIndex((txn, idx) =>
-          !usedSysTxnIndices.has(idx) && Math.abs(txn.amount - Math.abs(stmt.amount)) < 0.01
+          !usedSysTxnIndices.has(idx) && Math.abs(Math.abs(txn.amount) - Math.abs(stmt.amount)) < 0.01
         );
 
         if (matchedSysTxnIdx !== -1) {
@@ -4439,7 +4439,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
                   stmtLines.forEach(stmt => {
                     const matchedSysTxnIdx = sysTxns.findIndex((txn, idx) =>
-                      !usedSysTxnIndices.has(idx) && Math.abs(txn.amount - Math.abs(stmt.amount)) < 0.01
+                      !usedSysTxnIndices.has(idx) && Math.abs(Math.abs(txn.amount) - Math.abs(stmt.amount)) < 0.01
                     );
 
                     if (matchedSysTxnIdx !== -1) {
