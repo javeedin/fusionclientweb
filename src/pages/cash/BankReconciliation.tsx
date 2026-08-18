@@ -2069,13 +2069,14 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       }
     } catch { pool = sysTxns; }
 
-    const unmatchedSys  = pool.filter(t => !t.reconciledFlag || t.reconciledFlag === 'N');
-    const unmatchedStmt = stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId);
+    // Show ALL possible matches - include reconciled and unreconciled
+    const allSys  = pool;  // Include all transactions regardless of reconciliation status
+    const allStmt = stmtLines;  // Include all statement lines regardless of status
     const matches: AutoReconMatch[] = [];
 
-    // Match by Amount ONLY - find ALL possible matches (no break)
-    for (const stmt of unmatchedStmt) {
-      for (const sys of unmatchedSys) {
+    // Match by Amount ONLY - find ALL possible matches (no break, no filters)
+    for (const stmt of allStmt) {
+      for (const sys of allSys) {
         // Match only if amounts are equal (absolute value)
         if (Math.abs(stmt.amount) === Math.abs(sys.amount)) {
           matches.push({
@@ -2085,7 +2086,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
             confirmed: true,
             status: 'pending'
           });
-          // NOTE: Removed 'break' and 'usedSysKeys' - now shows ALL possible matches
+          // NOTE: No break, no usedSysKeys - shows ALL possible matches including reconciled items
         }
       }
     }
