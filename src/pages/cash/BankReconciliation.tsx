@@ -886,6 +886,8 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
   const [selectedStmtForRecon, setSelectedStmtForRecon] = useState<Set<string>>(new Set());
   const [selectedSysForRecon, setSelectedSysForRecon] = useState<Set<string>>(new Set());
   const [autoReconRunning,  setAutoReconRunning]  = useState(false);
+  const [selectedStmtLineId, setSelectedStmtLineId] = useState<number | null>(null);
+  const [manualMatchMsg, setManualMatchMsg] = useState<string>('');
   const [autoReconTxnType,  setAutoReconTxnType]  = useState<string>('ALL');
   const [autoReconApiOpen,  setAutoReconApiOpen]  = useState(false);
   const [matchingViewOpen, setMatchingViewOpen] = useState(false);
@@ -908,7 +910,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
   const [progressDone,  setProgressDone]  = useState(false);
 
-  // Auto-match reconciliation when modal opens
+  // Auto-match reconciliation when modal opens - 1:1 by amount with 0.01 tolerance
   useEffect(() => {
     if (!autoReconOpen || stmtLines.length === 0 || sysTxns.length === 0) return;
 
@@ -919,9 +921,9 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
       // 1:1 matching: for each statement line, find ONE system transaction with matching amount
       stmtLines.forEach(stmt => {
-        // Find first unmatched system transaction with same amount
+        // Find first unmatched system transaction with same amount (tolerance 0.01)
         const matchedSysTxnIdx = sysTxns.findIndex((txn, idx) =>
-          !usedSysTxnIndices.has(idx) && Math.abs(txn.amount - stmt.amount) < 0.01
+          !usedSysTxnIndices.has(idx) && Math.abs(txn.amount - Math.abs(stmt.amount)) < 0.01
         );
 
         if (matchedSysTxnIdx !== -1) {
@@ -930,8 +932,17 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
           matches.push({
             stmtLine: stmt,
             sysTxn: txn,
-            matchedBy: ['Auto-Match'],
+            matchedBy: ['amount'],
             confirmed: true,
+            status: 'pending'
+          });
+        } else {
+          // Create unconfirmed match entry for manual matching
+          matches.push({
+            stmtLine: stmt,
+            sysTxn: sysTxns[0], // placeholder
+            matchedBy: [],
+            confirmed: false,
             status: 'pending'
           });
         }
@@ -4445,6 +4456,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: REDWOOD.neutral900 }}>
                 📊 Bank Statements ({stmtLines.length})
+                {selectedStmtLineId && <span style={{ color: REDWOOD.primary, marginLeft: 8, fontSize: 10 }}>→ Click system transaction to match</span>}
               </div>
               <Table
                 size="small"
@@ -4535,6 +4547,14 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                 pagination={false}
                 scroll={{ y: 500 }}
                 style={{ fontSize: 10 }}
+                onRow={(record) => ({
+                  onClick: () => setSelectedStmtLineId(selectedStmtLineId === record.lineId ? null : record.lineId),
+                  style: {
+                    cursor: 'pointer',
+                    background: selectedStmtLineId === record.lineId ? '#e6f7ff' : 'transparent',
+                    transition: 'background 0.2s'
+                  }
+                })}
               />
             </div>
 
@@ -4546,10 +4566,38 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                   return !match || match.status !== 'success';
                 });
 
+                const handleTxnRowClick = (txn: SysTxn) => {
+                  if (!selectedStmtLineId) {
+                    setManualMatchMsg('First select a Bank Statement row');
+                    setTimeout(() => setManualMatchMsg(''), 2000);
+                    return;
+                  }
+                  const stmt = stmtLines.find(s => s.lineId === selectedStmtLineId);
+                  if (!stmt) return;
+
+                  const copy = [...autoReconMatches];
+                  const existingIdx = copy.findIndex(m => m.stmtLine.lineId === selectedStmtLineId);
+                  if (existingIdx !== -1) {
+                    copy[existingIdx] = { ...copy[existingIdx], sysTxn: txn, matchedBy: ['manual'], confirmed: true };
+                  } else {
+                    copy.push({
+                      stmtLine: stmt,
+                      sysTxn: txn,
+                      matchedBy: ['manual'],
+                      confirmed: true,
+                      status: 'pending'
+                    });
+                  }
+                  setAutoReconMatches(copy);
+                  setSelectedStmtLineId(null);
+                  msgApi.success(`Matched: ${stmt.description || `Line #${stmt.lineId}`} → ${txn.payee || txn.txnNumber}`);
+                };
+
                 return (
                   <>
                     <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: REDWOOD.neutral900 }}>
                       💳 Unmatched Transactions ({unmatchedTxns.length})
+                      {manualMatchMsg && <span style={{ color: REDWOOD.warning, marginLeft: 8, fontSize: 10 }}>{manualMatchMsg}</span>}
                     </div>
                     <Table
                       size="small"
@@ -4629,6 +4677,14 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                       pagination={false}
                       scroll={{ y: 500 }}
                       style={{ fontSize: 10 }}
+                      onRow={(record) => ({
+                        onClick: () => handleTxnRowClick(record),
+                        style: {
+                          cursor: selectedStmtLineId ? 'pointer' : 'default',
+                          opacity: selectedStmtLineId ? 1 : 0.7,
+                          transition: 'background 0.2s'
+                        }
+                      })}
                     />
                   </>
                 );
