@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Typography, Input, Tooltip, Badge, Spin } from 'antd';
+import { Typography, Input, Tooltip, Badge, Spin, Switch, Select, Modal, Card, Space, Button, Divider, Alert } from 'antd';
 import dayjs from 'dayjs';
 import {
   RobotOutlined,
@@ -11,9 +11,12 @@ import {
   FileAddOutlined,
   SearchOutlined,
   UserOutlined,
+  SettingOutlined,
+  LinkOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../config/api.config';
+import { buildApexUrl } from '../config/api.helper';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -81,6 +84,15 @@ interface SupplierMatch {
   alternativeName?: string;
 }
 
+interface MCPServer {
+  id: string;
+  name: string;
+  description: string;
+  type: 'SOAP' | 'REST';
+  status: 'active' | 'inactive';
+  config: any;
+}
+
 interface AutopilotProps {
   module?: 'gl' | 'ap';
   externalOpen?: boolean;       // when provided, hides the built-in button; open state is driven externally
@@ -102,6 +114,117 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
   const [suppliersFetching, setSuppliersFetching] = useState(false);
   // Live supplier suggestions (filtered as user types)
   const [supplierSuggestions, setSupplierSuggestions] = useState<SupplierMatch[]>([]);
+
+  // Claude AI and MCP integration
+  const [claudeEnabled, setClaudeEnabled] = useState(() => {
+    return localStorage.getItem('autopilot_claude_enabled') === 'true';
+  });
+  const [claudeApiKey, setClaudeApiKey] = useState(() => {
+    return localStorage.getItem('claude_api_key') || '';
+  });
+  const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
+  const [selectedMcpServer, setSelectedMcpServer] = useState<string>(() => {
+    return localStorage.getItem('autopilot_selected_mcp_server') || '';
+  });
+  const [loadingMcpServers, setLoadingMcpServers] = useState(false);
+  const [showMcpSettings, setShowMcpSettings] = useState(false);
+  const [apiKeyMissing, setApiKeyMissing] = useState(false);
+
+  // Load MCP servers on mount
+  useEffect(() => {
+    loadMcpServers();
+  }, []);
+
+  // Check if Claude is enabled but no API key
+  useEffect(() => {
+    if (claudeEnabled && !claudeApiKey) {
+      setApiKeyMissing(true);
+      setClaudeEnabled(false);
+    } else {
+      setApiKeyMissing(false);
+    }
+  }, [claudeEnabled, claudeApiKey]);
+
+  const loadMcpServers = async () => {
+    setLoadingMcpServers(true);
+    try {
+      const response = await fetch(buildApexUrl('mcp-servers'), {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const servers = (data.items || data || []).filter((s: MCPServer) => s.status === 'active');
+        setMcpServers(servers);
+      }
+    } catch (error) {
+      console.error('Error loading MCP servers:', error);
+    } finally {
+      setLoadingMcpServers(false);
+    }
+  };
+
+  const handleClaudeToggle = (checked: boolean) => {
+    if (checked && !claudeApiKey) {
+      Modal.info({
+        title: 'Claude API Key Required',
+        content: 'Please add your Claude API key in the settings. Go to Admin > Claude Key Settings.',
+        okText: 'OK',
+      });
+      return;
+    }
+    setClaudeEnabled(checked);
+    localStorage.setItem('autopilot_claude_enabled', checked ? 'true' : 'false');
+  };
+
+  const handleMcpServerSelect = (serverId: string) => {
+    setSelectedMcpServer(serverId);
+    localStorage.setItem('autopilot_selected_mcp_server', serverId);
+  };
+
+  const callClaudeApi = async (userMessage: string, conversationContext: string): Promise<string> => {
+    if (!claudeApiKey) {
+      throw new Error('Claude API key not configured');
+    }
+
+    const mcpContext = selectedMcpServer
+      ? `\n\nAvailable MCP Server: ${mcpServers.find(s => s.id === selectedMcpServer)?.name || 'Unknown'}`
+      : '';
+
+    const systemPrompt = module === 'ap'
+      ? 'You are an expert Payables Autopilot assistant helping with invoice creation, payment processing, and supplier management. Be concise and actionable. Provide step-by-step guidance when needed.'
+      : 'You are an expert GL (General Ledger) Autopilot assistant helping with journal entries, data synchronization, and financial reporting. Be concise and actionable.';
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': claudeApiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-sonnet-20241022',
+          max_tokens: 1024,
+          system: systemPrompt + mcpContext,
+          messages: [
+            { role: 'user', content: `${conversationContext}\n\nUser: ${userMessage}` }
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Claude API error: ${errorData.error?.message || 'Unknown error'}`);
+      }
+
+      const data = await response.json();
+      return data.content[0]?.text || 'No response from Claude';
+    } catch (error) {
+      console.error('Claude API error:', error);
+      throw error;
+    }
+  };
 
   const fetchSuppliersForMatch = async (): Promise<SupplierMatch[]> => {
     if (supplierCache.length > 0) return supplierCache;
@@ -314,6 +437,13 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     addAssistantMessage(`Selected: ${supplier.supplier} (${supplier.supplierNumber})\n\nEnter the invoice amount:`);
   };
 
+  const buildConversationContext = (): string => {
+    return messages
+      .slice(-6) // Last 6 messages for context
+      .map(m => `${m.type === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .join('\n');
+  };
+
   const handleSend = async () => {
     if (!inputValue.trim() || isProcessing) return;
 
@@ -330,68 +460,85 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     setSupplierSuggestions([]);
     setIsProcessing(true);
 
-    // Handle Quick Entry conversational flow
-    if (qeStep !== 'idle') {
-      await handleQuickEntryStep(userInput);
-      setIsProcessing(false);
-      return;
-    }
-
-    // Check if this is a one-shot quick entry (e.g. "invoice Acme 5000 office supplies")
-    const lowerInput = userInput.toLowerCase();
-    if (lowerInput.includes('quick entry') || lowerInput.includes('quick invoice')) {
-      await fetchSuppliersForMatch(); // pre-fetch
-      setQeStep('awaiting_supplier');
-      addAssistantMessage('Let\'s create an invoice quickly!\n\nStart typing the supplier name or number:');
-      setIsProcessing(false);
-      return;
-    }
-
-    // Try one-shot parse: "invoice Acme 5000 office supplies"
-    const oneShot = tryParseOneShotEntry(userInput);
-    if (oneShot && oneShot.supplier && oneShot.amount > 0) {
-      const suppliers = await fetchSuppliersForMatch();
-      const match = findSupplierMatch(oneShot.supplier, suppliers);
-      if (match) {
-        const data: QuickEntryData = {
-          supplierInput: oneShot.supplier,
-          supplierName: match.supplier,
-          supplierNumber: match.supplierNumber,
-          amount: oneShot.amount,
-          description: oneShot.description || 'Invoice',
-        };
-        setQeData(data);
-        addAssistantMessage(
-          `Got it! Creating invoice:\n\n` +
-          `Supplier: ${match.supplier} (${match.supplierNumber})\n` +
-          `Amount: ${oneShot.amount.toFixed(2)} AED\n` +
-          `Description: ${oneShot.description || 'Invoice'}\n` +
-          `Date: ${dayjs().format('DD-MMM-YYYY')} (today)\n` +
-          `Tax: None\n\n` +
-          `Opening invoice form now...`
-        );
-        createInvoiceFromQuickEntry(data);
-        setIsProcessing(false);
-        return;
-      } else {
-        // Supplier not found, start conversational flow
-        setQeData((prev) => ({ ...prev, amount: oneShot.amount, description: oneShot.description }));
-        setQeStep('awaiting_supplier');
-        addAssistantMessage(
-          `I couldn't find supplier "${oneShot.supplier}". ` +
-          `Start typing the supplier name or number:`
-        );
+    try {
+      // Handle Quick Entry conversational flow
+      if (qeStep !== 'idle') {
+        await handleQuickEntryStep(userInput);
         setIsProcessing(false);
         return;
       }
-    }
 
-    // Normal responses
-    setTimeout(() => {
-      const response = generateResponse(userInput);
-      addAssistantMessage(response);
+      // Check if this is a one-shot quick entry (e.g. "invoice Acme 5000 office supplies")
+      const lowerInput = userInput.toLowerCase();
+      if (lowerInput.includes('quick entry') || lowerInput.includes('quick invoice')) {
+        await fetchSuppliersForMatch(); // pre-fetch
+        setQeStep('awaiting_supplier');
+        addAssistantMessage('Let\'s create an invoice quickly!\n\nStart typing the supplier name or number:');
+        setIsProcessing(false);
+        return;
+      }
+
+      // Try one-shot parse: "invoice Acme 5000 office supplies"
+      const oneShot = tryParseOneShotEntry(userInput);
+      if (oneShot && oneShot.supplier && oneShot.amount > 0) {
+        const suppliers = await fetchSuppliersForMatch();
+        const match = findSupplierMatch(oneShot.supplier, suppliers);
+        if (match) {
+          const data: QuickEntryData = {
+            supplierInput: oneShot.supplier,
+            supplierName: match.supplier,
+            supplierNumber: match.supplierNumber,
+            amount: oneShot.amount,
+            description: oneShot.description || 'Invoice',
+          };
+          setQeData(data);
+          addAssistantMessage(
+            `Got it! Creating invoice:\n\n` +
+            `Supplier: ${match.supplier} (${match.supplierNumber})\n` +
+            `Amount: ${oneShot.amount.toFixed(2)} AED\n` +
+            `Description: ${oneShot.description || 'Invoice'}\n` +
+            `Date: ${dayjs().format('DD-MMM-YYYY')} (today)\n` +
+            `Tax: None\n\n` +
+            `Opening invoice form now...`
+          );
+          createInvoiceFromQuickEntry(data);
+          setIsProcessing(false);
+          return;
+        } else {
+          // Supplier not found, start conversational flow
+          setQeData((prev) => ({ ...prev, amount: oneShot.amount, description: oneShot.description }));
+          setQeStep('awaiting_supplier');
+          addAssistantMessage(
+            `I couldn't find supplier "${oneShot.supplier}". ` +
+            `Start typing the supplier name or number:`
+          );
+          setIsProcessing(false);
+          return;
+        }
+      }
+
+      // Use Claude if enabled, otherwise fall back to built-in responses
+      if (claudeEnabled && claudeApiKey) {
+        try {
+          const response = await callClaudeApi(userInput, buildConversationContext());
+          addAssistantMessage(response);
+        } catch (error) {
+          addAssistantMessage(`Error calling Claude: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      } else {
+        // Built-in responses
+        setTimeout(() => {
+          const response = generateResponse(userInput);
+          addAssistantMessage(response);
+        }, 1000);
+      }
+
       setIsProcessing(false);
-    }, 1000);
+    } catch (error) {
+      console.error('Error in handleSend:', error);
+      addAssistantMessage('An error occurred. Please try again.');
+      setIsProcessing(false);
+    }
   };
 
   const handleQuickEntryStep = async (input: string) => {
@@ -631,7 +778,7 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
               justifyContent: 'space-between',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
               <div
                 style={{
                   width: 36,
@@ -645,19 +792,27 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
               >
                 <RobotOutlined style={{ fontSize: 20, color: '#fff' }} />
               </div>
-              <div>
+              <div style={{ flex: 1 }}>
                 <Text strong style={{ color: '#fff', fontSize: 16, display: 'block' }}>
                   Autopilot
                 </Text>
                 <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12 }}>
-                  {qeStep !== 'idle' ? stepLabel : 'AI-powered assistant'}
+                  {claudeEnabled ? '✨ Claude AI Mode' : 'Standard Mode'} • {qeStep !== 'idle' ? stepLabel : 'AI-powered assistant'}
                 </Text>
               </div>
             </div>
-            <CloseOutlined
-              style={{ color: '#fff', cursor: 'pointer', fontSize: 16, padding: 8 }}
-              onClick={handleClose}
-            />
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <Tooltip title="MCP Server Settings">
+                <SettingOutlined
+                  style={{ color: '#fff', cursor: 'pointer', fontSize: 16 }}
+                  onClick={() => setShowMcpSettings(true)}
+                />
+              </Tooltip>
+              <CloseOutlined
+                style={{ color: '#fff', cursor: 'pointer', fontSize: 16 }}
+                onClick={handleClose}
+              />
+            </div>
           </div>
 
           {/* Messages */}
@@ -885,6 +1040,121 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
           </div>
         </div>
       )}
+
+      {/* MCP Settings Modal */}
+      <Modal
+        title="Autopilot Settings — Claude & MCP"
+        open={showMcpSettings}
+        onCancel={() => setShowMcpSettings(false)}
+        footer={null}
+        width={500}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          {/* Claude AI Toggle */}
+          <Card size="small">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <Text strong style={{ fontSize: 14, display: 'block' }}>✨ Enable Claude AI</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  Use Claude instead of built-in responses
+                </Text>
+              </div>
+              <Switch
+                checked={claudeEnabled}
+                onChange={handleClaudeToggle}
+                disabled={!claudeApiKey}
+              />
+            </div>
+
+            {apiKeyMissing && (
+              <Alert
+                message="Claude API Key Required"
+                description="Go to Admin > Claude Key Settings to add your API key"
+                type="warning"
+                style={{ marginTop: 12 }}
+                showIcon
+              />
+            )}
+
+            {claudeEnabled && (
+              <Alert
+                message="Claude AI Enabled"
+                description="Your questions will be answered using Claude AI with advanced reasoning"
+                type="success"
+                style={{ marginTop: 12 }}
+                showIcon
+              />
+            )}
+          </Card>
+
+          <Divider style={{ margin: '8px 0' }} />
+
+          {/* MCP Server Selection */}
+          <Card size="small">
+            <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 12 }}>
+              <LinkOutlined /> Select MCP Server (Optional)
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+              Connect to an MCP server to enhance Claude's capabilities with external integrations
+            </Text>
+
+            {loadingMcpServers ? (
+              <Spin size="small" style={{ marginTop: 12 }} />
+            ) : mcpServers.length === 0 ? (
+              <Alert
+                message="No MCP Servers Available"
+                description="Create an MCP server in Admin > MCP Server Manager"
+                type="info"
+                style={{ marginTop: 12 }}
+              />
+            ) : (
+              <Select
+                placeholder="Select an MCP server (optional)"
+                value={selectedMcpServer || undefined}
+                onChange={handleMcpServerSelect}
+                style={{ width: '100%', marginTop: 12 }}
+                options={mcpServers.map(server => ({
+                  label: `${server.name} (${server.type})`,
+                  value: server.id,
+                  description: server.description,
+                }))}
+                optionLabelProp="label"
+              />
+            )}
+
+            {selectedMcpServer && (
+              <div style={{ marginTop: 12 }}>
+                <Text type="success" style={{ fontSize: 12 }}>
+                  ✓ MCP Server Connected: {mcpServers.find(s => s.id === selectedMcpServer)?.name}
+                </Text>
+              </div>
+            )}
+          </Card>
+
+          {/* Refresh button */}
+          <Button
+            onClick={loadMcpServers}
+            loading={loadingMcpServers}
+            block
+            icon={<ThunderboltOutlined />}
+          >
+            Refresh MCP Servers
+          </Button>
+
+          {/* Info */}
+          <Alert
+            message="About Claude Integration"
+            description={`
+              • Claude AI provides intelligent responses based on conversation context
+              • MCP servers extend Claude's capabilities with external integrations
+              • Your API key is stored securely in browser localStorage
+              • Only you can see your conversation history
+            `}
+            type="info"
+            showIcon
+          />
+        </Space>
+      </Modal>
 
       {/* CSS Animations */}
       <style>{`
