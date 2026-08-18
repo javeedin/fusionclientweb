@@ -4710,7 +4710,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
             </div>
           </div>
         )}
-      </div>
 
       {/* Old matching details (collapsed) */}
       {autoReconMatches.length > 0 && (
