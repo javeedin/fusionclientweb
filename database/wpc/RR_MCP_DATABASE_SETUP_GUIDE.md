@@ -3,6 +3,14 @@
 ## Overview
 This guide shows how to set up persistent database storage for the MCP Server Manager using Oracle APEX with RR_ naming convention.
 
+## Important: Oracle Version Compatibility
+These SQL procedures are compatible with **Oracle 11g and later**. They use string concatenation for JSON generation instead of native JSON functions, ensuring compatibility with all Oracle versions (no requirement for Oracle 19c+).
+
+The updated procedures:
+- Use VARCHAR2/CLOB concatenation to build JSON responses
+- Include an RR_ESCAPE_JSON_STRING helper function for proper escaping
+- Support all CRUD operations (Create, Read, Update, Delete)
+
 ---
 
 ## Part 1: Database Table Setup

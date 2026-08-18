@@ -1,5 +1,6 @@
 -- ============================================================
 -- RR MCP Server Management Procedures
+-- Compatible with Oracle 11g+ (no JSON functions required)
 -- ============================================================
 
 -- Table Creation
@@ -59,27 +60,43 @@ END RR_CREATE_MCP_SERVER;
 /
 
 -- 2. GET MCP Server by ID
+-- Returns JSON as string using concatenation (Oracle 11g+ compatible)
 CREATE OR REPLACE PROCEDURE RR_GET_MCP_SERVER (
     p_server_id      IN NUMBER,
     p_result_json    OUT CLOB,
     p_result_status  OUT VARCHAR2
 ) AS
     v_json CLOB;
+    v_server_name VARCHAR2(255);
+    v_description VARCHAR2(1000);
+    v_type VARCHAR2(20);
+    v_status VARCHAR2(20);
+    v_config_json CLOB;
+    v_created_date TIMESTAMP;
+    v_updated_date TIMESTAMP;
+    v_created_by VARCHAR2(255);
 BEGIN
-    SELECT json_object(
-        'id' VALUE mcp_server_id,
-        'name' VALUE server_name,
-        'description' VALUE description,
-        'type' VALUE server_type,
-        'status' VALUE status,
-        'config' VALUE json_parse(config_json),
-        'createdAt' VALUE to_char(created_date, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-        'updatedAt' VALUE to_char(updated_date, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-        'createdBy' VALUE created_by
-    )
-    INTO v_json
+    SELECT
+        server_name, description, server_type, status, config_json,
+        created_date, updated_date, created_by
+    INTO
+        v_server_name, v_description, v_type, v_status, v_config_json,
+        v_created_date, v_updated_date, v_created_by
     FROM RR_MCP_SERVERS
     WHERE mcp_server_id = p_server_id;
+
+    -- Build JSON using string concatenation
+    v_json := '{' ||
+        '"id":' || p_server_id || ',' ||
+        '"name":"' || REPLACE(REPLACE(v_server_name, '\', '\\'), '"', '\"') || '",' ||
+        '"description":"' || REPLACE(REPLACE(NVL(v_description, ''), '\', '\\'), '"', '\"') || '",' ||
+        '"type":"' || v_type || '",' ||
+        '"status":"' || v_status || '",' ||
+        '"config":' || v_config_json || ',' ||
+        '"createdAt":"' || TO_CHAR(v_created_date, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') || '",' ||
+        '"updatedAt":"' || TO_CHAR(v_updated_date, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') || '",' ||
+        '"createdBy":"' || NVL(v_created_by, '') || '"' ||
+        '}';
 
     p_result_json := v_json;
     p_result_status := 'success';
@@ -92,30 +109,42 @@ END RR_GET_MCP_SERVER;
 /
 
 -- 3. LIST All MCP Servers
+-- Returns JSON array as string using concatenation (Oracle 11g+ compatible)
 CREATE OR REPLACE PROCEDURE RR_LIST_MCP_SERVERS (
     p_result_json    OUT CLOB,
     p_result_status  OUT VARCHAR2
 ) AS
     v_json CLOB;
+    v_first BOOLEAN := TRUE;
+    CURSOR c_servers IS
+        SELECT mcp_server_id, server_name, description, server_type, status,
+               config_json, created_date, updated_date
+        FROM RR_MCP_SERVERS
+        ORDER BY created_date DESC;
 BEGIN
-    SELECT json_arrayagg(
-        json_object(
-            'id' VALUE mcp_server_id,
-            'name' VALUE server_name,
-            'description' VALUE description,
-            'type' VALUE server_type,
-            'status' VALUE status,
-            'config' VALUE json_parse(config_json),
-            'createdAt' VALUE to_char(created_date, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-            'updatedAt' VALUE to_char(updated_date, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-            'url' VALUE '/mcp/mcp_' || mcp_server_id
-        )
-        ORDER BY created_date DESC
-    )
-    INTO v_json
-    FROM RR_MCP_SERVERS;
+    v_json := '[';
 
-    p_result_json := COALESCE(v_json, '[]');
+    FOR rec IN c_servers LOOP
+        IF NOT v_first THEN
+            v_json := v_json || ',';
+        END IF;
+        v_first := FALSE;
+
+        v_json := v_json || '{' ||
+            '"id":' || rec.mcp_server_id || ',' ||
+            '"name":"' || REPLACE(REPLACE(rec.server_name, '\', '\\'), '"', '\"') || '",' ||
+            '"description":"' || REPLACE(REPLACE(NVL(rec.description, ''), '\', '\\'), '"', '\"') || '",' ||
+            '"type":"' || rec.server_type || '",' ||
+            '"status":"' || rec.status || '",' ||
+            '"config":' || rec.config_json || ',' ||
+            '"createdAt":"' || TO_CHAR(rec.created_date, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') || '",' ||
+            '"updatedAt":"' || TO_CHAR(rec.updated_date, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') || '",' ||
+            '"url":"/mcp/mcp_' || rec.mcp_server_id || '"' ||
+            '}';
+    END LOOP;
+
+    v_json := v_json || ']';
+    p_result_json := v_json;
     p_result_status := 'success';
 
 EXCEPTION WHEN OTHERS THEN
