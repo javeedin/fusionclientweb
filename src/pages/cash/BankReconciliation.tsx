@@ -666,6 +666,7 @@ const StatementSelector: React.FC<StatementSelectorProps> = ({
           : jlLines;
         const totalDr = filtered.reduce((s, l) => s + (Number(l.entered_dr) || 0), 0);
         const totalCr = filtered.reduce((s, l) => s + (Number(l.entered_cr) || 0), 0);
+        const netBalance = totalDr - totalCr;
         return (
           <>
             <div style={{ padding: '6px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -675,6 +676,7 @@ const StatementSelector: React.FC<StatementSelectorProps> = ({
               <Space size={16}>
                 <Text style={{ fontSize: 12 }}>Dr: <Text strong style={{ color: REDWOOD.success }}>{totalDr.toLocaleString('en-US', { minimumFractionDigits: 2 })}</Text></Text>
                 <Text style={{ fontSize: 12 }}>Cr: <Text strong style={{ color: REDWOOD.error }}>{totalCr.toLocaleString('en-US', { minimumFractionDigits: 2 })}</Text></Text>
+                <Text style={{ fontSize: 12 }}>Balance: <Text strong style={{ color: netBalance >= 0 ? REDWOOD.success : REDWOOD.error }}>{netBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</Text></Text>
               </Space>
             </div>
             <Table
@@ -705,6 +707,11 @@ const StatementSelector: React.FC<StatementSelectorProps> = ({
                     <Table.Summary.Cell index={9} align="right">
                       <Text strong style={{ color: REDWOOD.error }}>
                         {totalCr.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </Text>
+                    </Table.Summary.Cell>
+                    <Table.Summary.Cell index={10} align="right">
+                      <Text strong style={{ color: netBalance >= 0 ? REDWOOD.success : REDWOOD.error }}>
+                        Balance: {netBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </Text>
                     </Table.Summary.Cell>
                   </Table.Summary.Row>
@@ -4829,7 +4836,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
                 const res = await fetch(`${APEX_BASE}/cash/reconciliation/systxns?${q.toString()}`);
                 const data = await parseApexJson(res);
-                console.log('Fetch result:', {status: data.status, itemCount: data.items?.length, items: data.items?.slice(0, 3)});
                 if (data.status === 'success') {
                   const txns = (data.items ?? []).map((i: any): SysTxn => ({
                     txnId: Number(i.txnId) || 0,
@@ -4845,7 +4851,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                     customerNumber: i.customerNumber ?? '',
                     bankAccountName: i.bankAccountName ?? '',
                   }));
-                  console.log('Mapped txns:', txns.length, txns.slice(0, 3));
                   setMatchingSysTxns(txns);
                 }
               } catch (err) {
@@ -4909,14 +4914,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
             const unreconStmts = filteredStmtLines;
             // Use matchingSysTxns which are fetched if not already loaded
             const unreconSysTxns = matchingSysTxns.length > 0 ? matchingSysTxns : filteredSysTxnsBase;
-            console.log('buildMatches:', {
-              unreconStmts: unreconStmts.length,
-              matchingSysTxns: matchingSysTxns.length,
-              filteredSysTxnsBase: filteredSysTxnsBase.length,
-              unreconSysTxns: unreconSysTxns.length,
-              stmtAmounts: unreconStmts.map(s => s.amount).slice(0, 3),
-              sysTxnAmounts: unreconSysTxns.map(t => t.amount).slice(0, 3)
-            });
 
             const matches: Array<{
               bankLine?: typeof unreconStmts[0];
