@@ -309,31 +309,37 @@ const MCPServerManager: React.FC = () => {
       ),
     },
     {
-      title: 'Endpoint',
+      title: 'Endpoint / URL',
       key: 'endpoint',
-      width: 300,
+      width: 450,
       render: (_: any, record: MCPServerConfig) => {
         if (record.type === 'SOAP') {
           const config = record.config as SOAPConfig;
           return (
             <div>
-              <Tag color="blue">SOAP</Tag>
-              <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+              <Tag color="blue" style={{ marginBottom: 4 }}>SOAP</Tag>
+              <div style={{ fontSize: 10, fontFamily: 'monospace', wordBreak: 'break-all', color: '#595959', lineHeight: 1.4 }}>
                 {config.bipReportName}
-              </Text>
+              </div>
             </div>
           );
         }
         const config = record.config as RESTConfig;
         return (
-          <Tooltip title={config.endpoint}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <ApiOutlined style={{ color: '#0572CE' }} />
-              <Text ellipsis style={{ fontSize: 11, flex: 1, maxWidth: 250 }}>
-                {config.method} {config.endpoint}
-              </Text>
+          <div>
+            <div style={{ marginBottom: 4 }}>
+              <Tag color={
+                config.method === 'GET' ? 'blue' :
+                config.method === 'POST' ? 'green' :
+                config.method === 'PUT' ? 'orange' : 'red'
+              } style={{ marginRight: 8 }}>
+                {config.method}
+              </Tag>
             </div>
-          </Tooltip>
+            <div style={{ fontSize: 10, fontFamily: 'monospace', wordBreak: 'break-all', color: '#0572CE', lineHeight: 1.4, backgroundColor: '#f5f5f5', padding: '4px 6px', borderRadius: 4 }}>
+              {config.endpoint}
+            </div>
+          </div>
         );
       },
     },
