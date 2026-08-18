@@ -6,7 +6,7 @@ import {
 } from 'antd';
 import {
   HomeOutlined, PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined,
-  TestOutlined, ExportOutlined, SettingOutlined, CheckCircleOutlined, ApiOutlined, PlayCircleOutlined
+  BugOutlined, ExportOutlined, SettingOutlined, CheckCircleOutlined, ApiOutlined, PlayCircleOutlined
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { mcpServerService } from '../../services/mcp-server.service';
@@ -359,7 +359,7 @@ const MCPServerManager: React.FC = () => {
           </Tooltip>
           <Button
             size="small"
-            icon={<TestOutlined />}
+            icon={<BugOutlined />}
             onClick={() => handleTestServer(record.id)}
             loading={serverToTest === record.id && testLoading}
           >
