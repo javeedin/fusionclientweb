@@ -3,6 +3,7 @@ import { notification, Button, Space, Typography, Modal, Card, Tag, Descriptions
 import { CheckCircleOutlined, StopOutlined, EyeOutlined, BellOutlined, ApiOutlined } from '@ant-design/icons';
 import { useNotifications } from '../context/NotificationContext';
 import type { AppNotification } from '../context/NotificationContext';
+import { buildApexUrl } from '../config/api.helper';
 
 const { Text } = Typography;
 
@@ -141,9 +142,8 @@ const ApprovalToastWatcher: React.FC<Props> = ({ onOpenPanel }) => {
 
   const getApprovalApiDetails = (req: any) => {
     const requestId = req.requestId;
-    const endpoint = `/approvals/requests/${requestId}/status`;
-    const baseUrl = 'https://your-apex-instance.com'; // Will be populated from APEX_DB_CONFIG
-    const fullUrl = `${baseUrl}${endpoint}`;
+    const endpoint = `approvals/requests/${requestId}/status`;
+    const fullUrl = buildApexUrl(endpoint);
     const method = 'PUT';
     const body = {
       status: 'APPROVED', // or 'REJECTED'
@@ -194,11 +194,11 @@ const ApprovalToastWatcher: React.FC<Props> = ({ onOpenPanel }) => {
 
             {/* API Endpoint */}
             <div>
-              <Text strong style={{ fontSize: 12, color: '#666', display: 'block', marginBottom: 8 }}>API ENDPOINT</Text>
+              <Text strong style={{ fontSize: 12, color: '#666', display: 'block', marginBottom: 8 }}>API ENDPOINT (FULL URL)</Text>
               <Card size="small" style={{ background: '#e6f7ff', borderColor: '#1890ff' }}>
-                <div style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                <div style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', color: '#0572CE' }}>
                   <Tag color="blue">PUT</Tag>
-                  {' '}{apiDetails.endpoint}
+                  {' '}{apiDetails.fullUrl}
                 </div>
               </Card>
             </div>
