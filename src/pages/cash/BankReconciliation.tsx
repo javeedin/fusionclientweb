@@ -908,6 +908,41 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
   const [progressDone,  setProgressDone]  = useState(false);
 
+  // Auto-match reconciliation when modal opens
+  useEffect(() => {
+    if (!autoReconOpen || stmtLines.length === 0 || sysTxns.length === 0) return;
+
+    setAutoReconRunning(true);
+    try {
+      const usedSysTxnIndices = new Set<number>();
+      const matches: AutoReconMatch[] = [];
+
+      // 1:1 matching: for each statement line, find ONE system transaction with matching amount
+      stmtLines.forEach(stmt => {
+        // Find first unmatched system transaction with same amount
+        const matchedSysTxnIdx = sysTxns.findIndex((txn, idx) =>
+          !usedSysTxnIndices.has(idx) && Math.abs(txn.amount - stmt.amount) < 0.01
+        );
+
+        if (matchedSysTxnIdx !== -1) {
+          const txn = sysTxns[matchedSysTxnIdx];
+          usedSysTxnIndices.add(matchedSysTxnIdx);
+          matches.push({
+            stmtLine: stmt,
+            sysTxn: txn,
+            matchedBy: ['Auto-Match'],
+            confirmed: true,
+            status: 'pending'
+          });
+        }
+      });
+
+      setAutoReconMatches(matches);
+    } finally {
+      setAutoReconRunning(false);
+    }
+  }, [autoReconOpen, stmtLines, sysTxns]);
+
   // Resize drag handlers
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -4370,228 +4405,104 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
       {/* ── Auto Recon Modal ─────────────────────────────────────────── */}
       <Modal
-        title={<Space><ThunderboltOutlined style={{ color: '#722ed1' }} /><span>Manual Reconciliation</span></Space>}
+        title={<Space><ThunderboltOutlined style={{ color: '#722ed1' }} /><span>Auto Reconciliation</span></Space>}
         open={autoReconOpen}
         onCancel={() => setAutoReconOpen(false)}
-        width={1200}
+        width={1000}
         bodyStyle={{ maxHeight: '80vh', overflowY: 'auto' }}
         footer={
-          autoReconStep === 'select' ? (
-            <Space>
-              <Button onClick={() => setAutoReconOpen(false)}>Close</Button>
-              <Button
-                type="primary"
-                loading={autoReconRunning}
-                disabled={selectedStmtForRecon.size === 0 || selectedSysForRecon.size === 0}
-                onClick={() => {
-                  const stmtLines_ = Array.from(selectedStmtForRecon);
-                  const sysTxns_ = Array.from(selectedSysForRecon);
-                  const pairs: AutoReconMatch[] = [];
-                  stmtLines_.forEach((stmtKey, idx) => {
-                    const stmt = stmtLines.find(s => String(s.lineId) === stmtKey);
-                    const sysTxnKey = sysTxns_[idx];
-                    const sys = sysTxns.find(t => sysTxnRowKey(t) === sysTxnKey);
-                    if (stmt && sys) {
-                      pairs.push({
-                        stmtLine: stmt,
-                        sysTxn: sys,
-                        matchedBy: ['Manual'],
-                        confirmed: true,
-                        status: 'pending'
-                      });
-                    }
-                  });
-                  setAutoReconMatches(pairs);
-                  setAutoReconStep('results');
-                }}
-                style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}
-              >
-                Reconcile {Math.min(selectedStmtForRecon.size, selectedSysForRecon.size)} Pair(s)
-              </Button>
-            </Space>
-          ) : (
-            <Space>
-              <Button onClick={() => setAutoReconStep('select')}>← Back to Selection</Button>
-              <Button onClick={() => setAutoReconOpen(false)}>Close</Button>
-              <Button
-                type="primary"
-                icon={<CheckOutlined />}
-                loading={autoReconRunning}
-                disabled={!autoReconMatches.some(m => m.confirmed && m.status === 'pending')}
-                onClick={executeAutoRecon}
-                style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}
-              >
-                Reconcile {autoReconMatches.filter(m => m.confirmed && m.status === 'pending').length} Pair(s)
-              </Button>
-            </Space>
-          )
+          <Space>
+            <Button onClick={() => setAutoReconOpen(false)}>Close</Button>
+            <Button
+              type="primary"
+              icon={<CheckOutlined />}
+              loading={autoReconRunning}
+              disabled={!autoReconMatches.some(m => m.confirmed && m.status === 'pending')}
+              onClick={executeAutoRecon}
+              style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}
+            >
+              Reconcile {autoReconMatches.filter(m => m.confirmed && m.status === 'pending').length} Pair(s)
+            </Button>
+          </Space>
         }
         destroyOnClose
       >
-        {autoReconStep === 'select' ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, height: '500px' }}>
-            {/* Left Column: Statement Lines */}
-            <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid #f0f0f0', borderRadius: 6, overflow: 'hidden' }}>
-              <div style={{ padding: '12px', background: '#fafafa', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 12 }}>
-                Bank Statement Lines ({stmtLines.length})
+        <Spin spinning={autoReconRunning && autoReconMatches.length === 0}>
+          {autoReconMatches.length === 0 ? (
+            <Empty description="Loading reconciliation data..." />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 8, flexShrink: 0 }}>
+                Matched <strong>{autoReconMatches.length}</strong> pair(s). Uncheck to exclude from reconciliation.
               </div>
-              <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-                {stmtLines.map(stmt => (
+              <div style={{ flex: 1, overflowY: 'auto', borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
+                {autoReconMatches.map((m, idx) => (
                   <div
-                    key={stmt.lineId}
-                    onClick={() => {
-                      const newSet = new Set(selectedStmtForRecon);
-                      const key = String(stmt.lineId);
-                      if (newSet.has(key)) newSet.delete(key);
-                      else newSet.add(key);
-                      setSelectedStmtForRecon(newSet);
-                    }}
+                    key={idx}
                     style={{
-                      padding: '8px',
-                      marginBottom: '4px',
-                      border: selectedStmtForRecon.has(String(stmt.lineId)) ? '2px solid #0572CE' : '1px solid #f0f0f0',
+                      display: 'flex',
+                      gap: 6,
+                      padding: '4px 8px',
+                      marginBottom: 3,
+                      border: `1px solid ${m.status === 'success' ? '#b7eb8f' : m.status === 'error' ? '#ffccc7' : '#f0f0f0'}`,
                       borderRadius: 4,
-                      background: selectedStmtForRecon.has(String(stmt.lineId)) ? '#e6f7ff' : '#fff',
-                      cursor: 'pointer',
-                      fontSize: 11,
-                      lineHeight: 1.4
+                      background: m.status === 'success' ? '#f6ffed' : m.status === 'error' ? '#fff2f0' : m.confirmed ? '#fff' : '#fafafa',
+                      opacity: m.confirmed ? 1 : 0.7,
+                      fontSize: 10,
+                      lineHeight: '1.3',
                     }}
                   >
-                    <div style={{ fontWeight: 500, color: '#0572CE', marginBottom: 2 }}>
-                      Line #{stmt.lineId}
-                    </div>
-                    <div style={{ color: '#666', marginBottom: 2 }}>
-                      {stmt.transactionDate?.slice(0, 10)} {stmt.transactionCode}
-                    </div>
-                    <div style={{ fontWeight: 600, color: '#1A1A1A' }}>
-                      {Math.abs(stmt.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    <Checkbox
+                      checked={m.confirmed}
+                      disabled={m.status !== 'pending'}
+                      onChange={e => {
+                        const copy = [...autoReconMatches];
+                        copy[idx] = { ...m, confirmed: e.target.checked };
+                        setAutoReconMatches(copy);
+                      }}
+                      style={{ marginTop: '2px', flexShrink: 0 }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 6, alignItems: 'center' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 500, fontSize: 9, color: '#1677ff', marginBottom: 1 }}>STMT</div>
+                          <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {m.stmtLine.description || m.stmtLine.reference || `Line #${m.stmtLine.lineId}`}
+                          </div>
+                          <div style={{ fontSize: 9, color: '#8c8c8c' }}>
+                            {m.stmtLine.transactionDate?.slice(0, 10)} {m.stmtLine.transactionCode} {Math.abs(m.stmtLine.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'center', flexShrink: 0 }}>
+                          {m.status === 'success' && <Tag color="success" style={{ fontSize: 8, margin: 0 }}>✓</Tag>}
+                          {m.status === 'error' && <Tag color="error" style={{ fontSize: 8, margin: 0 }}>✗</Tag>}
+                          {m.status === 'pending' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
+                              {m.matchedBy.map(r => (
+                                <Tag key={r} color="purple" style={{ fontSize: 7, margin: 0, padding: '0 3px' }}>
+                                  {r.substring(0, 3)}
+                                </Tag>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 500, fontSize: 9, color: '#722ed1', marginBottom: 1 }}>TXN</div>
+                          <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {m.sysTxn.payee || m.sysTxn.txnNumber || m.sysTxn.reference}
+                          </div>
+                          <div style={{ fontSize: 9, color: '#8c8c8c' }}>
+                            {m.sysTxn.txnDate?.slice(0, 10)} {m.sysTxn.source?.substring(0, 2)} {Math.abs(m.sysTxn.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
-
-            {/* Right Column: System Transactions */}
-            <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid #f0f0f0', borderRadius: 6, overflow: 'hidden' }}>
-              <div style={{ padding: '12px', background: '#fafafa', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 12 }}>
-                System Transactions ({sysTxns.length})
-              </div>
-              <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-                {sysTxns.map(txn => {
-                  const key = sysTxnRowKey(txn);
-                  return (
-                    <div
-                      key={key}
-                      onClick={() => {
-                        const newSet = new Set(selectedSysForRecon);
-                        if (newSet.has(key)) newSet.delete(key);
-                        else newSet.add(key);
-                        setSelectedSysForRecon(newSet);
-                      }}
-                      style={{
-                        padding: '8px',
-                        marginBottom: '4px',
-                        border: selectedSysForRecon.has(key) ? '2px solid #722ed1' : '1px solid #f0f0f0',
-                        borderRadius: 4,
-                        background: selectedSysForRecon.has(key) ? '#f9f0ff' : '#fff',
-                        cursor: 'pointer',
-                        fontSize: 11,
-                        lineHeight: 1.4
-                      }}
-                    >
-                      <div style={{ fontWeight: 500, color: '#722ed1', marginBottom: 2 }}>
-                        {txn.txnNumber}
-                      </div>
-                      <div style={{ color: '#666', marginBottom: 2, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-                        {txn.payee || txn.reference}
-                      </div>
-                      <div style={{ fontWeight: 600, color: '#1A1A1A' }}>
-                        {Math.abs(txn.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div>
-            {autoReconMatches.length === 0 ? (
-              <Empty description="No pairs selected for reconciliation" />
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 8, flexShrink: 0 }}>
-                  Selected <strong>{autoReconMatches.length}</strong> pair(s). Uncheck to exclude from reconciliation.
-                </div>
-                <div style={{ flex: 1, overflowY: 'auto', borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
-                  {autoReconMatches.map((m, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        display: 'flex',
-                        gap: 6,
-                        padding: '4px 8px',
-                        marginBottom: 3,
-                        border: `1px solid ${m.status === 'success' ? '#b7eb8f' : m.status === 'error' ? '#ffccc7' : '#f0f0f0'}`,
-                        borderRadius: 4,
-                        background: m.status === 'success' ? '#f6ffed' : m.status === 'error' ? '#fff2f0' : m.confirmed ? '#fff' : '#fafafa',
-                        opacity: m.confirmed ? 1 : 0.7,
-                        fontSize: 10,
-                        lineHeight: '1.3',
-                      }}
-                    >
-                      <Checkbox
-                        checked={m.confirmed}
-                        disabled={m.status !== 'pending'}
-                        onChange={e => {
-                          const copy = [...autoReconMatches];
-                          copy[idx] = { ...m, confirmed: e.target.checked };
-                          setAutoReconMatches(copy);
-                        }}
-                        style={{ marginTop: '2px', flexShrink: 0 }}
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 6, alignItems: 'center' }}>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontWeight: 500, fontSize: 9, color: '#1677ff', marginBottom: 1 }}>STMT</div>
-                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {m.stmtLine.description || m.stmtLine.reference || `Line #${m.stmtLine.lineId}`}
-                            </div>
-                            <div style={{ fontSize: 9, color: '#8c8c8c' }}>
-                              {m.stmtLine.transactionDate?.slice(0, 10)} {m.stmtLine.transactionCode} {Math.abs(m.stmtLine.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                            </div>
-                          </div>
-                          <div style={{ textAlign: 'center', flexShrink: 0 }}>
-                            {m.status === 'success' && <Tag color="success" style={{ fontSize: 8, margin: 0 }}>✓</Tag>}
-                            {m.status === 'error' && <Tag color="error" style={{ fontSize: 8, margin: 0 }}>✗</Tag>}
-                            {m.status === 'pending' && (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
-                                {m.matchedBy.map(r => (
-                                  <Tag key={r} color="purple" style={{ fontSize: 7, margin: 0, padding: '0 3px' }}>
-                                    {r.substring(0, 3)}
-                                  </Tag>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontWeight: 500, fontSize: 9, color: '#722ed1', marginBottom: 1 }}>TXN</div>
-                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {m.sysTxn.payee || m.sysTxn.txnNumber || m.sysTxn.reference}
-                            </div>
-                            <div style={{ fontSize: 9, color: '#8c8c8c' }}>
-                              {m.sysTxn.txnDate?.slice(0, 10)} {m.sysTxn.source?.substring(0, 2)} {Math.abs(m.sysTxn.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+          )}
+        </Spin>
       </Modal>
 
       {/* ── Matching View Modal (Simple table format) ──────────────── */}
