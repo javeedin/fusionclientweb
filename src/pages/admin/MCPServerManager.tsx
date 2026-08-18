@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Layout, Card, Button, Form, Input, Select, Radio, Tabs, Table, Space, Modal, message, Alert,
+  Layout, Card, Button, Form, Input, Select, Radio, Tabs, Table, Space, Modal, message,
   Row, Col, Typography, Breadcrumb, Tag, Divider, Spin, Tooltip, Drawer, Collapse,
   InputNumber, Checkbox, Descriptions
 } from 'antd';
 import {
   HomeOutlined, PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined,
-  CheckCircleOutlined, ExportOutlined, SettingOutlined
+  TestOutlined, ExportOutlined, SettingOutlined, CheckCircleOutlined, ApiOutlined, PlayCircleOutlined
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { mcpServerService } from '../../services/mcp-server.service';
@@ -75,6 +75,9 @@ const MCPServerManager: React.FC = () => {
   const [testResult, setTestResult] = useState<any>(null);
   const [testLoading, setTestLoading] = useState(false);
   const [serverToTest, setServerToTest] = useState<string | null>(null);
+  const [previewTestResult, setPreviewTestResult] = useState<any>(null);
+  const [previewTestLoading, setPreviewTestLoading] = useState(false);
+  const [apiInspectorOpen, setApiInspectorOpen] = useState(false);
 
   useEffect(() => {
     loadServers();
@@ -208,6 +211,56 @@ const MCPServerManager: React.FC = () => {
     message.success('Copied to clipboard');
   };
 
+  const testApiPreview = async (values: any) => {
+    setPreviewTestLoading(true);
+    try {
+      const config = extractConfigFromForm(values, serverType);
+      if (serverType === 'REST') {
+        const restConfig = config as RESTConfig;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+        if (restConfig.authType === 'basic' && restConfig.authUsername && restConfig.authPassword) {
+          const encoded = btoa(`${restConfig.authUsername}:${restConfig.authPassword}`);
+          headers['Authorization'] = `Basic ${encoded}`;
+        } else if (restConfig.authType === 'bearer' && restConfig.bearerToken) {
+          headers['Authorization'] = `Bearer ${restConfig.bearerToken}`;
+        } else if (restConfig.authType === 'apiKey' && restConfig.apiKey) {
+          headers[restConfig.apiKeyHeader || 'X-API-Key'] = restConfig.apiKey;
+        }
+
+        const options: RequestInit = {
+          method: restConfig.method,
+          headers,
+          timeout: restConfig.timeout || 30000,
+        };
+
+        if ((restConfig.method === 'POST' || restConfig.method === 'PUT') && restConfig.payloadTemplate) {
+          options.body = restConfig.payloadTemplate;
+        }
+
+        const response = await fetch(restConfig.endpoint, options);
+        const data = await response.json();
+
+        setPreviewTestResult({
+          success: response.ok,
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers),
+          body: data,
+        });
+        message.success('API test completed');
+      }
+    } catch (error) {
+      setPreviewTestResult({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      message.error('API test failed');
+    } finally {
+      setPreviewTestLoading(false);
+    }
+  };
+
   const columns = [
     {
       title: 'Server Name',
@@ -245,6 +298,35 @@ const MCPServerManager: React.FC = () => {
       ),
     },
     {
+      title: 'Endpoint',
+      key: 'endpoint',
+      width: 300,
+      render: (_: any, record: MCPServerConfig) => {
+        if (record.type === 'SOAP') {
+          const config = record.config as SOAPConfig;
+          return (
+            <div>
+              <Tag color="blue">SOAP</Tag>
+              <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+                {config.bipReportName}
+              </Text>
+            </div>
+          );
+        }
+        const config = record.config as RESTConfig;
+        return (
+          <Tooltip title={config.endpoint}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ApiOutlined style={{ color: '#0572CE' }} />
+              <Text ellipsis style={{ fontSize: 11, flex: 1, maxWidth: 250 }}>
+                {config.method} {config.endpoint}
+              </Text>
+            </div>
+          </Tooltip>
+        );
+      },
+    },
+    {
       title: 'Created',
       dataIndex: 'createdAt',
       key: 'createdAt',
@@ -257,6 +339,14 @@ const MCPServerManager: React.FC = () => {
       width: 220,
       render: (_: any, record: MCPServerConfig) => (
         <Space size="small" wrap>
+          <Tooltip title="View API Endpoint Details">
+            <Button
+              size="small"
+              icon={<ApiOutlined />}
+              onClick={() => showApiDetails(record)}
+              style={{ color: '#0572CE', borderColor: '#0572CE' }}
+            />
+          </Tooltip>
           <Tooltip title="View MCP URL">
             <Button
               type="primary"
@@ -269,7 +359,7 @@ const MCPServerManager: React.FC = () => {
           </Tooltip>
           <Button
             size="small"
-            icon={<CheckCircleOutlined />}
+            icon={<TestOutlined />}
             onClick={() => handleTestServer(record.id)}
             loading={serverToTest === record.id && testLoading}
           >
@@ -383,6 +473,113 @@ const MCPServerManager: React.FC = () => {
         </div>
       ),
     });
+  };
+
+  const showApiDetails = (server: MCPServerConfig) => {
+    if (server.type === 'SOAP') {
+      const config = server.config as SOAPConfig;
+      Modal.info({
+        title: `SOAP Server Details - ${server.name}`,
+        width: 700,
+        content: (
+          <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
+            <Descriptions
+              column={1}
+              size="small"
+              items={[
+                { label: 'Server Name', children: server.name },
+                { label: 'Type', children: 'SOAP' },
+                { label: 'Status', children: server.status },
+                { label: 'Fusion URL', children: <Text code copyable>{config.fusionUrl}</Text> },
+                { label: 'BIP Report', children: <Text code>{config.bipReportName}</Text> },
+                { label: 'Username', children: <Text code>{config.username}</Text> },
+                { label: 'Timeout', children: `${config.timeout || 30000}ms` },
+              ]}
+            />
+            <Divider />
+            <Text strong style={{ fontSize: 12 }}>Parameters:</Text>
+            <Card size="small" style={{ background: '#f5f5f5', marginTop: 8 }}>
+              <pre style={{ margin: 0, fontSize: 11 }}>
+                {JSON.stringify(config.parameters, null, 2)}
+              </pre>
+            </Card>
+          </div>
+        ),
+      });
+    } else {
+      const config = server.config as RESTConfig;
+      Modal.info({
+        title: `REST API Details - ${server.name}`,
+        width: 800,
+        content: (
+          <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
+            <Space direction="vertical" style={{ width: '100%' }} size="small">
+              <div>
+                <Text strong style={{ fontSize: 12, color: '#666' }}>METHOD & ENDPOINT</Text>
+                <Card size="small" style={{ background: '#f5f5f5', marginTop: 4 }}>
+                  <div style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                    <Tag color={
+                      config.method === 'GET' ? 'blue' :
+                      config.method === 'POST' ? 'green' :
+                      config.method === 'PUT' ? 'orange' : 'red'
+                    }>
+                      {config.method}
+                    </Tag>
+                    {' '}{config.endpoint}
+                  </div>
+                </Card>
+              </div>
+
+              <div>
+                <Text strong style={{ fontSize: 12, color: '#666' }}>AUTHENTICATION</Text>
+                <Card size="small" style={{ background: '#f5f5f5', marginTop: 4 }}>
+                  <div style={{ fontSize: 12 }}>
+                    <div><Text strong>Type:</Text> {config.authType || 'none'}</div>
+                    {config.authType === 'basic' && (
+                      <div><Text strong>Username:</Text> {config.authUsername}</div>
+                    )}
+                    {config.authType === 'bearer' && (
+                      <div><Text strong>Token:</Text> {config.bearerToken ? '••••••••' : 'Not set'}</div>
+                    )}
+                    {config.authType === 'apiKey' && (
+                      <div><Text strong>Header:</Text> {config.apiKeyHeader || 'X-API-Key'}</div>
+                    )}
+                  </div>
+                </Card>
+              </div>
+
+              {config.payloadTemplate && (
+                <div>
+                  <Text strong style={{ fontSize: 12, color: '#666' }}>REQUEST BODY TEMPLATE</Text>
+                  <Card size="small" style={{ background: '#f5f5f5', marginTop: 4 }}>
+                    <pre style={{ margin: 0, fontSize: 11, maxHeight: 200, overflowY: 'auto', wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
+                      {config.payloadTemplate}
+                    </pre>
+                  </Card>
+                </div>
+              )}
+
+              <div>
+                <Text strong style={{ fontSize: 12, color: '#666' }}>ADDITIONAL INFO</Text>
+                <Card size="small" style={{ background: '#f5f5f5', marginTop: 4 }}>
+                  <div style={{ fontSize: 12 }}>
+                    <div><Text strong>Timeout:</Text> {config.timeout || 30000}ms</div>
+                    {config.headers && (
+                      <div>
+                        <Text strong>Custom Headers:</Text>
+                        <pre style={{ margin: '8px 0 0 0', fontSize: 11, background: '#fff', padding: 8, borderRadius: 4 }}>
+                          {JSON.stringify(config.headers, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              </div>
+            </Space>
+          </div>
+        ),
+      });
+    }
   };
 
   const drawerContent = (
@@ -571,6 +768,96 @@ const MCPServerManager: React.FC = () => {
         </>
       )}
 
+      {serverType === 'REST' && (
+        <>
+          <Divider style={{ marginTop: 32, marginBottom: 16 }} />
+          <Text strong style={{ fontSize: 14, marginBottom: 12, display: 'block' }}>
+            <ApiOutlined /> API Preview
+          </Text>
+
+          <Card
+            size="small"
+            style={{ background: '#fafafa', marginBottom: 16 }}
+            bodyStyle={{ padding: 12 }}
+          >
+            <div style={{ marginBottom: 8 }}>
+              <Text strong style={{ fontSize: 11, color: '#666' }}>METHOD & ENDPOINT</Text>
+              <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
+                <Tag color={form.getFieldValue('method') === 'GET' ? 'blue' : form.getFieldValue('method') === 'POST' ? 'green' : form.getFieldValue('method') === 'PUT' ? 'orange' : 'red'}>
+                  {form.getFieldValue('method') || 'GET'}
+                </Tag>
+                {' '}{form.getFieldValue('endpoint') || 'https://api.example.com/endpoint'}
+              </div>
+            </div>
+
+            {(form.getFieldValue('method') === 'POST' || form.getFieldValue('method') === 'PUT') && form.getFieldValue('payloadTemplate') && (
+              <div style={{ marginBottom: 8 }}>
+                <Text strong style={{ fontSize: 11, color: '#666' }}>REQUEST BODY</Text>
+                <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 10, maxHeight: 150, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {form.getFieldValue('payloadTemplate')}
+                </div>
+              </div>
+            )}
+
+            {form.getFieldValue('authType') !== 'none' && (
+              <div>
+                <Text strong style={{ fontSize: 11, color: '#666' }}>AUTHENTICATION</Text>
+                <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontSize: 11 }}>
+                  {form.getFieldValue('authType') === 'basic' && <div>Basic Auth: {form.getFieldValue('authUsername')}</div>}
+                  {form.getFieldValue('authType') === 'bearer' && <div>Bearer Token: {form.getFieldValue('bearerToken') ? '••••••••' : 'Not set'}</div>}
+                  {form.getFieldValue('authType') === 'apiKey' && <div>API Key Header: {form.getFieldValue('apiKeyHeader') || 'X-API-Key'}</div>}
+                </div>
+              </div>
+            )}
+
+            <Button
+              type="primary"
+              size="small"
+              icon={<PlayCircleOutlined />}
+              loading={previewTestLoading}
+              onClick={() => testApiPreview(form.getFieldsValue())}
+              style={{ marginTop: 12 }}
+            >
+              Test API
+            </Button>
+          </Card>
+
+          {previewTestResult && (
+            <Card
+              size="small"
+              style={{ background: previewTestResult.success ? '#f6ffed' : '#fff2f0', marginBottom: 16 }}
+              bodyStyle={{ padding: 12 }}
+              title={
+                <Text strong style={{ color: previewTestResult.success ? '#52c41a' : '#d4380d' }}>
+                  {previewTestResult.success ? '✓ Test Passed' : '✗ Test Failed'}
+                </Text>
+              }
+            >
+              <div>
+                <Text strong style={{ fontSize: 11 }}>Status:</Text>
+                <div style={{ fontSize: 11, marginBottom: 8 }}>{previewTestResult.status} {previewTestResult.statusText}</div>
+
+                {previewTestResult.body && (
+                  <>
+                    <Text strong style={{ fontSize: 11 }}>Response:</Text>
+                    <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 10, maxHeight: 200, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {JSON.stringify(previewTestResult.body, null, 2)}
+                    </div>
+                  </>
+                )}
+
+                {previewTestResult.error && (
+                  <>
+                    <Text strong style={{ fontSize: 11, color: '#d4380d' }}>Error:</Text>
+                    <div style={{ fontSize: 11, marginTop: 4, color: '#d4380d' }}>{previewTestResult.error}</div>
+                  </>
+                )}
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+
       <Form.Item style={{ marginTop: 24, marginBottom: 0 }}>
         <Space>
           <Button type="primary" htmlType="submit" loading={loading}>
@@ -614,14 +901,24 @@ const MCPServerManager: React.FC = () => {
                 Create and manage MCP servers for Oracle Fusion and REST APIs
               </Text>
             </div>
-            <Button
-              type="primary"
-              size="large"
-              icon={<PlusOutlined />}
-              onClick={handleCreateNew}
-            >
-              Create MCP Server
-            </Button>
+            <Space>
+              <Button
+                size="large"
+                icon={<ApiOutlined />}
+                onClick={() => setApiInspectorOpen(true)}
+                style={{ color: '#0572CE', borderColor: '#0572CE' }}
+              >
+                API Inspector
+              </Button>
+              <Button
+                type="primary"
+                size="large"
+                icon={<PlusOutlined />}
+                onClick={handleCreateNew}
+              >
+                Create MCP Server
+              </Button>
+            </Space>
           </div>
 
           {/* Servers Table */}
@@ -709,8 +1006,138 @@ const MCPServerManager: React.FC = () => {
           )}
         </Modal>
       )}
+
+      {/* API Inspector Modal */}
+      <Modal
+        title="API Inspector — All Endpoints"
+        open={apiInspectorOpen}
+        onCancel={() => setApiInspectorOpen(false)}
+        width={1000}
+        footer={null}
+      >
+        <Tabs
+          items={servers.map((server) => ({
+            key: server.id,
+            label: (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <ApiOutlined />
+                <span>{server.name}</span>
+                <Tag color={server.status === 'active' ? 'success' : 'default'}>
+                  {server.status}
+                </Tag>
+              </div>
+            ),
+            children: (
+              <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
+                {server.type === 'SOAP' ? (
+                  <Card style={{ background: '#f0f2f5' }}>
+                    <Descriptions column={1} size="small">
+                      <Descriptions.Item label="Type">
+                        <Tag color="blue">SOAP</Tag>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Fusion URL">
+                        <Text code copyable>
+                          {(server.config as SOAPConfig).fusionUrl}
+                        </Text>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="BIP Report">
+                        <Text code>
+                          {(server.config as SOAPConfig).bipReportName}
+                        </Text>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Description">
+                        {server.description}
+                      </Descriptions.Item>
+                    </Descriptions>
+                  </Card>
+                ) : (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <div>
+                      <Text strong style={{ fontSize: 12, color: '#666' }}>REQUEST</Text>
+                      <Card size="small" style={{ background: '#f5f5f5', marginTop: 8 }}>
+                        <div style={{ fontFamily: 'monospace', fontSize: 12, marginBottom: 8 }}>
+                          <div>
+                            <Tag color={
+                              (server.config as RESTConfig).method === 'GET' ? 'blue' :
+                              (server.config as RESTConfig).method === 'POST' ? 'green' :
+                              (server.config as RESTConfig).method === 'PUT' ? 'orange' : 'red'
+                            }>
+                              {(server.config as RESTConfig).method}
+                            </Tag>
+                          </div>
+                          <div style={{ marginTop: 8, wordBreak: 'break-all', padding: '8px', background: '#fff', borderRadius: 4 }}>
+                            {(server.config as RESTConfig).endpoint}
+                          </div>
+                        </div>
+                      </Card>
+                    </div>
+
+                    {(server.config as RESTConfig).authType !== 'none' && (
+                      <div>
+                        <Text strong style={{ fontSize: 12, color: '#666' }}>AUTHENTICATION</Text>
+                        <Card size="small" style={{ background: '#f5f5f5', marginTop: 8 }}>
+                          <div style={{ fontSize: 12 }}>
+                            <div>
+                              <Text strong>Type:</Text> {(server.config as RESTConfig).authType}
+                            </div>
+                            {(server.config as RESTConfig).authType === 'basic' && (
+                              <div>
+                                <Text strong>Username:</Text> {(server.config as RESTConfig).authUsername}
+                              </div>
+                            )}
+                            {(server.config as RESTConfig).authType === 'bearer' && (
+                              <div>
+                                <Text strong>Token:</Text> {(server.config as RESTConfig).bearerToken ? '••••••••' : 'Not set'}
+                              </div>
+                            )}
+                            {(server.config as RESTConfig).authType === 'apiKey' && (
+                              <div>
+                                <Text strong>Header:</Text> {(server.config as RESTConfig).apiKeyHeader || 'X-API-Key'}
+                              </div>
+                            )}
+                          </div>
+                        </Card>
+                      </div>
+                    )}
+
+                    {(server.config as RESTConfig).payloadTemplate && (
+                      <div>
+                        <Text strong style={{ fontSize: 12, color: '#666' }}>REQUEST BODY</Text>
+                        <Card size="small" style={{ background: '#f5f5f5', marginTop: 8 }}>
+                          <pre style={{ margin: 0, fontSize: 11, maxHeight: 200, overflowY: 'auto', wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
+                            {(server.config as RESTConfig).payloadTemplate}
+                          </pre>
+                        </Card>
+                      </div>
+                    )}
+
+                    <div>
+                      <Text strong style={{ fontSize: 12, color: '#666' }}>METADATA</Text>
+                      <Card size="small" style={{ background: '#f5f5f5', marginTop: 8 }}>
+                        <Descriptions column={1} size="small">
+                          <Descriptions.Item label="Timeout">
+                            {(server.config as RESTConfig).timeout || 30000}ms
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Created">
+                            {new Date(server.createdAt).toLocaleString()}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="Last Updated">
+                            {new Date(server.updatedAt).toLocaleString()}
+                          </Descriptions.Item>
+                        </Descriptions>
+                      </Card>
+                    </div>
+                  </Space>
+                )}
+              </div>
+            ),
+          }))}
+        />
+      </Modal>
     </Layout>
   );
 };
+
+import { Alert } from 'antd';
 
 export default MCPServerManager;
