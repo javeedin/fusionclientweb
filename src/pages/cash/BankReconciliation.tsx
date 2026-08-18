@@ -4429,6 +4429,52 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
           <Space>
             <Button onClick={() => setAutoReconOpen(false)}>Close</Button>
             <Button
+              icon={<ThunderboltOutlined />}
+              loading={autoReconRunning}
+              onClick={() => {
+                setAutoReconRunning(true);
+                try {
+                  const usedSysTxnIndices = new Set<number>();
+                  const matches: AutoReconMatch[] = [];
+
+                  stmtLines.forEach(stmt => {
+                    const matchedSysTxnIdx = sysTxns.findIndex((txn, idx) =>
+                      !usedSysTxnIndices.has(idx) && Math.abs(txn.amount - Math.abs(stmt.amount)) < 0.01
+                    );
+
+                    if (matchedSysTxnIdx !== -1) {
+                      const txn = sysTxns[matchedSysTxnIdx];
+                      usedSysTxnIndices.add(matchedSysTxnIdx);
+                      matches.push({
+                        stmtLine: stmt,
+                        sysTxn: txn,
+                        matchedBy: ['amount'],
+                        confirmed: true,
+                        status: 'pending'
+                      });
+                    } else {
+                      matches.push({
+                        stmtLine: stmt,
+                        sysTxn: sysTxns[0],
+                        matchedBy: [],
+                        confirmed: false,
+                        status: 'pending'
+                      });
+                    }
+                  });
+
+                  setAutoReconMatches(matches);
+                  const matched = matches.filter(m => m.matchedBy.length > 0).length;
+                  msgApi.success(`Auto-matched ${matched} transaction(s) by amount`);
+                } finally {
+                  setAutoReconRunning(false);
+                }
+              }}
+              style={{ borderColor: '#722ed1', color: '#722ed1' }}
+            >
+              Auto Match by Amount
+            </Button>
+            <Button
               icon={<CloseOutlined />}
               disabled={!autoReconMatches.some(m => m.confirmed && m.status === 'success')}
               onClick={() => {
