@@ -4717,10 +4717,16 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                               <Space size={6}>
                                 <span>{m.stmtLine.transactionDate?.slice(0, 10)}</span>
                                 <Tag color={m.stmtLine.transactionCode === 'CR' ? 'volcano' : 'blue'} style={{ margin: 0, fontSize: 10 }}>{m.stmtLine.transactionCode}</Tag>
-                                <strong>{Math.abs(m.stmtLine.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                                <strong>
+                                  {/* Show actual amount with sign if stored as signed, else show with code context */}
+                                  {m.stmtLine.amount < 0 ? '−' : ''}{Math.abs(m.stmtLine.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </strong>
                               </Space>
                             </div>
                             {m.stmtLine.reference && <div style={{ fontSize: 10, color: '#8c8c8c', marginTop: 2 }}>Ref: {m.stmtLine.reference}</div>}
+                            {m.matchedBy.includes('Amount') && <div style={{ fontSize: 9, color: '#0050b3', marginTop: 3, padding: '2px 4px', background: '#e6f7ff', borderRadius: 2 }}>
+                              Abs Match: {Math.abs(m.stmtLine.amount).toFixed(2)}
+                            </div>}
                           </div>
 
                           {/* Match badges */}
@@ -4730,7 +4736,20 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                             {m.status === 'pending' && (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }}>
                                 <span style={{ fontSize: 16, color: '#52c41a' }}>⇄</span>
-                                {m.matchedBy.map(r => <Tag key={r} color="purple" style={{ margin: 0, fontSize: 10 }}>{r}</Tag>)}
+                                {m.matchedBy.map(r => {
+                                  // For Amount matches, show the actual values compared
+                                  if (r === 'Amount') {
+                                    const stmtAbs = Math.abs(m.stmtLine.amount);
+                                    const sysAbs = Math.abs(m.sysTxn.amount);
+                                    const match = stmtAbs === sysAbs;
+                                    return (
+                                      <Tooltip key={r} title={`Stmt: |${m.stmtLine.amount}| = ${stmtAbs.toFixed(2)} vs Sys: |${m.sysTxn.amount}| = ${sysAbs.toFixed(2)} ${match ? '✓' : '✗'}`}>
+                                        <Tag color={match ? 'purple' : 'red'} style={{ margin: 0, fontSize: 10, cursor: 'help' }}>{r}</Tag>
+                                      </Tooltip>
+                                    );
+                                  }
+                                  return <Tag key={r} color="purple" style={{ margin: 0, fontSize: 10 }}>{r}</Tag>;
+                                })}
                               </div>
                             )}
                           </div>
@@ -4743,10 +4762,16 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                               <Space size={6}>
                                 <span>{m.sysTxn.txnDate?.slice(0, 10)}</span>
                                 <Tag color="geekblue" style={{ margin: 0, fontSize: 10 }}>{m.sysTxn.source?.replace('_', ' ')}</Tag>
-                                <strong>{Math.abs(m.sysTxn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                                <strong>
+                                  {/* Show actual amount with sign if negative */}
+                                  {m.sysTxn.amount < 0 ? '−' : ''}{Math.abs(m.sysTxn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </strong>
                               </Space>
                             </div>
                             {m.sysTxn.txnNumber && <div style={{ fontSize: 10, color: '#8c8c8c', marginTop: 2 }}>#{m.sysTxn.txnNumber}</div>}
+                            {m.matchedBy.includes('Amount') && <div style={{ fontSize: 9, color: '#592d00', marginTop: 3, padding: '2px 4px', background: '#fff1f0', borderRadius: 2 }}>
+                              Abs Match: {Math.abs(m.sysTxn.amount).toFixed(2)}
+                            </div>}
                           </div>
                         </div>
                       </div>
