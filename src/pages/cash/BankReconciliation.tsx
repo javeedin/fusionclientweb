@@ -2071,49 +2071,22 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
     const unmatchedSys  = pool.filter(t => !t.reconciledFlag || t.reconciledFlag === 'N');
     const unmatchedStmt = stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId);
-    const usedSysKeys   = new Set<string>();
     const matches: AutoReconMatch[] = [];
 
+    // Match by Amount ONLY - find ALL possible matches (no break)
     for (const stmt of unmatchedStmt) {
       for (const sys of unmatchedSys) {
-        if (usedSysKeys.has(sysTxnRowKey(sys))) continue;
-        const matchedBy: string[] = [];
-
-        if (autoReconCriteria.includes('amount')) {
-          if (Math.abs(stmt.amount) !== Math.abs(sys.amount)) continue;
-          matchedBy.push('Amount');
+        // Match only if amounts are equal (absolute value)
+        if (Math.abs(stmt.amount) === Math.abs(sys.amount)) {
+          matches.push({
+            stmtLine: stmt,
+            sysTxn: sys,
+            matchedBy: ['Amount'],
+            confirmed: true,
+            status: 'pending'
+          });
+          // NOTE: Removed 'break' and 'usedSysKeys' - now shows ALL possible matches
         }
-        if (autoReconCriteria.includes('bankTxnId')) {
-          const stmtRef = (stmt.bankTxnReference || '').trim();
-          const sysRef  = (sys.reference || sys.txnNumber || '').trim();
-          if (!stmtRef || !sysRef || stmtRef !== sysRef) continue;
-          matchedBy.push('Bank Txn ID');
-        }
-        if (autoReconCriteria.includes('reference')) {
-          const ref = (stmt.reference || '').trim();
-          if (!ref || (ref !== (sys.txnNumber || '').trim() && ref !== (sys.reference || '').trim())) continue;
-          matchedBy.push('Reference');
-        }
-        if (autoReconCriteria.includes('checkNumber')) {
-          const ref = (stmt.reference || stmt.bankTxnReference || '').trim();
-          if (!ref || (ref !== (sys.txnNumber || '').trim() && ref !== (sys.reference || '').trim())) continue;
-          matchedBy.push('Check / Payment No.');
-        }
-        if (autoReconCriteria.includes('date')) {
-          if (stmt.transactionDate?.slice(0, 10) !== sys.txnDate?.slice(0, 10)) continue;
-          matchedBy.push('Date');
-        }
-        if (autoReconCriteria.includes('counterparty')) {
-          const cp = (stmt.counterpartyName || '').trim().toLowerCase();
-          const py = (sys.payee || '').trim().toLowerCase();
-          if (!cp || !py || (!cp.includes(py) && !py.includes(cp))) continue;
-          matchedBy.push('Counterparty');
-        }
-
-        if (matchedBy.length === 0) continue; // no criteria matched (safety guard)
-        matches.push({ stmtLine: stmt, sysTxn: sys, matchedBy, confirmed: true, status: 'pending' });
-        usedSysKeys.add(sysTxnRowKey(sys));
-        break;
       }
     }
 
