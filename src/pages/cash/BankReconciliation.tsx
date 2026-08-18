@@ -4905,8 +4905,8 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
           };
 
           const buildMatches = () => {
-            // Use all UNRECONCILED transactions, not just filtered by search
-            const unreconStmts = stmtLines.filter(l => l.reconStatus !== 'RECONCILED');
+            // Use filteredStmtLines which already has reconciliation filtering applied
+            const unreconStmts = filteredStmtLines;
             // Use matchingSysTxns which are fetched if not already loaded
             const unreconSysTxns = matchingSysTxns.length > 0 ? matchingSysTxns : filteredSysTxnsBase;
             console.log('buildMatches:', {
