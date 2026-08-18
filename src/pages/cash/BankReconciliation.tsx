@@ -4854,11 +4854,15 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
           };
 
           const buildMatches = () => {
+            // Use all UNRECONCILED transactions, not just filtered by search
+            const unreconStmts = stmtLines.filter(l => l.reconStatus !== 'RECONCILED');
+            const unreconSysTxns = sysTxns;
+
             const matches: Array<{
-              bankLine?: typeof filteredStmtLines[0];
-              sysTxns?: typeof filteredSysTxns;
-              sysTxn?: typeof filteredSysTxns[0];
-              bankLines?: typeof filteredStmtLines;
+              bankLine?: typeof unreconStmts[0];
+              sysTxns?: typeof unreconSysTxns;
+              sysTxn?: typeof unreconSysTxns[0];
+              bankLines?: typeof unreconStmts;
               totalBankAmount: number;
               totalSysAmount: number;
               difference: number;
@@ -4866,8 +4870,8 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
             }> = [];
 
             if (viewMode === 'bank-to-sys') {
-              filteredStmtLines.forEach(bankLine => {
-                const matchedSysTxns = filteredSysTxns.filter(t => Math.abs(Math.abs(t.amount) - Math.abs(bankLine.amount)) < 0.01);
+              unreconStmts.forEach(bankLine => {
+                const matchedSysTxns = unreconSysTxns.filter(t => Math.abs(Math.abs(t.amount) - Math.abs(bankLine.amount)) < 0.01);
                 const totalSysAmount = matchedSysTxns.reduce((sum, t) => sum + t.amount, 0);
                 const difference = bankLine.amount - totalSysAmount;
 
@@ -4881,8 +4885,8 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                 });
               });
             } else {
-              filteredSysTxns.forEach(sysTxn => {
-                const matchedBankLines = filteredStmtLines.filter(l => Math.abs(Math.abs(l.amount) - Math.abs(sysTxn.amount)) < 0.01);
+              unreconSysTxns.forEach(sysTxn => {
+                const matchedBankLines = unreconStmts.filter(l => Math.abs(Math.abs(l.amount) - Math.abs(sysTxn.amount)) < 0.01);
                 const totalBankAmount = matchedBankLines.reduce((sum, l) => sum + l.amount, 0);
                 const difference = totalBankAmount - sysTxn.amount;
 
