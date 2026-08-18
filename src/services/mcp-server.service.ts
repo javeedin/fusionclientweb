@@ -13,10 +13,10 @@ export interface MCPServer extends MCPServerPayload {
   url?: string;
 }
 
-import { buildApexAdminUrl } from '../config/api.helper';
+import { buildApexUrl } from '../config/api.helper';
 
-// Query MCP servers from APEX database via admin endpoint
-const getMcpServersUrl = () => buildApexAdminUrl('mcp-servers');
+// Query MCP servers from APEX database (saved server configs)
+const getMcpServersUrl = () => buildApexUrl('mcp-servers');
 
 export const mcpServerService = {
   async listServers(): Promise<MCPServer[]> {
