@@ -3101,11 +3101,10 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
         try {
           const q = new URLSearchParams({
-            reference_2: txn.txnId,
-            reference_5: refType,
-            row_limit: '1',
+            reference2: String(txn.txnId),
+            reference5: refType,
           });
-          const res = await fetch(`${APEX_BASE}/gl/journals?${q}`);
+          const res = await fetch(`${APEX_BASE}/gl/journals/check?${q}`);
           const data = await res.json();
           statusMap[txn.txnId] = (data.items?.length || 0) > 0;
         } catch (e) {
@@ -3133,11 +3132,10 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                     : 'GL_JOURNAL';
 
       const q = new URLSearchParams({
-        reference_2: txn.txnId,
-        reference_5: refType,
-        row_limit: '1',
+        reference2: String(txn.txnId),
+        reference5: refType,
       });
-      const url = `${APEX_BASE}/gl/journals?${q}`;
+      const url = `${APEX_BASE}/gl/journals/check?${q}`;
       const res = await fetch(url);
       const data = await res.json();
       setGlCheckTestResult({ status: res.status, data });
@@ -5613,12 +5611,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
               message="API Endpoint"
               description={
                 <Typography.Paragraph copyable>
-                  {`${APEX_BASE}/gl/journals?reference_2=${selectedTxnForGlCheck.txnId}&reference_5=${
+                  {`${APEX_BASE}/gl/journals/check?reference2=${selectedTxnForGlCheck.txnId}&reference5=${
                     selectedTxnForGlCheck.source === 'AP_PAYMENT' ? 'AP-PAYMENT'
                     : selectedTxnForGlCheck.source === 'EXTERNAL_TXN' ? 'BANK_EXTERNAL_TRANSACTIONS'
                     : selectedTxnForGlCheck.source === 'AR_RECEIPT' ? 'AR_RECEIPTS'
                     : 'GL_JOURNAL'
-                  }&row_limit=1`}
+                  }`}
                 </Typography.Paragraph>
               }
               type="info"
