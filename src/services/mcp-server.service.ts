@@ -13,20 +13,29 @@ export interface MCPServer extends MCPServerPayload {
   url?: string;
 }
 
-const API_BASE = 'http://localhost:3001/api';
+import { buildApexAdminUrl } from '../config/api.helper';
+
+// Query MCP servers from APEX database via admin endpoint
+const getMcpServersUrl = () => buildApexAdminUrl('mcp-servers');
 
 export const mcpServerService = {
   async listServers(): Promise<MCPServer[]> {
-    const response = await fetch(`${API_BASE}/mcp-servers`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (!response.ok) throw new Error(`Failed to fetch MCP servers: ${response.statusText}`);
-    return response.json();
+    try {
+      const response = await fetch(getMcpServersUrl(), {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) throw new Error(`Failed to fetch MCP servers: ${response.statusText}`);
+      const data = await response.json();
+      return data.items || [];
+    } catch (error) {
+      console.error('Error fetching MCP servers from APEX:', error);
+      return [];
+    }
   },
 
   async createServer(payload: MCPServerPayload): Promise<MCPServer> {
-    const response = await fetch(`${API_BASE}/mcp-servers`, {
+    const response = await fetch(getMcpServersUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -36,7 +45,7 @@ export const mcpServerService = {
   },
 
   async updateServer(id: string, payload: Partial<MCPServerPayload>): Promise<MCPServer> {
-    const response = await fetch(`${API_BASE}/mcp-servers/${id}`, {
+    const response = await fetch(`${getMcpServersUrl()}/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -46,7 +55,7 @@ export const mcpServerService = {
   },
 
   async deleteServer(id: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/mcp-servers/${id}`, {
+    const response = await fetch(`${getMcpServersUrl()}/${id}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -54,7 +63,7 @@ export const mcpServerService = {
   },
 
   async testServer(id: string): Promise<any> {
-    const response = await fetch(`${API_BASE}/mcp-servers/${id}/test`, {
+    const response = await fetch(`${getMcpServersUrl()}/${id}/test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -63,7 +72,7 @@ export const mcpServerService = {
   },
 
   async getServerConfig(id: string): Promise<MCPServer> {
-    const response = await fetch(`${API_BASE}/mcp-servers/${id}`, {
+    const response = await fetch(`${getMcpServersUrl()}/${id}`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -72,7 +81,7 @@ export const mcpServerService = {
   },
 
   async executeReport(serverId: string, params?: Record<string, any>): Promise<any> {
-    const response = await fetch(`${API_BASE}/mcp-servers/${serverId}/execute`, {
+    const response = await fetch(`${getMcpServersUrl()}/${serverId}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params || {}),
