@@ -2981,7 +2981,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
   const _stmtSel = sumSelected(stmtLines, selectedStmtKeys);
   const _sysSel  = sumSelected(filteredSysTxns, selectedSysKeys);
   useEffect(() => {
-    setDifference(_stmtSel - _sysSel);
+    setDifference(Math.abs(Math.abs(_stmtSel) - Math.abs(_sysSel)));
   }, [_stmtSel, _sysSel]);
 
   const stmtSelectedAmount = _stmtSel;
@@ -4930,7 +4930,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                 <Space split={<Divider type="vertical" />} style={{ fontSize: 12 }}>
                   <div><Text strong>Matched:</Text> <Tag color="green">{matchedCount}</Tag></div>
                   <div><Text strong>Unmatched:</Text> <Tag color="red">{matches.filter(m => m.matchType === 'No Match').length}</Tag></div>
-                  <div><Text strong>Difference:</Text> <Text style={{ color: Math.abs(totalBankSum - totalSysSum) < 0.01 ? REDWOOD.success : REDWOOD.warning, fontWeight: 600 }}>{fmtAmount(totalBankSum - totalSysSum)}</Text></div>
+                  <div><Text strong>Difference:</Text> <Text style={{ color: Math.abs(totalBankSum - totalSysSum) < 0.01 ? REDWOOD.success : REDWOOD.warning, fontWeight: 600 }}>{fmtAmount(Math.abs(totalBankSum - totalSysSum))}</Text></div>
                   <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={handleExportMatching}>Export</Button>
                 </Space>
               </div>
@@ -5002,7 +5002,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                     title: 'Difference',
                     width: 85,
                     align: 'right',
-                    render: (_, rec) => <Text style={{ color: Math.abs(rec.difference) < 0.01 ? REDWOOD.success : REDWOOD.warning, fontWeight: 500 }}>{fmtAmount(rec.difference)}</Text>,
+                    render: (_, rec) => <Text style={{ color: Math.abs(rec.difference) < 0.01 ? REDWOOD.success : REDWOOD.warning, fontWeight: 500 }}>{fmtAmount(Math.abs(rec.difference))}</Text>,
                   },
                 ] : [
                   {
@@ -5059,7 +5059,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                     title: 'Difference',
                     width: 80,
                     align: 'right',
-                    render: (_, rec) => <Text style={{ color: Math.abs(rec.difference) < 0.01 ? REDWOOD.success : REDWOOD.warning, fontWeight: 500 }}>{fmtAmount(rec.difference)}</Text>,
+                    render: (_, rec) => <Text style={{ color: Math.abs(rec.difference) < 0.01 ? REDWOOD.success : REDWOOD.warning, fontWeight: 500 }}>{fmtAmount(Math.abs(rec.difference))}</Text>,
                   },
                 ]}
                 summary={() => (
@@ -5069,7 +5069,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                       <Table.Summary.Cell align="right"><Text strong>{fmtAmount(totalBankSum)}</Text></Table.Summary.Cell>
                       <Table.Summary.Cell colSpan={3} />
                       <Table.Summary.Cell align="right"><Text strong>{fmtAmount(totalSysSum)}</Text></Table.Summary.Cell>
-                      <Table.Summary.Cell align="right"><Text strong style={{ color: Math.abs(totalBankSum - totalSysSum) < 0.01 ? REDWOOD.success : REDWOOD.warning }}>{fmtAmount(totalBankSum - totalSysSum)}</Text></Table.Summary.Cell>
+                      <Table.Summary.Cell align="right"><Text strong style={{ color: Math.abs(totalBankSum - totalSysSum) < 0.01 ? REDWOOD.success : REDWOOD.warning }}>{fmtAmount(Math.abs(totalBankSum - totalSysSum))}</Text></Table.Summary.Cell>
                     </Table.Summary.Row>
                   </Table.Summary>
                 )}
