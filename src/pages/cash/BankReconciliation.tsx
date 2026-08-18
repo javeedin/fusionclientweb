@@ -4462,20 +4462,23 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                     ),
                     dataIndex: 'select',
                     width: 32,
-                    render: (_, stmt) => (
-                      <Checkbox
-                        checked={autoReconMatches.some(m => m.stmtLine.lineId === stmt.lineId && m.confirmed)}
-                        onChange={e => {
-                          const match = autoReconMatches.find(m => m.stmtLine.lineId === stmt.lineId);
-                          if (match) {
-                            const copy = [...autoReconMatches];
-                            const idx = copy.indexOf(match);
-                            copy[idx] = { ...match, confirmed: e.target.checked };
-                            setAutoReconMatches(copy);
-                          }
-                        }}
-                      />
-                    ),
+                    render: (_, stmt) => {
+                      const match = autoReconMatches.find(m => m.stmtLine.lineId === stmt.lineId);
+                      return (
+                        <Checkbox
+                          checked={match?.confirmed ?? false}
+                          disabled={match?.status === 'success'}
+                          onChange={e => {
+                            if (match) {
+                              const copy = [...autoReconMatches];
+                              const idx = copy.indexOf(match);
+                              copy[idx] = { ...match, confirmed: e.target.checked };
+                              setAutoReconMatches(copy);
+                            }
+                          }}
+                        />
+                      );
+                    },
                   },
                   {
                     title: 'Date',
@@ -4489,7 +4492,15 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                     dataIndex: 'description',
                     width: 100,
                     ellipsis: true,
-                    render: (desc, stmt) => desc || stmt.reference || `#${stmt.lineId}`,
+                    render: (desc, stmt) => {
+                      const match = autoReconMatches.find(m => m.stmtLine.lineId === stmt.lineId);
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span>{desc || stmt.reference || `#${stmt.lineId}`}</span>
+                          {match?.status === 'success' && <CheckCircleOutlined style={{ color: REDWOOD.success, fontSize: 10 }} />}
+                        </div>
+                      );
+                    },
                   },
                   {
                     title: 'Type',
@@ -4511,8 +4522,9 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                     render: (amount, stmt) => {
                       const sign = stmt.transactionCode === 'DR' ? -1 : 1;
                       const displayAmount = Math.abs(amount) * sign;
+                      const match = autoReconMatches.find(m => m.stmtLine.lineId === stmt.lineId);
                       return (
-                        <Text strong style={{ fontSize: 10, color: displayAmount < 0 ? REDWOOD.error : REDWOOD.success }}>
+                        <Text strong style={{ fontSize: 10, color: match?.status === 'success' ? REDWOOD.success : (displayAmount < 0 ? REDWOOD.error : REDWOOD.neutral900) }}>
                           {displayAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </Text>
                       );
@@ -4526,82 +4538,101 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
               />
             </div>
 
-            {/* System Transactions Table */}
+            {/* System Transactions Table - Only show unmatched or pending transactions */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: REDWOOD.neutral900 }}>
-                💳 System Transactions ({sysTxns.length})
-              </div>
-              <Table
-                size="small"
-                dataSource={sysTxns}
-                columns={[
-                  {
-                    title: (
-                      <Checkbox
-                        checked={sysTxns.every(t => autoReconMatches.some(m => m.sysTxn.txnId === t.txnId && m.confirmed))}
-                        onChange={e => {
-                          const updated = autoReconMatches.map(m => ({ ...m, confirmed: e.target.checked }));
-                          setAutoReconMatches(updated);
-                        }}
-                      />
-                    ),
-                    dataIndex: 'select',
-                    width: 32,
-                    render: (_, txn) => (
-                      <Checkbox
-                        checked={autoReconMatches.some(m => m.sysTxn.txnId === txn.txnId && m.confirmed)}
-                        onChange={e => {
-                          const match = autoReconMatches.find(m => m.sysTxn.txnId === txn.txnId);
-                          if (match) {
-                            const copy = [...autoReconMatches];
-                            const idx = copy.indexOf(match);
-                            copy[idx] = { ...match, confirmed: e.target.checked };
-                            setAutoReconMatches(copy);
-                          }
-                        }}
-                      />
-                    ),
-                  },
-                  {
-                    title: 'Date',
-                    dataIndex: 'txnDate',
-                    width: 70,
-                    sorter: (a, b) => new Date(a.txnDate).getTime() - new Date(b.txnDate).getTime(),
-                    render: (date) => date?.slice(0, 10),
-                  },
-                  {
-                    title: 'Description',
-                    dataIndex: 'payee',
-                    width: 100,
-                    ellipsis: true,
-                    render: (payee, txn) => payee || txn.txnNumber || txn.reference || txn.accountDescription || '—',
-                  },
-                  {
-                    title: 'Source',
-                    dataIndex: 'source',
-                    width: 65,
-                    filters: Array.from(new Set(sysTxns.map(t => t.source))).map(source => ({ text: source, value: source })),
-                    onFilter: (value, record) => record.source === value,
-                  },
-                  {
-                    title: 'Amount',
-                    dataIndex: 'amount',
-                    width: 90,
-                    sorter: (a, b) => a.amount - b.amount,
-                    defaultSortOrder: 'descend' as const,
-                    align: 'right' as const,
-                    render: (amount) => (
-                      <Text strong style={{ fontSize: 10, color: REDWOOD.primary }}>
-                        {amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </Text>
-                    ),
-                  },
-                ]}
-                rowKey={(record) => sysTxnRowKey(record)}
-                pagination={false}
-                scroll={{ y: 500 }}
-                style={{ fontSize: 10 }}
-              />
+              {(() => {
+                const unmatchedTxns = sysTxns.filter(txn => {
+                  const match = autoReconMatches.find(m => m.sysTxn.txnId === txn.txnId);
+                  return !match || match.status !== 'success';
+                });
+
+                return (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: REDWOOD.neutral900 }}>
+                      💳 Unmatched Transactions ({unmatchedTxns.length})
+                    </div>
+                    <Table
+                      size="small"
+                      dataSource={unmatchedTxns}
+                      columns={[
+                        {
+                          title: (
+                            <Checkbox
+                              checked={unmatchedTxns.every(t => autoReconMatches.some(m => m.sysTxn.txnId === t.txnId && m.confirmed))}
+                              onChange={e => {
+                                const updated = autoReconMatches.map(m => {
+                                  if (unmatchedTxns.some(t => t.txnId === m.sysTxn.txnId)) {
+                                    return { ...m, confirmed: e.target.checked };
+                                  }
+                                  return m;
+                                });
+                                setAutoReconMatches(updated);
+                              }}
+                            />
+                          ),
+                          dataIndex: 'select',
+                          width: 32,
+                          render: (_, txn) => {
+                            const match = autoReconMatches.find(m => m.sysTxn.txnId === txn.txnId);
+                            return (
+                              <Checkbox
+                                checked={match?.confirmed ?? false}
+                                disabled={match?.status === 'success'}
+                                onChange={e => {
+                                  if (match) {
+                                    const copy = [...autoReconMatches];
+                                    const idx = copy.indexOf(match);
+                                    copy[idx] = { ...match, confirmed: e.target.checked };
+                                    setAutoReconMatches(copy);
+                                  }
+                                }}
+                              />
+                            );
+                          },
+                        },
+                        {
+                          title: 'Date',
+                          dataIndex: 'txnDate',
+                          width: 70,
+                          sorter: (a, b) => new Date(a.txnDate).getTime() - new Date(b.txnDate).getTime(),
+                          render: (date) => date?.slice(0, 10),
+                        },
+                        {
+                          title: 'Description',
+                          dataIndex: 'payee',
+                          width: 100,
+                          ellipsis: true,
+                          render: (payee, txn) => payee || txn.txnNumber || txn.reference || txn.accountDescription || '—',
+                        },
+                        {
+                          title: 'Source',
+                          dataIndex: 'source',
+                          width: 65,
+                          filters: Array.from(new Set(unmatchedTxns.map(t => t.source))).map(source => ({ text: source, value: source })),
+                          onFilter: (value, record) => record.source === value,
+                        },
+                        {
+                          title: 'Amount',
+                          dataIndex: 'amount',
+                          width: 90,
+                          sorter: (a, b) => a.amount - b.amount,
+                          defaultSortOrder: 'descend' as const,
+                          align: 'right' as const,
+                          render: (amount) => (
+                            <Text strong style={{ fontSize: 10, color: REDWOOD.primary }}>
+                              {amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </Text>
+                          ),
+                        },
+                      ]}
+                      rowKey={(record) => sysTxnRowKey(record)}
+                      pagination={false}
+                      scroll={{ y: 500 }}
+                      style={{ fontSize: 10 }}
+                    />
+                  </>
+                );
+              })()}
             </div>
           </div>
         </Spin>
