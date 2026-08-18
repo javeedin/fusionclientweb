@@ -2088,46 +2088,40 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
     const usedSysKeys   = new Set<string>();
     const matches: AutoReconMatch[] = [];
 
+    // New approach: Match by ABSOLUTE amount first, group by amount
+    const stmtByAbsAmount = new Map<number, StmtLine[]>();
+    const sysByAbsAmount = new Map<number, SysTxn[]>();
+
     for (const stmt of unmatchedStmt) {
-      for (const sys of unmatchedSys) {
-        if (usedSysKeys.has(sysTxnRowKey(sys))) continue;
-        const matchedBy: string[] = [];
+      const absAmt = Math.abs(stmt.amount);
+      if (!stmtByAbsAmount.has(absAmt)) stmtByAbsAmount.set(absAmt, []);
+      stmtByAbsAmount.get(absAmt)!.push(stmt);
+    }
 
-        if (autoReconCriteria.includes('amount')) {
-          if (stmt.amount !== sys.amount) continue;
-          matchedBy.push('Amount');
-        }
-        if (autoReconCriteria.includes('bankTxnId')) {
-          const stmtRef = (stmt.bankTxnReference || '').trim();
-          const sysRef  = (sys.reference || sys.txnNumber || '').trim();
-          if (!stmtRef || !sysRef || stmtRef !== sysRef) continue;
-          matchedBy.push('Bank Txn ID');
-        }
-        if (autoReconCriteria.includes('reference')) {
-          const ref = (stmt.reference || '').trim();
-          if (!ref || (ref !== (sys.txnNumber || '').trim() && ref !== (sys.reference || '').trim())) continue;
-          matchedBy.push('Reference');
-        }
-        if (autoReconCriteria.includes('checkNumber')) {
-          const ref = (stmt.reference || stmt.bankTxnReference || '').trim();
-          if (!ref || (ref !== (sys.txnNumber || '').trim() && ref !== (sys.reference || '').trim())) continue;
-          matchedBy.push('Check / Payment No.');
-        }
-        if (autoReconCriteria.includes('date')) {
-          if (stmt.transactionDate?.slice(0, 10) !== sys.txnDate?.slice(0, 10)) continue;
-          matchedBy.push('Date');
-        }
-        if (autoReconCriteria.includes('counterparty')) {
-          const cp = (stmt.counterpartyName || '').trim().toLowerCase();
-          const py = (sys.payee || '').trim().toLowerCase();
-          if (!cp || !py || (!cp.includes(py) && !py.includes(cp))) continue;
-          matchedBy.push('Counterparty');
-        }
+    for (const sys of unmatchedSys) {
+      const absAmt = Math.abs(sys.amount);
+      if (!sysByAbsAmount.has(absAmt)) sysByAbsAmount.set(absAmt, []);
+      sysByAbsAmount.get(absAmt)!.push(sys);
+    }
 
-        if (matchedBy.length === 0) continue; // no criteria matched (safety guard)
-        matches.push({ stmtLine: stmt, sysTxn: sys, matchedBy, confirmed: true, status: 'pending' });
-        usedSysKeys.add(sysTxnRowKey(sys));
-        break;
+    // Auto-match amounts that exist on both sides
+    for (const [absAmount, stmts] of stmtByAbsAmount) {
+      const sysTxns = sysByAbsAmount.get(absAmount) || [];
+      const minCount = Math.min(stmts.length, sysTxns.length);
+
+      for (let i = 0; i < minCount; i++) {
+        const stmt = stmts[i];
+        const sys = sysTxns[i];
+        if (!usedSysKeys.has(sysTxnRowKey(sys))) {
+          matches.push({
+            stmtLine: stmt,
+            sysTxn: sys,
+            matchedBy: ['Amount'],
+            confirmed: true,
+            status: 'pending'
+          });
+          usedSysKeys.add(sysTxnRowKey(sys));
+        }
       }
     }
 
@@ -4476,7 +4470,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         title={<Space><ThunderboltOutlined style={{ color: '#722ed1' }} /><span>Auto Reconciliation</span></Space>}
         open={autoReconOpen}
         onCancel={() => setAutoReconOpen(false)}
-        width={autoReconStep === 'results' ? 900 : 520}
+        width={autoReconStep === 'results' ? 1400 : 520}
         footer={
           autoReconStep === 'criteria' ? (
             <Space>
@@ -4600,21 +4594,132 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
             </div>
           </div>
         ) : (
-          <div>
-            {autoReconMatches.length === 0 ? (
-              <Empty
-                description={
-                  <div>
-                    <div>No matches found with the selected criteria</div>
-                    <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
-                      Try selecting fewer criteria (e.g. Amount only) or broader date/amount ranges.
-                      Checked <strong>{stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length}</strong> statement lines
-                      against <strong>{sysTxns.filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length}</strong> system transactions.
-                    </div>
-                  </div>
-                }
-              />
-            ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: 'calc(100vh - 250px)' }}>
+            {/* Summary Stats */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+              <div style={{ background: '#f5f5f5', padding: '8px 12px', borderRadius: 4, textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: '#8c8c8c' }}>Total Matches</div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: '#1677ff' }}>{autoReconMatches.filter(m => Math.abs(m.stmtLine.amount) === Math.abs(m.sysTxn.amount)).length}</div>
+              </div>
+              <div style={{ background: '#f5f5f5', padding: '8px 12px', borderRadius: 4, textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: '#8c8c8c' }}>Stmt Lines</div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>{stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length}</div>
+              </div>
+              <div style={{ background: '#f5f5f5', padding: '8px 12px', borderRadius: 4, textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: '#8c8c8c' }}>Sys Txns</div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: '#722ed1' }}>{(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length}</div>
+              </div>
+              <div style={{ background: '#f5f5f5', padding: '8px 12px', borderRadius: 4, textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: '#8c8c8c' }}>Confirmed</div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>{autoReconMatches.filter(m => m.confirmed).length}</div>
+              </div>
+            </div>
+
+            {/* Two Column Layout */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, flex: 1, overflow: 'hidden' }}>
+              {/* Statement Lines */}
+              <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, display: 'flex', flexDirection: 'column', background: '#fafafa' }}>
+                <div style={{ padding: '10px 12px', background: '#e6f4ff', borderBottom: '1px solid #d9d9d9', fontWeight: 600, fontSize: 12, color: '#1677ff' }}>
+                  Bank Statement Lines ({stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length})
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+                  {stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).map((stmt) => {
+                    const matched = autoReconMatches.find(m => m.stmtLine.lineId === stmt.lineId && m.confirmed);
+                    return (
+                      <div
+                        key={stmt.lineId}
+                        style={{
+                          background: matched ? '#f6ffed' : '#fff',
+                          border: matched ? '1px solid #b7eb8f' : '1px solid #e8e8e8',
+                          borderRadius: 4,
+                          padding: 8,
+                          marginBottom: 6,
+                          cursor: 'pointer',
+                          fontSize: 11,
+                          opacity: matched ? 1 : 0.8,
+                        }}
+                        onClick={() => {
+                          // Would allow manual selection
+                        }}
+                      >
+                        <div style={{ fontWeight: 500, marginBottom: 2 }}>Line #{stmt.lineId}</div>
+                        <div style={{ color: '#595959', marginBottom: 2 }}>{stmt.transactionDate?.slice(0, 10)} • {stmt.transactionCode}</div>
+                        <div style={{ fontWeight: 600, color: matched ? '#52c41a' : '#000', marginBottom: 2 }}>
+                          {formatSignedAmount(Math.abs(stmt.amount))}
+                        </div>
+                        {stmt.description && <div style={{ color: '#8c8c8c', fontSize: 10 }}>{stmt.description.substring(0, 40)}</div>}
+                        {matched && <div style={{ color: '#52c41a', fontSize: 10, marginTop: 4, fontWeight: 500 }}>✓ Matched</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* System Transactions */}
+              <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, display: 'flex', flexDirection: 'column', background: '#fafafa' }}>
+                <div style={{ padding: '10px 12px', background: '#f9f0ff', borderBottom: '1px solid #d9d9d9', fontWeight: 600, fontSize: 12, color: '#722ed1' }}>
+                  System Transactions ({(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length})
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+                  {(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType))
+                    .filter(t => !t.reconciledFlag || t.reconciledFlag === 'N')
+                    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
+                    .map((txn) => {
+                      const matched = autoReconMatches.find(m => sysTxnRowKey(m.sysTxn) === sysTxnRowKey(txn) && m.confirmed);
+                      return (
+                        <div
+                          key={sysTxnRowKey(txn)}
+                          style={{
+                            background: matched ? '#f6ffed' : '#fff',
+                            border: matched ? '1px solid #b7eb8f' : '1px solid #e8e8e8',
+                            borderRadius: 4,
+                            padding: 8,
+                            marginBottom: 6,
+                            cursor: 'pointer',
+                            fontSize: 11,
+                            opacity: matched ? 1 : 0.8,
+                          }}
+                          onClick={() => {
+                            // Would allow manual selection
+                          }}
+                        >
+                          <div style={{ fontWeight: 500, marginBottom: 2 }}>{txn.txnNumber}</div>
+                          <div style={{ color: '#595959', marginBottom: 2 }}>{txn.txnDate?.slice(0, 10)} • {txn.source?.replace('_', ' ')}</div>
+                          <div style={{ fontWeight: 600, color: matched ? '#52c41a' : '#000', marginBottom: 2 }}>
+                            {formatSignedAmount(Math.abs(txn.amount))}
+                          </div>
+                          {txn.payee && <div style={{ color: '#8c8c8c', fontSize: 10 }}>{txn.payee.substring(0, 40)}</div>}
+                          {matched && <div style={{ color: '#52c41a', fontSize: 10, marginTop: 4, fontWeight: 500 }}>✓ Matched</div>}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <Empty
+            description={
+              <div>
+                <div>No matches found</div>
+                <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
+                  Checked {stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length} statement lines against{' '}
+                  {(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length} system transactions by amount.
+                </div>
+              </div>
+            }
+          />
+        )}
+      </div>
+
+      {/* Old matching details (collapsed) */}
+      {autoReconMatches.length > 0 && (
+        <Collapse
+          style={{ marginTop: 16 }}
+          items={[{
+            key: 'details',
+            label: 'Matching Details Table',
+            children: (
               <div>
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ fontSize: 12, color: '#8c8c8c', marginBottom: 8 }}>
@@ -4819,6 +4924,9 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
               </div>
             )}
           </div>
+              )
+            }]}
+          />
         )}
       </Modal>
 
