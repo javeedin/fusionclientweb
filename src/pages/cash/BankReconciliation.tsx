@@ -4922,10 +4922,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                 </div>
               </div>
             )}
-          </div>
-              )
-            }]}
-          />
+          </Collapse>
         )}
       </Modal>
 
