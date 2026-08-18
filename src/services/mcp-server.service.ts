@@ -58,9 +58,20 @@ export const mcpServerService = {
         body: JSON.stringify(dbPayload),
       });
       console.log('[MCP Service] POST Response:', response.status, response.statusText);
-      const data = await response.json();
-      console.log('[MCP Service] POST Response Body:', data);
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${JSON.stringify(data)}`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      let data;
+      try {
+        data = await response.json();
+        console.log('[MCP Service] POST Response Body:', data);
+      } catch (parseError) {
+        console.log('[MCP Service] Response is not JSON, returning success');
+        data = { success: true };
+      }
+
       return data;
     } catch (error) {
       console.error('[MCP Service] POST Error:', error);
@@ -90,9 +101,20 @@ export const mcpServerService = {
         body: JSON.stringify(dbPayload),
       });
       console.log('[MCP Service] PUT Response:', response.status, response.statusText);
-      const data = await response.json();
-      console.log('[MCP Service] PUT Response Body:', data);
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${JSON.stringify(data)}`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      let data;
+      try {
+        data = await response.json();
+        console.log('[MCP Service] PUT Response Body:', data);
+      } catch (parseError) {
+        console.log('[MCP Service] Response is not JSON, returning success');
+        data = { success: true };
+      }
+
       return data;
     } catch (error) {
       console.error('[MCP Service] PUT Error:', error);
