@@ -5,6 +5,7 @@ import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input, Select,
   DatePicker, InputNumber, Row, Col, Space, Tag, Tooltip, Tabs, Collapse,
   message, Empty, Divider, Badge, Segmented, Modal, Checkbox, Steps, Popover,
+  Descriptions, Alert,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { TableRowSelection } from 'antd/es/table/interface';
@@ -2618,7 +2619,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
+        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
+        return (
+          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
+            {icon}
+          </span>
+        );
       },
     },
     colStatus,
@@ -2662,7 +2668,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
+        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
+        return (
+          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
+            {icon}
+          </span>
+        );
       },
     },
     colStatus,
@@ -2737,7 +2748,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
+        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
+        return (
+          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
+            {icon}
+          </span>
+        );
       },
     },
     colUnrecon,
@@ -2780,7 +2796,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
+        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
+        return (
+          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
+            {icon}
+          </span>
+        );
       },
     },
     colStatus,
@@ -2839,7 +2860,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
+        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
+        return (
+          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
+            {icon}
+          </span>
+        );
       },
     },
     colStatus,
@@ -2868,7 +2894,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 90,
       render: (_: unknown, r: SysTxn) => {
         const isAccounted = glJournalStatus[r.txnId];
-        return isAccounted === undefined ? '—' : isAccounted ? <Tag color="green" style={{ fontSize: 10 }}>Yes</Tag> : <Tag style={{ fontSize: 10 }}>No</Tag>;
+        const icon = isAccounted === undefined ? '—' : isAccounted ? <CheckCircleOutlined style={{ color: '#52c41a', cursor: 'pointer' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} />;
+        return (
+          <span onClick={() => handleOpenGlCheckModal(r)} style={{ cursor: 'pointer' }}>
+            {icon}
+          </span>
+        );
       },
     },
     { title: 'Recon',       dataIndex: 'reconciledFlag', key: 'recon', width: 70,
@@ -3050,6 +3081,10 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
   // Store GL journal status for transactions
   const [glJournalStatus, setGlJournalStatus] = React.useState<Record<string, boolean>>({});
   const [checkingGlStatus, setCheckingGlStatus] = React.useState(false);
+  const [selectedTxnForGlCheck, setSelectedTxnForGlCheck] = React.useState<SysTxn | null>(null);
+  const [glCheckModalVisible, setGlCheckModalVisible] = React.useState(false);
+  const [glCheckTestLoading, setGlCheckTestLoading] = React.useState(false);
+  const [glCheckTestResult, setGlCheckTestResult] = React.useState<{ status?: number; data?: any; error?: string } | null>(null);
 
   // Check GL Status for visible system transactions
   const checkGlJournalStatus = async () => {
@@ -3085,6 +3120,41 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
     } finally {
       setCheckingGlStatus(false);
     }
+  };
+
+  // Test GL Status for a specific transaction
+  const testGlJournalStatus = async (txn: SysTxn) => {
+    if (!txn) return;
+    setGlCheckTestLoading(true);
+    try {
+      const refType = txn.source === 'AP_PAYMENT' ? 'AP-PAYMENT'
+                    : txn.source === 'EXTERNAL_TXN' ? 'BANK_EXTERNAL_TRANSACTIONS'
+                    : txn.source === 'AR_RECEIPT' ? 'AR_RECEIPTS'
+                    : 'GL_JOURNAL';
+
+      const q = new URLSearchParams({
+        reference_2: txn.txnId,
+        reference_5: refType,
+        row_limit: '1',
+      });
+      const url = `${APEX_BASE}/gl/journals?${q}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setGlCheckTestResult({ status: res.status, data });
+      msgApi.success(`Test completed - Found ${data.items?.length || 0} journals`);
+    } catch (e) {
+      setGlCheckTestResult({ error: String(e) });
+      msgApi.error('Test failed: ' + String(e));
+    } finally {
+      setGlCheckTestLoading(false);
+    }
+  };
+
+  // Open GL check modal
+  const handleOpenGlCheckModal = (txn: SysTxn) => {
+    setSelectedTxnForGlCheck(txn);
+    setGlCheckTestResult(null);
+    setGlCheckModalVisible(true);
   };
 
   const stmtRowSelection: TableRowSelection<StmtLine> = {
@@ -5423,6 +5493,138 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
             setClaudeError('');
           }}
         />
+      </Modal>
+
+      {/* ── GL Journal Status Check Modal ────────────────────────────────── */}
+      <Modal
+        open={glCheckModalVisible}
+        onCancel={() => {
+          setGlCheckModalVisible(false);
+          setSelectedTxnForGlCheck(null);
+          setGlCheckTestResult(null);
+        }}
+        title={selectedTxnForGlCheck ? `GL Status Check - Txn ${selectedTxnForGlCheck.txnId}` : 'GL Status Check'}
+        width={800}
+        footer={[
+          <Button key="close" onClick={() => {
+            setGlCheckModalVisible(false);
+            setSelectedTxnForGlCheck(null);
+            setGlCheckTestResult(null);
+          }}>
+            Close
+          </Button>,
+          <Button
+            key="test"
+            type="primary"
+            loading={glCheckTestLoading}
+            onClick={() => selectedTxnForGlCheck && testGlJournalStatus(selectedTxnForGlCheck)}
+            icon={<SearchOutlined />}
+          >
+            Test GL Lookup
+          </Button>,
+        ]}
+      >
+        {selectedTxnForGlCheck && (
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            <Descriptions column={2} size="small" bordered>
+              <Descriptions.Item label="Transaction ID" span={2}>
+                <Typography.Text code>{selectedTxnForGlCheck.txnId}</Typography.Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Source" span={2}>
+                {selectedTxnForGlCheck.source}
+              </Descriptions.Item>
+              <Descriptions.Item label="Reference 2 (API Param)" span={2}>
+                <Typography.Text code>{selectedTxnForGlCheck.txnId}</Typography.Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Reference 5 (API Param)" span={2}>
+                <Typography.Text code>
+                  {selectedTxnForGlCheck.source === 'AP_PAYMENT' ? 'AP-PAYMENT'
+                   : selectedTxnForGlCheck.source === 'EXTERNAL_TXN' ? 'BANK_EXTERNAL_TRANSACTIONS'
+                   : selectedTxnForGlCheck.source === 'AR_RECEIPT' ? 'AR_RECEIPTS'
+                   : 'GL_JOURNAL'}
+                </Typography.Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Current Status" span={2}>
+                {glJournalStatus[selectedTxnForGlCheck.txnId] === undefined
+                  ? <Tag>Unknown</Tag>
+                  : glJournalStatus[selectedTxnForGlCheck.txnId]
+                    ? <Tag color="green">Yes - Found in GL</Tag>
+                    : <Tag color="red">No - Not in GL</Tag>
+                }
+              </Descriptions.Item>
+            </Descriptions>
+
+            {glCheckTestResult && (
+              <Card
+                title={
+                  <Space>
+                    {glCheckTestResult.error ? (
+                      <>
+                        <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                        <span>Test Failed</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                        <span>Test Result</span>
+                      </>
+                    )}
+                  </Space>
+                }
+                size="small"
+              >
+                {glCheckTestResult.error ? (
+                  <Alert
+                    message="Error"
+                    description={glCheckTestResult.error}
+                    type="error"
+                    showIcon
+                  />
+                ) : (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Descriptions size="small">
+                      <Descriptions.Item label="HTTP Status">{glCheckTestResult.status}</Descriptions.Item>
+                      <Descriptions.Item label="Journals Found">
+                        {glCheckTestResult.data?.items?.length || 0}
+                      </Descriptions.Item>
+                    </Descriptions>
+                    {glCheckTestResult.data?.items && glCheckTestResult.data.items.length > 0 && (
+                      <Alert
+                        message="Success"
+                        description={`Found ${glCheckTestResult.data.items.length} matching GL journal(s)`}
+                        type="success"
+                        showIcon
+                      />
+                    )}
+                    {(!glCheckTestResult.data?.items || glCheckTestResult.data.items.length === 0) && (
+                      <Alert
+                        message="No Matches"
+                        description="No GL journals found with these parameters"
+                        type="warning"
+                        showIcon
+                      />
+                    )}
+                  </Space>
+                )}
+              </Card>
+            )}
+
+            <Alert
+              message="API Endpoint"
+              description={
+                <Typography.Paragraph copyable>
+                  {`${APEX_BASE}/gl/journals?reference_2=${selectedTxnForGlCheck.txnId}&reference_5=${
+                    selectedTxnForGlCheck.source === 'AP_PAYMENT' ? 'AP-PAYMENT'
+                    : selectedTxnForGlCheck.source === 'EXTERNAL_TXN' ? 'BANK_EXTERNAL_TRANSACTIONS'
+                    : selectedTxnForGlCheck.source === 'AR_RECEIPT' ? 'AR_RECEIPTS'
+                    : 'GL_JOURNAL'
+                  }&row_limit=1`}
+                </Typography.Paragraph>
+              }
+              type="info"
+            />
+          </Space>
+        )}
       </Modal>
     </>
   );
