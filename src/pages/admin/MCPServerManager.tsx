@@ -76,8 +76,6 @@ const MCPServerManager: React.FC = () => {
   const [testResult, setTestResult] = useState<any>(null);
   const [testLoading, setTestLoading] = useState(false);
   const [serverToTest, setServerToTest] = useState<string | null>(null);
-  const [previewTestResult, setPreviewTestResult] = useState<any>(null);
-  const [previewTestLoading, setPreviewTestLoading] = useState(false);
   const [apiInspectorOpen, setApiInspectorOpen] = useState(false);
   const [searchText, setSearchText] = useState('');
 
@@ -222,69 +220,6 @@ const MCPServerManager: React.FC = () => {
       (server.type === 'SOAP' && (server.config as SOAPConfig).bipReportName?.toLowerCase().includes(searchLower))
     );
   });
-
-  const testApiPreview = async (values: any) => {
-    setPreviewTestLoading(true);
-    try {
-      const config = extractConfigFromForm(values, serverType);
-      if (serverType === 'REST') {
-        const restConfig = config as RESTConfig;
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-
-        if (restConfig.authType === 'basic' && restConfig.authUsername && restConfig.authPassword) {
-          const encoded = btoa(`${restConfig.authUsername}:${restConfig.authPassword}`);
-          headers['Authorization'] = `Basic ${encoded}`;
-        } else if (restConfig.authType === 'bearer' && restConfig.bearerToken) {
-          headers['Authorization'] = `Bearer ${restConfig.bearerToken}`;
-        } else if (restConfig.authType === 'apiKey' && restConfig.apiKey) {
-          headers[restConfig.apiKeyHeader || 'X-API-Key'] = restConfig.apiKey;
-        }
-
-        const options: RequestInit = {
-          method: restConfig.method,
-          headers,
-          timeout: restConfig.timeout || 30000,
-        };
-
-        if ((restConfig.method === 'POST' || restConfig.method === 'PUT') && restConfig.payloadTemplate) {
-          options.body = restConfig.payloadTemplate;
-        }
-
-        // Use APEX URL for MCP servers (to save/retrieve server configs from database)
-        const fullUrl = buildApexUrl('mcp-servers');
-        const response = await fetch(fullUrl, options);
-        let data: any;
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-          data = await response.json();
-        } else {
-          data = await response.text();
-        }
-
-        setPreviewTestResult({
-          success: response.ok,
-          status: response.status,
-          statusText: response.statusText,
-          headers: Object.fromEntries(response.headers),
-          body: data,
-          url: fullUrl,
-        });
-        message.success('API test completed');
-      } else {
-        // SOAP test
-        message.info('SOAP endpoint test not yet implemented');
-      }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      setPreviewTestResult({
-        success: false,
-        error: errorMsg,
-      });
-      message.error(`API test failed: ${errorMsg}`);
-    } finally {
-      setPreviewTestLoading(false);
-    }
-  };
 
   const columns = [
     {
@@ -799,117 +734,56 @@ const MCPServerManager: React.FC = () => {
         </>
       )}
 
-      {serverType === 'REST' && (
-        <>
-          <Divider style={{ marginTop: 32, marginBottom: 16 }} />
-          <Text strong style={{ fontSize: 14, marginBottom: 12, display: 'block' }}>
-            <ApiOutlined /> API Preview
-          </Text>
+      {/* JSON Payload Preview */}
+      <Divider style={{ marginTop: 32, marginBottom: 16 }} />
+      <Text strong style={{ fontSize: 14, marginBottom: 12, display: 'block' }}>
+        <ApiOutlined /> JSON Payload (will be POST'd to database)
+      </Text>
 
-          <Card
-            size="small"
-            style={{ background: '#fafafa', marginBottom: 16 }}
-            bodyStyle={{ padding: 12 }}
-          >
-            <div style={{ marginBottom: 8 }}>
-              <Text strong style={{ fontSize: 11, color: '#666' }}>FULL API URL (Database Endpoint)</Text>
-              <div style={{ background: '#e6f7ff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 10, wordBreak: 'break-all', border: '1px solid #1890ff', color: '#0572CE' }}>
-                {buildApexUrl('mcp-servers')}
-              </div>
-            </div>
+      <Card
+        size="small"
+        style={{ background: '#fafafa', marginBottom: 16 }}
+        bodyStyle={{ padding: 12 }}
+      >
+        <div style={{ marginBottom: 8 }}>
+          <Text strong style={{ fontSize: 11, color: '#666' }}>DATABASE ENDPOINT</Text>
+          <div style={{ background: '#e6f7ff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 10, wordBreak: 'break-all', border: '1px solid #1890ff', color: '#0572CE' }}>
+            POST {buildApexUrl('mcp-servers')}
+          </div>
+        </div>
 
-            <div style={{ marginBottom: 8 }}>
-              <Text strong style={{ fontSize: 11, color: '#666' }}>METHOD & ENDPOINT</Text>
-              <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
-                <Tag color={form.getFieldValue('method') === 'GET' ? 'blue' : form.getFieldValue('method') === 'POST' ? 'green' : form.getFieldValue('method') === 'PUT' ? 'orange' : 'red'}>
-                  {form.getFieldValue('method') || 'POST'}
-                </Tag>
-                {' '}{form.getFieldValue('endpoint') || '/mcp-servers'}
-              </div>
-            </div>
-
-            {(form.getFieldValue('method') === 'POST' || form.getFieldValue('method') === 'PUT') && form.getFieldValue('payloadTemplate') && (
-              <div style={{ marginBottom: 8 }}>
-                <Text strong style={{ fontSize: 11, color: '#666' }}>REQUEST BODY</Text>
-                <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 10, maxHeight: 150, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {form.getFieldValue('payloadTemplate')}
-                </div>
-              </div>
+        <div>
+          <Text strong style={{ fontSize: 11, color: '#666' }}>REQUEST BODY</Text>
+          <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 9, maxHeight: 300, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', border: '1px solid #f0f0f0' }}>
+            {JSON.stringify(
+              {
+                name: form.getFieldValue('name') || '(Server Name)',
+                description: form.getFieldValue('description') || '(Description)',
+                type: serverType,
+                status: 'active',
+                config: serverType === 'REST' ? {
+                  method: form.getFieldValue('method') || 'POST',
+                  endpoint: form.getFieldValue('endpoint') || '(endpoint)',
+                  authType: form.getFieldValue('authType') || 'none',
+                  ...(form.getFieldValue('authType') === 'basic' && { authUsername: form.getFieldValue('authUsername') }),
+                  ...(form.getFieldValue('authType') === 'bearer' && { bearerToken: form.getFieldValue('bearerToken') ? '***' : undefined }),
+                  ...(form.getFieldValue('authType') === 'apiKey' && { apiKeyHeader: form.getFieldValue('apiKeyHeader') || 'X-API-Key', apiKeyValue: form.getFieldValue('apiKeyValue') ? '***' : undefined }),
+                  payloadTemplate: form.getFieldValue('payloadTemplate') || undefined,
+                  timeout: form.getFieldValue('timeout') || 30000,
+                } : {
+                  fusionUrl: form.getFieldValue('fusionUrl') || '(Fusion URL)',
+                  bipReportName: form.getFieldValue('bipReportName') || '(BIP Report)',
+                  username: form.getFieldValue('username') ? '***' : undefined,
+                  password: form.getFieldValue('password') ? '***' : undefined,
+                  timeout: form.getFieldValue('timeout') || 30000,
+                }
+              },
+              null,
+              2
             )}
-
-            {form.getFieldValue('authType') !== 'none' && (
-              <div>
-                <Text strong style={{ fontSize: 11, color: '#666' }}>AUTHENTICATION</Text>
-                <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontSize: 11 }}>
-                  {form.getFieldValue('authType') === 'basic' && <div>Basic Auth: {form.getFieldValue('authUsername')}</div>}
-                  {form.getFieldValue('authType') === 'bearer' && <div>Bearer Token: {form.getFieldValue('bearerToken') ? '••••••••' : 'Not set'}</div>}
-                  {form.getFieldValue('authType') === 'apiKey' && <div>API Key Header: {form.getFieldValue('apiKeyHeader') || 'X-API-Key'}</div>}
-                </div>
-              </div>
-            )}
-
-            <Button
-              type="primary"
-              size="small"
-              icon={<PlayCircleOutlined />}
-              loading={previewTestLoading}
-              onClick={() => testApiPreview(form.getFieldsValue())}
-              style={{ marginTop: 12 }}
-            >
-              Test API
-            </Button>
-          </Card>
-
-          {previewTestResult && (
-            <Card
-              size="small"
-              style={{ background: previewTestResult.success ? '#f6ffed' : '#fff2f0', marginBottom: 16 }}
-              bodyStyle={{ padding: 12 }}
-              title={
-                <Text strong style={{ color: previewTestResult.success ? '#52c41a' : '#d4380d' }}>
-                  {previewTestResult.success ? '✓ Test Passed' : '✗ Test Failed'}
-                </Text>
-              }
-            >
-              <div>
-                {previewTestResult.url && (
-                  <>
-                    <Text strong style={{ fontSize: 11 }}>URL Called:</Text>
-                    <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, marginBottom: 8, fontFamily: 'monospace', fontSize: 10, wordBreak: 'break-all', color: '#0572CE' }}>
-                      {previewTestResult.url}
-                    </div>
-                  </>
-                )}
-
-                {previewTestResult.status && (
-                  <>
-                    <Text strong style={{ fontSize: 11 }}>Status:</Text>
-                    <div style={{ fontSize: 11, marginBottom: 8 }}>{previewTestResult.status} {previewTestResult.statusText}</div>
-                  </>
-                )}
-
-                {previewTestResult.body && (
-                  <>
-                    <Text strong style={{ fontSize: 11 }}>Response Body:</Text>
-                    <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 9, maxHeight: 250, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                      {typeof previewTestResult.body === 'string' ? previewTestResult.body : JSON.stringify(previewTestResult.body, null, 2)}
-                    </div>
-                  </>
-                )}
-
-                {previewTestResult.error && (
-                  <>
-                    <Text strong style={{ fontSize: 11, color: '#d4380d' }}>Error Message:</Text>
-                    <div style={{ fontSize: 11, marginTop: 4, color: '#d4380d', background: '#fff', padding: '8px', borderRadius: 4, fontFamily: 'monospace', wordBreak: 'break-word' }}>
-                      {previewTestResult.error}
-                    </div>
-                  </>
-                )}
-              </div>
-            </Card>
-          )}
-        </>
-      )}
+          </div>
+        </div>
+      </Card>
 
       <Form.Item style={{ marginTop: 24, marginBottom: 0 }}>
         <Space>
