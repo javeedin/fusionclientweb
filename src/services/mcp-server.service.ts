@@ -27,12 +27,37 @@ export const mcpServerService = {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
-      console.log('[MCP Service] GET Response:', response.status, response.statusText);
-      const data = await response.json();
-      console.log('[MCP Service] GET Data:', data);
-      return data.items || data || [];
+      console.log('[MCP Service] GET Response Status:', response.status, response.statusText);
+
+      if (!response.ok) {
+        console.error('[MCP Service] GET Error Status:', response.status);
+        return [];
+      }
+
+      let data;
+      try {
+        data = await response.json();
+        console.log('[MCP Service] GET Response Body:', JSON.stringify(data, null, 2));
+      } catch (parseError) {
+        console.log('[MCP Service] GET Response is not JSON or empty');
+        return [];
+      }
+
+      // Handle different response formats from APEX
+      if (Array.isArray(data)) {
+        return data;
+      }
+      if (data.items && Array.isArray(data.items)) {
+        return data.items;
+      }
+      if (data.result && Array.isArray(data.result)) {
+        return data.result;
+      }
+
+      console.warn('[MCP Service] Unexpected response format:', data);
+      return [];
     } catch (error) {
-      console.error('Error fetching MCP servers from APEX:', error);
+      console.error('[MCP Service] Error fetching MCP servers:', error);
       return [];
     }
   },
