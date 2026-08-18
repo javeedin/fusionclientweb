@@ -4634,7 +4634,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                 <div style={{ padding: '10px 12px', background: '#e6f4ff', borderBottom: '1px solid #d9d9d9', fontWeight: 600, fontSize: 12, color: '#1677ff' }}>
                   Bank Statement Lines ({stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length})
                 </div>
-                <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+                <div style={{ flex: 1, overflowY: 'auto', padding: 4 }}>
                   {stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).map((stmt) => {
                     const matched = autoReconMatches.find(m => m.stmtLine.lineId === stmt.lineId && m.confirmed);
                     return (
@@ -4643,24 +4643,24 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                         style={{
                           background: matched ? '#f6ffed' : '#fff',
                           border: matched ? '1px solid #b7eb8f' : '1px solid #e8e8e8',
-                          borderRadius: 4,
-                          padding: 8,
-                          marginBottom: 6,
+                          borderRadius: 3,
+                          padding: '4px 6px',
+                          marginBottom: 3,
                           cursor: 'pointer',
-                          fontSize: 11,
-                          opacity: matched ? 1 : 0.8,
+                          fontSize: 9,
+                          opacity: matched ? 1 : 0.75,
                         }}
                         onClick={() => {
                           // Would allow manual selection
                         }}
                       >
-                        <div style={{ fontWeight: 500, marginBottom: 2 }}>Line #{stmt.lineId}</div>
-                        <div style={{ color: '#595959', marginBottom: 2 }}>{stmt.transactionDate?.slice(0, 10)} • {stmt.transactionCode}</div>
-                        <div style={{ fontWeight: 600, color: matched ? '#52c41a' : '#000', marginBottom: 2 }}>
+                        <div style={{ fontWeight: 500, marginBottom: 1 }}>Line #{stmt.lineId}</div>
+                        <div style={{ color: '#595959', marginBottom: 1, fontSize: 8 }}>{stmt.transactionDate?.slice(0, 10)} • {stmt.transactionCode}</div>
+                        <div style={{ fontWeight: 600, color: matched ? '#52c41a' : '#000', marginBottom: 1, fontSize: 9 }}>
                           {formatSignedAmount(Math.abs(stmt.amount))}
                         </div>
-                        {stmt.description && <div style={{ color: '#8c8c8c', fontSize: 10 }}>{stmt.description.substring(0, 40)}</div>}
-                        {matched && <div style={{ color: '#52c41a', fontSize: 10, marginTop: 4, fontWeight: 500 }}>✓ Matched</div>}
+                        {stmt.description && <div style={{ color: '#8c8c8c', fontSize: 8 }}>{stmt.description.substring(0, 30)}</div>}
+                        {matched && <div style={{ color: '#52c41a', fontSize: 8, marginTop: 2, fontWeight: 500 }}>✓</div>}
                       </div>
                     );
                   })}
@@ -4672,7 +4672,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                 <div style={{ padding: '10px 12px', background: '#f9f0ff', borderBottom: '1px solid #d9d9d9', fontWeight: 600, fontSize: 12, color: '#722ed1' }}>
                   System Transactions ({(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length})
                 </div>
-                <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+                <div style={{ flex: 1, overflowY: 'auto', padding: 4 }}>
                   {(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType))
                     .filter(t => !t.reconciledFlag || t.reconciledFlag === 'N')
                     .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
@@ -4684,24 +4684,24 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                           style={{
                             background: matched ? '#f6ffed' : '#fff',
                             border: matched ? '1px solid #b7eb8f' : '1px solid #e8e8e8',
-                            borderRadius: 4,
-                            padding: 8,
-                            marginBottom: 6,
+                            borderRadius: 3,
+                            padding: '4px 6px',
+                            marginBottom: 3,
                             cursor: 'pointer',
-                            fontSize: 11,
-                            opacity: matched ? 1 : 0.8,
+                            fontSize: 9,
+                            opacity: matched ? 1 : 0.75,
                           }}
                           onClick={() => {
                             // Would allow manual selection
                           }}
                         >
-                          <div style={{ fontWeight: 500, marginBottom: 2 }}>{txn.txnNumber}</div>
-                          <div style={{ color: '#595959', marginBottom: 2 }}>{txn.txnDate?.slice(0, 10)} • {txn.source?.replace('_', ' ')}</div>
-                          <div style={{ fontWeight: 600, color: matched ? '#52c41a' : '#000', marginBottom: 2 }}>
+                          <div style={{ fontWeight: 500, marginBottom: 1 }}>{txn.txnNumber}</div>
+                          <div style={{ color: '#595959', marginBottom: 1, fontSize: 8 }}>{txn.txnDate?.slice(0, 10)} • {txn.source?.replace('_', ' ')}</div>
+                          <div style={{ fontWeight: 600, color: matched ? '#52c41a' : '#000', marginBottom: 1, fontSize: 9 }}>
                             {formatSignedAmount(Math.abs(txn.amount))}
                           </div>
-                          {txn.payee && <div style={{ color: '#8c8c8c', fontSize: 10 }}>{txn.payee.substring(0, 40)}</div>}
-                          {matched && <div style={{ color: '#52c41a', fontSize: 10, marginTop: 4, fontWeight: 500 }}>✓ Matched</div>}
+                          {txn.payee && <div style={{ color: '#8c8c8c', fontSize: 8 }}>{txn.payee.substring(0, 30)}</div>}
+                          {matched && <div style={{ color: '#52c41a', fontSize: 8, marginTop: 2, fontWeight: 500 }}>✓</div>}
                         </div>
                       );
                     })}
