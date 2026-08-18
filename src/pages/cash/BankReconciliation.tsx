@@ -4427,81 +4427,150 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         }
         destroyOnClose
       >
-        <Spin spinning={autoReconRunning && autoReconMatches.length === 0}>
-          {autoReconMatches.length === 0 ? (
-            <Empty description="Loading reconciliation data..." />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 8, flexShrink: 0 }}>
-                Matched <strong>{autoReconMatches.length}</strong> pair(s). Uncheck to exclude from reconciliation.
+        <Spin spinning={autoReconRunning && autoReconMatches.length === 0 && stmtLines.length === 0}>
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            {/* Bank Statement Lines Section */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 12, color: REDWOOD.neutral900 }}>
+                📊 Bank Statement Lines
               </div>
-              <div style={{ flex: 1, overflowY: 'auto', borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
-                {autoReconMatches.map((m, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      display: 'flex',
-                      gap: 6,
-                      padding: '4px 8px',
-                      marginBottom: 3,
-                      border: `1px solid ${m.status === 'success' ? '#b7eb8f' : m.status === 'error' ? '#ffccc7' : '#f0f0f0'}`,
-                      borderRadius: 4,
-                      background: m.status === 'success' ? '#f6ffed' : m.status === 'error' ? '#fff2f0' : m.confirmed ? '#fff' : '#fafafa',
-                      opacity: m.confirmed ? 1 : 0.7,
-                      fontSize: 10,
-                      lineHeight: '1.3',
-                    }}
-                  >
-                    <Checkbox
-                      checked={m.confirmed}
-                      disabled={m.status !== 'pending'}
-                      onChange={e => {
-                        const copy = [...autoReconMatches];
-                        copy[idx] = { ...m, confirmed: e.target.checked };
-                        setAutoReconMatches(copy);
-                      }}
-                      style={{ marginTop: '2px', flexShrink: 0 }}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 6, alignItems: 'center' }}>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 500, fontSize: 9, color: '#1677ff', marginBottom: 1 }}>STMT</div>
-                          <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {m.stmtLine.description || m.stmtLine.reference || `Line #${m.stmtLine.lineId}`}
-                          </div>
-                          <div style={{ fontSize: 9, color: '#8c8c8c' }}>
-                            {m.stmtLine.transactionDate?.slice(0, 10)} {m.stmtLine.transactionCode} {Math.abs(m.stmtLine.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                          </div>
-                        </div>
-                        <div style={{ textAlign: 'center', flexShrink: 0 }}>
-                          {m.status === 'success' && <Tag color="success" style={{ fontSize: 8, margin: 0 }}>✓</Tag>}
-                          {m.status === 'error' && <Tag color="error" style={{ fontSize: 8, margin: 0 }}>✗</Tag>}
-                          {m.status === 'pending' && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
-                              {m.matchedBy.map(r => (
-                                <Tag key={r} color="purple" style={{ fontSize: 7, margin: 0, padding: '0 3px' }}>
-                                  {r.substring(0, 3)}
-                                </Tag>
-                              ))}
+              <div style={{ border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 8, overflow: 'hidden' }}>
+                {stmtLines.map((stmt, stmtIdx) => {
+                  const matchedTxn = autoReconMatches.find(m => m.stmtLine.lineId === stmt.lineId)?.sysTxn;
+                  return (
+                    <div key={stmtIdx} style={{ borderBottom: stmtIdx < stmtLines.length - 1 ? `1px solid ${REDWOOD.neutral100}` : 'none' }}>
+                      {/* Statement Line */}
+                      <div
+                        style={{
+                          padding: '12px 16px',
+                          background: matchedTxn ? '#f6ffed' : REDWOOD.surface,
+                          borderLeft: `4px solid ${matchedTxn ? REDWOOD.success : REDWOOD.neutral200}`,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                              <Tag color="blue">STMT</Tag>
+                              <Text strong style={{ fontSize: 13 }}>
+                                {stmt.description || stmt.reference || `Line #${stmt.lineId}`}
+                              </Text>
                             </div>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              {stmt.transactionDate?.slice(0, 10)} • {stmt.transactionCode} •
+                              <Text strong style={{ marginLeft: 6, color: REDWOOD.neutral900 }}>
+                                {Math.abs(stmt.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </Text>
+                            </Text>
+                          </div>
+                          {matchedTxn ? (
+                            <Tag color="success" icon={<CheckOutlined />}>
+                              Matched
+                            </Tag>
+                          ) : (
+                            <Tag>Unmatched</Tag>
                           )}
                         </div>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 500, fontSize: 9, color: '#722ed1', marginBottom: 1 }}>TXN</div>
-                          <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {m.sysTxn.payee || m.sysTxn.txnNumber || m.sysTxn.reference}
-                          </div>
-                          <div style={{ fontSize: 9, color: '#8c8c8c' }}>
-                            {m.sysTxn.txnDate?.slice(0, 10)} {m.sysTxn.source?.substring(0, 2)} {Math.abs(m.sysTxn.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </div>
+
+                      {/* Matched System Transaction (nested under statement) */}
+                      {matchedTxn && (
+                        <div
+                          style={{
+                            padding: '12px 16px 12px 40px',
+                            background: '#f9fafb',
+                            borderLeft: `4px solid ${REDWOOD.success}`,
+                            marginLeft: 8,
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                <Tag color="purple">TXN</Tag>
+                                <Text strong style={{ fontSize: 13 }}>
+                                  {matchedTxn.payee || matchedTxn.txnNumber || matchedTxn.reference}
+                                </Text>
+                              </div>
+                              <Text type="secondary" style={{ fontSize: 12 }}>
+                                {matchedTxn.txnDate?.slice(0, 10)} • {matchedTxn.source?.substring(0, 2)} •
+                                <Text strong style={{ marginLeft: 6, color: REDWOOD.neutral900 }}>
+                                  {Math.abs(matchedTxn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </Text>
+                              </Text>
+                            </div>
                           </div>
                         </div>
-                      </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+              <Text type="secondary" style={{ fontSize: 11, marginTop: 8, display: 'block' }}>
+                Showing {stmtLines.length} bank statement lines
+              </Text>
             </div>
-          )}
+
+            <Divider style={{ margin: '12px 0' }} />
+
+            {/* System Transactions Section (Unmatched Only) */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 12, color: REDWOOD.neutral900 }}>
+                💳 Unmatched System Transactions
+              </div>
+              {(() => {
+                const matchedTxnIds = new Set(autoReconMatches.map(m => m.sysTxn.txnId || m.sysTxn.reference));
+                const unmatchedTxns = sysTxns.filter(txn => !matchedTxnIds.has(txn.txnId || txn.reference));
+
+                if (unmatchedTxns.length === 0) {
+                  return (
+                    <Empty
+                      description="All transactions have been matched!"
+                      style={{ padding: '20px' }}
+                    />
+                  );
+                }
+
+                return (
+                  <div style={{ border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 8, overflow: 'hidden' }}>
+                    {unmatchedTxns.map((txn, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          padding: '12px 16px',
+                          borderBottom: idx < unmatchedTxns.length - 1 ? `1px solid ${REDWOOD.neutral100}` : 'none',
+                          borderLeft: `4px solid ${REDWOOD.warning}`,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                              <Tag color="purple">TXN</Tag>
+                              <Text strong style={{ fontSize: 13 }}>
+                                {txn.payee || txn.txnNumber || txn.reference}
+                              </Text>
+                            </div>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              {txn.txnDate?.slice(0, 10)} • {txn.source?.substring(0, 2)} •
+                              <Text strong style={{ marginLeft: 6, color: REDWOOD.neutral900 }}>
+                                {Math.abs(txn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </Text>
+                            </Text>
+                          </div>
+                          <Tag color="orange">No Match</Tag>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+              <Text type="secondary" style={{ fontSize: 11, marginTop: 8, display: 'block' }}>
+                {(() => {
+                  const matchedTxnIds = new Set(autoReconMatches.map(m => m.sysTxn.txnId || m.sysTxn.reference));
+                  const unmatchedCount = sysTxns.filter(txn => !matchedTxnIds.has(txn.txnId || txn.reference)).length;
+                  return `${unmatchedCount} unmatched transaction(s)`;
+                })()}
+              </Text>
+            </div>
+          </Space>
         </Spin>
       </Modal>
 
