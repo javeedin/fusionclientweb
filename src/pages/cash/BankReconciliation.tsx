@@ -2434,16 +2434,20 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       width: 110,
       align: 'right',
       sorter: (a: StmtLine, b: StmtLine) => (a.amount || 0) - (b.amount || 0),
-      render: (v: number, r) => (
-        <span
-          style={{
-            color:      r.transactionCode === 'CR' ? REDWOOD.success : REDWOOD.error,
-            fontWeight: 500,
-          }}
-        >
-          {fmtAmount(v)}
-        </span>
-      ),
+      render: (v: number, r) => {
+        const sign = r.transactionCode === 'DR' ? -1 : 1;
+        const displayAmount = Math.abs(v) * sign;
+        return (
+          <span
+            style={{
+              color:      r.transactionCode === 'CR' ? REDWOOD.success : REDWOOD.error,
+              fontWeight: 500,
+            }}
+          >
+            {displayAmount < 0 ? '-' : ''}{fmtAmount(Math.abs(displayAmount))}
+          </span>
+        );
+      },
     },
     {
       title: 'Type',
@@ -4690,6 +4694,59 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                 );
               })()}
             </div>
+            {/* Reconciled Pairs Section */}
+            {autoReconMatches.some(m => m.status === 'success') && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: REDWOOD.success }}>
+                  ✓ Reconciled Pairs ({autoReconMatches.filter(m => m.status === 'success').length})
+                </div>
+                <div style={{ border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 8, overflow: 'hidden', background: '#f6ffed' }}>
+                  {autoReconMatches.filter(m => m.status === 'success').map((match, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        padding: '8px 12px',
+                        borderBottom: idx < autoReconMatches.filter(m => m.status === 'success').length - 1 ? `1px solid ${REDWOOD.neutral100}` : 'none',
+                        fontSize: 11,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 8
+                      }}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <Tag color="blue">STMT</Tag>
+                          <Text strong style={{ fontSize: 11 }}>
+                            {match.stmtLine.description || match.stmtLine.reference || `#${match.stmtLine.lineId}`}
+                          </Text>
+                          <Text type="secondary" style={{ fontSize: 10 }}>
+                            ({match.stmtLine.transactionDate?.slice(0, 10)})
+                          </Text>
+                        </div>
+                        <div style={{ marginLeft: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Tag color="purple">TXN</Tag>
+                          <Text style={{ fontSize: 11 }}>
+                            {match.sysTxn.payee || match.sysTxn.txnNumber || match.sysTxn.reference}
+                          </Text>
+                          <Text type="secondary" style={{ fontSize: 10 }}>
+                            ({match.sysTxn.txnDate?.slice(0, 10)})
+                          </Text>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right', minWidth: 120 }}>
+                        <Text strong style={{ color: REDWOOD.success, fontSize: 11 }}>
+                          {match.stmtLine.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </Text>
+                        <div style={{ fontSize: 10, color: REDWOOD.neutral600 }}>
+                          {match.matchedBy.join(', ')}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </Spin>
       </Modal>
