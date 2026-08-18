@@ -4593,6 +4593,18 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
               <strong>{(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length}</strong> unreconciled system transactions available
             </div>
           </div>
+        ) : autoReconMatches.length === 0 ? (
+          <Empty
+            description={
+              <div>
+                <div>No matches found</div>
+                <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
+                  Checked {stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length} statement lines against{' '}
+                  {(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length} system transactions by amount.
+                </div>
+              </div>
+            }
+          />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: 'calc(100vh - 250px)' }}>
             {/* Summary Stats */}
@@ -4697,18 +4709,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
               </div>
             </div>
           </div>
-        ) : (
-          <Empty
-            description={
-              <div>
-                <div>No matches found</div>
-                <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
-                  Checked {stmtLines.filter(l => l.reconStatus !== 'RECONCILED' && !l.externalTxnId).length} statement lines against{' '}
-                  {(autoReconTxnType === 'ALL' || autoReconTxnType === 'CM' ? sysTxns : sysTxns.filter(t => t.source === autoReconTxnType)).filter(t => !t.reconciledFlag || t.reconciledFlag === 'N').length} system transactions by amount.
-                </div>
-              </div>
-            }
-          />
         )}
       </div>
 
