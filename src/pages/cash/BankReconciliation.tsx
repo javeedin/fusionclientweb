@@ -4408,7 +4408,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         title={<Space><ThunderboltOutlined style={{ color: '#722ed1' }} /><span>Auto Reconciliation</span></Space>}
         open={autoReconOpen}
         onCancel={() => setAutoReconOpen(false)}
-        width={1000}
+        width={1400}
         bodyStyle={{ maxHeight: '80vh', overflowY: 'auto' }}
         footer={
           <Space>
@@ -4440,103 +4440,166 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         destroyOnClose
       >
         <Spin spinning={autoReconRunning && autoReconMatches.length === 0 && stmtLines.length === 0}>
-          <div style={{ display: 'flex', gap: 16, height: '60vh' }}>
-            {/* Left Column: Bank Statement Lines */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 8, overflow: 'hidden' }}>
-              <div style={{ padding: '8px 12px', background: REDWOOD.neutral100, fontWeight: 600, fontSize: 11, borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            {/* Bank Statements Table */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: REDWOOD.neutral900 }}>
                 📊 Bank Statements ({stmtLines.length})
               </div>
-              <div style={{ flex: 1, overflowY: 'auto' }}>
-                {stmtLines.map((stmt, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      padding: '6px 12px',
-                      borderBottom: idx < stmtLines.length - 1 ? `1px solid ${REDWOOD.neutral100}` : 'none',
-                      fontSize: 10,
-                      lineHeight: '1.4',
-                      cursor: 'pointer',
-                      background: autoReconMatches.some(m => m.stmtLine.lineId === stmt.lineId) ? '#f6ffed' : 'transparent',
-                      borderLeft: `3px solid ${autoReconMatches.some(m => m.stmtLine.lineId === stmt.lineId) ? REDWOOD.success : 'transparent'}`,
-                    }}
-                  >
-                    <Checkbox
-                      checked={autoReconMatches.some(m => m.stmtLine.lineId === stmt.lineId && m.confirmed)}
-                      onChange={e => {
-                        const match = autoReconMatches.find(m => m.stmtLine.lineId === stmt.lineId);
-                        if (match) {
-                          const copy = [...autoReconMatches];
-                          const idx = copy.indexOf(match);
-                          copy[idx] = { ...match, confirmed: e.target.checked };
-                          setAutoReconMatches(copy);
-                        }
-                      }}
-                      style={{ marginRight: 4 }}
-                    />
-                    <div style={{ display: 'inline-block', flex: 1 }}>
-                      <div style={{ fontWeight: 500, color: REDWOOD.primary }}>
-                        {stmt.description || stmt.reference || `Line #${stmt.lineId}`}
-                      </div>
-                      <div style={{ color: '#8c8c8c', marginTop: 2 }}>
-                        {stmt.transactionDate?.slice(0, 10)} {stmt.transactionCode}
-                      </div>
-                      <div style={{ fontWeight: 600, color: REDWOOD.neutral900, marginTop: 2 }}>
-                        {Math.abs(stmt.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <Table
+                size="small"
+                dataSource={stmtLines}
+                columns={[
+                  {
+                    title: (
+                      <Checkbox
+                        checked={stmtLines.every(s => autoReconMatches.some(m => m.stmtLine.lineId === s.lineId && m.confirmed))}
+                        onChange={e => {
+                          const updated = autoReconMatches.map(m => ({ ...m, confirmed: e.target.checked }));
+                          setAutoReconMatches(updated);
+                        }}
+                      />
+                    ),
+                    dataIndex: 'select',
+                    width: 40,
+                    render: (_, stmt) => (
+                      <Checkbox
+                        checked={autoReconMatches.some(m => m.stmtLine.lineId === stmt.lineId && m.confirmed)}
+                        onChange={e => {
+                          const match = autoReconMatches.find(m => m.stmtLine.lineId === stmt.lineId);
+                          if (match) {
+                            const copy = [...autoReconMatches];
+                            const idx = copy.indexOf(match);
+                            copy[idx] = { ...match, confirmed: e.target.checked };
+                            setAutoReconMatches(copy);
+                          }
+                        }}
+                      />
+                    ),
+                  },
+                  {
+                    title: 'Date',
+                    dataIndex: 'transactionDate',
+                    width: 80,
+                    sorter: (a, b) => new Date(a.transactionDate).getTime() - new Date(b.transactionDate).getTime(),
+                    render: (date) => date?.slice(0, 10),
+                  },
+                  {
+                    title: 'Description',
+                    dataIndex: 'description',
+                    ellipsis: true,
+                    render: (desc, stmt) => desc || stmt.reference || `Line #${stmt.lineId}`,
+                  },
+                  {
+                    title: 'Type',
+                    dataIndex: 'transactionCode',
+                    width: 50,
+                    filters: [
+                      { text: 'CR', value: 'CR' },
+                      { text: 'DR', value: 'DR' },
+                    ],
+                    onFilter: (value, record) => record.transactionCode === value,
+                  },
+                  {
+                    title: 'Amount',
+                    dataIndex: 'amount',
+                    width: 120,
+                    sorter: (a, b) => a.amount - b.amount,
+                    defaultSortOrder: 'descend' as const,
+                    render: (amount, stmt) => {
+                      const sign = stmt.transactionCode === 'DR' ? -1 : 1;
+                      const displayAmount = Math.abs(amount) * sign;
+                      return (
+                        <Text strong style={{ color: displayAmount < 0 ? REDWOOD.error : REDWOOD.success }}>
+                          {displayAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </Text>
+                      );
+                    },
+                  },
+                ]}
+                rowKey={(record) => String(record.lineId)}
+                pagination={false}
+                scroll={{ y: 300 }}
+              />
             </div>
 
-            {/* Right Column: System Transactions */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 8, overflow: 'hidden' }}>
-              <div style={{ padding: '8px 12px', background: REDWOOD.neutral100, fontWeight: 600, fontSize: 11, borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
+            <Divider style={{ margin: '12px 0' }} />
+
+            {/* System Transactions Table */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: REDWOOD.neutral900 }}>
                 💳 System Transactions ({sysTxns.length})
               </div>
-              <div style={{ flex: 1, overflowY: 'auto' }}>
-                {sysTxns.map((txn, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      padding: '6px 12px',
-                      borderBottom: idx < sysTxns.length - 1 ? `1px solid ${REDWOOD.neutral100}` : 'none',
-                      fontSize: 10,
-                      lineHeight: '1.4',
-                      cursor: 'pointer',
-                      background: autoReconMatches.some(m => m.sysTxn.txnId === txn.txnId && m.confirmed) ? '#f6ffed' : 'transparent',
-                      borderLeft: `3px solid ${autoReconMatches.some(m => m.sysTxn.txnId === txn.txnId && m.confirmed) ? REDWOOD.success : 'transparent'}`,
-                    }}
-                  >
-                    <Checkbox
-                      checked={autoReconMatches.some(m => m.sysTxn.txnId === txn.txnId && m.confirmed)}
-                      onChange={e => {
-                        const match = autoReconMatches.find(m => m.sysTxn.txnId === txn.txnId);
-                        if (match) {
-                          const copy = [...autoReconMatches];
-                          const idx = copy.indexOf(match);
-                          copy[idx] = { ...match, confirmed: e.target.checked };
-                          setAutoReconMatches(copy);
-                        }
-                      }}
-                      style={{ marginRight: 4 }}
-                    />
-                    <div style={{ display: 'inline-block', flex: 1 }}>
-                      <div style={{ fontWeight: 500, color: '#722ed1' }}>
-                        {txn.payee || txn.txnNumber || txn.reference}
-                      </div>
-                      <div style={{ color: '#8c8c8c', marginTop: 2 }}>
-                        {txn.txnDate?.slice(0, 10)} {txn.source?.substring(0, 2)}
-                      </div>
-                      <div style={{ fontWeight: 600, color: REDWOOD.neutral900, marginTop: 2 }}>
-                        {Math.abs(txn.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <Table
+                size="small"
+                dataSource={sysTxns}
+                columns={[
+                  {
+                    title: (
+                      <Checkbox
+                        checked={sysTxns.every(t => autoReconMatches.some(m => m.sysTxn.txnId === t.txnId && m.confirmed))}
+                        onChange={e => {
+                          const updated = autoReconMatches.map(m => ({ ...m, confirmed: e.target.checked }));
+                          setAutoReconMatches(updated);
+                        }}
+                      />
+                    ),
+                    dataIndex: 'select',
+                    width: 40,
+                    render: (_, txn) => (
+                      <Checkbox
+                        checked={autoReconMatches.some(m => m.sysTxn.txnId === txn.txnId && m.confirmed)}
+                        onChange={e => {
+                          const match = autoReconMatches.find(m => m.sysTxn.txnId === txn.txnId);
+                          if (match) {
+                            const copy = [...autoReconMatches];
+                            const idx = copy.indexOf(match);
+                            copy[idx] = { ...match, confirmed: e.target.checked };
+                            setAutoReconMatches(copy);
+                          }
+                        }}
+                      />
+                    ),
+                  },
+                  {
+                    title: 'Date',
+                    dataIndex: 'txnDate',
+                    width: 80,
+                    sorter: (a, b) => new Date(a.txnDate).getTime() - new Date(b.txnDate).getTime(),
+                    render: (date) => date?.slice(0, 10),
+                  },
+                  {
+                    title: 'Description/Reference',
+                    dataIndex: 'payee',
+                    ellipsis: true,
+                    render: (payee, txn) => payee || txn.txnNumber || txn.reference || txn.accountDescription,
+                  },
+                  {
+                    title: 'Source',
+                    dataIndex: 'source',
+                    width: 80,
+                    filters: Array.from(new Set(sysTxns.map(t => t.source))).map(source => ({ text: source, value: source })),
+                    onFilter: (value, record) => record.source === value,
+                  },
+                  {
+                    title: 'Amount',
+                    dataIndex: 'amount',
+                    width: 120,
+                    sorter: (a, b) => a.amount - b.amount,
+                    defaultSortOrder: 'descend' as const,
+                    render: (amount) => (
+                      <Text strong style={{ color: REDWOOD.primary }}>
+                        {amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </Text>
+                    ),
+                  },
+                ]}
+                rowKey={(record) => sysTxnRowKey(record)}
+                pagination={false}
+                scroll={{ y: 300 }}
+              />
             </div>
-          </div>
+          </Space>
         </Spin>
       </Modal>
 
