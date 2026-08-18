@@ -757,11 +757,12 @@ const MCPServerManager: React.FC = () => {
           <div style={{ background: '#fff', padding: '8px', borderRadius: 4, marginTop: 4, fontFamily: 'monospace', fontSize: 9, maxHeight: 300, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', border: '1px solid #f0f0f0' }}>
             {JSON.stringify(
               {
-                name: form.getFieldValue('name') || '(Server Name)',
+                action: editingServer ? 'UPDATE' : 'CREATE',
+                ...(editingServer && { server_id: editingServer.id }),
+                server_name: form.getFieldValue('name') || '(Server Name)',
                 description: form.getFieldValue('description') || '(Description)',
                 type: serverType,
-                status: 'active',
-                config: serverType === 'REST' ? {
+                config_json: JSON.stringify(serverType === 'REST' ? {
                   method: form.getFieldValue('method') || 'POST',
                   endpoint: form.getFieldValue('endpoint') || '(endpoint)',
                   authType: form.getFieldValue('authType') || 'none',
@@ -776,7 +777,7 @@ const MCPServerManager: React.FC = () => {
                   username: form.getFieldValue('username') ? '***' : undefined,
                   password: form.getFieldValue('password') ? '***' : undefined,
                   timeout: form.getFieldValue('timeout') || 30000,
-                }
+                })
               },
               null,
               2
