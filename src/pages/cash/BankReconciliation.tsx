@@ -4799,7 +4799,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
       {/* ── Matching View Modal (Simple table format) ──────────────── */}
       <Modal
-        title={<Space><LinkOutlined style={{ color: '#1890ff' }} /><span>Matching Analysis</span></Space>}
+        title={<Space><LinkOutlined style={{ color: '#1890ff' }} /><span>Matching Analysis v1</span></Space>}
         open={matchingViewOpen}
         onCancel={() => setMatchingViewOpen(false)}
         footer={<Button onClick={() => setMatchingViewOpen(false)}>Close</Button>}
