@@ -173,12 +173,33 @@ export const mcpServerService = {
   },
 
   async testServer(id: string): Promise<any> {
-    const response = await fetch(`${getMcpServersUrl()}/${id}/test`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (!response.ok) throw new Error(`Test failed: ${response.statusText}`);
-    return response.json();
+    const testUrl = `${getMcpServersUrl()}/${id}/test`;
+    console.log('[MCP Service] Testing server:', testUrl);
+    try {
+      const response = await fetch(testUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      console.log('[MCP Service] Test Response Status:', response.status, response.statusText);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      let data;
+      try {
+        data = await response.json();
+        console.log('[MCP Service] Test Response:', data);
+      } catch (parseError) {
+        console.log('[MCP Service] Test response is not JSON');
+        data = { success: true, message: 'Server test passed' };
+      }
+
+      return data;
+    } catch (error) {
+      console.error('[MCP Service] Test Error:', error);
+      throw error;
+    }
   },
 
   async getServerConfig(id: string): Promise<MCPServer> {

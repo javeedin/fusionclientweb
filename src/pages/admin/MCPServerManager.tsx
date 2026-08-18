@@ -193,13 +193,24 @@ const MCPServerManager: React.FC = () => {
   const handleTestServer = async (serverId: string) => {
     setServerToTest(serverId);
     setTestLoading(true);
+    const testStartTime = Date.now();
     try {
+      console.log(`[MCP Manager] Testing server: ${serverId}`);
       const result = await mcpServerService.testServer(serverId);
-      setTestResult(result);
-      message.success('Test completed');
+      const responseTime = Date.now() - testStartTime;
+      console.log(`[MCP Manager] Test succeeded in ${responseTime}ms`);
+      setTestResult({ ...result, responseTime });
+      message.success('Test completed successfully');
     } catch (error) {
+      const responseTime = Date.now() - testStartTime;
+      console.error(`[MCP Manager] Test failed after ${responseTime}ms:`, error);
       message.error('Server test failed');
-      setTestResult({ error: error instanceof Error ? error.message : String(error) });
+      setTestResult({
+        error: error instanceof Error ? error.message : String(error),
+        testUrl: `${buildApexUrl('mcp-servers')}/${serverId}/test`,
+        timestamp: new Date().toISOString(),
+        responseTime
+      });
     } finally {
       setTestLoading(false);
       setServerToTest(null);
@@ -849,6 +860,92 @@ const MCPServerManager: React.FC = () => {
             </Space>
           </div>
 
+          {/* Help Guide */}
+          <Collapse
+            style={{ marginBottom: 24, background: REDWOOD.surface }}
+            items={[
+              {
+                key: 'mcp-help',
+                label: <div style={{ fontSize: 14, fontWeight: 500 }}>📚 What are MCP Servers and How to Test?</div>,
+                children: (
+                  <Space direction="vertical" style={{ width: '100%' }} size="large">
+                    <div>
+                      <Text strong style={{ fontSize: 13 }}>What is an MCP Server?</Text>
+                      <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
+                        MCP (Model Context Protocol) servers are external services that provide data or functionality to Claude.
+                        They can be REST APIs, SOAP services, or custom integrations that Claude can interact with.
+                      </Paragraph>
+                    </div>
+
+                    <div>
+                      <Text strong style={{ fontSize: 13 }}>How to Test in This Application:</Text>
+                      <Paragraph style={{ marginTop: 8 }}>
+                        1. Go to the <strong>Servers Table</strong> below<br />
+                        2. Click the <strong>Test</strong> button next to any server<br />
+                        3. Check the <strong>Server Test Result</strong> dialog for details<br />
+                        4. If test fails, see the error message for debugging
+                      </Paragraph>
+                    </div>
+
+                    <div>
+                      <Text strong style={{ fontSize: 13 }}>How to Use in Claude Desktop:</Text>
+                      <Card size="small" style={{ background: '#fafafa', marginTop: 8 }}>
+                        <Paragraph style={{ marginBottom: 8, fontSize: 12 }}>
+                          <strong>Step 1: Configure MCP Server</strong><br />
+                          • Edit your Claude Desktop config file:<br />
+                          <code style={{ fontSize: 11, background: '#f5f5f5', padding: '2px 6px' }}>
+                            ~/.claude/config/claude_desktop_config.json
+                          </code>
+                        </Paragraph>
+                        <Paragraph style={{ marginBottom: 8, fontSize: 12 }}>
+                          <strong>Step 2: Add Server Configuration</strong><br />
+                          • Create or update the <code style={{ fontSize: 11, background: '#f5f5f5', padding: '2px 6px' }}>mcpServers</code> section:<br />
+                        </Paragraph>
+                        <pre style={{
+                          background: '#fff',
+                          padding: 12,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          maxHeight: 200,
+                          overflowY: 'auto',
+                          border: '1px solid #f0f0f0',
+                          marginBottom: 8
+                        }}>
+{`{
+  "mcpServers": {
+    "your-server-name": {
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-your-server"],
+      "env": {
+        "SERVER_URL": "https://your-server-url.com",
+        "API_KEY": "your-api-key"
+      }
+    }
+  }
+}`}
+                        </pre>
+                        <Paragraph style={{ marginBottom: 0, fontSize: 12 }}>
+                          <strong>Step 3: Restart Claude Desktop</strong><br />
+                          • Close and reopen Claude Desktop<br />
+                          • Claude will now have access to the MCP server
+                        </Paragraph>
+                      </Card>
+                    </div>
+
+                    <div>
+                      <Text strong style={{ fontSize: 13 }}>Troubleshooting:</Text>
+                      <ul style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
+                        <li><strong>Test Failed: Not Found</strong> → Endpoint URL is incorrect or server is not running</li>
+                        <li><strong>Connection Timeout</strong> → Server is not accessible from this location</li>
+                        <li><strong>Authentication Error</strong> → Check API keys and credentials in server config</li>
+                      </ul>
+                    </div>
+                  </Space>
+                )
+              }
+            ]}
+          />
+
           {/* Search and Refresh */}
           <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
             <Input
@@ -939,22 +1036,63 @@ const MCPServerManager: React.FC = () => {
           open={!!testResult}
           onOk={() => setTestResult(null)}
           onCancel={() => setTestResult(null)}
+          width={800}
+          footer={null}
         >
-          {testResult.error ? (
-            <Card style={{ background: '#fff2f0' }}>
-              <Text strong style={{ color: '#d4380d' }}>Error:</Text>
-              <Paragraph>{testResult.error}</Paragraph>
-            </Card>
-          ) : (
-            <Descriptions>
-              <Descriptions.Item label="Status">
-                <Tag color="success">Connected</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Response Time">
-                {testResult.responseTime}ms
-              </Descriptions.Item>
-            </Descriptions>
-          )}
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            {testResult.error ? (
+              <>
+                <Card style={{ background: '#fff2f0', borderColor: '#ffccc7' }}>
+                  <Text strong style={{ color: '#d4380d', fontSize: 14 }}>❌ Test Failed</Text>
+                  <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
+                    {testResult.error}
+                  </Paragraph>
+                </Card>
+                <Card size="small" style={{ background: '#fafafa' }}>
+                  <Text strong style={{ fontSize: 12 }}>Debug Information</Text>
+                  <pre style={{
+                    marginTop: 8,
+                    padding: 8,
+                    background: '#fff',
+                    borderRadius: 4,
+                    fontSize: 11,
+                    maxHeight: 300,
+                    overflowY: 'auto',
+                    fontFamily: 'monospace',
+                    border: '1px solid #f0f0f0'
+                  }}>
+                    {JSON.stringify({
+                      error: testResult.error,
+                      timestamp: new Date().toISOString(),
+                      endpoint: testResult.testUrl || 'Unknown'
+                    }, null, 2)}
+                  </pre>
+                </Card>
+              </>
+            ) : (
+              <>
+                <Card style={{ background: '#f6ffed', borderColor: '#b7eb8f' }}>
+                  <Text strong style={{ color: '#389e0d', fontSize: 14 }}>✓ Test Passed</Text>
+                </Card>
+                <Card size="small" style={{ background: '#fafafa' }}>
+                  <Text strong style={{ fontSize: 12 }}>Response Details</Text>
+                  <pre style={{
+                    marginTop: 8,
+                    padding: 8,
+                    background: '#fff',
+                    borderRadius: 4,
+                    fontSize: 11,
+                    maxHeight: 300,
+                    overflowY: 'auto',
+                    fontFamily: 'monospace',
+                    border: '1px solid #f0f0f0'
+                  }}>
+                    {JSON.stringify(testResult, null, 2)}
+                  </pre>
+                </Card>
+              </>
+            )}
+          </Space>
         </Modal>
       )}
 
