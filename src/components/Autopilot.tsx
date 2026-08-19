@@ -947,6 +947,15 @@ You can use this MCP server to enhance your responses with external integrations
               </div>
             </div>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <Tooltip title={claudeEnabled ? 'Disable Claude AI' : 'Enable Claude AI'}>
+                <Switch
+                  checked={claudeEnabled}
+                  onChange={handleClaudeToggle}
+                  disabled={!claudeApiKey}
+                  size="small"
+                  style={{ margin: 0 }}
+                />
+              </Tooltip>
               <Tooltip title="MCP Server Settings">
                 <SettingOutlined
                   style={{ color: '#fff', cursor: 'pointer', fontSize: 16 }}
