@@ -244,14 +244,20 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
   const loadMcpServers = async () => {
     setLoadingMcpServers(true);
     try {
-      const response = await fetch(buildApexUrl('mcp-servers'), {
+      const url = buildApexUrl('mcp-servers');
+      console.log('Loading MCP servers from:', url);
+      const response = await fetch(url, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
       if (response.ok) {
         const data = await response.json();
+        console.log('MCP servers API response:', data);
         const servers = (data.items || data || []).filter((s: MCPServer) => s.status === 'active');
+        console.log('Filtered active servers:', servers);
         setMcpServers(servers);
+      } else {
+        console.error('MCP servers API returned error status:', response.status, response.statusText);
       }
     } catch (error) {
       console.error('Error loading MCP servers:', error);
@@ -405,14 +411,42 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     if (!selectedServer) return [];
 
     try {
-      // Fetch tools from MCP server
-      const toolsResponse = await fetch(`${selectedServer.config?.url || selectedServer.name}/tools`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      });
+      // Get the server URL - check multiple possible locations
+      const serverUrl = (selectedServer as any).url || selectedServer.config?.url || selectedServer.name;
+      console.log('MCP Server URL:', serverUrl);
+      console.log('MCP Server config:', selectedServer.config);
+      console.log('MCP Server object:', selectedServer);
 
-      if (toolsResponse.ok) {
+      // Try to fetch tools from MCP server - support multiple endpoint patterns
+      const endpoints = [
+        `${serverUrl}/tools`,
+        `${serverUrl}/v1/tools`,
+        `${serverUrl.replace(/\/$/, '')}/api/tools`,
+      ];
+
+      let toolsResponse: Response | null = null;
+      let lastError: Error | null = null;
+
+      for (const endpoint of endpoints) {
+        try {
+          console.log(`Trying endpoint: ${endpoint}`);
+          toolsResponse = await fetch(endpoint, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+          });
+          if (toolsResponse.ok) {
+            console.log(`Successfully fetched tools from ${endpoint}`);
+            break;
+          }
+        } catch (e) {
+          lastError = e as Error;
+          console.log(`Failed to fetch from ${endpoint}: ${lastError.message}`);
+        }
+      }
+
+      if (toolsResponse && toolsResponse.ok) {
         const toolsData = await toolsResponse.json();
+        console.log('Tools data received:', toolsData);
         const tools = (toolsData.tools || toolsData || []).map((tool: any) => ({
           name: tool.name,
           description: tool.description || `Execute ${tool.name} tool`,
@@ -422,6 +456,7 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
             required: [],
           },
         }));
+        console.log('Parsed tools:', tools);
         return tools;
       }
     } catch (error) {
@@ -451,21 +486,50 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     if (!selectedServer) return 'MCP server not configured';
 
     try {
-      const serverUrl = selectedServer.config?.url || selectedServer.name;
-      const response = await fetch(`${serverUrl}/execute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tool: toolName,
-          input: toolInput,
-        }),
-      });
+      // Get the server URL - check multiple possible locations
+      const serverUrl = (selectedServer as any).url || selectedServer.config?.url || selectedServer.name;
+      console.log(`Executing tool "${toolName}" on server: ${serverUrl}`);
 
-      if (response.ok) {
+      // Try multiple endpoint patterns
+      const endpoints = [
+        `${serverUrl}/execute`,
+        `${serverUrl}/v1/execute`,
+        `${serverUrl.replace(/\/$/, '')}/api/execute`,
+        `${serverUrl.replace(/\/$/, '')}/call`,
+      ];
+
+      let response: Response | null = null;
+      let lastError: Error | null = null;
+
+      for (const endpoint of endpoints) {
+        try {
+          console.log(`Trying tool endpoint: ${endpoint}`);
+          response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tool: toolName,
+              input: toolInput,
+            }),
+          });
+          if (response.ok) {
+            console.log(`Successfully executed tool on ${endpoint}`);
+            break;
+          }
+        } catch (e) {
+          lastError = e as Error;
+          console.log(`Failed to execute on ${endpoint}: ${lastError.message}`);
+        }
+      }
+
+      if (response && response.ok) {
         const result = await response.json();
+        console.log('Tool result:', result);
         return JSON.stringify(result);
       } else {
-        return `Tool execution failed: ${response.statusText}`;
+        const errorMsg = response ? `Tool execution failed: ${response.statusText}` : `All endpoints failed. Last error: ${lastError?.message}`;
+        console.error(errorMsg);
+        return errorMsg;
       }
     } catch (error) {
       console.error('Error executing MCP tool:', error);
@@ -481,6 +545,10 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     let mcpContext = '';
     let mcpServerInfo = '';
     const mcpTools = await buildMcpTools();
+
+    console.log('callClaudeApi - selectedMcpServer:', selectedMcpServer);
+    console.log('callClaudeApi - mcpTools:', mcpTools);
+    console.log('callClaudeApi - mcpServers:', mcpServers);
 
     if (selectedMcpServer) {
       const selectedServer = mcpServers.find(s => s.id === selectedMcpServer);
@@ -511,8 +579,11 @@ Use these tools to fetch real-time data and provide accurate responses. Call the
       let maxIterations = 5;
       let iteration = 0;
 
+      console.log('Starting Claude agentic loop with', mcpTools.length, 'tools available');
+
       while (iteration < maxIterations) {
         iteration++;
+        console.log(`Iteration ${iteration}/${maxIterations}`);
 
         const requestBody: any = {
           model: 'claude-sonnet-5',
@@ -524,6 +595,9 @@ Use these tools to fetch real-time data and provide accurate responses. Call the
         // Include tools if available
         if (mcpTools.length > 0) {
           requestBody.tools = mcpTools;
+          console.log(`Sending ${mcpTools.length} tools to Claude: ${mcpTools.map(t => t.name).join(', ')}`);
+        } else {
+          console.log('No tools available to send to Claude');
         }
 
         const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -543,6 +617,7 @@ Use these tools to fetch real-time data and provide accurate responses. Call the
 
         const data = await response.json();
         const content = data.content || [];
+        console.log('Claude response content:', content);
 
         // Check if Claude wants to use a tool
         const toolUse = content.find((block: any) => block.type === 'tool_use');
@@ -555,13 +630,13 @@ Use these tools to fetch real-time data and provide accurate responses. Call the
           // Execute the tool
           const toolResult = await executeMcpTool(toolUse.name, toolUse.input);
 
-          // Add Claude's response to messages
+          // Add Claude's response with tool_use to messages
           messages.push({
             role: 'assistant',
-            content,
+            content: content,
           });
 
-          // Add tool result
+          // Add tool result immediately after
           messages.push({
             role: 'user',
             content: [
@@ -579,10 +654,12 @@ Use these tools to fetch real-time data and provide accurate responses. Call the
 
         // Claude gave a final response (no tool use)
         if (textBlock) {
+          console.log('Claude gave final response:', textBlock.text);
           return textBlock.text;
         }
 
         // Fallback
+        console.log('Claude response:', data.content[0]?.text);
         return data.content[0]?.text || 'No response from Claude';
       }
 
@@ -1655,7 +1732,36 @@ Use these tools to fetch real-time data and provide accurate responses. Call the
             {showLeftPanel && (
               <>
                 <div style={{ width: leftPanelWidth, borderRight: `1px solid ${REDWOOD.neutral200}`, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: REDWOOD.neutral100 }}>
-                  <Tabs defaultActiveKey="chats" style={{ flex: 1, display: 'flex', flexDirection: 'column' }} items={[
+                  <Tabs defaultActiveKey="servers" style={{ flex: 1, display: 'flex', flexDirection: 'column' }} items={[
+                    {
+                      key: 'servers',
+                      label: <span><LinkOutlined /> MCP Servers</span>,
+                      children: (
+                        <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+                          <Space direction="vertical" style={{ width: '100%' }}>
+                            {mcpServers.length > 0 ? mcpServers.map((server) => (
+                              <Card key={server.id} size="small" style={{ cursor: 'pointer', background: selectedMcpServer === server.id ? REDWOOD.autopilotPurple + '15' : 'transparent', border: selectedMcpServer === server.id ? `2px solid ${REDWOOD.autopilotPurple}` : `1px solid ${REDWOOD.neutral200}` }}>
+                                <div onClick={() => handleMcpServerSelect(server.id)}>
+                                  <Text strong style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>{server.name}</Text>
+                                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>{server.description}</Text>
+                                  <div style={{ display: 'flex', gap: 8 }}>
+                                    <Button size="small" type={selectedMcpServer === server.id ? 'primary' : 'default'} onClick={() => handleMcpServerSelect(server.id)}>
+                                      {selectedMcpServer === server.id ? 'Connected' : 'Connect'}
+                                    </Button>
+                                    <Text type="secondary" style={{ fontSize: 10, lineHeight: '32px' }}>{server.type}</Text>
+                                  </div>
+                                </div>
+                              </Card>
+                            )) : (
+                              <Empty description="No MCP servers added" />
+                            )}
+                            <Button block type="primary" onClick={() => setShowAddMcpServer(true)}>
+                              + Add Server
+                            </Button>
+                          </Space>
+                        </div>
+                      ),
+                    },
                     {
                       key: 'chats',
                       label: <span><MessageOutlined /> Chats</span>,
