@@ -403,7 +403,7 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     localStorage.setItem('autopilot_selected_mcp_server', serverId);
   };
 
-  // Build MCP server tools for Claude to use
+  // Build MCP server tools for Claude to use via the MCP Bridge
   const buildMcpTools = async (): Promise<any[]> => {
     if (!selectedMcpServer) return [];
 
@@ -411,128 +411,105 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     if (!selectedServer) return [];
 
     try {
-      // Get the server URL - check multiple possible locations
+      const bridgeUrl = process.env.REACT_APP_MCP_BRIDGE_URL || 'http://localhost:3001';
       const serverUrl = (selectedServer as any).url || selectedServer.config?.url || selectedServer.name;
+
       console.log('MCP Server URL:', serverUrl);
+      console.log('MCP Bridge URL:', bridgeUrl);
       console.log('MCP Server config:', selectedServer.config);
-      console.log('MCP Server object:', selectedServer);
 
-      // Try to fetch tools from MCP server - support multiple endpoint patterns
-      const endpoints = [
-        `${serverUrl}/tools`,
-        `${serverUrl}/v1/tools`,
-        `${serverUrl.replace(/\/$/, '')}/api/tools`,
-      ];
+      // First, ensure the server is connected to the bridge
+      console.log('Connecting to MCP server via bridge...');
+      const connectResponse = await fetch(`${bridgeUrl}/api/mcp/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverUrl }),
+      });
 
-      let toolsResponse: Response | null = null;
-      let lastError: Error | null = null;
+      if (connectResponse.ok) {
+        const connectData = await connectResponse.json();
+        const serverId = connectData.serverId;
+        console.log('Successfully connected to MCP server:', connectData);
 
-      for (const endpoint of endpoints) {
-        try {
-          console.log(`Trying endpoint: ${endpoint}`);
-          toolsResponse = await fetch(endpoint, {
-            method: 'GET',
-            headers: { 'Content-Type': 'application/json' },
-          });
-          if (toolsResponse.ok) {
-            console.log(`Successfully fetched tools from ${endpoint}`);
-            break;
-          }
-        } catch (e) {
-          lastError = e as Error;
-          console.log(`Failed to fetch from ${endpoint}: ${lastError.message}`);
-        }
-      }
+        // Store the serverId for later use
+        const mcpServerState = {
+          serverId,
+          serverUrl,
+          tools: connectData.tools,
+        };
+        localStorage.setItem(`mcp_server_${selectedMcpServer}`, JSON.stringify(mcpServerState));
 
-      if (toolsResponse && toolsResponse.ok) {
-        const toolsData = await toolsResponse.json();
-        console.log('Tools data received:', toolsData);
-        const tools = (toolsData.tools || toolsData || []).map((tool: any) => ({
+        // Convert tools to Claude-compatible format
+        const tools = (connectData.tools || []).map((tool: any) => ({
           name: tool.name,
           description: tool.description || `Execute ${tool.name} tool`,
-          input_schema: tool.input_schema || {
+          input_schema: tool.inputSchema || tool.input_schema || {
             type: 'object',
             properties: {},
             required: [],
           },
         }));
+
         console.log('Parsed tools:', tools);
         return tools;
+      } else {
+        const errorData = await connectResponse.json();
+        console.error('Failed to connect to MCP server:', errorData);
       }
     } catch (error) {
-      console.error('Error fetching MCP tools:', error);
+      console.error('Error fetching MCP tools via bridge:', error);
     }
 
-    // Fallback: Create default tools for common MCP operations
-    return [
-      {
-        name: 'get_data',
-        description: 'Fetch data from the MCP server',
-        input_schema: {
-          type: 'object',
-          properties: {
-            query: { type: 'string', description: 'The query or endpoint to call' },
-            parameters: { type: 'object', description: 'Query parameters' },
-          },
-          required: ['query'],
-        },
-      },
-    ];
+    // Fallback: Return empty array to indicate no tools available
+    return [];
   };
 
-  // Execute tool calls from Claude
+  // Execute tool calls from Claude via MCP Bridge
   const executeMcpTool = async (toolName: string, toolInput: any): Promise<string> => {
     const selectedServer = mcpServers.find(s => s.id === selectedMcpServer);
     if (!selectedServer) return 'MCP server not configured';
 
     try {
-      // Get the server URL - check multiple possible locations
-      const serverUrl = (selectedServer as any).url || selectedServer.config?.url || selectedServer.name;
-      console.log(`Executing tool "${toolName}" on server: ${serverUrl}`);
+      const bridgeUrl = process.env.REACT_APP_MCP_BRIDGE_URL || 'http://localhost:3001';
 
-      // Try multiple endpoint patterns
-      const endpoints = [
-        `${serverUrl}/execute`,
-        `${serverUrl}/v1/execute`,
-        `${serverUrl.replace(/\/$/, '')}/api/execute`,
-        `${serverUrl.replace(/\/$/, '')}/call`,
-      ];
-
-      let response: Response | null = null;
-      let lastError: Error | null = null;
-
-      for (const endpoint of endpoints) {
-        try {
-          console.log(`Trying tool endpoint: ${endpoint}`);
-          response = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              tool: toolName,
-              input: toolInput,
-            }),
-          });
-          if (response.ok) {
-            console.log(`Successfully executed tool on ${endpoint}`);
-            break;
-          }
-        } catch (e) {
-          lastError = e as Error;
-          console.log(`Failed to execute on ${endpoint}: ${lastError.message}`);
-        }
+      // Get the stored serverId from the bridge connection
+      const mcpServerState = localStorage.getItem(`mcp_server_${selectedMcpServer}`);
+      if (!mcpServerState) {
+        console.warn('MCP server not connected to bridge, reconnecting...');
+        // Try to rebuild tools which will connect to bridge
+        await buildMcpTools();
       }
 
-      if (response && response.ok) {
+      const state = mcpServerState ? JSON.parse(mcpServerState) : null;
+      const serverId = state?.serverId;
+
+      if (!serverId) {
+        return 'MCP server connection lost, please reconnect';
+      }
+
+      console.log(`Executing tool "${toolName}" via MCP Bridge on server: ${serverId}`);
+
+      const response = await fetch(`${bridgeUrl}/api/mcp/servers/${serverId}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: toolName,
+          input: toolInput,
+        }),
+      });
+
+      if (response.ok) {
         const result = await response.json();
-        console.log('Tool result:', result);
-        return JSON.stringify(result);
+        console.log('Tool result from bridge:', result);
+        return JSON.stringify(result.result || result);
       } else {
-        const errorMsg = response ? `Tool execution failed: ${response.statusText}` : `All endpoints failed. Last error: ${lastError?.message}`;
+        const errorData = await response.json();
+        const errorMsg = `Tool execution failed: ${errorData.message || response.statusText}`;
         console.error(errorMsg);
         return errorMsg;
       }
     } catch (error) {
-      console.error('Error executing MCP tool:', error);
+      console.error('Error executing MCP tool via bridge:', error);
       return `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
     }
   };
