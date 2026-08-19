@@ -1741,15 +1741,36 @@ Use these tools to fetch real-time data and provide accurate responses. Call the
                           <Space direction="vertical" style={{ width: '100%' }}>
                             {mcpServers.length > 0 ? mcpServers.map((server) => (
                               <Card key={server.id} size="small" style={{ cursor: 'pointer', background: selectedMcpServer === server.id ? REDWOOD.autopilotPurple + '15' : 'transparent', border: selectedMcpServer === server.id ? `2px solid ${REDWOOD.autopilotPurple}` : `1px solid ${REDWOOD.neutral200}` }}>
-                                <div onClick={() => handleMcpServerSelect(server.id)}>
+                                <div>
                                   <Text strong style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>{server.name}</Text>
                                   <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>{server.description}</Text>
-                                  <div style={{ display: 'flex', gap: 8 }}>
+                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
                                     <Button size="small" type={selectedMcpServer === server.id ? 'primary' : 'default'} onClick={() => handleMcpServerSelect(server.id)}>
                                       {selectedMcpServer === server.id ? 'Connected' : 'Connect'}
                                     </Button>
+                                    <Button size="small" onClick={async () => {
+                                      try {
+                                        const serverUrl = (server as any).url || server.config?.url || server.name;
+                                        console.log('Testing MCP server connection to:', serverUrl);
+                                        const res = await fetch(`${serverUrl}/tools`, { method: 'GET' });
+                                        console.log('Server response:', res.status, res.statusText);
+                                        Modal.success({
+                                          title: 'Server Reachable',
+                                          content: `Server responded with status ${res.status}`,
+                                        });
+                                      } catch (e) {
+                                        console.error('Connection test failed:', e);
+                                        Modal.error({
+                                          title: 'Connection Failed',
+                                          content: `${e instanceof Error ? e.message : 'Unknown error'}`,
+                                        });
+                                      }
+                                    }}>
+                                      Test
+                                    </Button>
                                     <Text type="secondary" style={{ fontSize: 10, lineHeight: '32px' }}>{server.type}</Text>
                                   </div>
+                                  <Text type="secondary" style={{ fontSize: 9, display: 'block', wordBreak: 'break-all' }}>URL: {(server as any).url || server.config?.url || server.name}</Text>
                                 </div>
                               </Card>
                             )) : (
