@@ -164,6 +164,34 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     }
   };
 
+  const fetchClaudeKeyFromServer = async () => {
+    try {
+      const response = await fetch('https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp/settings/claudekey', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const key = data.claude_api_key || data.key || data.apiKey || '';
+        if (key) {
+          setClaudeApiKey(key);
+          localStorage.setItem('claude_api_key', key);
+          setClaudeEnabled(true);
+          localStorage.setItem('autopilot_claude_enabled', 'true');
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching Claude key:', error);
+    }
+  };
+
+  // Fetch Claude key when settings modal opens
+  useEffect(() => {
+    if (showMcpSettings && !claudeApiKey) {
+      fetchClaudeKeyFromServer();
+    }
+  }, [showMcpSettings, claudeApiKey]);
+
   const handleClaudeToggle = (checked: boolean) => {
     if (checked && !claudeApiKey) {
       Modal.info({
