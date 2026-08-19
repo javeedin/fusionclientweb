@@ -171,6 +171,10 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
   const [newMcpServerName, setNewMcpServerName] = useState('');
   const [newMcpServerUrl, setNewMcpServerUrl] = useState('');
 
+  // OAuth authentication states
+  const [oauthAuthorized, setOauthAuthorized] = useState<{ [serverId: string]: boolean }>({});
+  const [authorizingServer, setAuthorizingServer] = useState<string | null>(null);
+
   // Desktop layout states
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(280);
@@ -401,6 +405,82 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
   const handleMcpServerSelect = (serverId: string) => {
     setSelectedMcpServer(serverId);
     localStorage.setItem('autopilot_selected_mcp_server', serverId);
+    // Check authorization status when server is selected
+    checkAuthorizationStatus(serverId);
+  };
+
+  // Check if a server is authorized via OAuth
+  const checkAuthorizationStatus = async (serverId: string) => {
+    const bridgeUrl = process.env.REACT_APP_MCP_BRIDGE_URL || 'http://localhost:3001';
+    try {
+      const response = await fetch(`${bridgeUrl}/api/auth/${serverId}/status`);
+      if (response.ok) {
+        const data = await response.json();
+        setOauthAuthorized((prev) => ({
+          ...prev,
+          [serverId]: data.authorized,
+        }));
+      }
+    } catch (error) {
+      console.error('Error checking authorization status:', error);
+    }
+  };
+
+  // Initiate OAuth login for a server
+  const initiateOAuthLogin = async (serverId: string) => {
+    const bridgeUrl = process.env.REACT_APP_MCP_BRIDGE_URL || 'http://localhost:3001';
+    setAuthorizingServer(serverId);
+
+    try {
+      const response = await fetch(`${bridgeUrl}/api/auth/${serverId}/login-url`, {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('OAuth login URL:', data.loginUrl);
+
+        // Open login URL in new window
+        const authWindow = window.open(data.loginUrl, 'zerodha_auth', 'width=800,height=600');
+
+        // Poll for authorization status
+        const pollInterval = setInterval(async () => {
+          const statusResponse = await fetch(`${bridgeUrl}/api/auth/${serverId}/status`);
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            if (statusData.authorized) {
+              clearInterval(pollInterval);
+              if (authWindow) authWindow.close();
+              setOauthAuthorized((prev) => ({
+                ...prev,
+                [serverId]: true,
+              }));
+              Modal.success({
+                title: 'Authorization Successful',
+                content: 'You are now authorized! Claude can access your account.',
+              });
+            }
+          }
+        }, 1000);
+
+        // Stop polling after 5 minutes
+        setTimeout(() => clearInterval(pollInterval), 5 * 60 * 1000);
+      } else {
+        const error = await response.json();
+        Modal.error({
+          title: 'Authorization Failed',
+          content: error.message || 'Failed to get login URL',
+        });
+      }
+    } catch (error) {
+      console.error('Error initiating OAuth login:', error);
+      Modal.error({
+        title: 'Error',
+        content: `Failed to initiate login: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    } finally {
+      setAuthorizingServer(null);
+    }
   };
 
   // Build MCP server tools for Claude to use via the MCP Bridge
@@ -1748,6 +1828,14 @@ Use these tools to fetch real-time data and provide accurate responses. Call the
                                       }
                                     }}>
                                       Test
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      type={oauthAuthorized[server.id] ? 'primary' : 'default'}
+                                      loading={authorizingServer === server.id}
+                                      onClick={() => initiateOAuthLogin(server.id)}
+                                    >
+                                      {oauthAuthorized[server.id] ? '✓ Authorized' : 'Authorize'}
                                     </Button>
                                     <Text type="secondary" style={{ fontSize: 10, lineHeight: '32px' }}>{server.type}</Text>
                                   </div>

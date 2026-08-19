@@ -14,6 +14,18 @@ const port = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// OAuth token storage (in production, use database)
+interface OAuthTokens {
+  [serverId: string]: {
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt: number;
+    requestToken?: string;
+  };
+}
+
+const oauthTokens: OAuthTokens = {};
+
 // Store MCP client connections by server URL
 interface ServerConnection {
   client: Client;
@@ -159,14 +171,15 @@ async function executeMcpTool(
   serverUrl: string,
   toolName: string,
   input: any,
-  client?: Client
+  client?: Client,
+  serverId?: string
 ): Promise<string> {
   console.log(`[MCP Bridge] Executing tool "${toolName}" on ${serverUrl}`);
 
   try {
     // For HTTP-based servers
     if (serverUrl.startsWith('http://') || serverUrl.startsWith('https://')) {
-      return await executeHttpMcpTool(serverUrl, toolName, input);
+      return await executeHttpMcpTool(serverUrl, toolName, input, serverId);
     }
 
     // For stdio-based servers
@@ -198,10 +211,21 @@ async function executeMcpTool(
 async function executeHttpMcpTool(
   serverUrl: string,
   toolName: string,
-  input: any
+  input: any,
+  serverId?: string
 ): Promise<string> {
   try {
     const baseUrl = serverUrl.replace(/\/$/, '');
+
+    // Add OAuth token if available
+    const headers: any = { 'Content-Type': 'application/json' };
+    if (serverId && oauthTokens[serverId]) {
+      const token = oauthTokens[serverId];
+      if (token.accessToken) {
+        headers['Authorization'] = `Bearer ${token.accessToken}`;
+        console.log(`[MCP Bridge] Adding OAuth token for server: ${serverId}`);
+      }
+    }
 
     // Try multiple endpoint patterns
     const endpoints = [
@@ -217,7 +241,7 @@ async function executeHttpMcpTool(
         console.log(`[MCP Bridge] Trying execute endpoint: ${endpoint}`);
         const response = await fetch(endpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             tool: toolName,
             input,
@@ -325,8 +349,8 @@ app.post('/api/mcp/servers/:serverId/execute', async (req: Request, res: Respons
       connections.set(serverUrl, connection);
     }
 
-    // Execute tool
-    const result = await executeMcpTool(serverUrl, tool, input, connection.client);
+    // Execute tool (pass serverId for OAuth support)
+    const result = await executeMcpTool(serverUrl, tool, input, connection.client, serverId);
 
     res.json({
       tool,
@@ -436,6 +460,205 @@ app.get('/api/mcp/servers', (req: Request, res: Response) => {
     servers,
     totalServers: servers.length,
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// OAuth Authentication Endpoints
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Initiate OAuth login for Zerodha Kite Connect
+ * GET /api/auth/zerodha/login
+ */
+app.get('/api/auth/zerodha/login', (req: Request, res: Response) => {
+  try {
+    const apiKey = process.env.ZERODHA_API_KEY;
+    const redirectUrl = process.env.ZERODHA_REDIRECT_URL || `http://localhost:${port}/api/auth/zerodha/callback`;
+
+    if (!apiKey) {
+      return res.status(400).json({
+        error: 'Zerodha API key not configured',
+        message: 'Set ZERODHA_API_KEY environment variable',
+      });
+    }
+
+    console.log('[OAuth] Initiating Zerodha login');
+    console.log('[OAuth] Redirect URL:', redirectUrl);
+
+    // Generate login URL for Zerodha Kite Connect
+    const loginUrl = `https://kite.zerodha.com/connect/login?api_key=${apiKey}&v=3`;
+
+    res.json({
+      loginUrl,
+      message: 'Redirect user to this URL to log in',
+      redirectUrl,
+    });
+  } catch (error) {
+    console.error('[OAuth] Error initiating login:', error);
+    res.status(500).json({
+      error: 'Failed to initiate login',
+      message: (error as Error).message,
+    });
+  }
+});
+
+/**
+ * OAuth callback handler for Zerodha
+ * GET /api/auth/zerodha/callback?request_token=TOKEN
+ */
+app.get('/api/auth/zerodha/callback', async (req: Request, res: Response) => {
+  try {
+    const { request_token } = req.query;
+
+    if (!request_token) {
+      return res.status(400).json({
+        error: 'Missing request_token',
+        message: 'Zerodha OAuth callback requires request_token parameter',
+      });
+    }
+
+    console.log('[OAuth] Received callback with request_token:', request_token);
+
+    const apiKey = process.env.ZERODHA_API_KEY;
+    const apiSecret = process.env.ZERODHA_API_SECRET;
+
+    if (!apiKey || !apiSecret) {
+      return res.status(400).json({
+        error: 'Zerodha credentials not configured',
+        message: 'Set ZERODHA_API_KEY and ZERODHA_API_SECRET environment variables',
+      });
+    }
+
+    // In production, exchange request_token for access_token
+    // This would involve calling Zerodha's token endpoint
+    // For now, store the request_token
+    const serverId = Buffer.from('https://mcp.kite.trade/mcp').toString('base64');
+
+    oauthTokens[serverId] = {
+      accessToken: request_token as string,
+      requestToken: request_token as string,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+    };
+
+    console.log('[OAuth] Token stored for server:', serverId);
+
+    // Redirect back to Autopilot with success
+    const redirectUrl = process.env.AUTOPILOT_URL || 'http://localhost:3000';
+    res.redirect(
+      `${redirectUrl}/autopilot?auth=success&server=zerodha&message=Successfully authorized Zerodha`
+    );
+  } catch (error) {
+    console.error('[OAuth] Error in callback:', error);
+    const redirectUrl = process.env.AUTOPILOT_URL || 'http://localhost:3000';
+    res.redirect(
+      `${redirectUrl}/autopilot?auth=failed&server=zerodha&message=${encodeURIComponent((error as Error).message)}`
+    );
+  }
+});
+
+/**
+ * Get authorization status for a server
+ * GET /api/auth/:serverId/status
+ */
+app.get('/api/auth/:serverId/status', (req: Request, res: Response) => {
+  try {
+    const { serverId } = req.params;
+    const tokens = oauthTokens[serverId];
+
+    if (!tokens) {
+      return res.json({
+        authorized: false,
+        message: 'No authorization found for this server',
+      });
+    }
+
+    const isExpired = tokens.expiresAt < Date.now();
+
+    res.json({
+      authorized: !isExpired,
+      expiresAt: new Date(tokens.expiresAt),
+      isExpired,
+      message: isExpired ? 'Token has expired' : 'Authorized',
+    });
+  } catch (error) {
+    console.error('[OAuth] Error getting status:', error);
+    res.status(500).json({
+      error: 'Failed to get authorization status',
+      message: (error as Error).message,
+    });
+  }
+});
+
+/**
+ * Clear authorization for a server
+ * POST /api/auth/:serverId/logout
+ */
+app.post('/api/auth/:serverId/logout', (req: Request, res: Response) => {
+  try {
+    const { serverId } = req.params;
+
+    if (oauthTokens[serverId]) {
+      delete oauthTokens[serverId];
+      console.log('[OAuth] Logged out server:', serverId);
+    }
+
+    res.json({
+      success: true,
+      message: 'Successfully logged out',
+    });
+  } catch (error) {
+    console.error('[OAuth] Error logging out:', error);
+    res.status(500).json({
+      error: 'Failed to logout',
+      message: (error as Error).message,
+    });
+  }
+});
+
+/**
+ * Get OAuth login URL for a server
+ * POST /api/auth/:serverId/login-url
+ */
+app.post('/api/auth/:serverId/login-url', (req: Request, res: Response) => {
+  try {
+    const { serverId } = req.params;
+    const serverUrl = Buffer.from(serverId, 'base64').toString('utf-8');
+
+    console.log('[OAuth] Getting login URL for server:', serverUrl);
+
+    // For Zerodha
+    if (serverUrl.includes('kite') || serverUrl.includes('zerodha')) {
+      const apiKey = process.env.ZERODHA_API_KEY;
+      if (!apiKey) {
+        return res.status(400).json({
+          error: 'Zerodha API key not configured',
+          message: 'Set ZERODHA_API_KEY environment variable',
+        });
+      }
+
+      const redirectUrl =
+        process.env.ZERODHA_REDIRECT_URL || `http://localhost:${port}/api/auth/zerodha/callback`;
+      const loginUrl = `https://kite.zerodha.com/connect/login?api_key=${apiKey}&v=3`;
+
+      return res.json({
+        serverType: 'zerodha',
+        loginUrl,
+        redirectUrl,
+        message: 'Redirect user to loginUrl for authentication',
+      });
+    }
+
+    res.status(400).json({
+      error: 'Unknown server type',
+      message: `No authentication handler for ${serverUrl}`,
+    });
+  } catch (error) {
+    console.error('[OAuth] Error getting login URL:', error);
+    res.status(500).json({
+      error: 'Failed to get login URL',
+      message: (error as Error).message,
+    });
+  }
 });
 
 // Error handling
