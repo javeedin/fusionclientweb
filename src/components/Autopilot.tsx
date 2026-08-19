@@ -795,8 +795,9 @@ You can use this MCP server to enhance your responses with external integrations
         setQeStep('awaiting_amount');
         addAssistantMessage(`Selected: ${match.supplier} (${match.supplierNumber})\n\nEnter the invoice amount:`);
       } else {
-        // If Claude is enabled and input doesn't look like a supplier search, use Claude
-        if (claudeEnabled && claudeApiKey && (input.includes('?') || input.includes('what') || input.includes('how') || input.includes('why'))) {
+        // If Claude is enabled, use Claude for general questions
+        const isQuestion = input.includes('?') || lower.includes('what') || lower.includes('how') || lower.includes('why') || lower.includes('is ') || lower.includes('price') || lower.includes('rate');
+        if (claudeEnabled && claudeApiKey && isQuestion) {
           try {
             const response = await callClaudeApi(input, buildConversationContext());
             addAssistantMessage(response);
