@@ -203,6 +203,34 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     }
   }, []);
 
+  // Handle panel resizing
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (resizingLeft) {
+        const newWidth = Math.max(200, Math.min(500, e.clientX));
+        setLeftPanelWidth(newWidth);
+      }
+      if (resizingRight) {
+        const newWidth = Math.max(200, Math.min(500, window.innerWidth - e.clientX));
+        setRightPanelWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setResizingLeft(false);
+      setResizingRight(false);
+    };
+
+    if (resizingLeft || resizingRight) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [resizingLeft, resizingRight]);
+
   // Check if Claude is enabled but no API key
   useEffect(() => {
     if (claudeEnabled && !claudeApiKey) {
@@ -515,6 +543,15 @@ You can use this MCP server to enhance your responses with external integrations
   const [isProcessing, setIsProcessing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Sync messages to current session
+  useEffect(() => {
+    if (isFullScreen && currentSessionId) {
+      setChatSessions((prev) => prev.map((session) =>
+        session.id === currentSessionId ? { ...session, messages, updatedAt: new Date() } : session
+      ));
+    }
+  }, [messages, currentSessionId, isFullScreen]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -1452,6 +1489,116 @@ You can use this MCP server to enhance your responses with external integrations
           />
         </Space>
       </Modal>
+
+      {/* Full Screen Desktop Mode */}
+      {isFullScreen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', background: REDWOOD.surface, zIndex: 2000 }}>
+          {/* Top Bar */}
+          <div style={{ padding: '12px 20px', borderBottom: `1px solid ${REDWOOD.neutral200}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: REDWOOD.autopilotGradient }}>
+            <Text strong style={{ color: '#fff', fontSize: 18 }}>🤖 Autopilot AI</Text>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <Tooltip title="Toggle sidebar">
+                <Button type="text" icon={showLeftPanel ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} onClick={() => setShowLeftPanel(!showLeftPanel)} style={{ color: '#fff' }} />
+              </Tooltip>
+              <Tooltip title="Exit full screen">
+                <Button type="text" icon={<CloseOutlined />} onClick={() => setIsFullScreen(false)} style={{ color: '#fff' }} />
+              </Tooltip>
+            </div>
+          </div>
+
+          {/* Main Content */}
+          <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+            {/* Left Sidebar */}
+            {showLeftPanel && (
+              <>
+                <div style={{ width: leftPanelWidth, borderRight: `1px solid ${REDWOOD.neutral200}`, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: REDWOOD.neutral100 }}>
+                  <Tabs defaultActiveKey="chats" style={{ flex: 1, display: 'flex', flexDirection: 'column' }} items={[
+                    {
+                      key: 'chats',
+                      label: <span><MessageOutlined /> Chats</span>,
+                      children: (
+                        <List style={{ flex: 1, overflow: 'auto' }} dataSource={chatSessions} renderItem={(session) => (
+                          <List.Item onClick={() => setCurrentSessionId(session.id)} style={{ cursor: 'pointer', background: currentSessionId === session.id ? REDWOOD.autopilotPurple + '10' : 'transparent', padding: '8px 12px' }}>
+                            <Text style={{ fontSize: 12 }}>{session.isPinned && <PushpinOutlined style={{ marginRight: 6 }} />}{session.title}</Text>
+                          </List.Item>
+                        )} />
+                      ),
+                    },
+                    {
+                      key: 'tasks',
+                      label: <span><CheckCircleOutlined /> Tasks</span>,
+                      children: (
+                        <List style={{ flex: 1, overflow: 'auto' }} dataSource={tasks} renderItem={(task) => (
+                          <List.Item style={{ padding: '8px 12px' }}>
+                            <Text style={{ fontSize: 12, textDecoration: task.completed ? 'line-through' : 'none' }}>{task.title}</Text>
+                          </List.Item>
+                        )} />
+                      ),
+                    },
+                  ]} />
+                </div>
+                {/* Resize Handle */}
+                <div onMouseDown={() => setResizingLeft(true)} style={{ width: 4, background: REDWOOD.neutral300, cursor: 'col-resize', transition: 'background 0.2s' }} onMouseEnter={(e) => e.currentTarget.style.background = REDWOOD.autopilotPurple} onMouseLeave={(e) => e.currentTarget.style.background = REDWOOD.neutral300} />
+              </>
+            )}
+
+            {/* Chat Area */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              {/* Messages */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: 16, background: REDWOOD.neutral100 }}>
+                {messages.length > 0 ? messages.map((msg) => (
+                  <div key={msg.id} style={{ display: 'flex', justifyContent: msg.type === 'user' ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
+                    <div style={{ maxWidth: '70%', padding: '12px 16px', borderRadius: 12, background: msg.type === 'user' ? REDWOOD.autopilotPurple : REDWOOD.surface, color: msg.type === 'user' ? '#fff' : REDWOOD.neutral900, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', whiteSpace: 'pre-wrap' }}>
+                      {msg.content}
+                    </div>
+                  </div>
+                )) : <Empty description="No messages yet" />}
+              </div>
+
+              {/* Input */}
+              <div style={{ padding: 16, borderTop: `1px solid ${REDWOOD.neutral200}`, background: REDWOOD.surface }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <TextArea value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyPress={handleKeyPress} placeholder="Ask anything..." autoSize={{ minRows: 1, maxRows: 4 }} style={{ borderRadius: 8, fontSize: 14 }} />
+                  <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={isProcessing} size="large" />
+                </div>
+              </div>
+            </div>
+
+            {/* Right Panel - Documents */}
+            {showRightPanel && (
+              <>
+                {/* Resize Handle */}
+                <div onMouseDown={() => setResizingRight(true)} style={{ width: 4, background: REDWOOD.neutral300, cursor: 'col-resize' }} onMouseEnter={(e) => e.currentTarget.style.background = REDWOOD.autopilotPurple} onMouseLeave={(e) => e.currentTarget.style.background = REDWOOD.neutral300} />
+                <div style={{ width: rightPanelWidth, borderLeft: `1px solid ${REDWOOD.neutral200}`, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: REDWOOD.neutral100 }}>
+                  <div style={{ padding: 12, borderBottom: `1px solid ${REDWOOD.neutral200}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text strong style={{ fontSize: 12 }}><FileTextOutlined /> Documents</Text>
+                    <Button type="text" size="small" icon={<DownloadOutlined />} />
+                  </div>
+                  {documents.length > 0 ? (
+                    <List style={{ flex: 1, overflow: 'auto' }} dataSource={documents} renderItem={(doc) => (
+                      <List.Item onClick={() => setSelectedDocument(doc)} style={{ cursor: 'pointer', background: selectedDocument?.id === doc.id ? REDWOOD.autopilotPurple + '10' : 'transparent', padding: '8px 12px' }}>
+                        <div>
+                          <Text style={{ fontSize: 12, display: 'block' }}>{doc.name}</Text>
+                          <Text type="secondary" style={{ fontSize: 10 }}>{(doc.size / 1024).toFixed(2)} KB</Text>
+                        </div>
+                      </List.Item>
+                    )} />
+                  ) : (
+                    <Empty description="No documents" />
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Button to enter fullscreen */}
+      {!isFullScreen && (
+        <Tooltip title="Full screen mode">
+          <Button onClick={() => setIsFullScreen(true)} icon={<MenuUnfoldOutlined />} style={{ position: 'fixed', top: 20, right: 20, zIndex: 1999 }} type="primary" />
+        </Tooltip>
+      )}
 
       {/* CSS Animations */}
       <style>{`
