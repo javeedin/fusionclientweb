@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Typography, Input, Tooltip, Badge, Spin, Switch, Select, Modal, Card, Space, Button, Divider, Alert } from 'antd';
+import { Typography, Input, Tooltip, Badge, Spin, Switch, Select, Modal, Card, Space, Button, Divider, Alert, Tabs, List, Empty } from 'antd';
 import dayjs from 'dayjs';
 import {
   RobotOutlined,
@@ -13,6 +13,15 @@ import {
   UserOutlined,
   SettingOutlined,
   LinkOutlined,
+  ClockCircleOutlined,
+  PushpinOutlined,
+  MessageOutlined,
+  CheckCircleOutlined,
+  DeleteOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  FileTextOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../config/api.config';
@@ -93,6 +102,33 @@ interface MCPServer {
   config: any;
 }
 
+interface ChatSession {
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: Date;
+  updatedAt: Date;
+  isPinned: boolean;
+}
+
+interface Task {
+  id: string;
+  title: string;
+  description: string;
+  completed: boolean;
+  createdAt: Date;
+  dueDate?: Date;
+}
+
+interface Document {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+  size: number;
+  downloadedAt: Date;
+}
+
 interface AutopilotProps {
   module?: 'gl' | 'ap';
   externalOpen?: boolean;       // when provided, hides the built-in button; open state is driven externally
@@ -135,9 +171,36 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
   const [newMcpServerName, setNewMcpServerName] = useState('');
   const [newMcpServerUrl, setNewMcpServerUrl] = useState('');
 
+  // Desktop layout states
+  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(280);
+  const [rightPanelWidth, setRightPanelWidth] = useState(300);
+  const [showLeftPanel, setShowLeftPanel] = useState(true);
+  const [showRightPanel, setShowRightPanel] = useState(true);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [resizingLeft, setResizingLeft] = useState(false);
+  const [resizingRight, setResizingRight] = useState(false);
+
   // Load MCP servers on mount
   useEffect(() => {
     loadMcpServers();
+    // Initialize with a default chat session if in fullscreen mode
+    if (isFullScreen && chatSessions.length === 0) {
+      const newSession: ChatSession = {
+        id: Date.now().toString(),
+        title: 'New Chat',
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        isPinned: false,
+      };
+      setChatSessions([newSession]);
+      setCurrentSessionId(newSession.id);
+    }
   }, []);
 
   // Check if Claude is enabled but no API key
