@@ -397,6 +397,82 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     localStorage.setItem('autopilot_selected_mcp_server', serverId);
   };
 
+  // Build MCP server tools for Claude to use
+  const buildMcpTools = async (): Promise<any[]> => {
+    if (!selectedMcpServer) return [];
+
+    const selectedServer = mcpServers.find(s => s.id === selectedMcpServer);
+    if (!selectedServer) return [];
+
+    try {
+      // Fetch tools from MCP server
+      const toolsResponse = await fetch(`${selectedServer.config?.url || selectedServer.name}/tools`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (toolsResponse.ok) {
+        const toolsData = await toolsResponse.json();
+        const tools = (toolsData.tools || toolsData || []).map((tool: any) => ({
+          name: tool.name,
+          description: tool.description || `Execute ${tool.name} tool`,
+          input_schema: tool.input_schema || {
+            type: 'object',
+            properties: {},
+            required: [],
+          },
+        }));
+        return tools;
+      }
+    } catch (error) {
+      console.error('Error fetching MCP tools:', error);
+    }
+
+    // Fallback: Create default tools for common MCP operations
+    return [
+      {
+        name: 'get_data',
+        description: 'Fetch data from the MCP server',
+        input_schema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'The query or endpoint to call' },
+            parameters: { type: 'object', description: 'Query parameters' },
+          },
+          required: ['query'],
+        },
+      },
+    ];
+  };
+
+  // Execute tool calls from Claude
+  const executeMcpTool = async (toolName: string, toolInput: any): Promise<string> => {
+    const selectedServer = mcpServers.find(s => s.id === selectedMcpServer);
+    if (!selectedServer) return 'MCP server not configured';
+
+    try {
+      const serverUrl = selectedServer.config?.url || selectedServer.name;
+      const response = await fetch(`${serverUrl}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: toolName,
+          input: toolInput,
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        return JSON.stringify(result);
+      } else {
+        return `Tool execution failed: ${response.statusText}`;
+      }
+    } catch (error) {
+      console.error('Error executing MCP tool:', error);
+      return `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    }
+  };
+
   const callClaudeApi = async (userMessage: string, conversationContext: string): Promise<string> => {
     if (!claudeApiKey) {
       throw new Error('Claude API key not configured');
@@ -404,19 +480,19 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
 
     let mcpContext = '';
     let mcpServerInfo = '';
+    const mcpTools = await buildMcpTools();
+
     if (selectedMcpServer) {
       const selectedServer = mcpServers.find(s => s.id === selectedMcpServer);
       if (selectedServer) {
         mcpServerInfo = ` You have access to the MCP Server "${selectedServer.name}" (${selectedServer.type}) for enhanced capabilities.`;
-        mcpContext = `\n\n=== IMPORTANT: MCP SERVER INTEGRATION ===
-You have access to an MCP Server that provides external integration:
-- Name: ${selectedServer.name}
-- Type: ${selectedServer.type}
-- Description: ${selectedServer.description}
-- Status: ${selectedServer.status}
+        mcpContext = `\n\n=== MCP SERVER TOOLS AVAILABLE ===
+Server: ${selectedServer.name} (${selectedServer.type})
+Description: ${selectedServer.description}
+Available Tools: ${mcpTools.map(t => t.name).join(', ')}
 
-INSTRUCTIONS: When the user asks questions related to this MCP server's capabilities, use the server to fetch real-time data and provide accurate responses. Include the MCP server name in your response when using it.
-=========================================`;
+Use these tools to fetch real-time data and provide accurate responses. Call the appropriate tool when the user's question requires data from the MCP server.
+===================================`;
       }
     }
 
@@ -427,30 +503,90 @@ INSTRUCTIONS: When the user asks questions related to this MCP server's capabili
     const systemPrompt = baseSystemPrompt + mcpServerInfo;
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': claudeApiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-5',
-          max_tokens: 1024,
-          system: systemPrompt + mcpContext,
-          messages: [
-            { role: 'user', content: `${conversationContext}\n\nUser: ${userMessage}` }
-          ],
-        }),
-      });
+      // Agentic loop - keep calling Claude until it gives a final response
+      const messages: any[] = [
+        { role: 'user', content: `${conversationContext}\n\nUser: ${userMessage}` }
+      ];
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Claude API error: ${errorData.error?.message || 'Unknown error'}`);
+      let maxIterations = 5;
+      let iteration = 0;
+
+      while (iteration < maxIterations) {
+        iteration++;
+
+        const requestBody: any = {
+          model: 'claude-sonnet-5',
+          max_tokens: 2048,
+          system: systemPrompt + mcpContext,
+          messages,
+        };
+
+        // Include tools if available
+        if (mcpTools.length > 0) {
+          requestBody.tools = mcpTools;
+        }
+
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': claudeApiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Claude API error: ${errorData.error?.message || 'Unknown error'}`);
+        }
+
+        const data = await response.json();
+        const content = data.content || [];
+
+        // Check if Claude wants to use a tool
+        const toolUse = content.find((block: any) => block.type === 'tool_use');
+        const textBlock = content.find((block: any) => block.type === 'text');
+
+        if (toolUse) {
+          // Claude wants to call a tool
+          console.log(`Claude calling tool: ${toolUse.name} with input:`, toolUse.input);
+
+          // Execute the tool
+          const toolResult = await executeMcpTool(toolUse.name, toolUse.input);
+
+          // Add Claude's response to messages
+          messages.push({
+            role: 'assistant',
+            content,
+          });
+
+          // Add tool result
+          messages.push({
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: toolUse.id,
+                content: toolResult,
+              },
+            ],
+          });
+
+          // Continue loop for Claude to process the tool result
+          continue;
+        }
+
+        // Claude gave a final response (no tool use)
+        if (textBlock) {
+          return textBlock.text;
+        }
+
+        // Fallback
+        return data.content[0]?.text || 'No response from Claude';
       }
 
-      const data = await response.json();
-      return data.content[0]?.text || 'No response from Claude';
+      return 'Claude exceeded maximum tool iterations';
     } catch (error) {
       console.error('Claude API error:', error);
       throw error;
