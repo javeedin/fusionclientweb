@@ -131,6 +131,9 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
   const [apiKeyMissing, setApiKeyMissing] = useState(false);
   const [testingApiKey, setTestingApiKey] = useState(false);
   const [apiKeyTestResult, setApiKeyTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [showAddMcpServer, setShowAddMcpServer] = useState(false);
+  const [newMcpServerName, setNewMcpServerName] = useState('');
+  const [newMcpServerUrl, setNewMcpServerUrl] = useState('');
 
   // Load MCP servers on mount
   useEffect(() => {
@@ -163,6 +166,51 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
       console.error('Error loading MCP servers:', error);
     } finally {
       setLoadingMcpServers(false);
+    }
+  };
+
+  const addNewMcpServer = async () => {
+    if (!newMcpServerName.trim() || !newMcpServerUrl.trim()) {
+      Modal.error({
+        title: 'Missing Information',
+        content: 'Please enter both MCP Server name and URL',
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(buildApexUrl('mcp-servers'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newMcpServerName,
+          url: newMcpServerUrl,
+          type: 'REST',
+          status: 'active',
+        }),
+      });
+
+      if (response.ok) {
+        Modal.success({
+          title: 'Success',
+          content: 'MCP Server added successfully!',
+        });
+        setNewMcpServerName('');
+        setNewMcpServerUrl('');
+        setShowAddMcpServer(false);
+        await loadMcpServers();
+      } else {
+        Modal.error({
+          title: 'Error',
+          content: 'Failed to add MCP Server',
+        });
+      }
+    } catch (error) {
+      console.error('Error adding MCP server:', error);
+      Modal.error({
+        title: 'Error',
+        content: `Failed to add MCP Server: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
     }
   };
 
@@ -263,9 +311,19 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
       throw new Error('Claude API key not configured');
     }
 
-    const mcpContext = selectedMcpServer
-      ? `\n\nAvailable MCP Server: ${mcpServers.find(s => s.id === selectedMcpServer)?.name || 'Unknown'}`
-      : '';
+    let mcpContext = '';
+    if (selectedMcpServer) {
+      const selectedServer = mcpServers.find(s => s.id === selectedMcpServer);
+      if (selectedServer) {
+        mcpContext = `\n\nYou have access to an MCP Server:
+- Name: ${selectedServer.name}
+- Type: ${selectedServer.type}
+- Description: ${selectedServer.description}
+- Status: ${selectedServer.status}
+
+You can use this MCP server to enhance your responses with external integrations. When relevant to the user's question, leverage the MCP server's capabilities to provide better answers.`;
+      }
+    }
 
     const systemPrompt = module === 'ap'
       ? 'You are an expert Payables Autopilot assistant helping with invoice creation, payment processing, and supplier management. Be concise and actionable. Provide step-by-step guidance when needed.'
@@ -1209,46 +1267,59 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
 
             {loadingMcpServers ? (
               <Spin size="small" style={{ marginTop: 12 }} />
-            ) : mcpServers.length === 0 ? (
-              <Alert
-                message="No MCP Servers Available"
-                description="Create an MCP server in Admin > MCP Server Manager"
-                type="info"
-                style={{ marginTop: 12 }}
-              />
             ) : (
-              <Select
-                placeholder="Select an MCP server (optional)"
-                value={selectedMcpServer || undefined}
-                onChange={handleMcpServerSelect}
-                style={{ width: '100%', marginTop: 12 }}
-                options={mcpServers.map(server => ({
-                  label: `${server.name} (${server.type})`,
-                  value: server.id,
-                  description: server.description,
-                }))}
-                optionLabelProp="label"
-              />
-            )}
+              <>
+                {mcpServers.length > 0 ? (
+                  <Select
+                    placeholder="Select an MCP server (optional)"
+                    value={selectedMcpServer || undefined}
+                    onChange={handleMcpServerSelect}
+                    style={{ width: '100%', marginTop: 12 }}
+                    options={mcpServers.map(server => ({
+                      label: `${server.name} (${server.type})`,
+                      value: server.id,
+                      description: server.description,
+                    }))}
+                    optionLabelProp="label"
+                  />
+                ) : (
+                  <Alert
+                    message="No MCP Servers Available"
+                    description="Add an MCP server below to enhance Claude's capabilities"
+                    type="info"
+                    style={{ marginTop: 12 }}
+                  />
+                )}
 
-            {selectedMcpServer && (
-              <div style={{ marginTop: 12 }}>
-                <Text type="success" style={{ fontSize: 12 }}>
-                  ✓ MCP Server Connected: {mcpServers.find(s => s.id === selectedMcpServer)?.name}
-                </Text>
-              </div>
+                {selectedMcpServer && (
+                  <div style={{ marginTop: 12 }}>
+                    <Text type="success" style={{ fontSize: 12 }}>
+                      ✓ MCP Server Connected: {mcpServers.find(s => s.id === selectedMcpServer)?.name}
+                    </Text>
+                  </div>
+                )}
+
+                <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                  <Button
+                    onClick={loadMcpServers}
+                    loading={loadingMcpServers}
+                    flex={1}
+                    icon={<ThunderboltOutlined />}
+                  >
+                    Refresh
+                  </Button>
+                  <Button
+                    onClick={() => setShowAddMcpServer(true)}
+                    type="primary"
+                    flex={1}
+                    icon={<LinkOutlined />}
+                  >
+                    Add Server
+                  </Button>
+                </div>
+              </>
             )}
           </Card>
-
-          {/* Refresh button */}
-          <Button
-            onClick={loadMcpServers}
-            loading={loadingMcpServers}
-            block
-            icon={<ThunderboltOutlined />}
-          >
-            Refresh MCP Servers
-          </Button>
 
           {/* Info */}
           <Alert
@@ -1259,6 +1330,51 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
               • Your API key is stored securely in browser localStorage
               • Only you can see your conversation history
             `}
+            type="info"
+            showIcon
+          />
+        </Space>
+      </Modal>
+
+      {/* Add MCP Server Modal */}
+      <Modal
+        title="Add New MCP Server"
+        open={showAddMcpServer}
+        onCancel={() => {
+          setShowAddMcpServer(false);
+          setNewMcpServerName('');
+          setNewMcpServerUrl('');
+        }}
+        onOk={addNewMcpServer}
+        okText="Add Server"
+        cancelText="Cancel"
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 6 }}>
+              Server Name
+            </Text>
+            <Input
+              placeholder="e.g., Zerodha Trading API"
+              value={newMcpServerName}
+              onChange={(e) => setNewMcpServerName(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 6 }}>
+              Server URL
+            </Text>
+            <Input
+              placeholder="e.g., https://api.zerodha.com"
+              value={newMcpServerUrl}
+              onChange={(e) => setNewMcpServerUrl(e.target.value)}
+            />
+          </div>
+
+          <Alert
+            message="Server Configuration"
+            description="Enter the name and URL for your MCP server. Once added, you can select it from the dropdown to use with Claude."
             type="info"
             showIcon
           />
