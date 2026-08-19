@@ -129,6 +129,8 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
   const [loadingMcpServers, setLoadingMcpServers] = useState(false);
   const [showMcpSettings, setShowMcpSettings] = useState(false);
   const [apiKeyMissing, setApiKeyMissing] = useState(false);
+  const [testingApiKey, setTestingApiKey] = useState(false);
+  const [apiKeyTestResult, setApiKeyTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Load MCP servers on mount
   useEffect(() => {
@@ -191,6 +193,52 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
       fetchClaudeKeyFromServer();
     }
   }, [showMcpSettings, claudeApiKey]);
+
+  const testClaudeApiKey = async () => {
+    if (!claudeApiKey) {
+      setApiKeyTestResult({ success: false, message: 'No API key to test' });
+      return;
+    }
+
+    setTestingApiKey(true);
+    setApiKeyTestResult(null);
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': claudeApiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-5',
+          max_tokens: 100,
+          messages: [{ role: 'user', content: 'Hello' }],
+        }),
+      });
+
+      if (response.ok) {
+        setApiKeyTestResult({
+          success: true,
+          message: '✓ Claude API key is valid and working correctly',
+        });
+      } else {
+        const errorData = await response.json();
+        setApiKeyTestResult({
+          success: false,
+          message: `✗ API error: ${errorData.error?.message || 'Unknown error'}`,
+        });
+      }
+    } catch (error) {
+      setApiKeyTestResult({
+        success: false,
+        message: `✗ Connection error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    } finally {
+      setTestingApiKey(false);
+    }
+  };
 
   const handleClaudeToggle = (checked: boolean) => {
     if (checked && !claudeApiKey) {
@@ -1112,6 +1160,28 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
                 style={{ marginTop: 12 }}
                 showIcon
               />
+            )}
+
+            {claudeApiKey && (
+              <div style={{ marginTop: 12 }}>
+                <Button
+                  onClick={testClaudeApiKey}
+                  loading={testingApiKey}
+                  block
+                  style={{ marginBottom: apiKeyTestResult ? 12 : 0 }}
+                >
+                  Test API Key
+                </Button>
+                {apiKeyTestResult && (
+                  <Alert
+                    message={apiKeyTestResult.success ? 'Test Successful' : 'Test Failed'}
+                    description={apiKeyTestResult.message}
+                    type={apiKeyTestResult.success ? 'success' : 'error'}
+                    showIcon
+                    style={{ marginTop: apiKeyTestResult ? 12 : 0 }}
+                  />
+                )}
+              </div>
             )}
           </Card>
 
