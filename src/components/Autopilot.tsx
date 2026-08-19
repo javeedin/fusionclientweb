@@ -637,6 +637,17 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
         setQeStep('awaiting_amount');
         addAssistantMessage(`Selected: ${match.supplier} (${match.supplierNumber})\n\nEnter the invoice amount:`);
       } else {
+        // If Claude is enabled and input doesn't look like a supplier search, use Claude
+        if (claudeEnabled && claudeApiKey && (input.includes('?') || input.includes('what') || input.includes('how') || input.includes('why'))) {
+          try {
+            const response = await callClaudeApi(input, buildConversationContext());
+            addAssistantMessage(response);
+          } catch (error) {
+            addAssistantMessage(`Error calling Claude: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+          return;
+        }
+
         // Show top closest matches
         const search = input.toLowerCase();
         const closest = suppliers
