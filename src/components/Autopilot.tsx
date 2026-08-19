@@ -619,35 +619,39 @@ Use these tools to fetch real-time data and provide accurate responses. Call the
         const content = data.content || [];
         console.log('Claude response content:', content);
 
-        // Check if Claude wants to use a tool
-        const toolUse = content.find((block: any) => block.type === 'tool_use');
+        // Check if Claude wants to use tools (might be multiple)
+        const toolUseBlocks = content.filter((block: any) => block.type === 'tool_use');
         const textBlock = content.find((block: any) => block.type === 'text');
 
-        if (toolUse) {
-          // Claude wants to call a tool
-          console.log(`Claude calling tool: ${toolUse.name} with input:`, toolUse.input);
+        if (toolUseBlocks.length > 0) {
+          // Claude wants to call one or more tools
+          console.log(`Claude calling ${toolUseBlocks.length} tool(s):`, toolUseBlocks.map((t: any) => t.name).join(', '));
 
-          // Execute the tool
-          const toolResult = await executeMcpTool(toolUse.name, toolUse.input);
+          // Execute all tools
+          const toolResults: any[] = [];
+          for (const toolUse of toolUseBlocks) {
+            console.log(`Executing tool: ${toolUse.name} with input:`, toolUse.input);
+            const toolResult = await executeMcpTool(toolUse.name, toolUse.input);
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: toolUse.id,
+              content: toolResult,
+            });
+          }
 
-          // Add Claude's response with tool_use to messages
+          // Add Claude's response with all tool_use blocks to messages
           messages.push({
             role: 'assistant',
             content: content,
           });
 
-          // Add tool result immediately after
+          // Add all tool results immediately after
           messages.push({
             role: 'user',
-            content: [
-              {
-                type: 'tool_result',
-                tool_use_id: toolUse.id,
-                content: toolResult,
-              },
-            ],
+            content: toolResults,
           });
 
+          console.log('Added tool results to messages, continuing loop...');
           // Continue loop for Claude to process the tool result
           continue;
         }
