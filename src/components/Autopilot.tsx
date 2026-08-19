@@ -403,22 +403,28 @@ const Autopilot: React.FC<AutopilotProps> = ({ module = 'gl', externalOpen, onEx
     }
 
     let mcpContext = '';
+    let mcpServerInfo = '';
     if (selectedMcpServer) {
       const selectedServer = mcpServers.find(s => s.id === selectedMcpServer);
       if (selectedServer) {
-        mcpContext = `\n\nYou have access to an MCP Server:
+        mcpServerInfo = ` You have access to the MCP Server "${selectedServer.name}" (${selectedServer.type}) for enhanced capabilities.`;
+        mcpContext = `\n\n=== IMPORTANT: MCP SERVER INTEGRATION ===
+You have access to an MCP Server that provides external integration:
 - Name: ${selectedServer.name}
 - Type: ${selectedServer.type}
 - Description: ${selectedServer.description}
 - Status: ${selectedServer.status}
 
-You can use this MCP server to enhance your responses with external integrations. When relevant to the user's question, leverage the MCP server's capabilities to provide better answers.`;
+INSTRUCTIONS: When the user asks questions related to this MCP server's capabilities, use the server to fetch real-time data and provide accurate responses. Include the MCP server name in your response when using it.
+=========================================`;
       }
     }
 
-    const systemPrompt = module === 'ap'
+    let baseSystemPrompt = module === 'ap'
       ? 'You are an expert Payables Autopilot assistant helping with invoice creation, payment processing, and supplier management. Be concise and actionable. Provide step-by-step guidance when needed.'
       : 'You are an expert GL (General Ledger) Autopilot assistant helping with journal entries, data synchronization, and financial reporting. Be concise and actionable.';
+
+    const systemPrompt = baseSystemPrompt + mcpServerInfo;
 
     try {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
