@@ -20,6 +20,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { postSlaToGL } from '../../services/glPosting.service';
 import { useAuth } from '../../context/AuthContext';
 import { APEX_DB_CONFIG } from '../../config/api.config';
+import { buildApexUrl } from '../../config/api.helper';
 import AccountSegmentSelector from '../../components/AccountSegmentSelector';
 import AccountSegmentDescriptions from '../../components/AccountSegmentDescriptions';
 import {
