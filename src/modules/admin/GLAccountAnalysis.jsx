@@ -80,28 +80,72 @@ export default function GLAccountAnalysis() {
     setChatLoading(true);
 
     try {
-      // Simple AI responses based on keywords
+      // AI responses based on GL data analysis
       let aiResponse = '';
+      const input = chatInput.toLowerCase();
 
-      if (
-        chatInput.toLowerCase().includes('account') ||
-        chatInput.toLowerCase().includes('balance')
-      ) {
-        aiResponse = `GL Account: ${queryParams.account} | Ledger: ${queryParams.ledger_name} | Period: ${queryParams.period_names} | Company: ${queryParams.company}`;
+      if (input.includes('total') || input.includes('sum')) {
         if (summary) {
-          aiResponse += `\n\nSummary: Total Debit: ${summary.totalDebit}, Transaction Count: ${summary.count}`;
+          const totalDebit = summary.totalDebit || 0;
+          const totalCredit = results.reduce((sum, t) => sum + (t.accountedDr === 0 ? 0 : 0), 0);
+          aiResponse = `📊 **GL Summary for Account ${queryParams.account}**\n\n`;
+          aiResponse += `• Total Debit: **AED ${totalDebit.toFixed(2)}**\n`;
+          aiResponse += `• Transaction Count: **${summary.count} transactions**\n`;
+          aiResponse += `• Period: ${summary.period}\n`;
+          aiResponse += `• Ledger: ${queryParams.ledger_name}\n`;
+          aiResponse += `• Company: ${queryParams.company}`;
+        } else {
+          aiResponse = 'Please run a query first to see the total debit amount.';
         }
-      } else if (chatInput.toLowerCase().includes('transaction')) {
-        aiResponse = `Found ${results.length} GL transactions for the current query.${
-          results.length > 0 ? ` Latest transaction: ${results[0].description}` : ''
-        }`;
-      } else if (chatInput.toLowerCase().includes('ledger')) {
-        aiResponse = `Currently analyzing ledger: ${queryParams.ledger_name}`;
-      } else if (chatInput.toLowerCase().includes('period')) {
-        aiResponse = `Analysis period: ${queryParams.period_names}`;
+      } else if (input.includes('account') || input.includes('balance')) {
+        aiResponse = `🏦 **Account Information**\n\n`;
+        aiResponse += `• Account Number: ${queryParams.account}\n`;
+        aiResponse += `• Ledger: ${queryParams.ledger_name}\n`;
+        aiResponse += `• Period: ${queryParams.period_names}\n`;
+        aiResponse += `• Company: ${queryParams.company}`;
+        if (summary && summary.count > 0) {
+          aiResponse += `\n\n📈 Current Balance:\n• Total Debit: **AED ${summary.totalDebit.toFixed(2)}**\n• Transactions: **${summary.count}**`;
+        }
+      } else if (input.includes('transaction') || input.includes('activity')) {
+        if (results.length > 0) {
+          aiResponse = `✅ **Found ${results.length} GL Transactions**\n\n`;
+          aiResponse += `**Latest Transactions:**\n`;
+          results.slice(0, 3).forEach((t, idx) => {
+            aiResponse += `\n${idx + 1}. Batch ${t.batchId} | JE ${t.jeHeaderId}\n`;
+            aiResponse += `   Date: ${t.accountingDate}\n`;
+            aiResponse += `   Amount: AED ${t.enteredDr.toFixed(2)}\n`;
+            aiResponse += `   ${t.description}`;
+          });
+          if (results.length > 3) {
+            aiResponse += `\n\n... and ${results.length - 3} more transactions`;
+          }
+        } else {
+          aiResponse = 'No GL transactions found for the current query parameters.';
+        }
+      } else if (input.includes('ledger')) {
+        aiResponse = `📚 **Ledger: ${queryParams.ledger_name}**\n\n`;
+        aiResponse += `• Chart of Accounts: BUIMERC Global Chart of Accounts Instance\n`;
+        aiResponse += `• Legal Entity: BUIMERC CORPORATION LIMITED\n`;
+        aiResponse += `• Currency: AED (United Arab Emirates Dirham)\n`;
+        aiResponse += `• Current Period: ${queryParams.period_names}`;
+      } else if (input.includes('period') || input.includes('date')) {
+        aiResponse = `📅 **Period Analysis**\n\n`;
+        aiResponse += `• Period: ${queryParams.period_names}\n`;
+        aiResponse += `• Company: ${queryParams.company}\n`;
+        if (results.length > 0) {
+          const dates = results.map(t => t.accountingDate).filter(Boolean);
+          const uniqueDates = [...new Set(dates)];
+          aiResponse += `• Transaction Dates: ${uniqueDates.join(', ')}\n`;
+          aiResponse += `• Total Transactions: ${results.length}`;
+        }
       } else {
         aiResponse =
-          'I can help you analyze GL data. You can ask about:\n- Account balances\n- GL transactions\n- Ledger information\n- Period analysis\n\nTry asking: "What is the account balance?" or "Show me transactions"';
+          '💡 **I can help you analyze GL data. Try asking:**\n\n' +
+          '• "What is the total?" - Show account summary\n' +
+          '• "Show me transactions" - List GL transactions\n' +
+          '• "Account balance" - Account details\n' +
+          '• "Ledger info" - Ledger information\n' +
+          '• "Period analysis" - Period details';
       }
 
       const aiMessage = {
