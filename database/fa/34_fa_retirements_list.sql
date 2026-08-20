@@ -170,15 +170,51 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
 
     -- Process accounting lines if present
     v_line_count := NVL(APEX_JSON.GET_COUNT(p_path => 'lines'), 0);
-    FOR v_i IN 1 .. v_line_count LOOP
-      v_line_type            := APEX_JSON.GET_VARCHAR2(p_path => 'lines[%d].lineType', p0 => v_i);
-      v_account_combination  := APEX_JSON.GET_VARCHAR2(p_path => 'lines[%d].accountCombination', p0 => v_i);
-      v_entered_dr           := NVL(APEX_JSON.GET_NUMBER(p_path => 'lines[%d].enteredDr', p0 => v_i), 0);
-      v_entered_cr           := NVL(APEX_JSON.GET_NUMBER(p_path => 'lines[%d].enteredCr', p0 => v_i), 0);
 
-      -- Insert accounting line (implementation depends on your table structure)
-      -- Placeholder for line insertion logic
-    END LOOP;
+    -- Variables to store account combinations by line type
+    DECLARE
+      v_acc_cost   VARCHAR2(200);
+      v_acc_deprn  VARCHAR2(200);
+      v_acc_proc   VARCHAR2(200);
+      v_acc_remv   VARCHAR2(200);
+      v_acc_gain   VARCHAR2(200);
+      v_acc_loss   VARCHAR2(200);
+    BEGIN
+      FOR v_i IN 1 .. v_line_count LOOP
+        v_line_type            := APEX_JSON.GET_VARCHAR2(p_path => 'lines[%d].lineType', p0 => v_i);
+        v_account_combination  := APEX_JSON.GET_VARCHAR2(p_path => 'lines[%d].accountCombination', p0 => v_i);
+
+        -- Map line type to account column
+        IF v_line_type IS NOT NULL AND v_account_combination IS NOT NULL THEN
+          IF UPPER(v_line_type) LIKE '%ACCUMULATED%' OR UPPER(v_line_type) LIKE '%RESERVE%' THEN
+            v_acc_deprn := v_account_combination;
+          ELSIF UPPER(v_line_type) LIKE '%ASSET COST%' OR UPPER(v_line_type) = 'COST' THEN
+            v_acc_cost  := v_account_combination;
+          ELSIF UPPER(v_line_type) LIKE '%PROCEEDS%' THEN
+            v_acc_proc  := v_account_combination;
+          ELSIF UPPER(v_line_type) LIKE '%REMOVAL%' THEN
+            v_acc_remv  := v_account_combination;
+          ELSIF UPPER(v_line_type) LIKE '%GAIN%' THEN
+            v_acc_gain  := v_account_combination;
+          ELSIF UPPER(v_line_type) LIKE '%LOSS%' THEN
+            v_acc_loss  := v_account_combination;
+          END IF;
+        END IF;
+      END LOOP;
+
+      -- Update the retirement record with all account combinations
+      UPDATE RR_FA_RETIREMENTS
+      SET
+        ASSET_COST_ACCOUNT       = NVL(v_acc_cost, ASSET_COST_ACCOUNT),
+        DEPRN_RESERVE_ACCOUNT    = NVL(v_acc_deprn, DEPRN_RESERVE_ACCOUNT),
+        PROCEEDS_ACCOUNT         = NVL(v_acc_proc, PROCEEDS_ACCOUNT),
+        COST_OF_REMOVAL_ACCOUNT  = NVL(v_acc_remv, COST_OF_REMOVAL_ACCOUNT),
+        GAIN_ACCOUNT             = NVL(v_acc_gain, GAIN_ACCOUNT),
+        LOSS_ACCOUNT             = NVL(v_acc_loss, LOSS_ACCOUNT),
+        LAST_UPDATE_DATE         = SYSTIMESTAMP,
+        LAST_UPDATED_BY          = v_created_by
+      WHERE RETIREMENT_ID = v_retirement_id;
+    END;
 
     COMMIT;
     p_http_status := 201;
