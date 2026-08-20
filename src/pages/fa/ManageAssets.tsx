@@ -32,7 +32,7 @@ import {
   checkSlaAccountingExists, getSlaAccounting,
   createSlaAccounting, markFaAdditionAccounted, markFaDeprnAccounted,
   updateAssetAttributes, adjustDeprn, adjustCost,
-  getRetirementPreview, retireAssetWithAccounting,
+  getRetirementPreview, retireAssetWithAccounting, getRetirements,
   formatCurrency, assetTypeLabel, assetStatusLabel,
 } from '../../services/fa.service';
 import type { JournalLine } from '../../services/manage-journals.service';
@@ -1007,6 +1007,8 @@ const AssetTabContent: React.FC<{
   const [retireSegmentDialogLineIdx, setRetireSegmentDialogLineIdx] = useState<number | null>(null);
   const [retireApiDetailsOpen, setRetireApiDetailsOpen] = useState(false);
   const [retireApiTestResult, setRetireApiTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [retirementRecords, setRetirementRecords] = useState<any[]>([]);
+  const [retirementLoading, setRetirementLoading] = useState(false);
 
   const retireBook = () => books[0]?.bookTypeCode || asset.bookTypeCode || '';
 
@@ -1085,6 +1087,20 @@ const AssetTabContent: React.FC<{
       }
     } finally {
       setRetireSaving(false);
+    }
+  };
+
+  const loadRetirements = async () => {
+    setRetirementLoading(true);
+    try {
+      const book = retireBook();
+      const allRetirements = await getRetirements(book);
+      const filtered = allRetirements.filter(r => String(r.assetId) === String(asset.assetId));
+      setRetirementRecords(filtered);
+    } catch (error) {
+      console.error('Error loading retirements:', error);
+    } finally {
+      setRetirementLoading(false);
     }
   };
 
@@ -1228,6 +1244,13 @@ const AssetTabContent: React.FC<{
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, asset]);
+
+  React.useEffect(() => {
+    if (asset && asset.assetId) {
+      loadRetirements();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asset, books]);
 
   const handleAttrChange = (key: string, val: string) => {
     setAttrValues(prev => ({ ...prev, [key]: val }));
@@ -2567,6 +2590,144 @@ const AssetTabContent: React.FC<{
               </Button>
             </div>
           </div>
+        ),
+    },
+    {
+      key: 'retirements',
+      label: <span><DeleteOutlined style={{ marginRight: 4 }} />Retirements</span>,
+      children: retirementLoading
+        ? <Spin style={{ display: 'block', margin: '40px auto' }} />
+        : (
+          <>
+            {/* API info strip */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0 10px', flexWrap: 'wrap' }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>GET</Text>
+              <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, color: FA_COLOR, wordBreak: 'break-all' }}>
+                {buildApexUrl(`fa/retirements?bookTypeCode=${retireBook()}`)}
+              </Text>
+              <Tooltip title="View API endpoint details">
+                <Button
+                  size="small"
+                  icon={<ApiOutlined />}
+                  style={{ color: FA_COLOR, borderColor: FA_COLOR, fontSize: 11 }}
+                  onClick={() => {
+                    Modal.info({
+                      title: 'Retirements API',
+                      width: 760,
+                      content: (
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>ENDPOINT (GET)</div>
+                          <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                            {buildApexUrl(`fa/retirements?bookTypeCode=${retireBook()}`)}
+                          </Text>
+                          <div style={{ marginTop: 12, fontSize: 11, color: '#666' }}>
+                            This endpoint retrieves all retirement records for the specified book type code. Filter by <code>assetId</code> client-side to show retirements for this specific asset.
+                          </div>
+                        </div>
+                      ),
+                    });
+                  }}
+                >
+                  API
+                </Button>
+              </Tooltip>
+            </div>
+
+            {retirementRecords.length === 0 ? (
+              <Empty description="No retirement records found" style={{ marginTop: 24 }} />
+            ) : (
+              <Table
+                dataSource={retirementRecords}
+                rowKey="retirementId"
+                size="small"
+                pagination={{ pageSize: 15, showSizeChanger: false }}
+                locale={{ emptyText: 'No retirement records' }}
+                style={{ marginTop: 4 }}
+                columns={[
+                  {
+                    title: 'Retirement ID',
+                    dataIndex: 'retirementId',
+                    key: 'retirementId',
+                    render: (text: string) => <Text strong>{text}</Text>,
+                  },
+                  {
+                    title: 'Book Type Code',
+                    dataIndex: 'bookTypeCode',
+                    key: 'bookTypeCode',
+                    width: 100,
+                  },
+                  {
+                    title: 'Date Retired',
+                    dataIndex: 'dateRetired',
+                    key: 'dateRetired',
+                    width: 110,
+                    render: (text: string) => fmtDate(text),
+                  },
+                  {
+                    title: 'Cost Retired',
+                    dataIndex: 'costRetired',
+                    key: 'costRetired',
+                    width: 120,
+                    align: 'right',
+                    render: (text: number) => formatCurrency(text),
+                  },
+                  {
+                    title: 'NBV Retired',
+                    dataIndex: 'nbvRetired',
+                    key: 'nbvRetired',
+                    width: 120,
+                    align: 'right',
+                    render: (text: number) => formatCurrency(text),
+                  },
+                  {
+                    title: 'Gain/Loss',
+                    dataIndex: 'gainLossAmount',
+                    key: 'gainLossAmount',
+                    width: 120,
+                    align: 'right',
+                    render: (text: number) => (
+                      <Text style={{ color: text >= 0 ? '#52c41a' : '#f5222d' }}>
+                        {formatCurrency(text)}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: 'Proceeds of Sale',
+                    dataIndex: 'proceedsOfSale',
+                    key: 'proceedsOfSale',
+                    width: 130,
+                    align: 'right',
+                    render: (text: number) => formatCurrency(text),
+                  },
+                  {
+                    title: 'Cost of Removal',
+                    dataIndex: 'costOfRemoval',
+                    key: 'costOfRemoval',
+                    width: 130,
+                    align: 'right',
+                    render: (text: number) => formatCurrency(text),
+                  },
+                  {
+                    title: 'Status',
+                    dataIndex: 'status',
+                    key: 'status',
+                    width: 100,
+                    render: (text: string) => (
+                      <Tag color={text === 'ACTIVE' ? 'success' : text === 'POSTED' ? 'blue' : 'default'}>
+                        {text}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: 'Sold To',
+                    dataIndex: 'soldTo',
+                    key: 'soldTo',
+                    width: 150,
+                  },
+                ]}
+              />
+            )}
+          </>
         ),
     },
   ];
