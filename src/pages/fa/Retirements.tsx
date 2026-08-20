@@ -7,7 +7,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   HomeOutlined, SearchOutlined, ReloadOutlined, AuditOutlined,
-  DollarOutlined, InfoCircleOutlined, StopOutlined,
+  DollarOutlined, InfoCircleOutlined, StopOutlined, ApiOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -15,6 +15,8 @@ import {
   getRetirements, getBookControls, retireAsset, formatCurrency,
 } from '../../services/fa.service';
 import type { RetirementRecord, BookControlRecord } from '../../services/fa.service';
+import { buildApexUrl } from '../../config/api.helper';
+import { APEX_DB_CONFIG } from '../../config/api.config';
 
 const { Content } = Layout;
 const { Text, Title } = Typography;
@@ -56,6 +58,9 @@ const Retirements: React.FC = () => {
   // Detail modal
   const [detailOpen,   setDetailOpen]   = useState(false);
   const [detailRecord, setDetailRecord] = useState<RetirementRecord | null>(null);
+
+  // API test modal
+  const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string; data?: any } | null>(null);
 
   useEffect(() => {
     getBookControls().then(setBookControls);
@@ -197,7 +202,7 @@ const Retirements: React.FC = () => {
                     </Select>
                   </Form.Item>
                 </Col>
-                <Col xs={24} sm={8} md={4} style={{ display: 'flex', alignItems: 'flex-end' }}>
+                <Col xs={24} sm={16} md={18} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
                   <Form.Item style={{ marginBottom: 8 }}>
                     <Space>
                       <Button type="primary" htmlType="submit" icon={<SearchOutlined />} loading={loading}
@@ -207,6 +212,100 @@ const Retirements: React.FC = () => {
                       <Button icon={<ReloadOutlined />} onClick={handleReset}>Reset</Button>
                     </Space>
                   </Form.Item>
+                  <Tooltip title="View API endpoint and test">
+                    <Button
+                      size="small"
+                      icon={<ApiOutlined />}
+                      style={{ color: FA_COLOR, borderColor: FA_COLOR, fontSize: 11 }}
+                      onClick={() => {
+                        const { bookTypeCode } = form.getFieldsValue();
+                        const params = new URLSearchParams();
+                        if (bookTypeCode) params.append('bookTypeCode', bookTypeCode);
+                        const apiUrl = buildApexUrl(`fa/retirements${params.toString() ? '?' + params.toString() : ''}`);
+
+                        Modal.info({
+                          title: 'Retirements API — GET Request',
+                          width: 760,
+                          content: (
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>ENDPOINT (GET)</div>
+                              <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                                {apiUrl}
+                              </Text>
+                              {bookTypeCode && (
+                                <div style={{ marginTop: 12, fontSize: 11, color: '#666' }}>
+                                  <div><strong>Query Parameters:</strong></div>
+                                  <div style={{ marginLeft: 8, marginTop: 4 }}>
+                                    <code>bookTypeCode = {bookTypeCode}</code>
+                                  </div>
+                                </div>
+                              )}
+                              <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+                                <Button
+                                  size="small"
+                                  type="primary"
+                                  loading={!apiTestResult && false}
+                                  onClick={() => {
+                                    setApiTestResult(null);
+                                    fetch(apiUrl)
+                                      .then(r => {
+                                        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                                        return r.json();
+                                      })
+                                      .then(data => {
+                                        setApiTestResult({
+                                          success: true,
+                                          message: `Success! Retrieved ${(data.items || data).length || 0} records`,
+                                          data,
+                                        });
+                                      })
+                                      .catch(err => {
+                                        setApiTestResult({
+                                          success: false,
+                                          message: `Error: ${err.message}`,
+                                        });
+                                      });
+                                  }}
+                                >
+                                  Test API
+                                </Button>
+                              </div>
+                              {apiTestResult && (
+                                <div style={{
+                                  marginTop: 12,
+                                  padding: 12,
+                                  borderRadius: 4,
+                                  background: apiTestResult.success ? '#f6ffed' : '#fff2f0',
+                                  border: `1px solid ${apiTestResult.success ? '#b7eb8f' : '#ffa39e'}`,
+                                }}>
+                                  <Text style={{ color: apiTestResult.success ? '#52c41a' : '#f5222d', fontSize: 12 }}>
+                                    {apiTestResult.success ? '✓' : '✗'} {apiTestResult.message}
+                                  </Text>
+                                  {apiTestResult.data && (
+                                    <div style={{ marginTop: 8, maxHeight: 300, overflow: 'auto' }}>
+                                      <pre style={{
+                                        background: '#f5f5f5',
+                                        padding: 8,
+                                        borderRadius: 2,
+                                        fontSize: 10,
+                                        fontFamily: 'monospace',
+                                        whiteSpace: 'pre-wrap',
+                                        wordBreak: 'break-all',
+                                      }}>
+                                        {JSON.stringify(apiTestResult.data, null, 2)}
+                                      </pre>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ),
+                        });
+                      }}
+                    >
+                      API
+                    </Button>
+                  </Tooltip>
                 </Col>
               </Row>
             </Form>
