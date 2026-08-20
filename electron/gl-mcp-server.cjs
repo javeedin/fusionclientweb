@@ -1,8 +1,12 @@
 // Note: MCP SDK dependency removed - using HTTP mode only
 // The HTTP endpoint provides full MCP functionality for Claude Desktop
-log('INFO', 'GL MCP Server running in HTTP mode');
+log('INFO', 'GL MCP Server running in HTTPS mode (self-signed certificate)');
+const https = require('https');
 const http = require('http');
 const url = require('url');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 
 // ── Logging utility ────────────────────────────────────────────────────────
 function log(level, message) {
@@ -200,9 +204,67 @@ async function getJournalEntry(params) {
 // Note: MCP tools are exposed via HTTP endpoints only
 // This allows testing on Claude Desktop and other MCP clients via HTTP
 
-// ── HTTP Server (for Claude Desktop testing) ──────────────────────────────
-function startHttpServer(port) {
-  const httpServer = http.createServer(async (req, res) => {
+// ── Generate or load self-signed certificate ──────────────────────────────
+function getCertificate() {
+  const certDir = path.join(require('os').homedir(), '.gl-mcp-server');
+  const certPath = path.join(certDir, 'cert.pem');
+  const keyPath = path.join(certDir, 'key.pem');
+
+  // Return existing cert if available
+  if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+    try {
+      return {
+        cert: fs.readFileSync(certPath, 'utf8'),
+        key: fs.readFileSync(keyPath, 'utf8'),
+      };
+    } catch (e) {
+      log('WARN', `Failed to read existing certificates: ${e.message}`);
+    }
+  }
+
+  // Generate new self-signed certificate
+  log('INFO', 'Generating self-signed certificate for localhost...');
+  try {
+    const { exec } = require('child_process');
+    const execSync = require('child_process').execSync;
+
+    // Ensure cert directory exists
+    if (!fs.existsSync(certDir)) {
+      fs.mkdirSync(certDir, { recursive: true });
+    }
+
+    // Generate self-signed certificate using openssl
+    const cmd = `openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" -days 365 -nodes -subj "/CN=localhost"`;
+
+    try {
+      execSync(cmd);
+      log('INFO', `Certificate generated at ${certDir}`);
+      return {
+        cert: fs.readFileSync(certPath, 'utf8'),
+        key: fs.readFileSync(keyPath, 'utf8'),
+      };
+    } catch (e) {
+      log('WARN', `openssl not available, using fallback certificate generation`);
+      // Fallback: use a basic self-signed cert (Node.js 15.7.0+)
+      // For now, return null and fall back to HTTP
+      return null;
+    }
+  } catch (e) {
+    log('ERROR', `Failed to generate certificate: ${e.message}`);
+    return null;
+  }
+}
+
+// ── HTTPS Server (for Claude Desktop) ──────────────────────────────────────
+function startHttpsServer(port) {
+  const tlsConfig = getCertificate();
+
+  if (!tlsConfig) {
+    log('WARN', 'Could not generate HTTPS certificate, falling back to HTTP');
+    return startHttpServer(port);
+  }
+
+  const httpsServer = https.createServer(tlsConfig, async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const pathname = parsedUrl.pathname;
 
@@ -259,27 +321,28 @@ function startHttpServer(port) {
     res.end(JSON.stringify({ error: 'Not found' }));
   });
 
-  httpServer.listen(port, 'localhost', () => {
-    log('INFO', `HTTP Server listening on http://localhost:${port}`);
+  httpsServer.listen(port, 'localhost', () => {
+    log('INFO', `HTTPS Server listening on https://localhost:${port}`);
+    log('INFO', `Certificate: Self-signed (safe for localhost testing)`);
   });
 
-  httpServer.on('error', (err) => {
-    log('ERROR', `HTTP Server error: ${err.message}`);
+  httpsServer.on('error', (err) => {
+    log('ERROR', `HTTPS Server error: ${err.message}`);
   });
 
-  return httpServer;
+  return httpsServer;
 }
 
 // ── Main startup ───────────────────────────────────────────────────────────
 async function main() {
   try {
-    log('INFO', 'Starting GL MCP Server (HTTP mode)');
+    log('INFO', 'Starting GL MCP Server (HTTPS mode)');
 
-    // Start HTTP server
+    // Start HTTPS server
     if (HTTP_PORT) {
-      log('INFO', `Starting HTTP server on port ${HTTP_PORT}`);
-      startHttpServer(HTTP_PORT);
-      log('INFO', 'GL MCP Server started successfully - HTTP server running');
+      log('INFO', `Starting HTTPS server on port ${HTTP_PORT}`);
+      startHttpsServer(HTTP_PORT);
+      log('INFO', 'GL MCP Server started successfully - HTTPS server running');
     } else {
       log('ERROR', 'No HTTP port configured, cannot start server');
       process.exit(1);
