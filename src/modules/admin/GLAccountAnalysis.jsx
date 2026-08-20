@@ -238,13 +238,29 @@ export default function GLAccountAnalysis() {
 
       const data = await response.json();
       console.log('API Response data:', data);
+      console.log('Full response structure:', JSON.stringify(data, null, 2));
 
       if (!data.success) {
         throw new Error(data.error || 'Failed to query GL data');
       }
 
-      // Process response data
-      const transactions = data.data?.transactions || [];
+      // Process response data - try multiple possible structures
+      let transactions = data.data?.transactions || [];
+
+      // If transactions is empty, check other possible structures
+      if (transactions.length === 0) {
+        console.log('No transactions in data.data.transactions, checking other structures...');
+        console.log('data.data:', data.data);
+        console.log('data keys:', Object.keys(data));
+
+        // Try other possible response structures
+        if (Array.isArray(data.data)) transactions = data.data;
+        else if (data.transactions) transactions = data.transactions;
+        else if (data.items) transactions = data.items;
+        else if (data.rows) transactions = data.rows;
+        else if (data.records) transactions = data.records;
+      }
+
       console.log(`Processing ${transactions.length} transactions`);
 
       const tableData = transactions.map((t, idx) => ({
