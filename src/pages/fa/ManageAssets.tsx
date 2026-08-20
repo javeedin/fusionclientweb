@@ -2026,6 +2026,7 @@ const AssetTabContent: React.FC<{
                                 const lines = retireShowAcct && retireLines.length ? retireLines : buildRetireLines();
                                 const body = {
                                   bookTypeCode: book,
+                                  assetId: asset.assetId,
                                   dateRetired: retireDate.format('YYYY-MM-DD'),
                                   proceedsOfSale: retireSold ? Number(retireProceeds || 0) : 0,
                                   costOfRemoval: Number(retireRemoval || 0),
@@ -2054,6 +2055,7 @@ const AssetTabContent: React.FC<{
                               const apiUrl = buildApexUrl('fa/retirements');
                               const requestBody = {
                                 bookTypeCode: book,
+                                assetId: asset.assetId,
                                 dateRetired: retireDate.format('YYYY-MM-DD'),
                                 proceedsOfSale: retireSold ? Number(retireProceeds || 0) : 0,
                                 costOfRemoval: Number(retireRemoval || 0),
