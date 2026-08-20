@@ -620,8 +620,6 @@ export default function GLAccountAnalysis() {
                   </div>
                 )}
               </div>
-            </>
-          )}
 
               {/* Claude Desktop MCP Config */}
               <Card size="small" style={{ marginTop: '12px', backgroundColor: '#fafafa' }}>
@@ -678,7 +676,6 @@ export default function GLAccountAnalysis() {
               </Card>
             </>
           )}
-        </div>
 
         {/* Query Parameters */}
         <Card title="Query Parameters" size="small" style={{ marginBottom: '24px' }}>
