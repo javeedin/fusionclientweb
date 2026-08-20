@@ -19,6 +19,17 @@ interface AccountSegmentSelectorProps {
   label?: string;
 }
 
+interface Segment {
+  key_flex_filed_name_code: string;
+  structure_code: string;
+  sequence_no: number;
+  segment_name: string;
+  segment_code: string;
+  column_name: string;
+  prompt: string;
+  enabled: string;
+}
+
 interface SegmentDetail {
   index: number;
   code: string;
@@ -28,8 +39,9 @@ interface SegmentDetail {
   availableValues?: Array<{ value: string; description: string }>;
 }
 
-// Cache for segment values to avoid repeated API calls
+// Cache for segment values and definitions to avoid repeated API calls
 let segmentValuesCache: Map<string, Array<{ value: string; description: string }>> = new Map();
+let segmentDefinitionsCache: Segment[] = [];
 
 const fetchSegmentValues = async (segmentCode: string): Promise<Array<{ value: string; description: string }>> => {
   if (segmentValuesCache.has(segmentCode)) {
@@ -53,27 +65,24 @@ const fetchSegmentValues = async (segmentCode: string): Promise<Array<{ value: s
   }
 };
 
-const fetchSegmentDefinitions = async (): Promise<{code: string; name: string}[]> => {
+const fetchSegmentDefinitions = async (): Promise<Segment[]> => {
+  if (segmentDefinitionsCache.length > 0) {
+    return segmentDefinitionsCache;
+  }
+
   try {
-    const api = buildApexUrl('segmentdefinitions');
+    const api = buildApexUrl('chartofaccounts/structuresegments');
     const response = await fetch(api);
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     const result = await response.json();
-    return result.items || result.segments || [];
+    const segments: Segment[] = (result.items || []).sort(
+      (a: Segment, b: Segment) => a.sequence_no - b.sequence_no
+    );
+    segmentDefinitionsCache = segments;
+    return segments;
   } catch (error) {
     console.error('Error fetching segment definitions:', error);
-    // Fallback: hardcoded segment structure based on GL account format
-    return [
-      { code: '01', name: 'Company' },
-      { code: '02', name: 'LOB' },
-      { code: '03', name: 'Department' },
-      { code: '04', name: 'Account' },
-      { code: '05', name: 'Sub Account' },
-      { code: '06', name: 'Analysis' },
-      { code: '07', name: 'Intercompany' },
-      { code: '08', name: 'Future 1' },
-      { code: '09', name: 'Future 2' },
-    ];
+    return [];
   }
 };
 
@@ -92,6 +101,7 @@ export const AccountSegmentSelector: React.FC<AccountSegmentSelectorProps> = ({
       setLoading(true);
       try {
         let segmentDetails: SegmentDetail[] = [];
+        let segments: Segment[] = [];
 
         if (accountCode) {
           // Validate and parse existing account code
@@ -107,12 +117,12 @@ export const AccountSegmentSelector: React.FC<AccountSegmentSelectorProps> = ({
           });
         } else {
           // Initialize empty segments for new account code creation
-          const definitions = await fetchSegmentDefinitions();
-          definitions.forEach((def, idx) => {
+          segments = await fetchSegmentDefinitions();
+          segments.forEach((seg, idx) => {
             segmentDetails.push({
               index: idx,
-              code: def.code,
-              name: def.name,
+              code: seg.segment_code,
+              name: seg.prompt || seg.segment_name || '',
               value: '',
               description: '',
             });
