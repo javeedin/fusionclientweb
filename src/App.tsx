@@ -108,6 +108,7 @@ const AdminModule             = lazy(() => import('./pages/admin/index'));
 const UserManagement          = lazy(() => import('./pages/admin/UserManagement'));
 const ClaudeKeySettings       = lazy(() => import('./pages/admin/ClaudeKeySettings'));
 const RagAssistant            = lazy(() => import('./pages/admin/RagAssistant'));
+const GLAccountAnalysis       = lazy(() => import('./modules/admin/GLAccountAnalysis'));
 const ApprovalEngine          = lazy(() => import('./pages/admin/ApprovalEngine'));
 const BrevoSettings           = lazy(() => import('./pages/admin/BrevoSettings'));
 const ManageChangeRequest     = lazy(() => import('./pages/admin/ManageChangeRequest'));
@@ -367,6 +368,7 @@ function App() {
               <Route path="admin/users" element={<UserManagement />} />
               <Route path="admin/claude-key" element={<ClaudeKeySettings />} />
               <Route path="admin/ai-assistant" element={<RagAssistant />} />
+              <Route path="admin/gl-account-analysis" element={<GLAccountAnalysis />} />
               <Route path="admin/approvals" element={<ApprovalEngine />} />
               <Route path="admin/brevo-settings" element={<BrevoSettings />} />
               <Route path="admin/releases" element={<ReleaseUploader />} />

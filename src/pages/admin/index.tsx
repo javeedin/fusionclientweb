@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layout, Typography, Card, Breadcrumb, Row, Col, Tag } from 'antd';
+import { Layout, Typography, Card, Breadcrumb, Row, Col, Tag, Tooltip } from 'antd';
 import {
   HomeOutlined,
   TeamOutlined,
@@ -11,6 +11,7 @@ import {
   DatabaseOutlined,
   CloudUploadOutlined,
   LinkOutlined,
+  DollarOutlined,
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -92,6 +93,14 @@ const adminCards: AdminCard[] = [
     icon: <MessageOutlined />,
     color: '#08979c',
     path: '/admin/ai-assistant',
+  },
+  {
+    key: 'gl-account-analysis',
+    title: 'GL Account Analysis',
+    description: 'Query Oracle GL transactions by account, period, and company. Start the MCP server, configure credentials, and analyze GL balances in real-time.',
+    icon: <DollarOutlined />,
+    color: '#13c2c2',
+    path: '/admin/gl-account-analysis',
   },
   {
     key: 'change-requests',
@@ -212,20 +221,24 @@ const AdminModule: React.FC = () => {
                   styles={{ body: { padding: 24 } }}
                 >
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-                    <div style={{
-                      width: 52,
-                      height: 52,
-                      borderRadius: 12,
-                      background: `${card.color}15`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: card.color,
-                      fontSize: 26,
-                      flexShrink: 0,
-                    }}>
-                      {card.icon}
-                    </div>
+                    <Tooltip title={card.description}>
+                      <div style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: 12,
+                        background: `${card.color}15`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: card.color,
+                        fontSize: 18,
+                        flexShrink: 0,
+                        cursor: 'help',
+                        transition: 'all 0.2s ease',
+                      }}>
+                        {card.icon}
+                      </div>
+                    </Tooltip>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                         <Text strong style={{ fontSize: 16, color: REDWOOD.neutral900 }}>
