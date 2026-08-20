@@ -489,12 +489,23 @@ function startHttpsServer(port) {
 // ── Main startup ──────────────────────────────────────────────────────────
 async function main() {
   try {
-    log('INFO', 'Starting GL MCP Server (HTTPS mode with MCP protocol)');
+    // Use HTTP for localhost development (Claude Desktop can access HTTP on localhost)
+    // Use HTTPS for remote/production (with proper certificates)
+    const useHttps = process.env.FORCE_HTTPS === 'true';
 
     if (HTTP_PORT) {
-      log('INFO', `Starting HTTPS server on port ${HTTP_PORT}`);
-      startHttpsServer(HTTP_PORT);
-      log('INFO', 'GL MCP Server started successfully - HTTPS server running');
+      if (useHttps) {
+        log('INFO', 'Starting GL MCP Server (HTTPS mode with MCP protocol)');
+        log('INFO', `Starting HTTPS server on port ${HTTP_PORT}`);
+        startHttpsServer(HTTP_PORT);
+        log('INFO', 'GL MCP Server started successfully - HTTPS server running');
+      } else {
+        log('INFO', 'Starting GL MCP Server (HTTP mode with MCP protocol)');
+        log('INFO', `Starting HTTP server on port ${HTTP_PORT}`);
+        startHttpServer(HTTP_PORT);
+        log('INFO', 'GL MCP Server started successfully - HTTP server running');
+        log('INFO', `MCP Endpoint: http://localhost:${HTTP_PORT}/`);
+      }
     } else {
       log('ERROR', 'No HTTP port configured, cannot start server');
       process.exit(1);
