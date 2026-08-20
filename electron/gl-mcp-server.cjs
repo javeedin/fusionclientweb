@@ -14,23 +14,25 @@ function log(level, message) {
 log('INFO', 'GL MCP Server initializing...');
 
 // ── Configuration ──────────────────────────────────────────────────────────
-// Normalize Oracle Base URL: remove trailing slashes and query parameters
-function normalizeUrl(url) {
+// Extract just the domain from Oracle Base URL
+function extractDomain(url) {
   try {
     const urlObj = new URL(url);
-    return `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`.replace(/\/$/, '').split('?')[0];
+    return `${urlObj.protocol}//${urlObj.host}`;
   } catch (e) {
-    // If URL parsing fails, just clean up manually
-    return url.replace(/\/$/, '').split('?')[0];
+    // Fallback: try to extract protocol and host manually
+    const match = url.match(/^https?:\/\/[^/]+/);
+    return match ? match[0] : url;
   }
 }
 
-const ORACLE_BASE_URL = normalizeUrl(process.env.ORACLE_BASE_URL || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com');
-const APEX_ENDPOINT = `${ORACLE_BASE_URL}/ords/bcldifc/reerp`;
+const ORACLE_DOMAIN = extractDomain(process.env.ORACLE_BASE_URL || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com');
+const APEX_ENDPOINT = `${ORACLE_DOMAIN}/ords/bcldifc/reerp`;
 const HTTP_PORT = process.env.GL_MCP_HTTP_PORT ? parseInt(process.env.GL_MCP_HTTP_PORT, 10) : null;
 const SKIP_AUTH = process.env.SKIP_AUTH === 'true' || process.env.SKIP_AUTH === '1';
 
-log('INFO', `Config: ORACLE_BASE_URL=${ORACLE_BASE_URL}`);
+log('INFO', `Config: ORACLE_DOMAIN=${ORACLE_DOMAIN}`);
+log('INFO', `Config: APEX_ENDPOINT=${APEX_ENDPOINT}`);
 log('INFO', `Config: SKIP_AUTH=${SKIP_AUTH}`);
 if (HTTP_PORT) log('INFO', `Config: HTTP_PORT=${HTTP_PORT}`);
 
