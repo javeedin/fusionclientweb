@@ -648,6 +648,7 @@ export default function GLAccountAnalysis() {
             label="Oracle Base URL"
             name="oracleBaseUrl"
             rules={[{ required: true, message: 'Please enter Oracle base URL' }]}
+            help="Enter ONLY the domain, e.g., https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com (do NOT include /ords/... or query parameters)"
           >
             <Input placeholder="https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com" />
           </Form.Item>

@@ -14,7 +14,18 @@ function log(level, message) {
 log('INFO', 'GL MCP Server initializing...');
 
 // ── Configuration ──────────────────────────────────────────────────────────
-const ORACLE_BASE_URL = process.env.ORACLE_BASE_URL || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com';
+// Normalize Oracle Base URL: remove trailing slashes and query parameters
+function normalizeUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    return `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`.replace(/\/$/, '').split('?')[0];
+  } catch (e) {
+    // If URL parsing fails, just clean up manually
+    return url.replace(/\/$/, '').split('?')[0];
+  }
+}
+
+const ORACLE_BASE_URL = normalizeUrl(process.env.ORACLE_BASE_URL || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com');
 const APEX_ENDPOINT = `${ORACLE_BASE_URL}/ords/bcldifc/reerp`;
 const HTTP_PORT = process.env.GL_MCP_HTTP_PORT ? parseInt(process.env.GL_MCP_HTTP_PORT, 10) : null;
 const SKIP_AUTH = process.env.SKIP_AUTH === 'true' || process.env.SKIP_AUTH === '1';
