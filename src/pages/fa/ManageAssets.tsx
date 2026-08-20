@@ -1036,9 +1036,9 @@ const AssetTabContent: React.FC<{
       { lineType: 'Accumulated Depreciation', accountCombination: retirePreview.accumDeprnAccount || '', enteredDr: reserve, enteredCr: 0 },
       { lineType: 'Asset Cost',               accountCombination: retirePreview.assetCostAccount  || '', enteredDr: 0, enteredCr: cost },
     ];
-    if (proceeds > 0) lines.push({ lineType: 'Proceeds of Sale', accountCombination: '', enteredDr: proceeds, enteredCr: 0 });
+    if (proceeds > 0) lines.push({ lineType: 'Proceeds of Sale', accountCombination: '01-00-00-1222194-0000-000-00-000-000', enteredDr: proceeds, enteredCr: 0 });
     if (removal  > 0) lines.push({ lineType: 'Cost of Removal',  accountCombination: '', enteredDr: 0, enteredCr: removal });
-    if (gainLoss > 0)      lines.push({ lineType: 'Gain on Retirement', accountCombination: '', enteredDr: 0, enteredCr: gainLoss });
+    if (gainLoss > 0)      lines.push({ lineType: 'Gain on Retirement', accountCombination: '01-00-00-4211100-0000-000-00-000-000', enteredDr: 0, enteredCr: gainLoss });
     else if (gainLoss < 0) lines.push({ lineType: 'Loss on Retirement', accountCombination: '', enteredDr: -gainLoss, enteredCr: 0 });
     return lines;
   };
@@ -1841,16 +1841,24 @@ const AssetTabContent: React.FC<{
                   maskClosable={!retireSaving}
                   title={<Space><LogoutOutlined style={{ color: '#C74634' }} /><span>Retire Asset — {asset.asset_number || asset.assetNumber}</span></Space>}
                   footer={
-                    <Space>
-                      <Button disabled={retireSaving} onClick={() => setRetireOpen(false)}>Cancel</Button>
-                      <Button icon={<AuditOutlined />} onClick={previewRetireAccounting} disabled={retireLoading || !retirePreview}>
-                        Preview Accounting
-                      </Button>
-                      <Button type="primary" danger loading={retireSaving} disabled={retireLoading || !retirePreview}
-                        onClick={handleRetire}>
-                        Retire Asset
-                      </Button>
-                    </Space>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Tooltip title="API: POST /retirements/retire-asset">
+                        <Space style={{ fontSize: 11, color: '#666' }}>
+                          <ApiOutlined style={{ color: '#0572CE' }} />
+                          <span>Retire Asset API</span>
+                        </Space>
+                      </Tooltip>
+                      <Space>
+                        <Button disabled={retireSaving} onClick={() => setRetireOpen(false)}>Cancel</Button>
+                        <Button icon={<AuditOutlined />} onClick={previewRetireAccounting} disabled={retireLoading || !retirePreview}>
+                          Preview Accounting
+                        </Button>
+                        <Button type="primary" danger loading={retireSaving} disabled={retireLoading || !retirePreview}
+                          onClick={handleRetire}>
+                          Retire Asset
+                        </Button>
+                      </Space>
+                    </div>
                   }
                 >
                   {retireLoading ? (
