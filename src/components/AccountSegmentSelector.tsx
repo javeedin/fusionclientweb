@@ -154,7 +154,7 @@ export const AccountSegmentSelector: React.FC<AccountSegmentSelectorProps> = ({
                 }
               >
                 {availableValues.map((opt) => (
-                  <Option key={opt.value} value={opt.value} label={`${opt.value}`}>
+                  <Option key={opt.value} value={opt.value} label={opt.value}>
                     <div>
                       <div><Text strong>{opt.value}</Text></div>
                       <Text type="secondary" style={{ fontSize: 11 }}>{opt.description}</Text>
