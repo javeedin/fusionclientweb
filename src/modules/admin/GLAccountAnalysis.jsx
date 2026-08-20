@@ -20,6 +20,7 @@ export default function GLAccountAnalysis() {
   const [apiTestResult, setApiTestResult] = useState(null);
   const [apiTestLoading, setApiTestLoading] = useState(false);
   const [tableColumns, setTableColumns] = useState([]);
+  const [fetchingClaudeKey, setFetchingClaudeKey] = useState(false);
 
   // Query parameters
   const [queryParams, setQueryParams] = useState({
@@ -201,8 +202,8 @@ export default function GLAccountAnalysis() {
       console.log('Save response:', response);
 
       if (response?.success) {
-        setCredentials(values);
-        messageApi.success('Credentials saved successfully');
+        setCredentials(response?.claudeKeyFetched ? { ...values, claudeApiKey: 'fetched-from-oracle' } : values);
+        messageApi.success(response?.claudeKeyFetched ? 'Credentials saved and Claude key fetched from Oracle!' : 'Credentials saved successfully');
         setShowSettings(false);
       } else {
         const errorMsg = response?.error || 'Failed to save credentials';
@@ -214,6 +215,35 @@ export default function GLAccountAnalysis() {
       messageApi.error(`Error: ${err.message || 'Unknown error'}`);
     } finally {
       setSettingsLoading(false);
+    }
+  }
+
+  async function handleFetchClaudeKey() {
+    if (!credentials?.oracleBaseUrl) {
+      messageApi.error('Please save Oracle Base URL first');
+      return;
+    }
+
+    setFetchingClaudeKey(true);
+    try {
+      const response = await window.electronAPI.glMcpFetchClaudeKey({
+        oracleBaseUrl: credentials.oracleBaseUrl,
+      });
+
+      if (response.success) {
+        setCredentials((prev) => ({
+          ...prev,
+          claudeApiKey: 'fetched-from-oracle',
+        }));
+        messageApi.success('Claude key fetched from Oracle APEX successfully!');
+      } else {
+        messageApi.error(response.error || 'Failed to fetch Claude key');
+      }
+    } catch (err) {
+      console.error('Fetch Claude key error:', err);
+      messageApi.error(`Error: ${err.message}`);
+    } finally {
+      setFetchingClaudeKey(false);
     }
   }
 
@@ -834,16 +864,29 @@ export default function GLAccountAnalysis() {
             />
           </Form.Item>
 
-          <Form.Item
-            label="Claude API Key"
-            name="claudeApiKey"
-            rules={[{ message: 'Required for AI-powered chat analysis' }]}
-            help="Your Anthropic API key for Claude AI integration. Get it from https://console.anthropic.com"
-          >
-            <Input.Password
-              placeholder="sk-ant-..."
-              visibilityToggle
-            />
+          <Form.Item label="Claude API Key">
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div style={{ flex: 1, padding: '8px 12px', backgroundColor: '#f5f5f5', borderRadius: '4px', border: '1px solid #d9d9d9' }}>
+                {credentials?.claudeApiKey ? (
+                  <div>
+                    <span style={{ color: '#52c41a', fontWeight: 'bold' }}>✓ Fetched from Oracle APEX</span>
+                    <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>Key loaded from settings/claudekey endpoint</div>
+                  </div>
+                ) : (
+                  <span style={{ color: '#999' }}>Not fetched yet</span>
+                )}
+              </div>
+              <Button
+                onClick={handleFetchClaudeKey}
+                loading={fetchingClaudeKey}
+                disabled={!credentials?.oracleBaseUrl}
+              >
+                Fetch from Oracle
+              </Button>
+            </div>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+              Claude API key will be automatically fetched from Oracle APEX endpoint: <code>{credentials?.oracleBaseUrl}/ords/bcldifc/reerp/settings/claudekey</code>
+            </div>
           </Form.Item>
         </Form>
       </Modal>

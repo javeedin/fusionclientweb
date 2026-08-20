@@ -64,16 +64,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ragQuery:      (params)   => ipcRenderer.invoke('rag:query', params),
 
   // GL MCP Server
-  glMcpSaveCredentials: (params)  => ipcRenderer.invoke('gl-mcp:save-credentials', params),
-  glMcpGetCredentials: ()         => ipcRenderer.invoke('gl-mcp:get-credentials'),
-  glMcpStart: (credentials)       => ipcRenderer.invoke('gl-mcp:start', credentials),
-  glMcpStop: ()                   => ipcRenderer.invoke('gl-mcp:stop'),
-  glMcpStatus: ()                 => ipcRenderer.invoke('gl-mcp:status'),
-  glMcpGetLogs: ()                => ipcRenderer.invoke('gl-mcp:get-logs'),
+  glMcpSaveCredentials: (params)    => ipcRenderer.invoke('gl-mcp:save-credentials', params),
+  glMcpGetCredentials: ()           => ipcRenderer.invoke('gl-mcp:get-credentials'),
+  glMcpStart: (credentials)         => ipcRenderer.invoke('gl-mcp:start', credentials),
+  glMcpStop: ()                     => ipcRenderer.invoke('gl-mcp:stop'),
+  glMcpStatus: ()                   => ipcRenderer.invoke('gl-mcp:status'),
+  glMcpGetLogs: ()                  => ipcRenderer.invoke('gl-mcp:get-logs'),
   glMcpAddToClaudeDesktop: (params) => ipcRenderer.invoke('gl-mcp:add-to-claude-desktop', params),
-  glMcpChat: (params)             => ipcRenderer.invoke('gl-mcp:chat', params),
-  onGlMcpStatus: (callback)       => ipcRenderer.on('gl-mcp-status', callback),
-  removeGlMcpStatusListener: ()   => ipcRenderer.removeAllListeners('gl-mcp-status'),
+  glMcpChat: (params)               => ipcRenderer.invoke('gl-mcp:chat', params),
+  glMcpFetchClaudeKey: (params)     => ipcRenderer.invoke('gl-mcp:fetch-claude-key', params),
+  onGlMcpStatus: (callback)         => ipcRenderer.on('gl-mcp-status', callback),
+  removeGlMcpStatusListener: ()     => ipcRenderer.removeAllListeners('gl-mcp-status'),
 
   // Native Oracle Fusion (IDCS) login — opens the real sign-in window
   fusionLogin: (url) => ipcRenderer.invoke('fusion-login', { url }),

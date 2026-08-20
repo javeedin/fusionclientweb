@@ -1162,7 +1162,38 @@ ipcMain.handle('clear-fusion-credentials', () => {
 // ── GL MCP Server IPC Handlers ─────────────────────────────────────────────
 const GL_CREDS_FILE = path.join(app.getPath('userData'), 'gl-api-creds.json');
 
-ipcMain.handle('gl-mcp:save-credentials', (_event, { oracleBaseUrl, username, password, skipAuth, httpPort }) => {
+async function fetchClaudeKeyFromOracleAPEX(oracleBaseUrl) {
+  try {
+    if (!oracleBaseUrl) {
+      console.warn('[GL MCP] No Oracle base URL provided for Claude key fetch');
+      return null;
+    }
+
+    const endpoint = `${oracleBaseUrl}/ords/bcldifc/reerp/settings/claudekey`;
+    console.log('[GL MCP] Fetching Claude key from:', endpoint);
+
+    const response = await fetch(endpoint);
+    if (!response.ok) {
+      console.warn('[GL MCP] Failed to fetch Claude key, status:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    if (data.claudeKey || data.key) {
+      const key = data.claudeKey || data.key;
+      console.log('[GL MCP] Successfully fetched Claude key from Oracle APEX');
+      return key;
+    } else {
+      console.warn('[GL MCP] No Claude key in response:', Object.keys(data));
+      return null;
+    }
+  } catch (err) {
+    console.error('[GL MCP] Error fetching Claude key from Oracle APEX:', err.message);
+    return null;
+  }
+}
+
+ipcMain.handle('gl-mcp:save-credentials', async (_event, { oracleBaseUrl, username, password, skipAuth, httpPort }) => {
   try {
     let storedPassword, encrypted;
     if (!skipAuth && password) {
@@ -1177,6 +1208,25 @@ ipcMain.handle('gl-mcp:save-credentials', (_event, { oracleBaseUrl, username, pa
       storedPassword = '';
       encrypted = true;
     }
+
+    // Fetch Claude key from Oracle APEX
+    let claudeKey = null;
+    if (oracleBaseUrl) {
+      claudeKey = await fetchClaudeKeyFromOracleAPEX(oracleBaseUrl);
+    }
+
+    let storedClaudeKey = '';
+    let claudeKeyEncrypted = true;
+    if (claudeKey) {
+      if (safeStorage.isEncryptionAvailable()) {
+        storedClaudeKey = safeStorage.encryptString(claudeKey).toString('base64');
+        claudeKeyEncrypted = true;
+      } else {
+        storedClaudeKey = Buffer.from(claudeKey).toString('base64');
+        claudeKeyEncrypted = false;
+      }
+    }
+
     const creds = {
       oracleBaseUrl,
       username: skipAuth ? '' : (username || ''),
@@ -1184,10 +1234,12 @@ ipcMain.handle('gl-mcp:save-credentials', (_event, { oracleBaseUrl, username, pa
       skipAuth: skipAuth || false,
       httpPort: httpPort || 3001,
       encrypted,
+      claudeKey: storedClaudeKey,
+      claudeKeyEncrypted,
     };
     fs.writeFileSync(GL_CREDS_FILE, JSON.stringify(creds, null, 2), 'utf8');
-    console.log(`[GL MCP] Credentials saved: skipAuth=${creds.skipAuth}, httpPort=${creds.httpPort}`);
-    return { success: true };
+    console.log(`[GL MCP] Credentials saved: skipAuth=${creds.skipAuth}, httpPort=${creds.httpPort}, hasClaudeKey=${!!claudeKey}`);
+    return { success: true, claudeKeyFetched: !!claudeKey };
   } catch (e) {
     console.error('[GL MCP] Failed to save credentials:', e.message);
     return { success: false, error: e.message };
@@ -1206,16 +1258,70 @@ ipcMain.handle('gl-mcp:get-credentials', () => {
         password = Buffer.from(data.password, 'base64').toString();
       }
     }
+
+    let claudeKey = '';
+    if (data.claudeKey) {
+      if (data.claudeKeyEncrypted && safeStorage.isEncryptionAvailable()) {
+        claudeKey = safeStorage.decryptString(Buffer.from(data.claudeKey, 'base64'));
+      } else if (data.claudeKey) {
+        claudeKey = Buffer.from(data.claudeKey, 'base64').toString();
+      }
+    }
+
     return {
       oracleBaseUrl: data.oracleBaseUrl,
       username: data.username || '',
       password,
       skipAuth: data.skipAuth || false,
       httpPort: data.httpPort || 3001,
+      claudeApiKey: claudeKey,
     };
   } catch (e) {
     console.error('[GL MCP] Error reading credentials:', e.message);
     return null;
+  }
+});
+
+ipcMain.handle('gl-mcp:fetch-claude-key', async (_event, { oracleBaseUrl } = {}) => {
+  try {
+    console.log('[GL MCP] Manually fetching Claude key from Oracle APEX');
+    const claudeKey = await fetchClaudeKeyFromOracleAPEX(oracleBaseUrl);
+
+    if (claudeKey) {
+      // Save to credentials file
+      if (fs.existsSync(GL_CREDS_FILE)) {
+        const data = JSON.parse(fs.readFileSync(GL_CREDS_FILE, 'utf8'));
+
+        let storedClaudeKey = '';
+        if (safeStorage.isEncryptionAvailable()) {
+          storedClaudeKey = safeStorage.encryptString(claudeKey).toString('base64');
+          data.claudeKeyEncrypted = true;
+        } else {
+          storedClaudeKey = Buffer.from(claudeKey).toString('base64');
+          data.claudeKeyEncrypted = false;
+        }
+
+        data.claudeKey = storedClaudeKey;
+        fs.writeFileSync(GL_CREDS_FILE, JSON.stringify(data, null, 2), 'utf8');
+      }
+
+      return {
+        success: true,
+        message: 'Claude key fetched and saved successfully',
+        claudeKey,
+      };
+    } else {
+      return {
+        success: false,
+        error: 'Failed to fetch Claude key from Oracle APEX endpoint'
+      };
+    }
+  } catch (err) {
+    console.error('[GL MCP] Error fetching Claude key:', err.message);
+    return {
+      success: false,
+      error: err.message
+    };
   }
 });
 
