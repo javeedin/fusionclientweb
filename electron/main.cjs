@@ -1273,43 +1273,62 @@ function getClaudeDesktopConfigPath() {
 }
 
 ipcMain.handle('gl-mcp:add-to-claude-desktop', async (_event, { httpPort = 3001 } = {}) => {
+  console.log('[GL MCP] add-to-claude-desktop handler called with httpPort:', httpPort);
+
   try {
     const configPath = getClaudeDesktopConfigPath();
+    console.log('[GL MCP] Claude Desktop config path:', configPath);
+
     const configDir = path.dirname(configPath);
+    console.log('[GL MCP] Config directory:', configDir);
 
     let config = {};
     if (fs.existsSync(configPath)) {
+      console.log('[GL MCP] Config file exists, reading...');
       const content = fs.readFileSync(configPath, 'utf8');
       config = JSON.parse(content);
+      console.log('[GL MCP] Existing config mcpServers:', Object.keys(config.mcpServers || {}));
+    } else {
+      console.log('[GL MCP] Config file does not exist, creating new');
     }
 
     if (!config.mcpServers) {
       config.mcpServers = {};
+      console.log('[GL MCP] Created mcpServers object');
     }
 
-    config.mcpServers['gl-server'] = {
+    const mcpConfig = {
       command: 'curl',
-      args: ['-X', 'POST', `http://localhost:${httpPort}/execute`],
+      args: ['-X', 'POST', `-H`, `Content-Type: application/json`, `https://localhost:${httpPort}/`],
       env: {}
     };
 
+    console.log('[GL MCP] MCP Server config:', JSON.stringify(mcpConfig, null, 2));
+    config.mcpServers['gl-server'] = mcpConfig;
+
     if (!fs.existsSync(configDir)) {
+      console.log('[GL MCP] Creating config directory:', configDir);
       fs.mkdirSync(configDir, { recursive: true });
     }
 
+    console.log('[GL MCP] Writing config to:', configPath);
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
-    console.log(`[GL MCP] Added GL server to Claude Desktop config: ${configPath}`);
+    console.log('[GL MCP] Successfully wrote config file');
+    console.log('[GL MCP] New config mcpServers:', Object.keys(config.mcpServers));
 
     return {
       success: true,
       message: `GL server added to Claude Desktop config at ${configPath}`,
-      configPath
+      configPath,
+      mcpConfig
     };
   } catch (e) {
     console.error('[GL MCP] Failed to add GL server to Claude Desktop config:', e.message);
+    console.error('[GL MCP] Stack trace:', e.stack);
     return {
       success: false,
-      error: e.message
+      error: e.message,
+      stack: e.stack
     };
   }
 });

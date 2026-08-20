@@ -345,13 +345,22 @@ export default function GLAccountAnalysis() {
 
   async function addToClaudeDesktop() {
     try {
+      const httpPort = credentials?.httpPort || 3001;
+      console.log('addToClaudeDesktop clicked, httpPort:', httpPort);
+
       const response = await window.electronAPI.glMcpAddToClaudeDesktop({
-        httpPort: credentials?.httpPort || 3001
+        httpPort
       });
 
+      console.log('addToClaudeDesktop response:', response);
+
       if (response.success) {
+        console.log('Successfully added GL server to Claude Desktop config');
+        console.log('Config path:', response.configPath);
+        console.log('MCP Config:', response.mcpConfig);
         messageApi.success('GL server added to Claude Desktop config!');
       } else {
+        console.error('Failed to add GL server:', response.error);
         messageApi.error(response.error || 'Failed to add GL server to Claude Desktop config');
       }
     } catch (err) {
