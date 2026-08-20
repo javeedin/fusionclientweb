@@ -1,12 +1,10 @@
-// Note: MCP SDK dependency removed - using HTTP mode only
-// The HTTP endpoint provides full MCP functionality for Claude Desktop
-log('INFO', 'GL MCP Server running in HTTPS mode (self-signed certificate)');
+// GL MCP Server with MCP Protocol Support
+// Supports both MCP JSON-RPC (for Claude Desktop) and custom HTTP API (for Electron app)
 const https = require('https');
 const http = require('http');
 const url = require('url');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 
 // ── Logging utility ────────────────────────────────────────────────────────
 function log(level, message) {
@@ -15,18 +13,16 @@ function log(level, message) {
   console.error(`${prefix} ${message}`);
 }
 
-log('INFO', 'GL MCP Server initializing...');
+log('INFO', 'GL MCP Server initializing with MCP protocol support...');
 
 // ── Configuration ──────────────────────────────────────────────────────────
-// Extract just the domain from Oracle Base URL
-function extractDomain(url) {
+function extractDomain(urlStr) {
   try {
-    const urlObj = new URL(url);
+    const urlObj = new URL(urlStr);
     return `${urlObj.protocol}//${urlObj.host}`;
   } catch (e) {
-    // Fallback: try to extract protocol and host manually
-    const match = url.match(/^https?:\/\/[^/]+/);
-    return match ? match[0] : url;
+    const match = urlStr.match(/^https?:\/\/[^/]+/);
+    return match ? match[0] : urlStr;
   }
 }
 
@@ -68,7 +64,6 @@ async function fetchAPI(endpoint, options = {}) {
     ...options.headers,
   };
 
-  // Add basic auth only if not skipped and credentials provided
   if (!SKIP_AUTH && username && password) {
     const encoded = Buffer.from(`${username}:${password}`).toString('base64');
     headers['Authorization'] = `Basic ${encoded}`;
@@ -101,16 +96,13 @@ async function fetchAPI(endpoint, options = {}) {
   }
 }
 
-// ── Tool: Get GL Account Analysis ──────────────────────────────────────────
+// ── GL Tools ───────────────────────────────────────────────────────────────
 async function getGLAccountAnalysis(params) {
   const { ledger_name, period_names, company, account } = params;
-
-  // Build cache key
   const cacheKey = `gl_analysis_${ledger_name}_${period_names}_${company}_${account}`;
   const cached = getCachedValue(cacheKey);
   if (cached) return { ...cached, cached: true };
 
-  // Build query string with parameters
   const queryParams = new URLSearchParams({
     ledger_name: ledger_name || '',
     period_names: period_names || '',
@@ -118,23 +110,17 @@ async function getGLAccountAnalysis(params) {
     account: account || '',
   }).toString();
 
-  const result = await fetchAPI(`/gl/accountanalysis?${queryParams}`, {
-    method: 'GET',
-  });
-
+  const result = await fetchAPI(`/gl/accountanalysis?${queryParams}`, { method: 'GET' });
   setCachedValue(cacheKey, result);
   return { ...result, cached: false };
 }
 
-// ── Tool: Get GL Transactions ──────────────────────────────────────────────
 async function getGLTransactions(params) {
   const { ledger_name, period_names, company, account, limit = 100, offset = 0 } = params;
-
   const cacheKey = `gl_txns_${ledger_name}_${period_names}_${company}_${account}_${limit}_${offset}`;
   const cached = getCachedValue(cacheKey);
   if (cached) return { ...cached, cached: true };
 
-  // Build query string with parameters
   const queryParams = new URLSearchParams({
     ledger_name: ledger_name || '',
     period_names: period_names || '',
@@ -144,65 +130,241 @@ async function getGLTransactions(params) {
     offset: offset.toString(),
   }).toString();
 
-  const result = await fetchAPI(`/gl/transactions?${queryParams}`, {
-    method: 'GET',
-  });
-
+  const result = await fetchAPI(`/gl/transactions?${queryParams}`, { method: 'GET' });
   setCachedValue(cacheKey, result);
   return { ...result, cached: false };
 }
 
-// ── Tool: Get Account Balance ──────────────────────────────────────────────
 async function getAccountBalance(params) {
   const { ledger_name, period_names, account } = params;
-
   const cacheKey = `gl_balance_${ledger_name}_${period_names}_${account}`;
   const cached = getCachedValue(cacheKey);
   if (cached) return { ...cached, cached: true };
 
-  // Build query string with parameters
   const queryParams = new URLSearchParams({
     ledger_name: ledger_name || '',
     period_names: period_names || '',
     account: account || '',
   }).toString();
 
-  const result = await fetchAPI(`/gl/accountbalance?${queryParams}`, {
-    method: 'GET',
-  });
-
+  const result = await fetchAPI(`/gl/accountbalance?${queryParams}`, { method: 'GET' });
   setCachedValue(cacheKey, result);
   return { ...result, cached: false };
 }
 
-// ── Tool: Search Accounts ──────────────────────────────────────────────────
 async function searchAccounts(params) {
   const { ledger_name, search_term } = params;
-
-  const result = await fetchAPI('/gl/accounts/search', {
+  return await fetchAPI('/gl/accounts/search', {
     method: 'POST',
-    body: {
-      ledger_name,
-      search_term,
-    },
+    body: { ledger_name, search_term },
   });
-
-  return result;
 }
 
-// ── Tool: Get Journal Entry ────────────────────────────────────────────────
 async function getJournalEntry(params) {
   const { je_header_id } = params;
-
-  const result = await fetchAPI(`/gl/journalentry/${je_header_id}`, {
-    method: 'GET',
-  });
-
-  return result;
+  return await fetchAPI(`/gl/journalentry/${je_header_id}`, { method: 'GET' });
 }
 
-// Note: MCP tools are exposed via HTTP endpoints only
-// This allows testing on Claude Desktop and other MCP clients via HTTP
+// ── MCP Tool Definitions ──────────────────────────────────────────────────
+const MCP_TOOLS = [
+  {
+    name: 'getGLAccountAnalysis',
+    description: 'Get GL account analysis data for a specific account, period, and ledger',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ledger_name: { type: 'string', description: 'General Ledger name' },
+        period_names: { type: 'string', description: 'Period name (e.g., Jan-26)' },
+        company: { type: 'string', description: 'Company code' },
+        account: { type: 'string', description: 'GL Account number' }
+      },
+      required: ['ledger_name', 'period_names', 'company', 'account']
+    }
+  },
+  {
+    name: 'getGLTransactions',
+    description: 'Get GL transactions with pagination support',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ledger_name: { type: 'string', description: 'General Ledger name' },
+        period_names: { type: 'string', description: 'Period name' },
+        company: { type: 'string', description: 'Company code' },
+        account: { type: 'string', description: 'GL Account number' },
+        limit: { type: 'integer', description: 'Max results (default 100)' },
+        offset: { type: 'integer', description: 'Pagination offset (default 0)' }
+      },
+      required: ['ledger_name', 'period_names', 'company', 'account']
+    }
+  },
+  {
+    name: 'getAccountBalance',
+    description: 'Get account balance for a specific period',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ledger_name: { type: 'string', description: 'General Ledger name' },
+        period_names: { type: 'string', description: 'Period name' },
+        account: { type: 'string', description: 'GL Account number' }
+      },
+      required: ['ledger_name', 'period_names', 'account']
+    }
+  },
+  {
+    name: 'searchAccounts',
+    description: 'Search for GL accounts by term',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ledger_name: { type: 'string', description: 'General Ledger name' },
+        search_term: { type: 'string', description: 'Search term' }
+      },
+      required: ['ledger_name', 'search_term']
+    }
+  },
+  {
+    name: 'getJournalEntry',
+    description: 'Get details of a specific journal entry',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        je_header_id: { type: 'string', description: 'Journal Entry Header ID' }
+      },
+      required: ['je_header_id']
+    }
+  }
+];
+
+// ── Execute Tool ────────────────────────────────────────────────────────
+async function executeTool(toolName, args) {
+  switch (toolName) {
+    case 'getGLAccountAnalysis':
+      return await getGLAccountAnalysis(args);
+    case 'getGLTransactions':
+      return await getGLTransactions(args);
+    case 'getAccountBalance':
+      return await getAccountBalance(args);
+    case 'searchAccounts':
+      return await searchAccounts(args);
+    case 'getJournalEntry':
+      return await getJournalEntry(args);
+    default:
+      throw new Error(`Unknown tool: ${toolName}`);
+  }
+}
+
+// ── Request handler (HTTP and HTTPS) ──────────────────────────────────────
+async function requestHandler(req, res) {
+  const parsedUrl = url.parse(req.url, true);
+  const pathname = parsedUrl.pathname;
+
+  // Health check
+  if (pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
+    return;
+  }
+
+  // MCP JSON-RPC endpoint (for Claude Desktop)
+  if ((pathname === '/' || pathname === '') && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const request = JSON.parse(body);
+        log('INFO', `MCP Request: ${request.method}`);
+
+        let response;
+        const { jsonrpc = '2.0', method, params, id } = request;
+
+        if (method === 'initialize') {
+          response = {
+            jsonrpc,
+            id,
+            result: {
+              protocolVersion: '2024-11-05',
+              capabilities: {},
+              serverInfo: {
+                name: 'GL MCP Server',
+                version: '1.0.0'
+              }
+            }
+          };
+        }
+        else if (method === 'resources/list') {
+          response = {
+            jsonrpc,
+            id,
+            result: { resources: [] }
+          };
+        }
+        else if (method === 'tools/list') {
+          response = {
+            jsonrpc,
+            id,
+            result: { tools: MCP_TOOLS }
+          };
+        }
+        else if (method === 'tools/call') {
+          const { name, arguments: toolArgs } = params;
+          const result = await executeTool(name, toolArgs);
+          response = {
+            jsonrpc,
+            id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(result, null, 2)
+                }
+              ]
+            }
+          };
+        }
+        else {
+          throw new Error(`Unknown MCP method: ${method}`);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(response));
+      } catch (error) {
+        log('ERROR', `MCP Error: ${error.message}`);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: error.message }
+        }));
+      }
+    });
+    return;
+  }
+
+  // Custom HTTP /execute endpoint (for Electron app)
+  if (pathname === '/execute' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const { tool, arguments: args } = JSON.parse(body);
+        log('INFO', `HTTP Request: Tool=${tool}`);
+
+        const result = await executeTool(tool, args);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, data: result }));
+      } catch (error) {
+        log('ERROR', `HTTP Error: ${error.message}`);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // 404
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not found' }));
+}
 
 // ── Generate or load self-signed certificate ──────────────────────────────
 function getCertificate() {
@@ -210,7 +372,6 @@ function getCertificate() {
   const certPath = path.join(certDir, 'cert.pem');
   const keyPath = path.join(certDir, 'key.pem');
 
-  // Return existing cert if available
   if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
     try {
       return {
@@ -222,15 +383,12 @@ function getCertificate() {
     }
   }
 
-  // Generate new self-signed certificate
   log('INFO', 'Generating self-signed certificate for localhost...');
   try {
-    // Ensure cert directory exists
     if (!fs.existsSync(certDir)) {
       fs.mkdirSync(certDir, { recursive: true });
     }
 
-    // Try openssl first (faster)
     try {
       const { execSync } = require('child_process');
       const cmd = `openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" -days 365 -nodes -subj "/CN=localhost"`;
@@ -242,39 +400,30 @@ function getCertificate() {
       };
     } catch (opensslError) {
       log('DEBUG', `openssl not available: ${opensslError.message}`);
-      // Fallback to node-forge (works on all platforms, synchronous)
       try {
         const forge = require('node-forge');
 
-        // Generate RSA key pair
         log('DEBUG', 'Generating RSA key pair...');
         const keys = forge.pki.rsa.generateKeyPair(2048);
 
-        // Generate self-signed certificate
         log('DEBUG', 'Generating self-signed certificate...');
         const cert = forge.pki.createCertificate();
         cert.publicKey = keys.publicKey;
         cert.serialNumber = '01';
 
-        // Set certificate validity
         const now = new Date();
         cert.validity.notBefore = now;
         cert.validity.notAfter = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
 
-        // Add certificate attributes
         cert.setSubject([
           { name: 'commonName', value: 'localhost' },
           { name: 'organizationName', value: 'GL MCP Server' },
           { name: 'countryName', value: 'US' }
         ]);
 
-        // Set issuer same as subject for self-signed
         cert.setIssuer(cert.subject.attributes);
-
-        // Self-sign the certificate
         cert.sign(keys.privateKey, forge.md.sha256.create());
 
-        // Convert to PEM format
         const certPem = forge.pki.certificateToPem(cert);
         const keyPem = forge.pki.privateKeyToPem(keys.privateKey);
 
@@ -297,65 +446,7 @@ function getCertificate() {
   }
 }
 
-// ── Request handler (shared by HTTP and HTTPS) ────────────────────────────
-async function requestHandler(req, res) {
-  const parsedUrl = url.parse(req.url, true);
-  const pathname = parsedUrl.pathname;
-
-  // Health check endpoint
-  if (pathname === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
-    return;
-  }
-
-  // Tool execution endpoint
-  if (pathname === '/execute' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', async () => {
-      try {
-        const { tool, arguments: args } = JSON.parse(body);
-        log('INFO', `HTTP Request: Tool=${tool}`);
-
-        let result;
-        switch (tool) {
-          case 'getGLAccountAnalysis':
-            result = await getGLAccountAnalysis(args);
-            break;
-          case 'getGLTransactions':
-            result = await getGLTransactions(args);
-            break;
-          case 'getAccountBalance':
-            result = await getAccountBalance(args);
-            break;
-          case 'searchAccounts':
-            result = await searchAccounts(args);
-            break;
-          case 'getJournalEntry':
-            result = await getJournalEntry(args);
-            break;
-          default:
-            throw new Error(`Unknown tool: ${tool}`);
-        }
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, data: result }));
-      } catch (error) {
-        log('ERROR', `HTTP Error: ${error.message}`);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: error.message }));
-      }
-    });
-    return;
-  }
-
-  // 404
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Not found' }));
-}
-
-// ── HTTP Server (fallback when HTTPS cert generation fails) ────────────────
+// ── HTTP Server (fallback) ────────────────────────────────────────────────
 function startHttpServer(port) {
   const httpServer = http.createServer(requestHandler);
 
@@ -371,7 +462,7 @@ function startHttpServer(port) {
   return httpServer;
 }
 
-// ── HTTPS Server (for Claude Desktop) ──────────────────────────────────────
+// ── HTTPS Server ──────────────────────────────────────────────────────────
 function startHttpsServer(port) {
   const tlsConfig = getCertificate();
 
@@ -384,6 +475,7 @@ function startHttpsServer(port) {
 
   httpsServer.listen(port, 'localhost', () => {
     log('INFO', `HTTPS Server listening on https://localhost:${port}`);
+    log('INFO', `MCP Endpoint: https://localhost:${port}/`);
     log('INFO', `Certificate: Self-signed (safe for localhost testing)`);
   });
 
@@ -394,12 +486,11 @@ function startHttpsServer(port) {
   return httpsServer;
 }
 
-// ── Main startup ───────────────────────────────────────────────────────────
+// ── Main startup ──────────────────────────────────────────────────────────
 async function main() {
   try {
-    log('INFO', 'Starting GL MCP Server (HTTPS mode)');
+    log('INFO', 'Starting GL MCP Server (HTTPS mode with MCP protocol)');
 
-    // Start HTTPS server
     if (HTTP_PORT) {
       log('INFO', `Starting HTTPS server on port ${HTTP_PORT}`);
       startHttpsServer(HTTP_PORT);
