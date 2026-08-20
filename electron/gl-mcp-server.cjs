@@ -248,16 +248,25 @@ function getCertificate() {
         const attrs = [{ name: 'commonName', value: 'localhost' }];
         const pems = selfsigned.generate(attrs, { days: 365, algorithm: 'sha256', keySize: 2048 });
 
-        fs.writeFileSync(certPath, pems.cert, 'utf8');
-        fs.writeFileSync(keyPath, pems.private, 'utf8');
+        // Ensure we have cert and private key
+        if (!pems.cert || !pems.private) {
+          throw new Error(`selfsigned returned invalid data: cert=${!!pems.cert}, private=${!!pems.private}`);
+        }
+
+        // Write as strings/buffers
+        const certData = pems.cert.toString ? pems.cert.toString() : pems.cert;
+        const keyData = pems.private.toString ? pems.private.toString() : pems.private;
+
+        fs.writeFileSync(certPath, certData);
+        fs.writeFileSync(keyPath, keyData);
 
         log('INFO', `Certificate generated at ${certDir} using selfsigned`);
         return {
-          cert: pems.cert,
-          key: pems.private,
+          cert: certData,
+          key: keyData,
         };
       } catch (nodeError) {
-        log('ERROR', `Failed to generate certificate with both openssl and selfsigned: ${nodeError.message}`);
+        log('ERROR', `Failed to generate certificate with selfsigned: ${nodeError.message}`);
         return null;
       }
     }
