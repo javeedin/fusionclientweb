@@ -1340,6 +1340,84 @@ ipcMain.handle('gl-mcp:add-to-claude-desktop', async (_event, { httpPort = 3001 
   }
 });
 
+// ── GL MCP Chat with Claude API ─────────────────────────────────────────────
+ipcMain.handle('gl-mcp:chat', async (_event, { message, glData, apiKey } = {}) => {
+  try {
+    if (!apiKey) {
+      return {
+        success: false,
+        error: 'Claude API key not configured'
+      };
+    }
+
+    console.log('[GL MCP Chat] Processing message:', message.substring(0, 50) + '...');
+
+    // Build context for Claude
+    const systemPrompt = `You are an AI assistant specialized in analyzing General Ledger (GL) data from Oracle applications.
+Your role is to help users understand their GL transactions, accounts, and financial data.
+
+Current GL Context:
+- Query Parameters: ${JSON.stringify(glData.queryParams)}
+- Total Records: ${glData.totalRecords}
+- Summary: ${glData.summary ? `Total Debit: AED ${glData.summary.totalDebit.toFixed(2)}, Transaction Count: ${glData.summary.count}` : 'No data queried'}
+${glData.recentTransactions && glData.recentTransactions.length > 0 ? `\nRecent Transactions:\n${glData.recentTransactions.map(t => `- Batch: ${t.batch}, JE: ${t.jeHeader}, Date: ${t.date}, Amount: AED ${t.amount.toFixed(2)}`).join('\n')}` : ''}
+
+Provide clear, concise analysis focused on the GL data context.`;
+
+    // Call Claude API
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [
+          {
+            role: 'user',
+            content: message,
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      console.error('[GL MCP Chat] API Error:', response.status, errorData);
+      return {
+        success: false,
+        error: `Claude API error: ${response.status} - ${errorData.substring(0, 100)}`
+      };
+    }
+
+    const data = await response.json();
+    console.log('[GL MCP Chat] Claude response received');
+
+    if (data.content && data.content.length > 0) {
+      const responseText = data.content[0].text;
+      return {
+        success: true,
+        response: responseText,
+      };
+    } else {
+      return {
+        success: false,
+        error: 'No response from Claude API'
+      };
+    }
+  } catch (err) {
+    console.error('[GL MCP Chat] Error:', err.message);
+    return {
+      success: false,
+      error: err.message
+    };
+  }
+});
+
 // ── Native Oracle Fusion login ──────────────────────────────────────────────
 // Opens the real Oracle Cloud (IDCS) sign-in in a child window. The user
 // authenticates natively; when the browser lands back on the Fusion app domain

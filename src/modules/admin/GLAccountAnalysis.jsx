@@ -19,6 +19,7 @@ export default function GLAccountAnalysis() {
   const [showAPITest, setShowAPITest] = useState(false);
   const [apiTestResult, setApiTestResult] = useState(null);
   const [apiTestLoading, setApiTestLoading] = useState(false);
+  const [tableColumns, setTableColumns] = useState([]);
 
   // Query parameters
   const [queryParams, setQueryParams] = useState({
@@ -80,85 +81,61 @@ export default function GLAccountAnalysis() {
     setChatLoading(true);
 
     try {
-      // AI responses based on GL data analysis
-      let aiResponse = '';
-      const input = chatInput.toLowerCase();
-
-      if (input.includes('total') || input.includes('sum')) {
-        if (summary) {
-          const totalDebit = summary.totalDebit || 0;
-          const totalCredit = results.reduce((sum, t) => sum + (t.accountedDr === 0 ? 0 : 0), 0);
-          aiResponse = `📊 **GL Summary for Account ${queryParams.account}**\n\n`;
-          aiResponse += `• Total Debit: **AED ${totalDebit.toFixed(2)}**\n`;
-          aiResponse += `• Transaction Count: **${summary.count} transactions**\n`;
-          aiResponse += `• Period: ${summary.period}\n`;
-          aiResponse += `• Ledger: ${queryParams.ledger_name}\n`;
-          aiResponse += `• Company: ${queryParams.company}`;
-        } else {
-          aiResponse = 'Please run a query first to see the total debit amount.';
-        }
-      } else if (input.includes('account') || input.includes('balance')) {
-        aiResponse = `🏦 **Account Information**\n\n`;
-        aiResponse += `• Account Number: ${queryParams.account}\n`;
-        aiResponse += `• Ledger: ${queryParams.ledger_name}\n`;
-        aiResponse += `• Period: ${queryParams.period_names}\n`;
-        aiResponse += `• Company: ${queryParams.company}`;
-        if (summary && summary.count > 0) {
-          aiResponse += `\n\n📈 Current Balance:\n• Total Debit: **AED ${summary.totalDebit.toFixed(2)}**\n• Transactions: **${summary.count}**`;
-        }
-      } else if (input.includes('transaction') || input.includes('activity')) {
-        if (results.length > 0) {
-          aiResponse = `✅ **Found ${results.length} GL Transactions**\n\n`;
-          aiResponse += `**Latest Transactions:**\n`;
-          results.slice(0, 3).forEach((t, idx) => {
-            aiResponse += `\n${idx + 1}. Batch ${t.batchId} | JE ${t.jeHeaderId}\n`;
-            aiResponse += `   Date: ${t.accountingDate}\n`;
-            aiResponse += `   Amount: AED ${t.enteredDr.toFixed(2)}\n`;
-            aiResponse += `   ${t.description}`;
-          });
-          if (results.length > 3) {
-            aiResponse += `\n\n... and ${results.length - 3} more transactions`;
-          }
-        } else {
-          aiResponse = 'No GL transactions found for the current query parameters.';
-        }
-      } else if (input.includes('ledger')) {
-        aiResponse = `📚 **Ledger: ${queryParams.ledger_name}**\n\n`;
-        aiResponse += `• Chart of Accounts: BUIMERC Global Chart of Accounts Instance\n`;
-        aiResponse += `• Legal Entity: BUIMERC CORPORATION LIMITED\n`;
-        aiResponse += `• Currency: AED (United Arab Emirates Dirham)\n`;
-        aiResponse += `• Current Period: ${queryParams.period_names}`;
-      } else if (input.includes('period') || input.includes('date')) {
-        aiResponse = `📅 **Period Analysis**\n\n`;
-        aiResponse += `• Period: ${queryParams.period_names}\n`;
-        aiResponse += `• Company: ${queryParams.company}\n`;
-        if (results.length > 0) {
-          const dates = results.map(t => t.accountingDate).filter(Boolean);
-          const uniqueDates = [...new Set(dates)];
-          aiResponse += `• Transaction Dates: ${uniqueDates.join(', ')}\n`;
-          aiResponse += `• Total Transactions: ${results.length}`;
-        }
-      } else {
-        aiResponse =
-          '💡 **I can help you analyze GL data. Try asking:**\n\n' +
-          '• "What is the total?" - Show account summary\n' +
-          '• "Show me transactions" - List GL transactions\n' +
-          '• "Account balance" - Account details\n' +
-          '• "Ledger info" - Ledger information\n' +
-          '• "Period analysis" - Period details';
+      if (!credentials?.claudeApiKey) {
+        const fallbackResponse = 'Please configure Claude API key in settings to enable AI analysis.';
+        const aiMessage = {
+          id: Date.now() + 1,
+          type: 'ai',
+          content: fallbackResponse,
+          timestamp: new Date().toLocaleTimeString(),
+        };
+        setChatMessages((prev) => [...prev, aiMessage]);
+        setChatLoading(false);
+        return;
       }
 
-      const aiMessage = {
-        id: Date.now() + 1,
-        type: 'ai',
-        content: aiResponse,
-        timestamp: new Date().toLocaleTimeString(),
+      // Prepare GL data context for Claude
+      const dataContext = {
+        queryParams,
+        summary,
+        recentTransactions: results.slice(0, 5).map(t => ({
+          batch: t.batchId,
+          jeHeader: t.jeHeaderId,
+          date: t.accountingDate,
+          amount: t.enteredDr,
+          description: t.description,
+        })),
+        totalRecords: results.length,
       };
 
-      setChatMessages((prev) => [...prev, aiMessage]);
+      // Call Claude API through Electron main process
+      const response = await window.electronAPI.glMcpChat({
+        message: chatInput,
+        glData: dataContext,
+        apiKey: credentials.claudeApiKey,
+      });
+
+      if (response.success) {
+        const aiMessage = {
+          id: Date.now() + 1,
+          type: 'ai',
+          content: response.response,
+          timestamp: new Date().toLocaleTimeString(),
+        };
+        setChatMessages((prev) => [...prev, aiMessage]);
+      } else {
+        throw new Error(response.error || 'Failed to get AI response');
+      }
     } catch (err) {
       console.error('Chat error:', err);
-      messageApi.error('Error processing question');
+      messageApi.error(`Error: ${err.message}`);
+      const errorMessage = {
+        id: Date.now() + 1,
+        type: 'ai',
+        content: `❌ Error: ${err.message}`,
+        timestamp: new Date().toLocaleTimeString(),
+      };
+      setChatMessages((prev) => [...prev, errorMessage]);
     } finally {
       setChatLoading(false);
     }
@@ -323,6 +300,42 @@ export default function GLAccountAnalysis() {
 
       setResults(tableData);
 
+      // Generate dynamic columns from all available fields
+      if (tableData.length > 0) {
+        const firstRecord = tableData[0];
+        const allKeys = Object.keys(firstRecord).filter(k => k !== 'key');
+
+        const dynamicCols = allKeys.map(key => {
+          const title = key.replace(/([A-Z])/g, ' $1').trim()
+            .split(' ')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+
+          const isNumeric = typeof firstRecord[key] === 'number';
+
+          return {
+            title,
+            dataIndex: key,
+            key,
+            width: isNumeric ? 120 : 150,
+            align: isNumeric ? 'right' : 'left',
+            render: (value) => {
+              if (typeof value === 'number') {
+                return value.toFixed(2);
+              }
+              return value || '-';
+            },
+            sorter: (a, b) => {
+              if (typeof a[key] === 'number') return a[key] - b[key];
+              if (typeof a[key] === 'string') return (a[key] || '').localeCompare(b[key] || '');
+              return 0;
+            },
+          };
+        });
+
+        setTableColumns(dynamicCols);
+      }
+
       // Calculate summary
       const totalDebit = tableData.reduce((sum, t) => sum + (t.enteredDr || 0), 0);
       setSummary({
@@ -434,14 +447,6 @@ export default function GLAccountAnalysis() {
     }
   }
 
-  const columns = [
-    { title: 'Batch ID', dataIndex: 'batchId', key: 'batchId', width: 100 },
-    { title: 'JE Header ID', dataIndex: 'jeHeaderId', key: 'jeHeaderId', width: 100 },
-    { title: 'Description', dataIndex: 'accountDescription', key: 'accountDescription', width: 300 },
-    { title: 'Debit', dataIndex: 'enteredDr', key: 'enteredDr', width: 120, align: 'right', render: (v) => v?.toFixed(2) || '0.00' },
-    { title: 'Date', dataIndex: 'accountingDate', key: 'accountingDate', width: 120 },
-    { title: 'Note', dataIndex: 'description', key: 'description', width: 300 },
-  ];
 
   return (
     <div style={{ padding: '24px', backgroundColor: '#f5f5f5', minHeight: '100vh' }}>
@@ -641,13 +646,16 @@ export default function GLAccountAnalysis() {
 
         {/* Results Table */}
         {results.length > 0 && (
-          <Card title="GL Transactions" size="small">
-            <Table
-              columns={columns}
-              dataSource={results}
-              pagination={{ pageSize: 10 }}
-              size="small"
-            />
+          <Card title={`GL Transactions (${tableColumns.length} columns)`} size="small">
+            <div style={{ overflowX: 'auto' }}>
+              <Table
+                columns={tableColumns.length > 0 ? tableColumns : []}
+                dataSource={results}
+                pagination={{ pageSize: 10 }}
+                size="small"
+                scroll={{ x: 'max-content' }}
+              />
+            </div>
           </Card>
         )}
       </Card>
@@ -823,6 +831,18 @@ export default function GLAccountAnalysis() {
               max={65535}
               placeholder="e.g., 3001"
               style={{ width: '100%' }}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="Claude API Key"
+            name="claudeApiKey"
+            rules={[{ message: 'Required for AI-powered chat analysis' }]}
+            help="Your Anthropic API key for Claude AI integration. Get it from https://console.anthropic.com"
+          >
+            <Input.Password
+              placeholder="sk-ant-..."
+              visibilityToggle
             />
           </Form.Item>
         </Form>

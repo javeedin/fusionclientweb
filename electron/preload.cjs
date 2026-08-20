@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   glMcpStatus: ()                 => ipcRenderer.invoke('gl-mcp:status'),
   glMcpGetLogs: ()                => ipcRenderer.invoke('gl-mcp:get-logs'),
   glMcpAddToClaudeDesktop: (params) => ipcRenderer.invoke('gl-mcp:add-to-claude-desktop', params),
+  glMcpChat: (params)             => ipcRenderer.invoke('gl-mcp:chat', params),
   onGlMcpStatus: (callback)       => ipcRenderer.on('gl-mcp-status', callback),
   removeGlMcpStatusListener: ()   => ipcRenderer.removeAllListeners('gl-mcp-status'),
 
