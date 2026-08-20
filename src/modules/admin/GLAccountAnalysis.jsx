@@ -248,9 +248,9 @@ export default function GLAccountAnalysis() {
 
     setQueryLoading(true);
     try {
-      // Call the actual HTTP endpoint
+      // Call the actual HTTPS endpoint (self-signed cert safe for localhost)
       const httpPort = credentials?.httpPort || 3001;
-      const endpoint = `http://localhost:${httpPort}/execute`;
+      const endpoint = `https://localhost:${httpPort}/execute`;
 
       console.log('Query GL Data:', {
         endpoint,
@@ -362,8 +362,8 @@ export default function GLAccountAnalysis() {
 
   async function testAPI() {
     const httpPort = credentials?.httpPort || 3001;
-    const healthEndpoint = `http://localhost:${httpPort}/health`;
-    const executeEndpoint = `http://localhost:${httpPort}/execute`;
+    const healthEndpoint = `https://localhost:${httpPort}/health`;
+    const executeEndpoint = `https://localhost:${httpPort}/execute`;
 
     setApiTestLoading(true);
     setShowAPITest(true);
