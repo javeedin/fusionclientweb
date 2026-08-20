@@ -1250,7 +1250,7 @@ app.post('/api/mcp-servers/:id/test', async (req, res) => {
 });
 
 // MCP Server endpoint (callable from Claude)
-app.all('/mcp/:id/*', async (req, res) => {
+app.all('/mcp/:id/:path*', async (req, res) => {
   try {
     const server = mcpServers.get(req.params.id);
     if (!server) {
@@ -1325,7 +1325,7 @@ app.listen(PORT, () => {
   console.log('  PUT  /api/mcp-servers/:id       - Update MCP server');
   console.log('  DELETE /api/mcp-servers/:id     - Delete MCP server');
   console.log('  POST /api/mcp-servers/:id/test  - Test MCP server');
-  console.log('  ALL  /mcp/:id/*                 - MCP Server endpoint (callable from Claude)');
+  console.log('  ALL  /mcp/:id/:path*            - MCP Server endpoint (callable from Claude)');
   console.log('');
   console.log('Oracle Host:', ORACLE_CONFIG.baseUrl);
   console.log('APEX Host:', APEX_CONFIG.baseUrl);
