@@ -174,6 +174,7 @@ let tray = null;
 let isQuitting = false;
 let isSyncing = false;
 let proxyServer = null;
+let glMcpServer = null; // GL MCP Server process
 
 // Start the proxy server.
 // Primary: utilityProcess.fork() — uses Electron's bundled Node, no system Node needed.
@@ -233,6 +234,83 @@ function stopProxyServer() {
     proxyServer.kill();
     proxyServer = null;
   }
+}
+
+// ── GL MCP Server Management ────────────────────────────────────────────────
+function startGLMcpServer(credentials) {
+  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+  const serverPath = isDev
+    ? path.join(__dirname, 'gl-mcp-server.cjs')
+    : path.join(app.getAppPath(), 'electron', 'gl-mcp-server.cjs');
+
+  console.log('Starting GL MCP Server from:', serverPath);
+
+  if (!fs.existsSync(serverPath)) {
+    console.error('GL MCP Server not found at:', serverPath);
+    return false;
+  }
+
+  if (glMcpServer) {
+    console.warn('GL MCP Server already running');
+    return false;
+  }
+
+  // Set environment variables for GL API authentication
+  const env = {
+    ...process.env,
+    ORACLE_BASE_URL: credentials?.oracleBaseUrl || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com',
+    ORACLE_USERNAME: credentials?.username || '',
+    ORACLE_PASSWORD: credentials?.password || '',
+  };
+
+  try {
+    glMcpServer = spawn('node', [serverPath], {
+      cwd: isDev ? path.join(__dirname, '..') : app.getAppPath(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: env,
+    });
+
+    glMcpServer.stdout?.on('data', (d) => console.log('[GL MCP]', d.toString().trim()));
+    glMcpServer.stderr?.on('data', (d) => console.error('[GL MCP Error]', d.toString().trim()));
+    glMcpServer.on('close', (code) => {
+      console.log('GL MCP Server exited:', code);
+      glMcpServer = null;
+      if (mainWindow) {
+        mainWindow.webContents.send('gl-mcp-status', { running: false, code });
+      }
+    });
+    glMcpServer.on('error', (err) => {
+      console.error('GL MCP Server spawn error:', err);
+      glMcpServer = null;
+    });
+
+    console.log('GL MCP Server started successfully');
+    return true;
+  } catch (err) {
+    console.error('Failed to start GL MCP Server:', err);
+    glMcpServer = null;
+    return false;
+  }
+}
+
+// Stop GL MCP Server
+function stopGLMcpServer() {
+  if (glMcpServer) {
+    console.log('Stopping GL MCP Server...');
+    glMcpServer.kill();
+    glMcpServer = null;
+    return true;
+  }
+  return false;
+}
+
+// Get GL MCP Server status
+function getGLMcpServerStatus() {
+  return {
+    running: glMcpServer !== null,
+    pid: glMcpServer?.pid || null,
+  };
 }
 
 // Get config file path
@@ -1034,6 +1112,72 @@ ipcMain.handle('clear-fusion-credentials', () => {
   }
 });
 
+// ── GL MCP Server IPC Handlers ─────────────────────────────────────────────
+const GL_CREDS_FILE = path.join(app.getPath('userData'), 'gl-api-creds.json');
+
+ipcMain.handle('gl-mcp:save-credentials', (_event, { oracleBaseUrl, username, password }) => {
+  try {
+    let storedPassword, encrypted;
+    if (safeStorage.isEncryptionAvailable()) {
+      storedPassword = safeStorage.encryptString(password).toString('base64');
+      encrypted = true;
+    } else {
+      storedPassword = Buffer.from(password).toString('base64');
+      encrypted = false;
+    }
+    fs.writeFileSync(GL_CREDS_FILE, JSON.stringify({ oracleBaseUrl, username, password: storedPassword, encrypted }, null, 2), 'utf8');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('gl-mcp:get-credentials', () => {
+  try {
+    if (!fs.existsSync(GL_CREDS_FILE)) return null;
+    const data = JSON.parse(fs.readFileSync(GL_CREDS_FILE, 'utf8'));
+    let password;
+    if (data.encrypted && safeStorage.isEncryptionAvailable()) {
+      password = safeStorage.decryptString(Buffer.from(data.password, 'base64'));
+    } else {
+      password = Buffer.from(data.password, 'base64').toString();
+    }
+    return { oracleBaseUrl: data.oracleBaseUrl, username: data.username, password };
+  } catch (e) {
+    return null;
+  }
+});
+
+ipcMain.handle('gl-mcp:start', async (_event, credentials) => {
+  try {
+    const success = startGLMcpServer(credentials);
+    if (success) {
+      return { success: true, status: getGLMcpServerStatus() };
+    } else {
+      return { success: false, error: 'Failed to start GL MCP Server' };
+    }
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('gl-mcp:stop', async () => {
+  try {
+    const stopped = stopGLMcpServer();
+    return { success: stopped, status: getGLMcpServerStatus() };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('gl-mcp:status', async () => {
+  try {
+    return { success: true, status: getGLMcpServerStatus() };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 // ── Native Oracle Fusion login ──────────────────────────────────────────────
 // Opens the real Oracle Cloud (IDCS) sign-in in a child window. The user
 // authenticates natively; when the browser lands back on the Fusion app domain
@@ -1201,6 +1345,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   isQuitting = true;
   stopProxyServer();
+  stopGLMcpServer();
 });
 
 // Handle certificate errors in development

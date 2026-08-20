@@ -63,6 +63,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ragDeleteDoc:  (params)   => ipcRenderer.invoke('rag:delete-doc', params),
   ragQuery:      (params)   => ipcRenderer.invoke('rag:query', params),
 
+  // GL MCP Server
+  glMcpSaveCredentials: (params)  => ipcRenderer.invoke('gl-mcp:save-credentials', params),
+  glMcpGetCredentials: ()         => ipcRenderer.invoke('gl-mcp:get-credentials'),
+  glMcpStart: (credentials)       => ipcRenderer.invoke('gl-mcp:start', credentials),
+  glMcpStop: ()                   => ipcRenderer.invoke('gl-mcp:stop'),
+  glMcpStatus: ()                 => ipcRenderer.invoke('gl-mcp:status'),
+  onGlMcpStatus: (callback)       => ipcRenderer.on('gl-mcp-status', callback),
+  removeGlMcpStatusListener: ()   => ipcRenderer.removeAllListeners('gl-mcp-status'),
+
   // Native Oracle Fusion (IDCS) login — opens the real sign-in window
   fusionLogin: (url) => ipcRenderer.invoke('fusion-login', { url }),
 
