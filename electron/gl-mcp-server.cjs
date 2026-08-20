@@ -1,5 +1,6 @@
-// Import MCP SDK - the package exports these directly
-const { Server, StdioServerTransport, CallToolRequest } = require('@modelcontextprotocol/sdk');
+// Note: MCP SDK dependency removed - using HTTP mode only
+// The HTTP endpoint provides full MCP functionality for Claude Desktop
+log('INFO', 'GL MCP Server running in HTTP mode');
 const http = require('http');
 const url = require('url');
 
@@ -175,89 +176,8 @@ async function getJournalEntry(params) {
   return result;
 }
 
-// ── MCP Server Setup ───────────────────────────────────────────────────────
-const server = new Server({
-  name: 'oracle-gl-mcp-server',
-  version: '1.0.0',
-});
-
-// Register tools
-server.setRequestHandler(CallToolRequest, async (request) => {
-  const { name, arguments: args } = request;
-
-  try {
-    let result;
-
-    switch (name) {
-      case 'getGLAccountAnalysis':
-        result = await getGLAccountAnalysis(args);
-        break;
-      case 'getGLTransactions':
-        result = await getGLTransactions(args);
-        break;
-      case 'getAccountBalance':
-        result = await getAccountBalance(args);
-        break;
-      case 'searchAccounts':
-        result = await searchAccounts(args);
-        break;
-      case 'getJournalEntry':
-        result = await getJournalEntry(args);
-        break;
-      default:
-        return {
-          content: [{ type: 'text', text: `Unknown tool: ${name}` }],
-          isError: true,
-        };
-    }
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  } catch (error) {
-    return {
-      content: [{ type: 'text', text: `Tool error: ${error.message}` }],
-      isError: true,
-    };
-  }
-});
-
-// Expose tools
-server.tool('getGLAccountAnalysis', 'Get GL account analysis for a given account and period', {
-  ledger_name: { type: 'string', description: 'Ledger name (e.g., "BUIMERC LEDGER")' },
-  period_names: { type: 'string', description: 'Period name (e.g., "Jan-26")' },
-  company: { type: 'string', description: 'Company code (e.g., "01")' },
-  account: { type: 'string', description: 'Account number (e.g., "1222107")' },
-});
-
-server.tool('getGLTransactions', 'Get GL transactions with pagination', {
-  ledger_name: { type: 'string', description: 'Ledger name' },
-  period_names: { type: 'string', description: 'Period name' },
-  company: { type: 'string', description: 'Company code' },
-  account: { type: 'string', description: 'Account number' },
-  limit: { type: 'number', description: 'Records per page (default: 100)' },
-  offset: { type: 'number', description: 'Page offset (default: 0)' },
-});
-
-server.tool('getAccountBalance', 'Get account balance for a specific period', {
-  ledger_name: { type: 'string', description: 'Ledger name' },
-  period_names: { type: 'string', description: 'Period name' },
-  account: { type: 'string', description: 'Account number' },
-});
-
-server.tool('searchAccounts', 'Search chart of accounts', {
-  ledger_name: { type: 'string', description: 'Ledger name' },
-  search_term: { type: 'string', description: 'Account name or number to search' },
-});
-
-server.tool('getJournalEntry', 'Get journal entry details', {
-  je_header_id: { type: 'number', description: 'Journal entry header ID' },
-});
+// Note: MCP tools are exposed via HTTP endpoints only
+// This allows testing on Claude Desktop and other MCP clients via HTTP
 
 // ── HTTP Server (for Claude Desktop testing) ──────────────────────────────
 function startHttpServer(port) {
@@ -332,19 +252,17 @@ function startHttpServer(port) {
 // ── Main startup ───────────────────────────────────────────────────────────
 async function main() {
   try {
-    log('INFO', 'Starting GL MCP Server');
+    log('INFO', 'Starting GL MCP Server (HTTP mode)');
 
-    // Start HTTP server if port provided
+    // Start HTTP server
     if (HTTP_PORT) {
       log('INFO', `Starting HTTP server on port ${HTTP_PORT}`);
       startHttpServer(HTTP_PORT);
+      log('INFO', 'GL MCP Server started successfully - HTTP server running');
+    } else {
+      log('ERROR', 'No HTTP port configured, cannot start server');
+      process.exit(1);
     }
-
-    // Start stdio MCP server
-    log('INFO', 'Starting stdio MCP server');
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    log('INFO', 'GL MCP Server started successfully - waiting for commands');
   } catch (error) {
     log('ERROR', `Failed to start server: ${error.message}`);
     process.exit(1);
