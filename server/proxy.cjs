@@ -1250,14 +1250,15 @@ app.post('/api/mcp-servers/:id/test', async (req, res) => {
 });
 
 // MCP Server endpoint (callable from Claude)
-app.all('/mcp/:id/:path*', async (req, res) => {
+app.all(/^\/mcp\/([^/]+)\/(.*)$/, async (req, res) => {
   try {
-    const server = mcpServers.get(req.params.id);
+    const serverId = req.params[0]; // First capture group
+    const server = mcpServers.get(serverId);
     if (!server) {
       return res.status(404).json({ error: 'MCP Server not found' });
     }
 
-    console.log(`[MCP] ${req.params.id} - ${req.method} ${req.path}`);
+    console.log(`[MCP] ${serverId} - ${req.method} ${req.path}`);
 
     if (server.type === 'REST') {
       const { endpoint, method = 'GET', authType, authUsername, authPassword, bearerToken, apiKey, apiKeyHeader = 'X-API-Key' } = server.config;

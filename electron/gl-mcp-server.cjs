@@ -1,6 +1,5 @@
-const { Server } = require('@modelcontextprotocol/sdk/server/stdio');
-const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio');
-const { CallToolRequest, Tool } = require('@modelcontextprotocol/sdk/types');
+// Import MCP SDK - the package exports these directly
+const { Server, StdioServerTransport, CallToolRequest } = require('@modelcontextprotocol/sdk');
 const http = require('http');
 const url = require('url');
 
