@@ -1,10 +1,27 @@
 const { Server } = require('@modelcontextprotocol/sdk/server/stdio');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio');
 const { CallToolRequest, Tool } = require('@modelcontextprotocol/sdk/types');
+const http = require('http');
+const url = require('url');
+
+// ── Logging utility ────────────────────────────────────────────────────────
+function log(level, message) {
+  const timestamp = new Date().toISOString();
+  const prefix = `[${timestamp}] [GL MCP ${level}]`;
+  console.error(`${prefix} ${message}`);
+}
+
+log('INFO', 'GL MCP Server initializing...');
 
 // ── Configuration ──────────────────────────────────────────────────────────
 const ORACLE_BASE_URL = process.env.ORACLE_BASE_URL || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com';
 const APEX_ENDPOINT = `${ORACLE_BASE_URL}/ords/bcldifc/reerp`;
+const HTTP_PORT = process.env.GL_MCP_HTTP_PORT ? parseInt(process.env.GL_MCP_HTTP_PORT, 10) : null;
+const SKIP_AUTH = process.env.SKIP_AUTH === 'true' || process.env.SKIP_AUTH === '1';
+
+log('INFO', `Config: ORACLE_BASE_URL=${ORACLE_BASE_URL}`);
+log('INFO', `Config: SKIP_AUTH=${SKIP_AUTH}`);
+if (HTTP_PORT) log('INFO', `Config: HTTP_PORT=${HTTP_PORT}`);
 
 // Cache for API calls (TTL: 5 minutes)
 const cache = new Map();
@@ -34,26 +51,35 @@ async function fetchAPI(endpoint, options = {}) {
     ...options.headers,
   };
 
-  // Add basic auth if credentials provided
-  if (username && password) {
+  // Add basic auth only if not skipped and credentials provided
+  if (!SKIP_AUTH && username && password) {
     const encoded = Buffer.from(`${username}:${password}`).toString('base64');
     headers['Authorization'] = `Basic ${encoded}`;
+  } else if (!SKIP_AUTH && (!username || !password)) {
+    log('WARN', 'No credentials provided but SKIP_AUTH is disabled');
   }
 
+  const fullUrl = `${APEX_ENDPOINT}${endpoint}`;
+  log('DEBUG', `API Call: ${options.method || 'GET'} ${endpoint}`);
+
   try {
-    const response = await fetch(`${APEX_ENDPOINT}${endpoint}`, {
+    const response = await fetch(fullUrl, {
       method: options.method || 'GET',
       headers,
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
 
     if (!response.ok) {
-      throw new Error(`Oracle API ${response.status}: ${response.statusText}`);
+      const error = new Error(`Oracle API ${response.status}: ${response.statusText}`);
+      log('ERROR', `API Failed: ${error.message}`);
+      throw error;
     }
 
-    return await response.json();
+    const data = await response.json();
+    log('DEBUG', `API Success: Got response with ${JSON.stringify(data).length} bytes`);
+    return data;
   } catch (error) {
-    console.error(`[GL API] Error: ${error.message}`);
+    log('ERROR', `API Error: ${error.message}`);
     throw error;
   }
 }
@@ -234,11 +260,110 @@ server.tool('getJournalEntry', 'Get journal entry details', {
   je_header_id: { type: 'number', description: 'Journal entry header ID' },
 });
 
-// Start server
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('[GL MCP Server] Started successfully');
+// ── HTTP Server (for Claude Desktop testing) ──────────────────────────────
+function startHttpServer(port) {
+  const httpServer = http.createServer(async (req, res) => {
+    const parsedUrl = url.parse(req.url, true);
+    const pathname = parsedUrl.pathname;
+
+    // Health check endpoint
+    if (pathname === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
+      return;
+    }
+
+    // Tool execution endpoint
+    if (pathname === '/execute' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { tool, arguments: args } = JSON.parse(body);
+          log('INFO', `HTTP Request: Tool=${tool}`);
+
+          let result;
+          switch (tool) {
+            case 'getGLAccountAnalysis':
+              result = await getGLAccountAnalysis(args);
+              break;
+            case 'getGLTransactions':
+              result = await getGLTransactions(args);
+              break;
+            case 'getAccountBalance':
+              result = await getAccountBalance(args);
+              break;
+            case 'searchAccounts':
+              result = await searchAccounts(args);
+              break;
+            case 'getJournalEntry':
+              result = await getJournalEntry(args);
+              break;
+            default:
+              throw new Error(`Unknown tool: ${tool}`);
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, data: result }));
+        } catch (error) {
+          log('ERROR', `HTTP Error: ${error.message}`);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: error.message }));
+        }
+      });
+      return;
+    }
+
+    // 404
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
+  });
+
+  httpServer.listen(port, 'localhost', () => {
+    log('INFO', `HTTP Server listening on http://localhost:${port}`);
+  });
+
+  httpServer.on('error', (err) => {
+    log('ERROR', `HTTP Server error: ${err.message}`);
+  });
+
+  return httpServer;
 }
 
-main().catch(console.error);
+// ── Main startup ───────────────────────────────────────────────────────────
+async function main() {
+  try {
+    log('INFO', 'Starting GL MCP Server');
+
+    // Start HTTP server if port provided
+    if (HTTP_PORT) {
+      log('INFO', `Starting HTTP server on port ${HTTP_PORT}`);
+      startHttpServer(HTTP_PORT);
+    }
+
+    // Start stdio MCP server
+    log('INFO', 'Starting stdio MCP server');
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    log('INFO', 'GL MCP Server started successfully - waiting for commands');
+  } catch (error) {
+    log('ERROR', `Failed to start server: ${error.message}`);
+    process.exit(1);
+  }
+}
+
+// Handle graceful shutdown
+process.on('SIGTERM', () => {
+  log('INFO', 'SIGTERM received, shutting down gracefully');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  log('INFO', 'SIGINT received, shutting down gracefully');
+  process.exit(0);
+});
+
+main().catch((error) => {
+  log('ERROR', `Startup error: ${error.message}`);
+  process.exit(1);
+});

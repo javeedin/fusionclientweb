@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Input, Table, Card, Space, Statistic, Spin, message, Form, Modal, Tag } from 'antd';
+import { Button, Input, Table, Card, Space, Statistic, Spin, message, Form, Modal, Tag, Checkbox, InputNumber } from 'antd';
 import { PlayCircleOutlined, StopOutlined, SettingOutlined, ReloadOutlined } from '@ant-design/icons';
 
 export default function GLAccountAnalysis() {
@@ -170,47 +170,57 @@ export default function GLAccountAnalysis() {
     <div style={{ padding: '24px', backgroundColor: '#f5f5f5', minHeight: '100vh' }}>
       <Card title="GL Account Analysis" style={{ marginBottom: '24px' }}>
         {/* Server Status & Controls */}
-        <div style={{ marginBottom: '24px', display: 'flex', gap: '16px', alignItems: 'center' }}>
-          <div>
-            <strong>Server Status: </strong>
-            {serverStatus?.running ? (
-              <Tag color="green">Running (PID: {serverStatus.pid})</Tag>
-            ) : (
-              <Tag color="red">Stopped</Tag>
-            )}
+        <div style={{ marginBottom: '24px' }}>
+          <div style={{ marginBottom: '12px', display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <div>
+              <strong>Server Status: </strong>
+              {serverStatus?.running ? (
+                <Tag color="green">Running (PID: {serverStatus.pid})</Tag>
+              ) : (
+                <Tag color="red">Stopped</Tag>
+              )}
+            </div>
+            <Space>
+              <Button
+                type="primary"
+                icon={<PlayCircleOutlined />}
+                onClick={startServer}
+                loading={loading}
+                disabled={serverStatus?.running}
+              >
+                Start Server
+              </Button>
+              <Button
+                danger
+                icon={<StopOutlined />}
+                onClick={stopServer}
+                loading={loading}
+                disabled={!serverStatus?.running}
+              >
+                Stop Server
+              </Button>
+              <Button
+                icon={<SettingOutlined />}
+                onClick={() => setShowSettings(true)}
+              >
+                Settings
+              </Button>
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={checkServerStatus}
+              >
+                Refresh
+              </Button>
+            </Space>
           </div>
-          <Space>
-            <Button
-              type="primary"
-              icon={<PlayCircleOutlined />}
-              onClick={startServer}
-              loading={loading}
-              disabled={serverStatus?.running}
-            >
-              Start Server
-            </Button>
-            <Button
-              danger
-              icon={<StopOutlined />}
-              onClick={stopServer}
-              loading={loading}
-              disabled={!serverStatus?.running}
-            >
-              Stop Server
-            </Button>
-            <Button
-              icon={<SettingOutlined />}
-              onClick={() => setShowSettings(true)}
-            >
-              Settings
-            </Button>
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={checkServerStatus}
-            >
-              Refresh
-            </Button>
-          </Space>
+
+          {serverStatus?.running && (
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+              <strong>HTTP Endpoint (Claude Desktop):</strong> http://localhost:{credentials?.httpPort || 3001}<br/>
+              <strong>Health Check:</strong> GET /health<br/>
+              <strong>Execute Tool:</strong> POST /execute with {'{tool: "toolName", arguments: {...}'} }
+            </div>
+          )}
         </div>
 
         {/* Query Parameters */}
@@ -311,19 +321,54 @@ export default function GLAccountAnalysis() {
           >
             <Input placeholder="https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com" />
           </Form.Item>
+
           <Form.Item
-            label="Username"
-            name="username"
-            rules={[{ required: true, message: 'Please enter username' }]}
+            label="Skip Authentication"
+            name="skipAuth"
+            valuePropName="checked"
+            initialValue={false}
           >
-            <Input placeholder="Oracle APEX username" />
+            <Checkbox>Disable Basic Auth (for public APEX endpoints)</Checkbox>
           </Form.Item>
+
           <Form.Item
-            label="Password"
-            name="password"
-            rules={[{ required: true, message: 'Please enter password' }]}
+            noStyle
+            shouldUpdate={(prevValues, currentValues) => prevValues.skipAuth !== currentValues.skipAuth}
           >
-            <Input.Password placeholder="Oracle APEX password" />
+            {({ getFieldValue }) =>
+              !getFieldValue('skipAuth') && (
+                <>
+                  <Form.Item
+                    label="Username"
+                    name="username"
+                    rules={[{ required: true, message: 'Please enter username' }]}
+                  >
+                    <Input placeholder="Oracle APEX username" />
+                  </Form.Item>
+                  <Form.Item
+                    label="Password"
+                    name="password"
+                    rules={[{ required: true, message: 'Please enter password' }]}
+                  >
+                    <Input.Password placeholder="Oracle APEX password" />
+                  </Form.Item>
+                </>
+              )
+            }
+          </Form.Item>
+
+          <Form.Item
+            label="HTTP Port (for Claude Desktop testing)"
+            name="httpPort"
+            initialValue={3001}
+            rules={[{ required: true, message: 'Please enter HTTP port' }]}
+          >
+            <InputNumber
+              min={3000}
+              max={65535}
+              placeholder="e.g., 3001"
+              style={{ width: '100%' }}
+            />
           </Form.Item>
         </Form>
       </Modal>

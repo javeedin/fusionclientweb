@@ -244,15 +244,15 @@ function startGLMcpServer(credentials) {
     ? path.join(__dirname, 'gl-mcp-server.cjs')
     : path.join(app.getAppPath(), 'electron', 'gl-mcp-server.cjs');
 
-  console.log('Starting GL MCP Server from:', serverPath);
+  console.log(`[GL MCP] ${new Date().toISOString()} Starting GL MCP Server from: ${serverPath}`);
 
   if (!fs.existsSync(serverPath)) {
-    console.error('GL MCP Server not found at:', serverPath);
+    console.error(`[GL MCP] ${new Date().toISOString()} GL MCP Server not found at: ${serverPath}`);
     return false;
   }
 
   if (glMcpServer) {
-    console.warn('GL MCP Server already running');
+    console.warn(`[GL MCP] ${new Date().toISOString()} GL MCP Server already running (PID: ${glMcpServer.pid})`);
     return false;
   }
 
@@ -262,7 +262,11 @@ function startGLMcpServer(credentials) {
     ORACLE_BASE_URL: credentials?.oracleBaseUrl || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com',
     ORACLE_USERNAME: credentials?.username || '',
     ORACLE_PASSWORD: credentials?.password || '',
+    SKIP_AUTH: credentials?.skipAuth ? 'true' : 'false',
+    GL_MCP_HTTP_PORT: credentials?.httpPort ? String(credentials.httpPort) : '3001',
   };
+
+  console.log(`[GL MCP] ${new Date().toISOString()} Environment config: SKIP_AUTH=${env.SKIP_AUTH}, HTTP_PORT=${env.GL_MCP_HTTP_PORT}`);
 
   try {
     glMcpServer = spawn('node', [serverPath], {
@@ -271,24 +275,48 @@ function startGLMcpServer(credentials) {
       env: env,
     });
 
-    glMcpServer.stdout?.on('data', (d) => console.log('[GL MCP]', d.toString().trim()));
-    glMcpServer.stderr?.on('data', (d) => console.error('[GL MCP Error]', d.toString().trim()));
+    let serverStarted = false;
+    const startTimeout = setTimeout(() => {
+      if (!serverStarted && glMcpServer) {
+        console.warn(`[GL MCP] ${new Date().toISOString()} Server startup timeout (5s) - check logs above`);
+      }
+    }, 5000);
+
+    glMcpServer.stdout?.on('data', (d) => {
+      const message = d.toString().trim();
+      console.log(`[GL MCP] ${new Date().toISOString()} STDOUT: ${message}`);
+      if (message.includes('started successfully') || message.includes('listening')) {
+        serverStarted = true;
+        clearTimeout(startTimeout);
+      }
+    });
+
+    glMcpServer.stderr?.on('data', (d) => {
+      const message = d.toString().trim();
+      console.error(`[GL MCP] ${new Date().toISOString()} STDERR: ${message}`);
+      if (message.includes('started successfully') || message.includes('listening')) {
+        serverStarted = true;
+        clearTimeout(startTimeout);
+      }
+    });
+
     glMcpServer.on('close', (code) => {
-      console.log('GL MCP Server exited:', code);
+      console.log(`[GL MCP] ${new Date().toISOString()} Server exited with code: ${code}`);
       glMcpServer = null;
       if (mainWindow) {
         mainWindow.webContents.send('gl-mcp-status', { running: false, code });
       }
     });
+
     glMcpServer.on('error', (err) => {
-      console.error('GL MCP Server spawn error:', err);
+      console.error(`[GL MCP] ${new Date().toISOString()} Spawn error: ${err.message}`);
       glMcpServer = null;
     });
 
-    console.log('GL MCP Server started successfully');
+    console.log(`[GL MCP] ${new Date().toISOString()} Server spawned successfully (PID: ${glMcpServer.pid})`);
     return true;
   } catch (err) {
-    console.error('Failed to start GL MCP Server:', err);
+    console.error(`[GL MCP] ${new Date().toISOString()} Failed to start server: ${err.message}`);
     glMcpServer = null;
     return false;
   }
