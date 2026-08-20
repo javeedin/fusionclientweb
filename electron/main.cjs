@@ -1297,10 +1297,17 @@ ipcMain.handle('gl-mcp:add-to-claude-desktop', async (_event, { httpPort = 3001 
       console.log('[GL MCP] Created mcpServers object');
     }
 
+    // Path to the stdio wrapper script
+    const wrapperPath = path.join(__dirname, 'gl-mcp-stdio-wrapper.cjs');
+    console.log('[GL MCP] Wrapper script path:', wrapperPath);
+
     const mcpConfig = {
-      command: 'curl',
-      args: ['-X', 'POST', `-H`, `Content-Type: application/json`, `https://localhost:${httpPort}/`],
-      env: {}
+      command: 'node',
+      args: [wrapperPath],
+      env: {
+        GL_MCP_URL: `https://localhost:${httpPort}`,
+        NODE_TLS_REJECT_UNAUTHORIZED: '0' // Allow self-signed certs for localhost
+      }
     };
 
     console.log('[GL MCP] MCP Server config:', JSON.stringify(mcpConfig, null, 2));
