@@ -22,7 +22,6 @@ import { useAuth } from '../../context/AuthContext';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import AccountSegmentSelector from '../../components/AccountSegmentSelector';
 import AccountSegmentDescriptions from '../../components/AccountSegmentDescriptions';
-import { EditOutlined } from '@ant-design/icons';
 import {
   searchAssets, getAssetDetail, getAssetBooks, getAssetDeprn,
   getAssetDistributions, getAssetInvoices, getAssetTransactions,
