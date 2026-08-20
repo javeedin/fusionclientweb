@@ -80,7 +80,50 @@ const Retirements: React.FC = () => {
 
   const runSearch = useCallback(async () => {
     const { bookTypeCode } = form.getFieldsValue();
-    await loadRetirements(bookTypeCode || undefined);
+    setLoading(true);
+    try {
+      // Build the API endpoint with query params
+      const params = new URLSearchParams();
+      if (bookTypeCode) params.append('bookTypeCode', bookTypeCode);
+      const apiUrl = buildApexUrl(`fa/retirements${params.toString() ? '?' + params.toString() : ''}`);
+
+      // Call the GET endpoint
+      const response = await fetch(apiUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+
+      // Update table with results
+      const records = data.items || data || [];
+      setRows(records);
+      setSearched(true);
+
+      // Show API response modal
+      Modal.info({
+        title: 'GET Retirements API Response',
+        width: 900,
+        content: (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 12, color: '#52c41a', marginBottom: 12, fontWeight: 600 }}>
+              ✓ Success! Retrieved {records.length} retirement records
+            </div>
+            <div style={{ fontSize: 11, color: '#888', marginBottom: 8, fontWeight: 600 }}>ENDPOINT (GET)</div>
+            <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
+              {apiUrl}
+            </Text>
+            <div style={{ fontSize: 11, color: '#888', margin: '16px 0 8px', fontWeight: 600 }}>RESPONSE ({records.length} records)</div>
+            <div style={{ background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 6, padding: 12, maxHeight: 500, overflow: 'auto' }}>
+              <pre style={{ margin: 0, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#333' }}>
+                {JSON.stringify(data, null, 2)}
+              </pre>
+            </div>
+          </div>
+        ),
+      });
+    } catch (error) {
+      message.error(`API Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setLoading(false);
+    }
   }, [form]);
 
   const handleReset = () => {
@@ -310,83 +353,6 @@ const Retirements: React.FC = () => {
               </Row>
             </Form>
           </Card>
-
-          {/* API Info Strip */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', marginBottom: 16, background: '#fafafa', border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 8 }}>
-            <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>GET ENDPOINT:</Text>
-            <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, color: FA_COLOR, flex: 1, wordBreak: 'break-all' }}>
-              {buildApexUrl('fa/retirements')}
-            </Text>
-            <Button
-              type="primary"
-              icon={<ApiOutlined />}
-              loading={loading}
-              style={{ background: FA_COLOR, borderColor: FA_COLOR }}
-              onClick={() => {
-                setLoading(true);
-                const apiUrl = buildApexUrl('fa/retirements');
-                fetch(apiUrl)
-                  .then(r => {
-                    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                    return r.json();
-                  })
-                  .then(data => {
-                    const records = data.items || data || [];
-                    setRows(records);
-                    setSearched(true);
-                    setApiTestResult({
-                      success: true,
-                      message: `Success! Retrieved ${records.length} retirement records`,
-                      data,
-                    });
-                    Modal.info({
-                      title: 'GET Retirements API Response',
-                      width: 900,
-                      content: (
-                        <div style={{ marginTop: 8 }}>
-                          <div style={{ fontSize: 12, color: '#52c41a', marginBottom: 12, fontWeight: 600 }}>
-                            ✓ Success! Retrieved {records.length} retirement records
-                          </div>
-                          <div style={{ fontSize: 11, color: '#888', marginBottom: 8, fontWeight: 600 }}>ENDPOINT</div>
-                          <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
-                            {apiUrl}
-                          </Text>
-                          <div style={{ fontSize: 11, color: '#888', margin: '16px 0 8px', fontWeight: 600 }}>RESPONSE ({records.length} records)</div>
-                          <div style={{ background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 6, padding: 12, maxHeight: 500, overflow: 'auto' }}>
-                            <pre style={{ margin: 0, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#333' }}>
-                              {JSON.stringify(data, null, 2)}
-                            </pre>
-                          </div>
-                        </div>
-                      ),
-                    });
-                  })
-                  .catch(err => {
-                    setApiTestResult({
-                      success: false,
-                      message: `Error: ${err.message}`,
-                    });
-                    Modal.error({
-                      title: 'API Error',
-                      content: (
-                        <div>
-                          <Text style={{ color: '#f5222d' }}>✗ {err.message}</Text>
-                          <div style={{ marginTop: 12 }}>
-                            <Text type="secondary" style={{ fontSize: 11 }}>Endpoint:</Text>
-                            <div style={{ fontFamily: 'monospace', fontSize: 11, marginTop: 4 }}>
-                              {apiUrl}
-                            </div>
-                          </div>
-                        </div>
-                      ),
-                    });
-                  })
-                  .finally(() => setLoading(false));
-              }}
-            >
-              Run GET
-            </Button>
-          </div>
 
           {/* Results table */}
           <Card style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
