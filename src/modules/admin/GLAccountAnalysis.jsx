@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Input, Table, Card, Space, Statistic, Spin, message, Form, Modal, Tag, Checkbox, InputNumber, AutoComplete, Avatar } from 'antd';
-import { PlayCircleOutlined, StopOutlined, SettingOutlined, ReloadOutlined, SendOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, StopOutlined, SettingOutlined, ReloadOutlined, SendOutlined, UserOutlined, RobotOutlined, ApiOutlined } from '@ant-design/icons';
 
 export default function GLAccountAnalysis() {
   const [serverStatus, setServerStatus] = useState(null);
@@ -203,7 +203,15 @@ export default function GLAccountAnalysis() {
     try {
       // Call the actual HTTP endpoint
       const httpPort = credentials?.httpPort || 3001;
-      const response = await fetch(`http://localhost:${httpPort}/execute`, {
+      const endpoint = `http://localhost:${httpPort}/execute`;
+
+      console.log('Query GL Data:', {
+        endpoint,
+        params: queryParams,
+        credentials: { ...credentials, password: '***' }
+      });
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -217,11 +225,16 @@ export default function GLAccountAnalysis() {
         }),
       });
 
+      console.log('Response status:', response.status, response.statusText);
+
       if (!response.ok) {
-        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('API Error response:', errorText);
+        throw new Error(`API Error: ${response.status} ${response.statusText}\n${errorText}`);
       }
 
       const data = await response.json();
+      console.log('API Response data:', data);
 
       if (!data.success) {
         throw new Error(data.error || 'Failed to query GL data');
@@ -229,6 +242,8 @@ export default function GLAccountAnalysis() {
 
       // Process response data
       const transactions = data.data?.transactions || [];
+      console.log(`Processing ${transactions.length} transactions`);
+
       const tableData = transactions.map((t, idx) => ({
         key: idx.toString(),
         batchId: t.batch_id || '',
@@ -255,7 +270,7 @@ export default function GLAccountAnalysis() {
       messageApi.success(`Found ${tableData.length} GL transactions`);
     } catch (err) {
       console.error('GL Query Error:', err);
-      messageApi.error(`Error: ${err.message}`);
+      messageApi.error(`Query Error: ${err.message}`);
       setResults([]);
       setSummary(null);
     } finally {
@@ -277,6 +292,20 @@ export default function GLAccountAnalysis() {
     } catch (err) {
       console.error('Add to Claude Desktop error:', err);
       messageApi.error(`Error: ${err.message || 'Failed to add GL server'}`);
+    }
+  }
+
+  async function testAPI() {
+    const httpPort = credentials?.httpPort || 3001;
+    const endpoint = `http://localhost:${httpPort}/health`;
+    try {
+      const response = await fetch(endpoint);
+      const data = await response.json();
+      console.log('Health check response:', data);
+      messageApi.success(`API is responsive: ${JSON.stringify(data)}`);
+    } catch (err) {
+      console.error('Health check error:', err);
+      messageApi.error(`API is not responding: ${err.message}`);
     }
   }
 
@@ -339,15 +368,28 @@ export default function GLAccountAnalysis() {
               >
                 View Logs
               </Button>
+              <Button
+                icon={<ApiOutlined />}
+                onClick={testAPI}
+              >
+                Test API
+              </Button>
             </Space>
           </div>
 
           {serverStatus?.running && (
             <>
-              <div style={{ fontSize: '12px', color: '#666', marginTop: '8px', marginBottom: '16px' }}>
-                <strong>HTTP Endpoint (Claude Desktop):</strong> http://localhost:{credentials?.httpPort || 3001}<br/>
-                <strong>Health Check:</strong> GET /health<br/>
-                <strong>Execute Tool:</strong> POST /execute with {'{ tool: "toolName", arguments: {...} }'}
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '8px', marginBottom: '16px', padding: '12px', backgroundColor: '#e6f7ff', borderRadius: '4px', border: '1px solid #91d5ff' }}>
+                <div style={{ marginBottom: '8px' }}>
+                  <ApiOutlined style={{ color: '#1677ff', marginRight: '8px', fontSize: '14px' }} />
+                  <strong>HTTP Endpoint (Claude Desktop):</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px' }}>http://localhost:{credentials?.httpPort || 3001}</code>
+                </div>
+                <div style={{ marginBottom: '4px' }}>
+                  <strong>Health Check:</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px' }}>GET /health</code>
+                </div>
+                <div>
+                  <strong>Execute Tool:</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px' }}>POST /execute</code> with {'{ tool: "toolName", arguments: {...} }'}
+                </div>
               </div>
 
               {/* Claude Desktop MCP Config */}
