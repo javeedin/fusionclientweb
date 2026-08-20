@@ -16,6 +16,9 @@ export default function GLAccountAnalysis() {
   const [chatLoading, setChatLoading] = useState(false);
   const [settingsForm] = Form.useForm();
   const [messageApi] = message.useMessage();
+  const [showAPITest, setShowAPITest] = useState(false);
+  const [apiTestResult, setApiTestResult] = useState(null);
+  const [apiTestLoading, setApiTestLoading] = useState(false);
 
   // Query parameters
   const [queryParams, setQueryParams] = useState({
@@ -297,15 +300,66 @@ export default function GLAccountAnalysis() {
 
   async function testAPI() {
     const httpPort = credentials?.httpPort || 3001;
-    const endpoint = `http://localhost:${httpPort}/health`;
+    const healthEndpoint = `http://localhost:${httpPort}/health`;
+    const executeEndpoint = `http://localhost:${httpPort}/execute`;
+
+    setApiTestLoading(true);
+    setShowAPITest(true);
+
     try {
-      const response = await fetch(endpoint);
-      const data = await response.json();
-      console.log('Health check response:', data);
-      messageApi.success(`API is responsive: ${JSON.stringify(data)}`);
+      // Test health endpoint
+      const healthResponse = await fetch(healthEndpoint);
+      const healthData = await healthResponse.json();
+
+      // Test execute endpoint with sample query
+      const executeResponse = await fetch(executeEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: 'getGLAccountAnalysis',
+          arguments: {
+            ledger_name: queryParams.ledger_name,
+            period_names: queryParams.period_names,
+            company: queryParams.company,
+            account: queryParams.account,
+          },
+        }),
+      });
+
+      const executeData = await executeResponse.json();
+
+      setApiTestResult({
+        success: true,
+        baseUrl: `http://localhost:${httpPort}`,
+        healthEndpoint,
+        executeEndpoint,
+        method: 'POST',
+        queryParams,
+        healthStatus: {
+          code: healthResponse.status,
+          data: healthData,
+        },
+        executeStatus: {
+          code: executeResponse.status,
+          data: executeData,
+        },
+      });
+
+      console.log('API Test Results:', {
+        health: healthData,
+        execute: executeData,
+      });
     } catch (err) {
-      console.error('Health check error:', err);
-      messageApi.error(`API is not responding: ${err.message}`);
+      console.error('API test error:', err);
+      setApiTestResult({
+        success: false,
+        error: err.message,
+        baseUrl: `http://localhost:${httpPort}`,
+        healthEndpoint,
+        executeEndpoint,
+      });
+    } finally {
+      setApiTestLoading(false);
     }
   }
 
@@ -731,6 +785,120 @@ export default function GLAccountAnalysis() {
             logs.map((log, idx) => <div key={idx}>{log}</div>)
           )}
         </div>
+      </Modal>
+
+      {/* API Test Modal */}
+      <Modal
+        title="API Endpoint Test"
+        open={showAPITest}
+        onCancel={() => setShowAPITest(false)}
+        width={900}
+        footer={[
+          <Button key="close" onClick={() => setShowAPITest(false)}>
+            Close
+          </Button>,
+          apiTestResult?.success && (
+            <Button
+              key="copy"
+              type="primary"
+              onClick={() => {
+                navigator.clipboard.writeText(apiTestResult.executeEndpoint);
+                messageApi.success('Execute endpoint copied!');
+              }}
+            >
+              Copy Execute URL
+            </Button>
+          ),
+        ]}
+      >
+        <Spin spinning={apiTestLoading}>
+          {apiTestResult && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {/* Base URL */}
+              <div style={{ padding: '12px', backgroundColor: '#f0f5ff', borderRadius: '4px', border: '1px solid #91d5ff' }}>
+                <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Base URL:</div>
+                <code style={{ fontSize: '13px', fontWeight: 'bold', color: '#1677ff' }}>
+                  {apiTestResult.baseUrl}
+                </code>
+              </div>
+
+              {/* Health Endpoint */}
+              <div style={{ padding: '12px', backgroundColor: '#f6ffed', borderRadius: '4px', border: '1px solid #b7eb8f' }}>
+                <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Health Check Endpoint (GET):</div>
+                <code style={{ fontSize: '13px', fontWeight: 'bold', color: '#52c41a' }}>
+                  {apiTestResult.healthEndpoint}
+                </code>
+                {apiTestResult.healthStatus && (
+                  <div style={{ marginTop: '8px', fontSize: '12px' }}>
+                    <strong>Status:</strong> {apiTestResult.healthStatus.code} ✓
+                  </div>
+                )}
+              </div>
+
+              {/* Execute Endpoint */}
+              <div style={{ padding: '12px', backgroundColor: '#e6f7ff', borderRadius: '4px', border: '1px solid #91d5ff' }}>
+                <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Execute Endpoint (POST):</div>
+                <code style={{ fontSize: '13px', fontWeight: 'bold', color: '#1677ff', wordBreak: 'break-all' }}>
+                  {apiTestResult.executeEndpoint}
+                </code>
+                {apiTestResult.executeStatus && (
+                  <div style={{ marginTop: '8px', fontSize: '12px' }}>
+                    <strong>Status:</strong> {apiTestResult.executeStatus.code}
+                    {apiTestResult.executeStatus.code === 200 ? ' ✓' : ' ✗'}
+                  </div>
+                )}
+              </div>
+
+              {/* Query Parameters */}
+              {apiTestResult.queryParams && (
+                <div style={{ padding: '12px', backgroundColor: '#fafafa', borderRadius: '4px', border: '1px solid #d9d9d9' }}>
+                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px', fontWeight: 'bold' }}>Query Parameters:</div>
+                  <div style={{
+                    backgroundColor: '#fff',
+                    padding: '8px',
+                    borderRadius: '3px',
+                    fontFamily: 'monospace',
+                    fontSize: '12px',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                  }}>
+                    {JSON.stringify(apiTestResult.queryParams, null, 2)}
+                  </div>
+                </div>
+              )}
+
+              {/* Response Data */}
+              {apiTestResult.success && apiTestResult.executeStatus?.data && (
+                <div style={{ padding: '12px', backgroundColor: '#fafafa', borderRadius: '4px', border: '1px solid #d9d9d9' }}>
+                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px', fontWeight: 'bold' }}>Execute Response:</div>
+                  <div style={{
+                    backgroundColor: '#fff',
+                    padding: '8px',
+                    borderRadius: '3px',
+                    fontFamily: 'monospace',
+                    fontSize: '11px',
+                    maxHeight: '300px',
+                    overflowY: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}>
+                    {JSON.stringify(apiTestResult.executeStatus.data, null, 2)}
+                  </div>
+                </div>
+              )}
+
+              {/* Error */}
+              {!apiTestResult.success && (
+                <div style={{ padding: '12px', backgroundColor: '#fff2f0', borderRadius: '4px', border: '1px solid #ffccc7' }}>
+                  <div style={{ fontSize: '12px', color: '#cf1322', fontWeight: 'bold' }}>❌ Error:</div>
+                  <div style={{ marginTop: '8px', fontSize: '12px', color: '#cf1322' }}>
+                    {apiTestResult.error}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </Spin>
       </Modal>
     </div>
   );
