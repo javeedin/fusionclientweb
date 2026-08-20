@@ -201,42 +201,62 @@ export default function GLAccountAnalysis() {
 
     setQueryLoading(true);
     try {
-      // Mock API call (in real implementation, this would call the MCP server through the proxy)
-      const mockData = [
-        {
-          key: '1',
-          batchId: 638363,
-          jeHeaderId: 602826,
-          jeLineNumber: 1,
-          accountDescription: 'BetterHome Client Ac (Rent Balance Receivable)',
-          enteredDr: 110000,
-          accountedDr: 110000,
-          accountingDate: '05-JAN-2026',
-          description: 'Transaction Number: 900041',
-        },
-        {
-          key: '2',
-          batchId: 638364,
-          jeHeaderId: 602827,
-          jeLineNumber: 1,
-          accountDescription: 'BetterHome Client Ac (Rent Balance Receivable)',
-          enteredDr: 50000,
-          accountedDr: 50000,
-          accountingDate: '06-JAN-2026',
-          description: 'Transaction Number: 900042',
-        },
-      ];
-
-      setResults(mockData);
-      setSummary({
-        totalDebit: 160000,
-        count: 2,
-        period: queryParams.period_names,
-        account: queryParams.account,
+      // Call the actual HTTP endpoint
+      const response = await fetch('http://localhost:3001/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: 'getGLAccountAnalysis',
+          arguments: {
+            ledger_name: queryParams.ledger_name,
+            period_names: queryParams.period_names,
+            company: queryParams.company,
+            account: queryParams.account,
+          },
+        }),
       });
-      messageApi.success(`Found ${mockData.length} GL transactions`);
+
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to query GL data');
+      }
+
+      // Process response data
+      const transactions = data.data?.transactions || [];
+      const tableData = transactions.map((t, idx) => ({
+        key: idx.toString(),
+        batchId: t.batch_id || '',
+        jeHeaderId: t.je_header_id || '',
+        jeLineNumber: t.line_number || 1,
+        accountDescription: t.account_description || 'N/A',
+        enteredDr: t.debit_amount || 0,
+        accountedDr: t.accounted_debit || 0,
+        accountingDate: t.accounting_date || '',
+        description: t.description || '',
+      }));
+
+      setResults(tableData);
+
+      // Calculate summary
+      const totalDebit = tableData.reduce((sum, t) => sum + (t.enteredDr || 0), 0);
+      setSummary({
+        totalDebit,
+        count: tableData.length,
+        period: queryParams.period_names,
+        account: queryParams.account || 'All',
+      });
+
+      messageApi.success(`Found ${tableData.length} GL transactions`);
     } catch (err) {
-      messageApi.error(err.message);
+      console.error('GL Query Error:', err);
+      messageApi.error(`Error: ${err.message}`);
+      setResults([]);
+      setSummary(null);
     } finally {
       setQueryLoading(false);
     }
