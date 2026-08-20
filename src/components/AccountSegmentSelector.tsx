@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Select, Spin, Row, Col, Space, Typography, message } from 'antd';
 import { validateAccountCode } from './AccountSelector';
+import { buildApexUrl } from '../config/api.helper';
 
 const { Text } = Typography;
 const { Option } = Select;
@@ -36,8 +37,8 @@ const fetchSegmentValues = async (segmentCode: string): Promise<Array<{ value: s
   }
 
   try {
-    const baseUrl = process.env.REACT_APP_APEX_BASE_URL || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com/ords/bcldifc/reerp';
-    const response = await fetch(`${baseUrl}/valuesets/getvalues/${segmentCode}`);
+    const api = buildApexUrl(`valuesets/getvalues/${segmentCode}`);
+    const response = await fetch(api);
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     const result = await response.json();
     const values = (result.items || []).map((item: any) => ({
