@@ -248,19 +248,25 @@ function getCertificate() {
         const attrs = [{ name: 'commonName', value: 'localhost' }];
         const pems = selfsigned.generate(attrs, { days: 365, algorithm: 'sha256', keySize: 2048 });
 
+        // Debug: log what we got
+        log('DEBUG', `selfsigned returned: cert=${!!pems.cert}, private=${!!pems.private}, keys=${Object.keys(pems).join(',')}`);
+
         // Ensure we have cert and private key
-        if (!pems.cert || !pems.private) {
-          throw new Error(`selfsigned returned invalid data: cert=${!!pems.cert}, private=${!!pems.private}`);
+        const cert = pems.cert || pems.certificate;
+        const key = pems.private || pems.key;
+
+        if (!cert || !key) {
+          throw new Error(`selfsigned returned invalid data: ${JSON.stringify(Object.keys(pems))}`);
         }
 
         // Write as strings/buffers
-        const certData = pems.cert.toString ? pems.cert.toString() : pems.cert;
-        const keyData = pems.private.toString ? pems.private.toString() : pems.private;
+        const certData = typeof cert === 'string' ? cert : cert.toString();
+        const keyData = typeof key === 'string' ? key : key.toString();
 
         fs.writeFileSync(certPath, certData);
         fs.writeFileSync(keyPath, keyData);
 
-        log('INFO', `Certificate generated at ${certDir} using selfsigned`);
+        log('INFO', `Certificate generated at ${certDir} using selfsigned (${certData.length} bytes cert, ${keyData.length} bytes key)`);
         return {
           cert: certData,
           key: keyData,
