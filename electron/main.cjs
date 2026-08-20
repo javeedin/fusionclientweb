@@ -1257,6 +1257,63 @@ ipcMain.handle('gl-mcp:get-logs', async () => {
   }
 });
 
+function getClaudeDesktopConfigPath() {
+  const platform = process.platform;
+  let configDir;
+
+  if (platform === 'darwin') {
+    configDir = path.join(process.env.HOME, 'Library', 'Application Support', 'Claude');
+  } else if (platform === 'win32') {
+    configDir = path.join(process.env.APPDATA, 'Claude');
+  } else {
+    configDir = path.join(process.env.HOME, '.config', 'Claude');
+  }
+
+  return path.join(configDir, 'claude_desktop_config.json');
+}
+
+ipcMain.handle('gl-mcp:add-to-claude-desktop', async (_event, { httpPort = 3001 } = {}) => {
+  try {
+    const configPath = getClaudeDesktopConfigPath();
+    const configDir = path.dirname(configPath);
+
+    let config = {};
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, 'utf8');
+      config = JSON.parse(content);
+    }
+
+    if (!config.mcpServers) {
+      config.mcpServers = {};
+    }
+
+    config.mcpServers['gl-server'] = {
+      command: 'curl',
+      args: ['-X', 'POST', `http://localhost:${httpPort}/execute`],
+      env: {}
+    };
+
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+    console.log(`[GL MCP] Added GL server to Claude Desktop config: ${configPath}`);
+
+    return {
+      success: true,
+      message: `GL server added to Claude Desktop config at ${configPath}`,
+      configPath
+    };
+  } catch (e) {
+    console.error('[GL MCP] Failed to add GL server to Claude Desktop config:', e.message);
+    return {
+      success: false,
+      error: e.message
+    };
+  }
+});
+
 // ── Native Oracle Fusion login ──────────────────────────────────────────────
 // Opens the real Oracle Cloud (IDCS) sign-in in a child window. The user
 // authenticates natively; when the browser lands back on the Fusion app domain

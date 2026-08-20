@@ -202,7 +202,8 @@ export default function GLAccountAnalysis() {
     setQueryLoading(true);
     try {
       // Call the actual HTTP endpoint
-      const response = await fetch('http://localhost:3001/execute', {
+      const httpPort = credentials?.httpPort || 3001;
+      const response = await fetch(`http://localhost:${httpPort}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -259,6 +260,23 @@ export default function GLAccountAnalysis() {
       setSummary(null);
     } finally {
       setQueryLoading(false);
+    }
+  }
+
+  async function addToClaudeDesktop() {
+    try {
+      const response = await window.electronAPI.glMcpAddToClaudeDesktop({
+        httpPort: credentials?.httpPort || 3001
+      });
+
+      if (response.success) {
+        messageApi.success('GL server added to Claude Desktop config!');
+      } else {
+        messageApi.error(response.error || 'Failed to add GL server to Claude Desktop config');
+      }
+    } catch (err) {
+      console.error('Add to Claude Desktop error:', err);
+      messageApi.error(`Error: ${err.message || 'Failed to add GL server'}`);
     }
   }
 
@@ -325,11 +343,67 @@ export default function GLAccountAnalysis() {
           </div>
 
           {serverStatus?.running && (
-            <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-              <strong>HTTP Endpoint (Claude Desktop):</strong> http://localhost:{credentials?.httpPort || 3001}<br/>
-              <strong>Health Check:</strong> GET /health<br/>
-              <strong>Execute Tool:</strong> POST /execute with {'{ tool: "toolName", arguments: {...} }'}
-            </div>
+            <>
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '8px', marginBottom: '16px' }}>
+                <strong>HTTP Endpoint (Claude Desktop):</strong> http://localhost:{credentials?.httpPort || 3001}<br/>
+                <strong>Health Check:</strong> GET /health<br/>
+                <strong>Execute Tool:</strong> POST /execute with {'{ tool: "toolName", arguments: {...} }'}
+              </div>
+
+              {/* Claude Desktop MCP Config */}
+              <Card size="small" style={{ marginTop: '12px', backgroundColor: '#fafafa' }}>
+                <div style={{ marginBottom: '8px' }}>
+                  <strong style={{ fontSize: '12px' }}>Claude Desktop Config:</strong>
+                </div>
+                <div
+                  style={{
+                    backgroundColor: '#1a1a1a',
+                    color: '#00ff00',
+                    padding: '8px 12px',
+                    borderRadius: '4px',
+                    fontFamily: 'monospace',
+                    fontSize: '11px',
+                    marginBottom: '8px',
+                    maxHeight: '150px',
+                    overflowY: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                  }}
+                >
+{`{
+  "mcpServers": {
+    "gl-server": {
+      "command": "curl",
+      "args": ["-X", "POST",
+        "http://localhost:${credentials?.httpPort || 3001}/execute"],
+      "env": {}
+    }
+  }
+}`}
+                </div>
+                <Space size="small">
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      const config = `{\n  "mcpServers": {\n    "gl-server": {\n      "command": "curl",\n      "args": ["-X", "POST", "http://localhost:${
+                        credentials?.httpPort || 3001
+                      }/execute"],\n      "env": {}\n    }\n  }\n}`;
+                      navigator.clipboard.writeText(config);
+                      messageApi.success('Config copied to clipboard!');
+                    }}
+                  >
+                    Copy Config
+                  </Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    onClick={() => addToClaudeDesktop()}
+                  >
+                    Add to Claude Desktop
+                  </Button>
+                </Space>
+              </Card>
+            </>
           )}
         </div>
 
