@@ -1015,16 +1015,57 @@ const AssetTabContent: React.FC<{
   const openRetire = async () => {
     const book = retireBook();
     if (!book) { message.error('No active book found for this asset'); return; }
-    setRetireOpen(true);
+
     setRetireLoading(true);
-    setRetireShowAcct(false); setRetireLines([]);
-    setRetireSegmentDialogOpen(false); setRetireSegmentDialogLineIdx(null);
-    setRetireSold(false); setRetireProceeds(null); setRetireRemoval(null); setRetireSoldTo('');
-    setRetireDate(dayjs());
-    const pv = await getRetirementPreview(asset.assetId, book);
-    setRetirePreview(pv.success ? pv : null);
-    if (!pv.success) message.error(pv.error || 'Failed to load retirement preview');
-    setRetireLoading(false);
+    try {
+      // Check if asset is already retired
+      const existingRetirements = await getRetirements(book);
+      const assetRetirement = existingRetirements.find(r => String(r.assetId) === String(asset.assetId));
+
+      if (assetRetirement) {
+        // Asset is already retired - show details, not retire dialog
+        Modal.info({
+          title: `Retirement Details — ${asset.asset_number || asset.assetNumber}`,
+          width: 600,
+          content: (
+            <Descriptions column={2} size="small" bordered labelStyle={{ fontWeight: 500, width: 140 }}>
+              <Descriptions.Item label="Retirement ID">{assetRetirement.retirementId}</Descriptions.Item>
+              <Descriptions.Item label="Status">{assetRetirement.status || '—'}</Descriptions.Item>
+              <Descriptions.Item label="Date Retired">{assetRetirement.dateRetired}</Descriptions.Item>
+              <Descriptions.Item label="Retirement Type">{assetRetirement.retirementTypeCode || '—'}</Descriptions.Item>
+              <Descriptions.Item label="Cost Retired">{formatCurrency(assetRetirement.costRetired)}</Descriptions.Item>
+              <Descriptions.Item label="NBV Retired">{formatCurrency(assetRetirement.nbvRetired)}</Descriptions.Item>
+              <Descriptions.Item label="Proceeds">{formatCurrency(assetRetirement.proceedsOfSale)}</Descriptions.Item>
+              <Descriptions.Item label="Cost of Removal">{formatCurrency(assetRetirement.costOfRemoval)}</Descriptions.Item>
+              <Descriptions.Item label="Gain / Loss" span={2}>
+                <Text style={{ fontWeight: 600, color: parseFloat(assetRetirement.gainLossAmount || '0') >= 0 ? REDWOOD.success : REDWOOD.primary }}>
+                  {formatCurrency(assetRetirement.gainLossAmount)}
+                </Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Sold To" span={2}>{assetRetirement.soldTo || '—'}</Descriptions.Item>
+            </Descriptions>
+          ),
+          okText: 'Close',
+        });
+        setRetireLoading(false);
+        return;
+      }
+
+      // Asset not retired - proceed with retire dialog
+      setRetireOpen(true);
+      setRetireShowAcct(false); setRetireLines([]);
+      setRetireSegmentDialogOpen(false); setRetireSegmentDialogLineIdx(null);
+      setRetireSold(false); setRetireProceeds(null); setRetireRemoval(null); setRetireSoldTo('');
+      setRetireDate(dayjs());
+      const pv = await getRetirementPreview(asset.assetId, book);
+      setRetirePreview(pv.success ? pv : null);
+      if (!pv.success) message.error(pv.error || 'Failed to load retirement preview');
+    } catch (error) {
+      message.error('Error checking retirement status');
+      console.error(error);
+    } finally {
+      setRetireLoading(false);
+    }
   };
 
   // Standard retirement accounting lines. Balances by construction:
