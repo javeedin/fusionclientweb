@@ -242,37 +242,52 @@ function getCertificate() {
       };
     } catch (opensslError) {
       log('DEBUG', `openssl not available: ${opensslError.message}`);
-      // Fallback to Node.js selfsigned package
+      // Fallback to node-forge (works on all platforms, synchronous)
       try {
-        const selfsigned = require('selfsigned');
-        const attrs = [{ name: 'commonName', value: 'localhost' }];
-        const pems = selfsigned.generate(attrs, { days: 365, algorithm: 'sha256', keySize: 2048 });
+        const forge = require('node-forge');
 
-        // Debug: log what we got
-        log('DEBUG', `selfsigned returned: cert=${!!pems.cert}, private=${!!pems.private}, keys=${Object.keys(pems).join(',')}`);
+        // Generate RSA key pair
+        log('DEBUG', 'Generating RSA key pair...');
+        const keys = forge.pki.rsa.generateKeyPair(2048);
 
-        // Ensure we have cert and private key
-        const cert = pems.cert || pems.certificate;
-        const key = pems.private || pems.key;
+        // Generate self-signed certificate
+        log('DEBUG', 'Generating self-signed certificate...');
+        const cert = forge.pki.createCertificate();
+        cert.publicKey = keys.publicKey;
+        cert.serialNumber = '01';
 
-        if (!cert || !key) {
-          throw new Error(`selfsigned returned invalid data: ${JSON.stringify(Object.keys(pems))}`);
-        }
+        // Set certificate validity
+        const now = new Date();
+        cert.validity.notBefore = now;
+        cert.validity.notAfter = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
 
-        // Write as strings/buffers
-        const certData = typeof cert === 'string' ? cert : cert.toString();
-        const keyData = typeof key === 'string' ? key : key.toString();
+        // Add certificate attributes
+        cert.setSubject([
+          { name: 'commonName', value: 'localhost' },
+          { name: 'organizationName', value: 'GL MCP Server' },
+          { name: 'countryName', value: 'US' }
+        ]);
 
-        fs.writeFileSync(certPath, certData);
-        fs.writeFileSync(keyPath, keyData);
+        // Set issuer same as subject for self-signed
+        cert.setIssuer(cert.subject.attributes);
 
-        log('INFO', `Certificate generated at ${certDir} using selfsigned (${certData.length} bytes cert, ${keyData.length} bytes key)`);
+        // Self-sign the certificate
+        cert.sign(keys.privateKey, forge.md.sha256.create());
+
+        // Convert to PEM format
+        const certPem = forge.pki.certificateToPem(cert);
+        const keyPem = forge.pki.privateKeyToPem(keys.privateKey);
+
+        fs.writeFileSync(certPath, certPem);
+        fs.writeFileSync(keyPath, keyPem);
+
+        log('INFO', `Certificate generated at ${certDir} using node-forge (${certPem.length} bytes cert, ${keyPem.length} bytes key)`);
         return {
-          cert: certData,
-          key: keyData,
+          cert: certPem,
+          key: keyPem,
         };
       } catch (nodeError) {
-        log('ERROR', `Failed to generate certificate with selfsigned: ${nodeError.message}`);
+        log('ERROR', `Failed to generate certificate with node-forge: ${nodeError.message}`);
         return null;
       }
     }
