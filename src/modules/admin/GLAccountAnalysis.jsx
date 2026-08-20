@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Input, Table, Card, Space, Statistic, Spin, message, Form, Modal, Tag, Checkbox, InputNumber } from 'antd';
-import { PlayCircleOutlined, StopOutlined, SettingOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Button, Input, Table, Card, Space, Statistic, Spin, message, Form, Modal, Tag, Checkbox, InputNumber, AutoComplete, Avatar } from 'antd';
+import { PlayCircleOutlined, StopOutlined, SettingOutlined, ReloadOutlined, SendOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
 
 export default function GLAccountAnalysis() {
   const [serverStatus, setServerStatus] = useState(null);
@@ -11,6 +11,9 @@ export default function GLAccountAnalysis() {
   const [showSettings, setShowSettings] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState([]);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
   const [settingsForm] = Form.useForm();
   const [messageApi] = message.useMessage();
 
@@ -56,6 +59,61 @@ export default function GLAccountAnalysis() {
     } catch (err) {
       console.error('Failed to fetch logs:', err);
       messageApi.error(err.message);
+    }
+  }
+
+  async function handleChatSubmit() {
+    if (!chatInput.trim()) return;
+
+    const userMessage = {
+      id: Date.now(),
+      type: 'user',
+      content: chatInput,
+      timestamp: new Date().toLocaleTimeString(),
+    };
+
+    setChatMessages((prev) => [...prev, userMessage]);
+    setChatInput('');
+    setChatLoading(true);
+
+    try {
+      // Simple AI responses based on keywords
+      let aiResponse = '';
+
+      if (
+        chatInput.toLowerCase().includes('account') ||
+        chatInput.toLowerCase().includes('balance')
+      ) {
+        aiResponse = `GL Account: ${queryParams.account} | Ledger: ${queryParams.ledger_name} | Period: ${queryParams.period_names} | Company: ${queryParams.company}`;
+        if (summary) {
+          aiResponse += `\n\nSummary: Total Debit: ${summary.totalDebit}, Transaction Count: ${summary.count}`;
+        }
+      } else if (chatInput.toLowerCase().includes('transaction')) {
+        aiResponse = `Found ${results.length} GL transactions for the current query.${
+          results.length > 0 ? ` Latest transaction: ${results[0].description}` : ''
+        }`;
+      } else if (chatInput.toLowerCase().includes('ledger')) {
+        aiResponse = `Currently analyzing ledger: ${queryParams.ledger_name}`;
+      } else if (chatInput.toLowerCase().includes('period')) {
+        aiResponse = `Analysis period: ${queryParams.period_names}`;
+      } else {
+        aiResponse =
+          'I can help you analyze GL data. You can ask about:\n- Account balances\n- GL transactions\n- Ledger information\n- Period analysis\n\nTry asking: "What is the account balance?" or "Show me transactions"';
+      }
+
+      const aiMessage = {
+        id: Date.now() + 1,
+        type: 'ai',
+        content: aiResponse,
+        timestamp: new Date().toLocaleTimeString(),
+      };
+
+      setChatMessages((prev) => [...prev, aiMessage]);
+    } catch (err) {
+      console.error('Chat error:', err);
+      messageApi.error('Error processing question');
+    } finally {
+      setChatLoading(false);
     }
   }
 
@@ -331,6 +389,105 @@ export default function GLAccountAnalysis() {
             />
           </Card>
         )}
+      </Card>
+
+      {/* AI Chat for GL Analysis */}
+      <Card title="GL Data Analysis Chat" style={{ marginBottom: '24px' }}>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            height: '400px',
+            border: '1px solid #e0e0e0',
+            borderRadius: '4px',
+            backgroundColor: '#fafafa',
+          }}
+        >
+          {/* Chat Messages */}
+          <div
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '16px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            {chatMessages.length === 0 ? (
+              <div style={{ textAlign: 'center', color: '#999', marginTop: '20px' }}>
+                Ask questions about GL data. Try: "What accounts are included?" or "Show me the total debit"
+              </div>
+            ) : (
+              chatMessages.map((msg) => (
+                <div
+                  key={msg.id}
+                  style={{
+                    display: 'flex',
+                    gap: '8px',
+                    alignItems: 'flex-start',
+                  }}
+                >
+                  <Avatar
+                    size="small"
+                    icon={msg.type === 'user' ? <UserOutlined /> : <RobotOutlined />}
+                    style={{
+                      backgroundColor: msg.type === 'user' ? '#1677ff' : '#52c41a',
+                    }}
+                  />
+                  <div
+                    style={{
+                      flex: 1,
+                      backgroundColor: msg.type === 'user' ? '#e6f7ff' : '#f6ffed',
+                      padding: '8px 12px',
+                      borderRadius: '4px',
+                      wordBreak: 'break-word',
+                      whiteSpace: 'pre-wrap',
+                    }}
+                  >
+                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
+                      {msg.type === 'user' ? 'You' : 'AI Assistant'} - {msg.timestamp}
+                    </div>
+                    <div>{msg.content}</div>
+                  </div>
+                </div>
+              ))
+            )}
+            {chatLoading && (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <Avatar size="small" icon={<RobotOutlined />} style={{ backgroundColor: '#52c41a' }} />
+                <Spin size="small" />
+              </div>
+            )}
+          </div>
+
+          {/* Input Area */}
+          <div
+            style={{
+              borderTop: '1px solid #e0e0e0',
+              padding: '12px',
+              display: 'flex',
+              gap: '8px',
+            }}
+          >
+            <Input
+              placeholder="Ask a question about GL data..."
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onPressEnter={handleChatSubmit}
+              disabled={chatLoading}
+            />
+            <Button
+              type="primary"
+              icon={<SendOutlined />}
+              onClick={handleChatSubmit}
+              loading={chatLoading}
+              disabled={!chatInput.trim() || chatLoading}
+            >
+              Send
+            </Button>
+          </div>
+        </div>
       </Card>
 
       {/* Settings Modal */}
