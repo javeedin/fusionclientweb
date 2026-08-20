@@ -21,6 +21,8 @@ import { postSlaToGL } from '../../services/glPosting.service';
 import { useAuth } from '../../context/AuthContext';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import AccountSegmentSelector from '../../components/AccountSegmentSelector';
+import AccountSegmentDescriptions from '../../components/AccountSegmentDescriptions';
+import { EditOutlined } from '@ant-design/icons';
 import {
   searchAssets, getAssetDetail, getAssetBooks, getAssetDeprn,
   getAssetDistributions, getAssetInvoices, getAssetTransactions,
@@ -1001,7 +1003,8 @@ const AssetTabContent: React.FC<{
   const [retireSoldTo,   setRetireSoldTo]   = useState('');
   const [retireLines,    setRetireLines]    = useState<RetireLine[]>([]);
   const [retireShowAcct, setRetireShowAcct] = useState(false);
-  const [retireExpandedLines, setRetireExpandedLines] = useState<Set<number>>(new Set());
+  const [retireSegmentDialogOpen, setRetireSegmentDialogOpen] = useState(false);
+  const [retireSegmentDialogLineIdx, setRetireSegmentDialogLineIdx] = useState<number | null>(null);
 
   const retireBook = () => books[0]?.bookTypeCode || asset.bookTypeCode || '';
 
@@ -1011,7 +1014,7 @@ const AssetTabContent: React.FC<{
     setRetireOpen(true);
     setRetireLoading(true);
     setRetireShowAcct(false); setRetireLines([]);
-    setRetireExpandedLines(new Set());
+    setRetireSegmentDialogOpen(false); setRetireSegmentDialogLineIdx(null);
     setRetireSold(false); setRetireProceeds(null); setRetireRemoval(null); setRetireSoldTo('');
     setRetireDate(dayjs());
     const pv = await getRetirementPreview(asset.assetId, book);
@@ -1073,7 +1076,7 @@ const AssetTabContent: React.FC<{
       if (res.success) {
         message.success(`Asset ${asset.asset_number || asset.assetId} retired (retirement #${res.retirementId}). Gain/Loss ${formatCurrency(String(res.gainLoss ?? 0))}`);
         setRetireOpen(false);
-        setRetireExpandedLines(new Set());
+        setRetireSegmentDialogOpen(false);
         onRefresh();
       } else {
         message.error(res.error || 'Retirement failed');
@@ -1834,7 +1837,7 @@ const AssetTabContent: React.FC<{
               return (
                 <Modal
                   open
-                  onCancel={() => { if (!retireSaving) { setRetireOpen(false); setRetireExpandedLines(new Set()); } }}
+                  onCancel={() => { if (!retireSaving) { setRetireOpen(false); setRetireSegmentDialogOpen(false); } }}
                   width={860}
                   maskClosable={!retireSaving}
                   title={<Space><LogoutOutlined style={{ color: '#C74634' }} /><span>Retire Asset — {asset.asset_number || asset.assetNumber}</span></Space>}
@@ -1914,31 +1917,28 @@ const AssetTabContent: React.FC<{
                                 <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr 100px 100px', alignItems: 'center', padding: '8px 12px', background: idx % 2 === 0 ? '#fff' : '#fafafa', fontSize: 12 }}>
                                   <div><Text strong style={{ color: FA_COLOR }}>{l.lineType}</Text></div>
                                   <div>
-                                    <div style={{ marginBottom: 4 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                                       <Input size="small" value={l.accountCombination}
                                         placeholder="01-00-00-…"
                                         status={!l.accountCombination ? 'error' : ''}
                                         onChange={e => setRetireLineAccount(idx, e.target.value)}
-                                        style={{ fontFamily: 'monospace', fontSize: 11 }} />
+                                        style={{ fontFamily: 'monospace', fontSize: 11, flex: 1 }} />
+                                      {l.accountCombination && (
+                                        <Tooltip title="Edit account segments">
+                                          <Button
+                                            type="text"
+                                            size="small"
+                                            icon={<EditOutlined />}
+                                            onClick={() => {
+                                              setRetireSegmentDialogLineIdx(idx);
+                                              setRetireSegmentDialogOpen(true);
+                                            }}
+                                            style={{ color: FA_COLOR, minWidth: 32, padding: '4px 8px' }}
+                                          />
+                                        </Tooltip>
+                                      )}
                                     </div>
-                                    {l.accountCombination && (
-                                      <div style={{ paddingLeft: 4 }}>
-                                        <Button
-                                          type="link"
-                                          size="small"
-                                          onClick={() => {
-                                            setRetireExpandedLines(prev => {
-                                              const next = new Set(prev);
-                                              next.has(idx) ? next.delete(idx) : next.add(idx);
-                                              return next;
-                                            });
-                                          }}
-                                          style={{ padding: 0, height: 'auto', fontSize: 11, color: '#0572CE' }}
-                                        >
-                                          {retireExpandedLines.has(idx) ? '▼ Hide segments' : '▶ Show segments'}
-                                        </Button>
-                                      </div>
-                                    )}
+                                    {l.accountCombination && <AccountSegmentDescriptions accountCode={l.accountCombination} />}
                                   </div>
                                   <div style={{ textAlign: 'right', fontFamily: 'monospace', color: '#1D7B4D', fontWeight: 600 }}>
                                     {l.enteredDr ? formatCurrency(String(l.enteredDr)) : '—'}
@@ -1947,15 +1947,6 @@ const AssetTabContent: React.FC<{
                                     {l.enteredCr ? formatCurrency(String(l.enteredCr)) : '—'}
                                   </div>
                                 </div>
-                                {retireExpandedLines.has(idx) && l.accountCombination && (
-                                  <div style={{ padding: '12px 16px', background: '#fafafa', borderTop: `1px solid ${REDWOOD.neutral200}` }}>
-                                    <AccountSegmentSelector
-                                      accountCode={l.accountCombination}
-                                      onChange={(newCode) => setRetireLineAccount(idx, newCode)}
-                                      label={`${l.lineType} — Account Segments`}
-                                    />
-                                  </div>
-                                )}
                               </div>
                             ))}
                             <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr 100px 100px', alignItems: 'center', padding: '8px 12px', background: REDWOOD.neutral100, fontWeight: 700, fontSize: 12, borderTop: `2px solid ${REDWOOD.neutral300}` }}>
@@ -1964,6 +1955,28 @@ const AssetTabContent: React.FC<{
                               <div style={{ textAlign: 'right', fontFamily: 'monospace' }}>{formatCurrency(String(totCr))}</div>
                             </div>
                           </div>
+
+                          {/* Segment Editor Dialog */}
+                          <Modal
+                            open={retireSegmentDialogOpen && retireSegmentDialogLineIdx !== null}
+                            onCancel={() => setRetireSegmentDialogOpen(false)}
+                            title={retireSegmentDialogLineIdx !== null ? `${retireLines[retireSegmentDialogLineIdx]?.lineType} — Edit Account Segments` : 'Edit Segments'}
+                            width={680}
+                            footer={[
+                              <Button key="close" onClick={() => setRetireSegmentDialogOpen(false)}>
+                                Done
+                              </Button>,
+                            ]}
+                          >
+                            {retireSegmentDialogLineIdx !== null && retireLines[retireSegmentDialogLineIdx] && (
+                              <AccountSegmentSelector
+                                accountCode={retireLines[retireSegmentDialogLineIdx].accountCombination}
+                                onChange={(newCode) => {
+                                  setRetireLineAccount(retireSegmentDialogLineIdx, newCode);
+                                }}
+                              />
+                            )}
+                          </Modal>
                         </>
                       )}
                     </>
