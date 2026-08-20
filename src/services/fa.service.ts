@@ -721,11 +721,10 @@ export const retireAssetWithAccounting = async (payload: {
   lines: RetireLine[];
 }): Promise<{ success: boolean; retirementId?: number; nbvRetired?: number; gainLoss?: number; error?: string }> => {
   try {
-    const { assetId, ...body } = payload;
-    const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/fa/assets/${assetId}/retire-post`, {
+    const res = await fetch(buildApexUrl('fa/retirements'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
     return await res.json();
   } catch (e: any) {

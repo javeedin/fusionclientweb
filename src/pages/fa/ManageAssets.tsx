@@ -2011,7 +2011,7 @@ const AssetTabContent: React.FC<{
                                   lines,
                                 };
                                 try {
-                                  const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/fa/assets/${asset.assetId}/retire-post`, {
+                                  const res = await fetch(buildApexUrl('fa/retirements'), {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
                                     body: JSON.stringify(body),
@@ -2027,7 +2027,7 @@ const AssetTabContent: React.FC<{
                             {(() => {
                               const book = retireBook();
                               const lines = retireShowAcct && retireLines.length ? retireLines : buildRetireLines();
-                              const apiUrl = `${APEX_DB_CONFIG.baseUrl}/fa/assets/${asset.assetId}/retire-post`;
+                              const apiUrl = buildApexUrl('fa/retirements');
                               const requestBody = {
                                 bookTypeCode: book,
                                 dateRetired: retireDate.format('YYYY-MM-DD'),
