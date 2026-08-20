@@ -61,6 +61,7 @@ const Retirements: React.FC = () => {
 
   // API test modal
   const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string; data?: any } | null>(null);
+  const [apiTestLoading, setApiTestLoading] = useState(false);
 
   useEffect(() => {
     getBookControls().then(setBookControls);
@@ -287,12 +288,13 @@ const Retirements: React.FC = () => {
                                 <Button
                                   size="small"
                                   type="primary"
-                                  loading={!apiTestResult && false}
+                                  loading={apiTestLoading}
                                   onClick={() => {
                                     setApiTestResult(null);
+                                    setApiTestLoading(true);
                                     fetch(apiUrl)
                                       .then(r => {
-                                        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                                        if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
                                         return r.json();
                                       })
                                       .then(data => {
@@ -307,7 +309,8 @@ const Retirements: React.FC = () => {
                                           success: false,
                                           message: `Error: ${err.message}`,
                                         });
-                                      });
+                                      })
+                                      .finally(() => setApiTestLoading(false));
                                   }}
                                 >
                                   Test API
