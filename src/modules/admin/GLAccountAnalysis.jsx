@@ -244,19 +244,18 @@ export default function GLAccountAnalysis() {
         throw new Error(data.error || 'Failed to query GL data');
       }
 
-      // Process response data - try multiple possible structures
-      let transactions = data.data?.transactions || [];
+      // Process response data - Oracle API returns items, not transactions
+      let transactions = data.items || data.data?.items || data.data?.transactions || [];
 
-      // If transactions is empty, check other possible structures
+      // If still empty, check other possible structures
       if (transactions.length === 0) {
-        console.log('No transactions in data.data.transactions, checking other structures...');
+        console.log('No transactions found in standard locations, checking other structures...');
         console.log('data.data:', data.data);
         console.log('data keys:', Object.keys(data));
 
         // Try other possible response structures
         if (Array.isArray(data.data)) transactions = data.data;
         else if (data.transactions) transactions = data.transactions;
-        else if (data.items) transactions = data.items;
         else if (data.rows) transactions = data.rows;
         else if (data.records) transactions = data.records;
       }
@@ -265,14 +264,17 @@ export default function GLAccountAnalysis() {
 
       const tableData = transactions.map((t, idx) => ({
         key: idx.toString(),
-        batchId: t.batch_id || '',
-        jeHeaderId: t.je_header_id || '',
-        jeLineNumber: t.line_number || 1,
-        accountDescription: t.account_description || 'N/A',
-        enteredDr: t.debit_amount || 0,
-        accountedDr: t.accounted_debit || 0,
-        accountingDate: t.accounting_date || '',
-        description: t.description || '',
+        batchId: t.batchId || t.batch_id || '',
+        jeHeaderId: t.jeHeaderId || t.je_header_id || '',
+        jeLineNumber: t.jeLineNumber || t.line_number || 1,
+        accountDescription: t.accountDescription || t.account_description || 'N/A',
+        enteredDr: parseFloat(t.enteredDr || t.debit_amount || 0),
+        accountedDr: parseFloat(t.accountedDr || t.accounted_debit || 0),
+        accountingDate: t.accountingDate || t.accounting_date || '',
+        description: t.description || t.userJeSourceName || '',
+        account: t.account || '',
+        company: t.company || '',
+        currencyCode: t.currencyCode || '',
       }));
 
       setResults(tableData);
