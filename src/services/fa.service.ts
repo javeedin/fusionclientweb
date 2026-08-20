@@ -865,7 +865,7 @@ export const createAsset = async (payload: any): Promise<{ success: boolean; ass
 };
 
 export const retireAsset = async (assetId: string, payload: any): Promise<{ success: boolean; message?: string; gainLoss?: string; error?: string }> => {
-  try { return await putToApex(`fa/assets/${assetId}/retire`, payload); }
+  try { return await insertToApex('fa/retirements', payload); }
   catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
 };
 

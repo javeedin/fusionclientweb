@@ -63,6 +63,9 @@ const Retirements: React.FC = () => {
   const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string; data?: any } | null>(null);
   const [apiTestLoading, setApiTestLoading] = useState(false);
 
+  // Retire API details modal
+  const [retireApiOpen, setRetireApiOpen] = useState(false);
+
   useEffect(() => {
     getBookControls().then(setBookControls);
     loadRetirements();
@@ -142,12 +145,15 @@ const Retirements: React.FC = () => {
       }
       setRetireSaving(true);
       const res = await retireAsset(retireTarget.assetId, {
-        bookTypeCode:      retireTarget.bookTypeCode,
-        dateRetired:       vals.dateRetired,
-        retirementTypeCode:vals.retirementTypeCode,
-        proceedsOfSale:    vals.proceedsOfSale    || 0,
-        costOfRemoval:     vals.costOfRemoval     || 0,
-        soldTo:            vals.soldTo            || '',
+        bookTypeCode:        retireTarget.bookTypeCode,
+        assetId:             retireTarget.assetId,
+        dateRetired:         vals.dateRetired,
+        retirementTypeCode:  vals.retirementTypeCode || 'ORDINARY',
+        proceedsOfSale:      vals.proceedsOfSale    || 0,
+        costOfRemoval:       vals.costOfRemoval     || 0,
+        soldTo:              vals.soldTo            || '',
+        createdBy:           sessionStorage.getItem('userEmail') || 'reacterp',
+        lines:               [],
       });
       if (res.success) {
         message.success(`Asset ${retireTarget.assetNumber} retired. Gain/Loss: ${formatCurrency(res.gainLoss || '0')}`);
@@ -383,10 +389,21 @@ const Retirements: React.FC = () => {
         <Modal
           open={retireOpen}
           title={
-            <Space>
-              <StopOutlined style={{ color: REDWOOD.primary }} />
-              <span>Retire Asset — {retireTarget?.assetNumber}</span>
-            </Space>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Space>
+                <StopOutlined style={{ color: REDWOOD.primary }} />
+                <span>Retire Asset — {retireTarget?.assetNumber}</span>
+              </Space>
+              <Tooltip title="View API endpoint and test">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ApiOutlined />}
+                  style={{ color: FA_COLOR, fontSize: 12 }}
+                  onClick={() => setRetireApiOpen(true)}
+                />
+              </Tooltip>
+            </div>
           }
           onCancel={() => { setRetireOpen(false); retireForm.resetFields(); }}
           onOk={handleRetireSubmit}
@@ -484,9 +501,104 @@ const Retirements: React.FC = () => {
             </Descriptions>
           )}
         </Modal>
+
+        {/* Retire Asset API Details Modal */}
+        <Modal
+          open={retireApiOpen}
+          title="Retire Asset API Details"
+          onCancel={() => setRetireApiOpen(false)}
+          footer={[
+            <Button key="close" onClick={() => setRetireApiOpen(false)}>Close</Button>,
+            <Button
+              key="test"
+              type="primary"
+              loading={apiTestLoading}
+              style={{ background: FA_COLOR, borderColor: FA_COLOR }}
+              onClick={() => {
+                if (!retireTarget) return;
+                setApiTestLoading(true);
+                const vals = retireForm.getFieldsValue();
+                let dateRetired = vals.dateRetired;
+                if (dayjs.isDayjs(dateRetired)) {
+                  dateRetired = dateRetired.format('YYYY-MM-DD');
+                }
+                const payload = {
+                  bookTypeCode:        retireTarget.bookTypeCode,
+                  assetId:             retireTarget.assetId,
+                  dateRetired:         dateRetired,
+                  retirementTypeCode:  vals.retirementTypeCode || 'ORDINARY',
+                  proceedsOfSale:      vals.proceedsOfSale    || 0,
+                  costOfRemoval:       vals.costOfRemoval     || 0,
+                  soldTo:              vals.soldTo            || '',
+                  createdBy:           sessionStorage.getItem('userEmail') || 'reacterp',
+                  lines:               [],
+                };
+                const apiUrl = buildApexUrl('fa/retirements');
+                fetch(apiUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload),
+                })
+                  .then(r => {
+                    if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+                    return r.json();
+                  })
+                  .then(data => {
+                    setApiTestResult({ success: true, message: 'Success', data });
+                    message.success('API test successful');
+                  })
+                  .catch(e => {
+                    setApiTestResult({ success: false, message: e.message });
+                    message.error(`API test failed: ${e.message}`);
+                  })
+                  .finally(() => setApiTestLoading(false));
+              }}
+            >
+              Test API
+            </Button>,
+          ]}
+          width={900}
+        >
+          {retireTarget && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>ENDPOINT (POST)</div>
+              <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                {buildApexUrl('fa/retirements')}
+              </Text>
+
+              <div style={{ fontSize: 11, color: '#888', margin: '16px 0 8px', fontWeight: 600 }}>REQUEST BODY</div>
+              <div style={{ background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 6, padding: 12, maxHeight: 400, overflow: 'auto' }}>
+                <pre style={{ margin: 0, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#333' }}>
+                  {JSON.stringify({
+                    bookTypeCode:        retireTarget.bookTypeCode,
+                    assetId:             retireTarget.assetId,
+                    dateRetired:         retireForm.getFieldValue('dateRetired') ? (dayjs.isDayjs(retireForm.getFieldValue('dateRetired')) ? retireForm.getFieldValue('dateRetired').format('YYYY-MM-DD') : retireForm.getFieldValue('dateRetired')) : new Date().toISOString().split('T')[0],
+                    retirementTypeCode:  retireForm.getFieldValue('retirementTypeCode') || 'ORDINARY',
+                    proceedsOfSale:      retireForm.getFieldValue('proceedsOfSale') || 0,
+                    costOfRemoval:       retireForm.getFieldValue('costOfRemoval') || 0,
+                    soldTo:              retireForm.getFieldValue('soldTo') || '',
+                    createdBy:           sessionStorage.getItem('userEmail') || 'reacterp',
+                    lines:               [],
+                  }, null, 2)}
+                </pre>
+              </div>
+
+              {apiTestResult && (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 8, fontWeight: 600 }}>RESPONSE</div>
+                  <div style={{ background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 6, padding: 12, maxHeight: 300, overflow: 'auto' }}>
+                    <pre style={{ margin: 0, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#333' }}>
+                      {JSON.stringify(apiTestResult.data, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </Modal>
       </Content>
 
-      
+
     </Layout>
   );
 };
