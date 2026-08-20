@@ -250,7 +250,7 @@ export default function GLAccountAnalysis() {
             <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
               <strong>HTTP Endpoint (Claude Desktop):</strong> http://localhost:{credentials?.httpPort || 3001}<br/>
               <strong>Health Check:</strong> GET /health<br/>
-              <strong>Execute Tool:</strong> POST /execute with {'{tool: "toolName", arguments: {...}'} }
+              <strong>Execute Tool:</strong> POST /execute with {'{ tool: "toolName", arguments: {...} }'}
             </div>
           )}
         </div>
