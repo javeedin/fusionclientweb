@@ -9,6 +9,8 @@ export default function GLAccountAnalysis() {
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [credentials, setCredentials] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
+  const [logs, setLogs] = useState([]);
   const [settingsForm] = Form.useForm();
   const [messageApi] = message.useMessage();
 
@@ -39,6 +41,21 @@ export default function GLAccountAnalysis() {
       }
     } catch (err) {
       console.error('Failed to check GL MCP status:', err);
+    }
+  }
+
+  async function fetchLogs() {
+    try {
+      const response = await window.electronAPI.glMcpGetLogs();
+      if (response.success) {
+        setLogs(response.logs || []);
+        setShowLogs(true);
+      } else {
+        messageApi.error('Failed to fetch logs');
+      }
+    } catch (err) {
+      console.error('Failed to fetch logs:', err);
+      messageApi.error(err.message);
     }
   }
 
@@ -221,6 +238,11 @@ export default function GLAccountAnalysis() {
               >
                 Refresh
               </Button>
+              <Button
+                onClick={fetchLogs}
+              >
+                View Logs
+              </Button>
             </Space>
           </div>
 
@@ -385,6 +407,36 @@ export default function GLAccountAnalysis() {
             />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* Logs Modal */}
+      <Modal
+        title="GL MCP Server Logs"
+        open={showLogs}
+        onCancel={() => setShowLogs(false)}
+        width={800}
+        footer={null}
+      >
+        <div
+          style={{
+            backgroundColor: '#1a1a1a',
+            color: '#00ff00',
+            padding: '12px',
+            borderRadius: '4px',
+            fontFamily: 'monospace',
+            fontSize: '12px',
+            maxHeight: '400px',
+            overflowY: 'auto',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          {logs.length === 0 ? (
+            <div>No logs available</div>
+          ) : (
+            logs.map((log, idx) => <div key={idx}>{log}</div>)
+          )}
+        </div>
       </Modal>
     </div>
   );

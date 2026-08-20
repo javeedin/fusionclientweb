@@ -175,6 +175,17 @@ let isQuitting = false;
 let isSyncing = false;
 let proxyServer = null;
 let glMcpServer = null; // GL MCP Server process
+const glMcpLogs = []; // Store recent logs (max 100 lines)
+const MAX_LOGS = 100;
+
+function addGLLog(level, message) {
+  const timestamp = new Date().toISOString();
+  const logEntry = `[${timestamp}] [${level}] ${message}`;
+  glMcpLogs.push(logEntry);
+  if (glMcpLogs.length > MAX_LOGS) {
+    glMcpLogs.shift();
+  }
+}
 
 // Start the proxy server.
 // Primary: utilityProcess.fork() — uses Electron's bundled Node, no system Node needed.
@@ -278,25 +289,33 @@ function startGLMcpServer(credentials) {
     let serverStarted = false;
     const startTimeout = setTimeout(() => {
       if (!serverStarted && glMcpServer) {
-        console.warn(`[GL MCP] ${new Date().toISOString()} Server startup timeout (5s) - check logs above`);
+        const msg = 'Server startup timeout (5s) - check logs';
+        console.warn(`[GL MCP] ${new Date().toISOString()} ${msg}`);
+        addGLLog('WARN', msg);
       }
     }, 5000);
 
     glMcpServer.stdout?.on('data', (d) => {
       const message = d.toString().trim();
-      console.log(`[GL MCP] ${new Date().toISOString()} STDOUT: ${message}`);
-      if (message.includes('started successfully') || message.includes('listening')) {
-        serverStarted = true;
-        clearTimeout(startTimeout);
+      if (message) {
+        console.log(`[GL MCP] ${new Date().toISOString()} STDOUT: ${message}`);
+        addGLLog('STDOUT', message);
+        if (message.includes('started successfully') || message.includes('listening')) {
+          serverStarted = true;
+          clearTimeout(startTimeout);
+        }
       }
     });
 
     glMcpServer.stderr?.on('data', (d) => {
       const message = d.toString().trim();
-      console.error(`[GL MCP] ${new Date().toISOString()} STDERR: ${message}`);
-      if (message.includes('started successfully') || message.includes('listening')) {
-        serverStarted = true;
-        clearTimeout(startTimeout);
+      if (message) {
+        console.error(`[GL MCP] ${new Date().toISOString()} STDERR: ${message}`);
+        addGLLog('STDERR', message);
+        if (message.includes('started successfully') || message.includes('listening')) {
+          serverStarted = true;
+          clearTimeout(startTimeout);
+        }
       }
     });
 
@@ -1227,6 +1246,14 @@ ipcMain.handle('gl-mcp:status', async () => {
     return { success: true, status: getGLMcpServerStatus() };
   } catch (e) {
     return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('gl-mcp:get-logs', async () => {
+  try {
+    return { success: true, logs: glMcpLogs };
+  } catch (e) {
+    return { success: false, error: e.message, logs: [] };
   }
 });
 
