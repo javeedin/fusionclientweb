@@ -1004,6 +1004,8 @@ const AssetTabContent: React.FC<{
   const [retireShowAcct, setRetireShowAcct] = useState(false);
   const [retireSegmentDialogOpen, setRetireSegmentDialogOpen] = useState(false);
   const [retireSegmentDialogLineIdx, setRetireSegmentDialogLineIdx] = useState<number | null>(null);
+  const [retireApiDetailsOpen, setRetireApiDetailsOpen] = useState(false);
+  const [retireApiTestResult, setRetireApiTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const retireBook = () => books[0]?.bookTypeCode || asset.bookTypeCode || '';
 
@@ -1842,8 +1844,11 @@ const AssetTabContent: React.FC<{
                   title={<Space><LogoutOutlined style={{ color: '#C74634' }} /><span>Retire Asset — {asset.asset_number || asset.assetNumber}</span></Space>}
                   footer={
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Tooltip title="API: POST /retirements/retire-asset">
-                        <Space style={{ fontSize: 11, color: '#666' }}>
+                      <Tooltip title="Click to view API details and test">
+                        <Space style={{ fontSize: 11, color: '#666', cursor: 'pointer', padding: '4px 8px', borderRadius: 4, transition: 'background 0.2s' }}
+                          onClick={() => setRetireApiDetailsOpen(true)}
+                          onMouseEnter={(e) => e.currentTarget.style.background = '#f0f0f0'}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
                           <ApiOutlined style={{ color: '#0572CE' }} />
                           <span>Retire Asset API</span>
                         </Space>
@@ -1981,6 +1986,82 @@ const AssetTabContent: React.FC<{
                                 }}
                               />
                             )}
+                          </Modal>
+
+                          {/* API Details Modal */}
+                          <Modal
+                            open={retireApiDetailsOpen}
+                            onCancel={() => { setRetireApiDetailsOpen(false); setRetireApiTestResult(null); }}
+                            title="Retire Asset API Details"
+                            width={800}
+                            footer={[
+                              <Button key="close" onClick={() => { setRetireApiDetailsOpen(false); setRetireApiTestResult(null); }}>Close</Button>,
+                              <Button key="test" type="primary" onClick={async () => {
+                                if (!retirePreview) { message.error('No retirement preview'); return; }
+                                const book = retireBook();
+                                const lines = retireShowAcct && retireLines.length ? retireLines : buildRetireLines();
+                                const body = {
+                                  bookTypeCode: book,
+                                  dateRetired: retireDate.format('YYYY-MM-DD'),
+                                  proceedsOfSale: retireSold ? Number(retireProceeds || 0) : 0,
+                                  costOfRemoval: Number(retireRemoval || 0),
+                                  soldTo: retireSold ? retireSoldTo : undefined,
+                                  retirementTypeCode: 'ORDINARY',
+                                  createdBy: loggedUser,
+                                  lines,
+                                };
+                                try {
+                                  const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/fa/assets/${asset.assetId}/retire-post`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                                    body: JSON.stringify(body),
+                                  });
+                                  const result = await res.json();
+                                  setRetireApiTestResult({ success: result.success, message: result.success ? `Success! Retirement ID: ${result.retirementId}` : result.error || 'Failed' });
+                                } catch (e: any) {
+                                  setRetireApiTestResult({ success: false, message: e.message });
+                                }
+                              }}>Test API</Button>,
+                            ]}
+                          >
+                            {(() => {
+                              const book = retireBook();
+                              const lines = retireShowAcct && retireLines.length ? retireLines : buildRetireLines();
+                              const apiUrl = `${APEX_DB_CONFIG.baseUrl}/fa/assets/${asset.assetId}/retire-post`;
+                              const requestBody = {
+                                bookTypeCode: book,
+                                dateRetired: retireDate.format('YYYY-MM-DD'),
+                                proceedsOfSale: retireSold ? Number(retireProceeds || 0) : 0,
+                                costOfRemoval: Number(retireRemoval || 0),
+                                soldTo: retireSold ? retireSoldTo : undefined,
+                                retirementTypeCode: 'ORDINARY',
+                                createdBy: loggedUser,
+                                lines,
+                              };
+                              return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                                  <div>
+                                    <Text strong style={{ display: 'block', marginBottom: 8 }}>Endpoint URL</Text>
+                                    <div style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                                      POST {apiUrl}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <Text strong style={{ display: 'block', marginBottom: 8 }}>Request Body</Text>
+                                    <div style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, fontFamily: 'monospace', fontSize: 11, maxHeight: 400, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                      {JSON.stringify(requestBody, null, 2)}
+                                    </div>
+                                  </div>
+                                  {retireApiTestResult && (
+                                    <div style={{ background: retireApiTestResult.success ? '#f6ffed' : '#fff2f0', border: `1px solid ${retireApiTestResult.success ? '#b7eb8f' : '#ffa39e'}`, padding: 12, borderRadius: 4 }}>
+                                      <Text style={{ color: retireApiTestResult.success ? '#52c41a' : '#f5222d' }}>
+                                        {retireApiTestResult.success ? '✓' : '✗'} {retireApiTestResult.message}
+                                      </Text>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </Modal>
                         </>
                       )}
