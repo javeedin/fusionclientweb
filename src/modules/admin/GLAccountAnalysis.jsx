@@ -676,6 +676,7 @@ export default function GLAccountAnalysis() {
               </Card>
             </>
           )}
+        </div>
 
         {/* Query Parameters */}
         <Card title="Query Parameters" size="small" style={{ marginBottom: '24px' }}>

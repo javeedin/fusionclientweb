@@ -20,6 +20,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { postSlaToGL } from '../../services/glPosting.service';
 import { useAuth } from '../../context/AuthContext';
 import { APEX_DB_CONFIG } from '../../config/api.config';
+import AccountSegmentSelector from '../../components/AccountSegmentSelector';
 import {
   searchAssets, getAssetDetail, getAssetBooks, getAssetDeprn,
   getAssetDistributions, getAssetInvoices, getAssetTransactions,
@@ -1000,6 +1001,7 @@ const AssetTabContent: React.FC<{
   const [retireSoldTo,   setRetireSoldTo]   = useState('');
   const [retireLines,    setRetireLines]    = useState<RetireLine[]>([]);
   const [retireShowAcct, setRetireShowAcct] = useState(false);
+  const [retireExpandedLines, setRetireExpandedLines] = useState<Set<number>>(new Set());
 
   const retireBook = () => books[0]?.bookTypeCode || asset.bookTypeCode || '';
 
@@ -1009,6 +1011,7 @@ const AssetTabContent: React.FC<{
     setRetireOpen(true);
     setRetireLoading(true);
     setRetireShowAcct(false); setRetireLines([]);
+    setRetireExpandedLines(new Set());
     setRetireSold(false); setRetireProceeds(null); setRetireRemoval(null); setRetireSoldTo('');
     setRetireDate(dayjs());
     const pv = await getRetirementPreview(asset.assetId, book);
@@ -1070,6 +1073,7 @@ const AssetTabContent: React.FC<{
       if (res.success) {
         message.success(`Asset ${asset.asset_number || asset.assetId} retired (retirement #${res.retirementId}). Gain/Loss ${formatCurrency(String(res.gainLoss ?? 0))}`);
         setRetireOpen(false);
+        setRetireExpandedLines(new Set());
         onRefresh();
       } else {
         message.error(res.error || 'Retirement failed');
@@ -1830,7 +1834,7 @@ const AssetTabContent: React.FC<{
               return (
                 <Modal
                   open
-                  onCancel={() => { if (!retireSaving) setRetireOpen(false); }}
+                  onCancel={() => { if (!retireSaving) { setRetireOpen(false); setRetireExpandedLines(new Set()); } }}
                   width={860}
                   maskClosable={!retireSaving}
                   title={<Space><LogoutOutlined style={{ color: '#C74634' }} /><span>Retire Asset — {asset.asset_number || asset.assetNumber}</span></Space>}
@@ -1904,37 +1908,62 @@ const AssetTabContent: React.FC<{
                           <Divider orientation="left" style={{ fontSize: 13, margin: '10px 0' }}>
                             Retirement Accounting {balanced ? <Tag color="success" style={{ marginLeft: 8 }}>Balanced</Tag> : <Tag color="error" style={{ marginLeft: 8 }}>Out of balance</Tag>}
                           </Divider>
-                          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                            <thead>
-                              <tr style={{ background: '#fafafa', color: '#888' }}>
-                                <th style={{ textAlign: 'left', padding: '4px 8px', width: 190 }}>Line</th>
-                                <th style={{ textAlign: 'left', padding: '4px 8px' }}>Account Combination</th>
-                                <th style={{ textAlign: 'right', padding: '4px 8px', width: 110 }}>Debit</th>
-                                <th style={{ textAlign: 'right', padding: '4px 8px', width: 110 }}>Credit</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {retireLines.map((l, idx) => (
-                                <tr key={idx} style={{ borderTop: '1px solid #eee' }}>
-                                  <td style={{ padding: '4px 8px' }}>{l.lineType}</td>
-                                  <td style={{ padding: '4px 8px' }}>
-                                    <Input size="small" value={l.accountCombination}
-                                      placeholder="01-00-00-…"
-                                      status={!l.accountCombination ? 'error' : ''}
-                                      onChange={e => setRetireLineAccount(idx, e.target.value)}
-                                      style={{ fontFamily: 'monospace', fontSize: 11 }} />
-                                  </td>
-                                  <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'monospace', color: '#1D7B4D' }}>{l.enteredDr ? formatCurrency(String(l.enteredDr)) : '—'}</td>
-                                  <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'monospace', color: '#C74634' }}>{l.enteredCr ? formatCurrency(String(l.enteredCr)) : '—'}</td>
-                                </tr>
-                              ))}
-                              <tr style={{ borderTop: '2px solid #ddd', background: '#fafafa', fontWeight: 700 }}>
-                                <td style={{ padding: '4px 8px' }} colSpan={2}>Total</td>
-                                <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'monospace' }}>{formatCurrency(String(totDr))}</td>
-                                <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: 'monospace' }}>{formatCurrency(String(totCr))}</td>
-                              </tr>
-                            </tbody>
-                          </table>
+                          <div style={{ border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 6, overflow: 'hidden' }}>
+                            {retireLines.map((l, idx) => (
+                              <div key={idx} style={{ borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr 100px 100px', alignItems: 'center', padding: '8px 12px', background: idx % 2 === 0 ? '#fff' : '#fafafa', fontSize: 12 }}>
+                                  <div><Text strong style={{ color: FA_COLOR }}>{l.lineType}</Text></div>
+                                  <div>
+                                    <div style={{ marginBottom: 4 }}>
+                                      <Input size="small" value={l.accountCombination}
+                                        placeholder="01-00-00-…"
+                                        status={!l.accountCombination ? 'error' : ''}
+                                        onChange={e => setRetireLineAccount(idx, e.target.value)}
+                                        style={{ fontFamily: 'monospace', fontSize: 11 }} />
+                                    </div>
+                                    {l.accountCombination && (
+                                      <div style={{ paddingLeft: 4 }}>
+                                        <Button
+                                          type="link"
+                                          size="small"
+                                          onClick={() => {
+                                            setRetireExpandedLines(prev => {
+                                              const next = new Set(prev);
+                                              next.has(idx) ? next.delete(idx) : next.add(idx);
+                                              return next;
+                                            });
+                                          }}
+                                          style={{ padding: 0, height: 'auto', fontSize: 11, color: '#0572CE' }}
+                                        >
+                                          {retireExpandedLines.has(idx) ? '▼ Hide segments' : '▶ Show segments'}
+                                        </Button>
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div style={{ textAlign: 'right', fontFamily: 'monospace', color: '#1D7B4D', fontWeight: 600 }}>
+                                    {l.enteredDr ? formatCurrency(String(l.enteredDr)) : '—'}
+                                  </div>
+                                  <div style={{ textAlign: 'right', fontFamily: 'monospace', color: '#C74634', fontWeight: 600 }}>
+                                    {l.enteredCr ? formatCurrency(String(l.enteredCr)) : '—'}
+                                  </div>
+                                </div>
+                                {retireExpandedLines.has(idx) && l.accountCombination && (
+                                  <div style={{ padding: '12px 16px', background: '#fafafa', borderTop: `1px solid ${REDWOOD.neutral200}` }}>
+                                    <AccountSegmentSelector
+                                      accountCode={l.accountCombination}
+                                      onChange={(newCode) => setRetireLineAccount(idx, newCode)}
+                                      label={`${l.lineType} — Account Segments`}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                            <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr 100px 100px', alignItems: 'center', padding: '8px 12px', background: REDWOOD.neutral100, fontWeight: 700, fontSize: 12, borderTop: `2px solid ${REDWOOD.neutral300}` }}>
+                              <div colSpan={2}>Total</div>
+                              <div style={{ textAlign: 'right', fontFamily: 'monospace' }}>{formatCurrency(String(totDr))}</div>
+                              <div style={{ textAlign: 'right', fontFamily: 'monospace' }}>{formatCurrency(String(totCr))}</div>
+                            </div>
+                          </div>
                         </>
                       )}
                     </>
