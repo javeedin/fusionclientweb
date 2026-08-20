@@ -9,51 +9,48 @@ interface AccountSegmentDescriptionsProps {
 }
 
 export const AccountSegmentDescriptions: React.FC<AccountSegmentDescriptionsProps> = ({ accountCode }) => {
-  const [descriptions, setDescriptions] = useState<string[]>([]);
+  const [description, setDescription] = useState<string>('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!accountCode) {
-      setDescriptions([]);
+      setDescription('');
       return;
     }
 
-    const fetchDescriptions = async () => {
+    const fetchDescription = async () => {
       setLoading(true);
       try {
         const validation = await validateAccountCode(accountCode);
-        const descs = Object.values(validation.segmentDetails)
-          .map(detail => detail.description)
-          .filter(Boolean);
-        setDescriptions(descs);
+        // Find the Account segment description (usually the 4th segment)
+        const accountSegment = Object.values(validation.segmentDetails).find(
+          detail => detail.name?.toLowerCase().includes('account') && !detail.name?.toLowerCase().includes('sub')
+        );
+        setDescription(accountSegment?.description || '');
       } catch (error) {
-        console.error('Error fetching segment descriptions:', error);
-        setDescriptions([]);
+        console.error('Error fetching segment description:', error);
+        setDescription('');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchDescriptions();
+    fetchDescription();
   }, [accountCode]);
 
   if (loading) {
     return <Spin size="small" style={{ marginTop: 4 }} />;
   }
 
-  if (descriptions.length === 0) {
+  if (!description) {
     return null;
   }
 
   return (
     <div style={{ marginTop: 4, fontSize: 11, color: '#666', lineHeight: 1.4 }}>
-      {descriptions.map((desc, idx) => (
-        <div key={idx} style={{ marginBottom: idx < descriptions.length - 1 ? 3 : 0 }}>
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            {desc}
-          </Text>
-        </div>
-      ))}
+      <Text type="secondary" style={{ fontSize: 11 }}>
+        {description}
+      </Text>
     </div>
   );
 };
