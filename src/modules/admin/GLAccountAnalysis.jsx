@@ -21,6 +21,7 @@ export default function GLAccountAnalysis() {
   const [apiTestLoading, setApiTestLoading] = useState(false);
   const [tableColumns, setTableColumns] = useState([]);
   const [fetchingClaudeKey, setFetchingClaudeKey] = useState(false);
+  const [claudeKeyStatus, setClaudeKeyStatus] = useState(null); // 'connected', 'fetching', 'error', null
 
   // Query parameters
   const [queryParams, setQueryParams] = useState({
@@ -83,7 +84,18 @@ export default function GLAccountAnalysis() {
 
     try {
       if (!credentials?.claudeApiKey) {
-        const fallbackResponse = 'Please configure Claude API key in settings to enable AI analysis.';
+        console.error('Claude API key missing. Status:', claudeKeyStatus);
+        console.log('Credentials:', { ...credentials, password: '***' });
+
+        let fallbackResponse = '';
+        if (claudeKeyStatus === 'fetching') {
+          fallbackResponse = '⏳ Still fetching Claude API key from Oracle APEX... Please wait a moment and try again.';
+        } else if (claudeKeyStatus === 'error') {
+          fallbackResponse = '❌ Failed to fetch Claude API key from Oracle APEX.\n\n**Please check:**\n• Oracle Base URL is correct\n• Oracle APEX endpoint is accessible at: /ords/bcldifc/reerp/settings/claudekey\n• Network connection is stable\n\nTry clicking "Fetch from Oracle" button in Settings to retry.';
+        } else {
+          fallbackResponse = '🔐 Claude API key not configured.\n\nClick **Settings** and use the **Fetch from Oracle** button to automatically retrieve your Claude API key from Oracle APEX.\n\nThe key will be fetched from: /ords/bcldifc/reerp/settings/claudekey';
+        }
+
         const aiMessage = {
           id: Date.now() + 1,
           type: 'ai',
@@ -148,9 +160,39 @@ export default function GLAccountAnalysis() {
       if (creds) {
         setCredentials(creds);
         settingsForm.setFieldsValue(creds);
+
+        // Auto-fetch Claude key if not already present
+        if (!creds.claudeApiKey && creds.oracleBaseUrl) {
+          console.log('Claude key not found, attempting to fetch from Oracle APEX...');
+          setClaudeKeyStatus('fetching');
+          try {
+            const keyResponse = await window.electronAPI.glMcpFetchClaudeKey({
+              oracleBaseUrl: creds.oracleBaseUrl,
+            });
+
+            if (keyResponse.success) {
+              console.log('Claude key fetched successfully');
+              setClaudeKeyStatus('connected');
+              // Reload credentials to get the newly fetched key
+              const updatedCreds = await window.electronAPI.glMcpGetCredentials();
+              if (updatedCreds) {
+                setCredentials(updatedCreds);
+              }
+            } else {
+              console.error('Failed to fetch Claude key:', keyResponse.error);
+              setClaudeKeyStatus('error');
+            }
+          } catch (err) {
+            console.error('Error fetching Claude key:', err);
+            setClaudeKeyStatus('error');
+          }
+        } else if (creds.claudeApiKey) {
+          setClaudeKeyStatus('connected');
+        }
       }
     } catch (err) {
       console.error('Failed to load credentials:', err);
+      setClaudeKeyStatus('error');
     }
   }
 
@@ -552,6 +594,35 @@ export default function GLAccountAnalysis() {
                 </div>
               </div>
 
+              {/* Claude API Connection Status */}
+              <div style={{
+                padding: '12px',
+                backgroundColor: credentials?.claudeApiKey ? '#f6ffed' : '#fff7e6',
+                borderRadius: '4px',
+                border: `1px solid ${credentials?.claudeApiKey ? '#b7eb8f' : '#ffc53d'}`,
+                marginBottom: '16px',
+                fontSize: '12px'
+              }}>
+                <div style={{ marginBottom: '8px', fontWeight: 'bold' }}>
+                  {credentials?.claudeApiKey ? '✓ Claude API: Connected' : '⚠ Claude API: Not Configured'}
+                </div>
+                {credentials?.claudeApiKey ? (
+                  <div style={{ color: '#52c41a' }}>
+                    <div>Key loaded from Oracle APEX settings/claudekey endpoint</div>
+                    <div style={{ fontSize: '11px', color: '#999', marginTop: '4px', fontFamily: 'monospace' }}>
+                      {credentials.claudeApiKey.substring(0, 10)}***{credentials.claudeApiKey.substring(credentials.claudeApiKey.length - 4)}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ color: '#faad14' }}>
+                    <div>Claude API key not yet configured</div>
+                    <div style={{ fontSize: '11px', marginTop: '4px' }}>Go to Settings → "Fetch from Oracle" to retrieve your Claude API key from the Oracle APEX endpoint</div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
               {/* Claude Desktop MCP Config */}
               <Card size="small" style={{ marginTop: '12px', backgroundColor: '#fafafa' }}>
                 <div style={{ marginBottom: '8px' }}>
@@ -691,7 +762,34 @@ export default function GLAccountAnalysis() {
       </Card>
 
       {/* AI Chat for GL Analysis */}
-      <Card title="GL Data Analysis Chat" style={{ marginBottom: '24px' }}>
+      <Card
+        title="GL Data Analysis Chat"
+        style={{ marginBottom: '24px' }}
+        extra={
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            {claudeKeyStatus === 'connected' && (
+              <Tag color="green" style={{ cursor: 'pointer', fontSize: '11px' }} title="Click Settings to view key details">
+                ✓ Claude API Connected
+              </Tag>
+            )}
+            {claudeKeyStatus === 'fetching' && (
+              <Tag color="processing" style={{ fontSize: '11px' }}>
+                ⏳ Fetching Claude Key...
+              </Tag>
+            )}
+            {claudeKeyStatus === 'error' && (
+              <Tag color="red" style={{ cursor: 'pointer', fontSize: '11px' }} onClick={() => setShowSettings(true)}>
+                ✗ Claude Connection Failed
+              </Tag>
+            )}
+            {!claudeKeyStatus && (
+              <Tag color="default" style={{ cursor: 'pointer', fontSize: '11px' }} onClick={() => setShowSettings(true)}>
+                ⚙ Configure Claude
+              </Tag>
+            )}
+          </div>
+        }
+      >
         <div
           style={{
             display: 'flex',
@@ -864,28 +962,53 @@ export default function GLAccountAnalysis() {
             />
           </Form.Item>
 
-          <Form.Item label="Claude API Key">
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <div style={{ flex: 1, padding: '8px 12px', backgroundColor: '#f5f5f5', borderRadius: '4px', border: '1px solid #d9d9d9' }}>
-                {credentials?.claudeApiKey ? (
-                  <div>
-                    <span style={{ color: '#52c41a', fontWeight: 'bold' }}>✓ Fetched from Oracle APEX</span>
-                    <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>Key loaded from settings/claudekey endpoint</div>
-                  </div>
-                ) : (
-                  <span style={{ color: '#999' }}>Not fetched yet</span>
-                )}
+          <Form.Item label="Claude API Key Connection">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{ flex: 1, padding: '12px', backgroundColor: credentials?.claudeApiKey ? '#f6ffed' : '#fff7e6', borderRadius: '4px', border: `1px solid ${credentials?.claudeApiKey ? '#b7eb8f' : '#ffc53d'}` }}>
+                  {credentials?.claudeApiKey ? (
+                    <div>
+                      <div style={{ color: '#52c41a', fontWeight: 'bold', marginBottom: '4px' }}>✓ Claude API Connected</div>
+                      <div style={{ fontSize: '11px', color: '#666', fontFamily: 'monospace', marginBottom: '4px' }}>
+                        Key: {credentials.claudeApiKey.substring(0, 10)}***{credentials.claudeApiKey.substring(credentials.claudeApiKey.length - 4)}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>Fetched from Oracle APEX settings/claudekey endpoint</div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ color: '#faad14', fontWeight: 'bold', marginBottom: '4px' }}>⚠ Not Connected</div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>Claude API key not yet fetched. Click "Fetch from Oracle" to retrieve it.</div>
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="primary"
+                  onClick={handleFetchClaudeKey}
+                  loading={fetchingClaudeKey}
+                  disabled={!credentials?.oracleBaseUrl}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  {credentials?.claudeApiKey ? 'Refresh' : 'Fetch from Oracle'}
+                </Button>
               </div>
-              <Button
-                onClick={handleFetchClaudeKey}
-                loading={fetchingClaudeKey}
-                disabled={!credentials?.oracleBaseUrl}
-              >
-                Fetch from Oracle
-              </Button>
-            </div>
-            <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-              Claude API key will be automatically fetched from Oracle APEX endpoint: <code>{credentials?.oracleBaseUrl}/ords/bcldifc/reerp/settings/claudekey</code>
+
+              {claudeKeyStatus === 'error' && (
+                <div style={{ padding: '8px 12px', backgroundColor: '#fff1f0', borderRadius: '4px', border: '1px solid #ffccc7', fontSize: '12px', color: '#d32f2f' }}>
+                  ✗ Failed to fetch Claude key from Oracle APEX. Please check:
+                  <ul style={{ margin: '8px 0 0 20px', paddingLeft: '0' }}>
+                    <li>Oracle Base URL is correct</li>
+                    <li>Endpoint is accessible: <code style={{ fontSize: '11px' }}>{credentials?.oracleBaseUrl}/ords/bcldifc/reerp/settings/claudekey</code></li>
+                    <li>Network connection is stable</li>
+                  </ul>
+                </div>
+              )}
+
+              <div style={{ fontSize: '11px', color: '#666', backgroundColor: '#fafafa', padding: '8px 12px', borderRadius: '4px', border: '1px solid #f0f0f0' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>📍 Endpoint:</div>
+                <code style={{ fontSize: '10px', wordBreak: 'break-all' }}>
+                  {credentials?.oracleBaseUrl}/ords/bcldifc/reerp/settings/claudekey
+                </code>
+              </div>
             </div>
           </Form.Item>
         </Form>
