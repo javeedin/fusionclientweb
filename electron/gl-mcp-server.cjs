@@ -366,14 +366,15 @@ async function requestHandler(req, res) {
   res.end(JSON.stringify({ error: 'Not found' }));
 }
 
-// ── Generate or load self-signed certificate ──────────────────────────────
-function getCertificate() {
+// ── Generate or load locally-trusted certificate ────────────────────────
+async function getCertificateAsync() {
   const certDir = path.join(require('os').homedir(), '.gl-mcp-server');
   const certPath = path.join(certDir, 'cert.pem');
   const keyPath = path.join(certDir, 'key.pem');
 
   if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
     try {
+      log('INFO', 'Using existing certificate from ~/.gl-mcp-server');
       return {
         cert: fs.readFileSync(certPath, 'utf8'),
         key: fs.readFileSync(keyPath, 'utf8'),
@@ -383,23 +384,44 @@ function getCertificate() {
     }
   }
 
-  log('INFO', 'Generating self-signed certificate for localhost...');
+  log('INFO', 'Generating locally-trusted certificate for localhost...');
   try {
     if (!fs.existsSync(certDir)) {
       fs.mkdirSync(certDir, { recursive: true });
     }
 
     try {
-      const { execSync } = require('child_process');
-      const cmd = `openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" -days 365 -nodes -subj "/CN=localhost"`;
-      execSync(cmd);
-      log('INFO', `Certificate generated at ${certDir} using openssl`);
+      const mkcert = require('mkcert');
+
+      log('INFO', 'Creating certificate with mkcert (locally-trusted)...');
+      const ca = await mkcert.createCA({
+        organization: 'GL MCP Server',
+        countryCode: 'US',
+        state: 'State',
+        locality: 'Local',
+        validity: 365
+      });
+
+      const cert = await mkcert.createCert({
+        domains: ['localhost', '127.0.0.1', '::1'],
+        caKey: ca.key,
+        caCert: ca.cert,
+        validity: 365
+      });
+
+      fs.writeFileSync(certPath, cert.cert);
+      fs.writeFileSync(keyPath, cert.key);
+
+      log('INFO', `Certificate generated at ${certDir} using mkcert (locally-trusted)`);
+      log('INFO', 'Certificate is trusted by your system for development');
       return {
-        cert: fs.readFileSync(certPath, 'utf8'),
-        key: fs.readFileSync(keyPath, 'utf8'),
+        cert: cert.cert,
+        key: cert.key,
       };
-    } catch (opensslError) {
-      log('DEBUG', `openssl not available: ${opensslError.message}`);
+    } catch (mkcertError) {
+      log('WARN', `mkcert not available: ${mkcertError.message}`);
+      log('INFO', 'Falling back to self-signed certificate (will show warning)...');
+
       try {
         const forge = require('node-forge');
 
@@ -431,6 +453,7 @@ function getCertificate() {
         fs.writeFileSync(keyPath, keyPem);
 
         log('INFO', `Certificate generated at ${certDir} using node-forge (${certPem.length} bytes cert, ${keyPem.length} bytes key)`);
+        log('WARN', 'Self-signed certificate will show browser warnings - use mkcert for trusted certs');
         return {
           cert: certPem,
           key: keyPem,
@@ -489,23 +512,30 @@ function startHttpsServer(port) {
 // ── Main startup ──────────────────────────────────────────────────────────
 async function main() {
   try {
-    // Use HTTP for localhost development (Claude Desktop can access HTTP on localhost)
-    // Use HTTPS for remote/production (with proper certificates)
-    const useHttps = process.env.FORCE_HTTPS === 'true';
+    log('INFO', 'Starting GL MCP Server (HTTPS mode with MCP protocol)');
 
     if (HTTP_PORT) {
-      if (useHttps) {
-        log('INFO', 'Starting GL MCP Server (HTTPS mode with MCP protocol)');
-        log('INFO', `Starting HTTPS server on port ${HTTP_PORT}`);
-        startHttpsServer(HTTP_PORT);
-        log('INFO', 'GL MCP Server started successfully - HTTPS server running');
-      } else {
-        log('INFO', 'Starting GL MCP Server (HTTP mode with MCP protocol)');
-        log('INFO', `Starting HTTP server on port ${HTTP_PORT}`);
-        startHttpServer(HTTP_PORT);
-        log('INFO', 'GL MCP Server started successfully - HTTP server running');
-        log('INFO', `MCP Endpoint: http://localhost:${HTTP_PORT}/`);
+      log('INFO', `Starting HTTPS server on port ${HTTP_PORT}`);
+      log('INFO', 'Generating/loading certificate...');
+
+      const tlsConfig = await getCertificateAsync();
+
+      if (!tlsConfig) {
+        log('ERROR', 'Failed to generate certificate, cannot start HTTPS server');
+        process.exit(1);
       }
+
+      const httpsServer = https.createServer(tlsConfig, requestHandler);
+
+      httpsServer.listen(HTTP_PORT, 'localhost', () => {
+        log('INFO', `HTTPS Server listening on https://localhost:${HTTP_PORT}`);
+        log('INFO', `MCP Endpoint: https://localhost:${HTTP_PORT}/`);
+        log('INFO', 'GL MCP Server started successfully - ready for Claude Desktop');
+      });
+
+      httpsServer.on('error', (err) => {
+        log('ERROR', `HTTPS Server error: ${err.message}`);
+      });
     } else {
       log('ERROR', 'No HTTP port configured, cannot start server');
       process.exit(1);

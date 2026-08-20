@@ -250,7 +250,7 @@ export default function GLAccountAnalysis() {
     try {
       // Call the actual HTTPS endpoint (self-signed cert safe for localhost)
       const httpPort = credentials?.httpPort || 3001;
-      const endpoint = `http://localhost:${httpPort}/execute`;
+      const endpoint = `https://localhost:${httpPort}/execute`;
 
       console.log('Query GL Data:', {
         endpoint,
@@ -362,8 +362,8 @@ export default function GLAccountAnalysis() {
 
   async function testAPI() {
     const httpPort = credentials?.httpPort || 3001;
-    const healthEndpoint = `http://localhost:${httpPort}/health`;
-    const executeEndpoint = `http://localhost:${httpPort}/execute`;
+    const healthEndpoint = `https://localhost:${httpPort}/health`;
+    const executeEndpoint = `https://localhost:${httpPort}/execute`;
 
     setApiTestLoading(true);
     setShowAPITest(true);
@@ -392,7 +392,7 @@ export default function GLAccountAnalysis() {
 
       setApiTestResult({
         success: true,
-        baseUrl: `http://localhost:${httpPort}`,
+        baseUrl: `https://localhost:${httpPort}`,
         healthEndpoint,
         executeEndpoint,
         method: 'POST',
@@ -416,7 +416,7 @@ export default function GLAccountAnalysis() {
       setApiTestResult({
         success: false,
         error: err.message,
-        baseUrl: `http://localhost:${httpPort}`,
+        baseUrl: `https://localhost:${httpPort}`,
         healthEndpoint,
         executeEndpoint,
       });
@@ -498,7 +498,7 @@ export default function GLAccountAnalysis() {
               <div style={{ fontSize: '12px', color: '#666', marginTop: '8px', marginBottom: '16px', padding: '12px', backgroundColor: '#e6f7ff', borderRadius: '4px', border: '1px solid #91d5ff' }}>
                 <div style={{ marginBottom: '8px' }}>
                   <ApiOutlined style={{ color: '#1677ff', marginRight: '8px', fontSize: '14px' }} />
-                  <strong>HTTP Endpoint (Claude Desktop):</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px' }}>http://localhost:{credentials?.httpPort || 3001}</code>
+                  <strong>HTTP Endpoint (Claude Desktop):</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px' }}>https://localhost:{credentials?.httpPort || 3001}</code>
                 </div>
                 <div style={{ marginBottom: '4px' }}>
                   <strong>Health Check:</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px' }}>GET /health</code>
@@ -533,7 +533,7 @@ export default function GLAccountAnalysis() {
     "gl-server": {
       "command": "curl",
       "args": ["-X", "POST",
-        "http://localhost:${credentials?.httpPort || 3001}/execute"],
+        "https://localhost:${credentials?.httpPort || 3001}/execute"],
       "env": {}
     }
   }
@@ -543,7 +543,7 @@ export default function GLAccountAnalysis() {
                   <Button
                     size="small"
                     onClick={() => {
-                      const config = `{\n  "mcpServers": {\n    "gl-server": {\n      "command": "curl",\n      "args": ["-X", "POST", "http://localhost:${
+                      const config = `{\n  "mcpServers": {\n    "gl-server": {\n      "command": "curl",\n      "args": ["-X", "POST", "https://localhost:${
                         credentials?.httpPort || 3001
                       }/execute"],\n      "env": {}\n    }\n  }\n}`;
                       navigator.clipboard.writeText(config);
