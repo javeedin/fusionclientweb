@@ -716,7 +716,61 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_PKG AS
         p_ret_status  IN  VARCHAR2,
         p_http_status OUT NUMBER,
         p_result      OUT CLOB
-    ) IS BEGIN write_error(p_http_status, p_result, 501, 'Not implemented in this body'); END;
+    ) IS
+        v_first BOOLEAN := TRUE;
+    BEGIN
+        APEX_JSON.INITIALIZE_CLOB_OUTPUT;
+        APEX_JSON.OPEN_OBJECT;
+        APEX_JSON.OPEN_ARRAY('items');
+
+        FOR r IN (
+            SELECT r.RETIREMENT_ID,
+                   r.BOOK_TYPE_CODE,
+                   r.ASSET_ID,
+                   a.ASSET_NUMBER,
+                   a.DESCRIPTION,
+                   r.DATE_RETIRED,
+                   r.COST_RETIRED,
+                   r.STATUS,
+                   r.NBV_RETIRED,
+                   r.GAIN_LOSS_AMOUNT,
+                   r.PROCEEDS_OF_SALE,
+                   r.COST_OF_REMOVAL,
+                   r.RETIREMENT_TYPE_CODE,
+                   r.SOLD_TO
+            FROM RR_FA_RETIREMENTS r
+            LEFT JOIN RR_FA_ADDITIONS a ON r.ASSET_ID = a.ASSET_ID
+            WHERE (r.BOOK_TYPE_CODE = p_book_type OR p_book_type IS NULL)
+              AND (r.STATUS = p_ret_status OR p_ret_status IS NULL)
+            ORDER BY r.CREATION_DATE DESC
+        ) LOOP
+            APEX_JSON.OPEN_OBJECT;
+            APEX_JSON.WRITE('retirementId', r.RETIREMENT_ID);
+            APEX_JSON.WRITE('bookTypeCode', r.BOOK_TYPE_CODE);
+            APEX_JSON.WRITE('assetId', r.ASSET_ID);
+            APEX_JSON.WRITE('assetNumber', r.ASSET_NUMBER);
+            APEX_JSON.WRITE('description', r.DESCRIPTION);
+            APEX_JSON.WRITE('dateRetired', r.DATE_RETIRED);
+            APEX_JSON.WRITE('costRetired', r.COST_RETIRED);
+            APEX_JSON.WRITE('status', r.STATUS);
+            APEX_JSON.WRITE('nbvRetired', r.NBV_RETIRED);
+            APEX_JSON.WRITE('gainLossAmount', r.GAIN_LOSS_AMOUNT);
+            APEX_JSON.WRITE('proceedsOfSale', r.PROCEEDS_OF_SALE);
+            APEX_JSON.WRITE('costOfRemoval', r.COST_OF_REMOVAL);
+            APEX_JSON.WRITE('retirementTypeCode', r.RETIREMENT_TYPE_CODE);
+            APEX_JSON.WRITE('soldTo', r.SOLD_TO);
+            APEX_JSON.CLOSE_OBJECT;
+        END LOOP;
+
+        APEX_JSON.CLOSE_ARRAY;
+        APEX_JSON.CLOSE_OBJECT;
+        p_http_status := 200;
+        p_result      := APEX_JSON.GET_CLOB_OUTPUT;
+        APEX_JSON.FREE_OUTPUT;
+    EXCEPTION
+        WHEN OTHERS THEN
+            write_error(p_http_status, p_result, 500, SQLERRM);
+    END GET_RETIREMENTS;
 
     PROCEDURE GET_DEPRN_WORKBENCH (
         p_book_type      IN  VARCHAR2,
