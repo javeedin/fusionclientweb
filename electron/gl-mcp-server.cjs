@@ -225,29 +225,41 @@ function getCertificate() {
   // Generate new self-signed certificate
   log('INFO', 'Generating self-signed certificate for localhost...');
   try {
-    const { exec } = require('child_process');
-    const execSync = require('child_process').execSync;
-
     // Ensure cert directory exists
     if (!fs.existsSync(certDir)) {
       fs.mkdirSync(certDir, { recursive: true });
     }
 
-    // Generate self-signed certificate using openssl
-    const cmd = `openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" -days 365 -nodes -subj "/CN=localhost"`;
-
+    // Try openssl first (faster)
     try {
+      const { execSync } = require('child_process');
+      const cmd = `openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" -days 365 -nodes -subj "/CN=localhost"`;
       execSync(cmd);
-      log('INFO', `Certificate generated at ${certDir}`);
+      log('INFO', `Certificate generated at ${certDir} using openssl`);
       return {
         cert: fs.readFileSync(certPath, 'utf8'),
         key: fs.readFileSync(keyPath, 'utf8'),
       };
-    } catch (e) {
-      log('WARN', `openssl not available, using fallback certificate generation`);
-      // Fallback: use a basic self-signed cert (Node.js 15.7.0+)
-      // For now, return null and fall back to HTTP
-      return null;
+    } catch (opensslError) {
+      log('DEBUG', `openssl not available: ${opensslError.message}`);
+      // Fallback to Node.js selfsigned package
+      try {
+        const selfsigned = require('selfsigned');
+        const attrs = [{ name: 'commonName', value: 'localhost' }];
+        const pems = selfsigned.generate(attrs, { days: 365, algorithm: 'sha256', keySize: 2048 });
+
+        fs.writeFileSync(certPath, pems.cert, 'utf8');
+        fs.writeFileSync(keyPath, pems.private, 'utf8');
+
+        log('INFO', `Certificate generated at ${certDir} using selfsigned`);
+        return {
+          cert: pems.cert,
+          key: pems.private,
+        };
+      } catch (nodeError) {
+        log('ERROR', `Failed to generate certificate with both openssl and selfsigned: ${nodeError.message}`);
+        return null;
+      }
     }
   } catch (e) {
     log('ERROR', `Failed to generate certificate: ${e.message}`);
