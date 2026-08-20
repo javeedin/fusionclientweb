@@ -1922,22 +1922,20 @@ const AssetTabContent: React.FC<{
                                         status={!l.accountCombination ? 'error' : ''}
                                         onChange={e => setRetireLineAccount(idx, e.target.value)}
                                         style={{ fontFamily: 'monospace', fontSize: 11, flex: 1 }} />
-                                      {l.accountCombination && (
-                                        <Tooltip title="Edit account segments">
-                                          <Button
-                                            type="text"
-                                            size="small"
-                                            icon={<EditOutlined />}
-                                            onClick={() => {
-                                              setRetireSegmentDialogLineIdx(idx);
-                                              setRetireSegmentDialogOpen(true);
-                                            }}
-                                            style={{ color: FA_COLOR, minWidth: 32, padding: '4px 8px' }}
-                                          />
-                                        </Tooltip>
-                                      )}
+                                      <Tooltip title="Edit account segments">
+                                        <Button
+                                          type="text"
+                                          size="small"
+                                          icon={<EditOutlined />}
+                                          onClick={() => {
+                                            setRetireSegmentDialogLineIdx(idx);
+                                            setRetireSegmentDialogOpen(true);
+                                          }}
+                                          style={{ color: FA_COLOR, minWidth: 32, padding: '4px 8px' }}
+                                        />
+                                      </Tooltip>
                                     </div>
-                                    {l.accountCombination && <AccountSegmentDescriptions accountCode={l.accountCombination} />}
+                                    <AccountSegmentDescriptions accountCode={l.accountCombination} />
                                   </div>
                                   <div style={{ textAlign: 'right', fontFamily: 'monospace', color: '#1D7B4D', fontWeight: 600 }}>
                                     {l.enteredDr ? formatCurrency(String(l.enteredDr)) : '—'}
