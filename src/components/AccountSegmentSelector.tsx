@@ -53,6 +53,30 @@ const fetchSegmentValues = async (segmentCode: string): Promise<Array<{ value: s
   }
 };
 
+const fetchSegmentDefinitions = async (): Promise<{code: string; name: string}[]> => {
+  try {
+    const api = buildApexUrl('segmentdefinitions');
+    const response = await fetch(api);
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const result = await response.json();
+    return result.items || result.segments || [];
+  } catch (error) {
+    console.error('Error fetching segment definitions:', error);
+    // Fallback: hardcoded segment structure based on GL account format
+    return [
+      { code: '01', name: 'Company' },
+      { code: '02', name: 'LOB' },
+      { code: '03', name: 'Department' },
+      { code: '04', name: 'Account' },
+      { code: '05', name: 'Sub Account' },
+      { code: '06', name: 'Analysis' },
+      { code: '07', name: 'Intercompany' },
+      { code: '08', name: 'Future 1' },
+      { code: '09', name: 'Future 2' },
+    ];
+  }
+};
+
 export const AccountSegmentSelector: React.FC<AccountSegmentSelectorProps> = ({
   accountCode,
   onChange,
@@ -65,27 +89,35 @@ export const AccountSegmentSelector: React.FC<AccountSegmentSelectorProps> = ({
   // Parse and validate the account code on mount or when it changes
   useEffect(() => {
     const parseCode = async () => {
-      if (!accountCode) {
-        setSegments([]);
-        return;
-      }
-
       setLoading(true);
       try {
-        const validation = await validateAccountCode(accountCode);
-        const parts = accountCode.split('-');
+        let segmentDetails: SegmentDetail[] = [];
 
-        // Build segment details from validation result
-        const segmentDetails: SegmentDetail[] = [];
-        Object.entries(validation.segmentDetails).forEach(([code, detail]) => {
-          segmentDetails.push({
-            index: segmentDetails.length,
-            code,
-            name: detail.name,
-            value: detail.value,
-            description: detail.description,
+        if (accountCode) {
+          // Validate and parse existing account code
+          const validation = await validateAccountCode(accountCode);
+          Object.entries(validation.segmentDetails).forEach(([code, detail]) => {
+            segmentDetails.push({
+              index: segmentDetails.length,
+              code,
+              name: detail.name,
+              value: detail.value,
+              description: detail.description,
+            });
           });
-        });
+        } else {
+          // Initialize empty segments for new account code creation
+          const definitions = await fetchSegmentDefinitions();
+          definitions.forEach((def, idx) => {
+            segmentDetails.push({
+              index: idx,
+              code: def.code,
+              name: def.name,
+              value: '',
+              description: '',
+            });
+          });
+        }
 
         // Fetch available values for each segment
         const valueMap = new Map<string, Array<{ value: string; description: string }>>();
@@ -97,7 +129,9 @@ export const AccountSegmentSelector: React.FC<AccountSegmentSelectorProps> = ({
         setSegments(segmentDetails);
       } catch (error) {
         console.error('Error parsing account code:', error);
-        message.error('Failed to parse account code');
+        if (accountCode) {
+          message.error('Failed to parse account code');
+        }
       } finally {
         setLoading(false);
       }
@@ -111,15 +145,19 @@ export const AccountSegmentSelector: React.FC<AccountSegmentSelectorProps> = ({
     newSegments[segmentIndex].value = newValue;
 
     // Find the new description for the selected value
-    const availableValues = segmentValueOptions.get(newSegments[segmentIndex].code) || [];
-    const selectedOption = availableValues.find(v => v.value === newValue);
-    if (selectedOption) {
-      newSegments[segmentIndex].description = selectedOption.description;
+    if (newValue) {
+      const availableValues = segmentValueOptions.get(newSegments[segmentIndex].code) || [];
+      const selectedOption = availableValues.find(v => v.value === newValue);
+      if (selectedOption) {
+        newSegments[segmentIndex].description = selectedOption.description;
+      }
+    } else {
+      newSegments[segmentIndex].description = '';
     }
 
     setSegments(newSegments);
 
-    // Reconstruct the account code
+    // Reconstruct the account code with all segments
     const newCode = newSegments.map(s => s.value).join('-');
     onChange(newCode);
   };
@@ -144,9 +182,10 @@ export const AccountSegmentSelector: React.FC<AccountSegmentSelectorProps> = ({
             <Col xs={24} sm={6}>
               <Select
                 style={{ width: '100%' }}
-                value={segment.value}
-                onChange={(newValue) => handleSegmentChange(idx, newValue)}
+                value={segment.value || undefined}
+                onChange={(newValue) => handleSegmentChange(idx, newValue || '')}
                 placeholder={`Select`}
+                allowClear
                 optionFilterProp="label"
                 filterOption={(input, option) =>
                   (option?.label ?? '').toLowerCase().includes(input.toLowerCase()) ||
