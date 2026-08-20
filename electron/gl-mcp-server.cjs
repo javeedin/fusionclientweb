@@ -255,6 +255,80 @@ function getCertificate() {
   }
 }
 
+// ── Request handler (shared by HTTP and HTTPS) ────────────────────────────
+async function requestHandler(req, res) {
+  const parsedUrl = url.parse(req.url, true);
+  const pathname = parsedUrl.pathname;
+
+  // Health check endpoint
+  if (pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
+    return;
+  }
+
+  // Tool execution endpoint
+  if (pathname === '/execute' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const { tool, arguments: args } = JSON.parse(body);
+        log('INFO', `HTTP Request: Tool=${tool}`);
+
+        let result;
+        switch (tool) {
+          case 'getGLAccountAnalysis':
+            result = await getGLAccountAnalysis(args);
+            break;
+          case 'getGLTransactions':
+            result = await getGLTransactions(args);
+            break;
+          case 'getAccountBalance':
+            result = await getAccountBalance(args);
+            break;
+          case 'searchAccounts':
+            result = await searchAccounts(args);
+            break;
+          case 'getJournalEntry':
+            result = await getJournalEntry(args);
+            break;
+          default:
+            throw new Error(`Unknown tool: ${tool}`);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, data: result }));
+      } catch (error) {
+        log('ERROR', `HTTP Error: ${error.message}`);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // 404
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not found' }));
+}
+
+// ── HTTP Server (fallback when HTTPS cert generation fails) ────────────────
+function startHttpServer(port) {
+  const httpServer = http.createServer(requestHandler);
+
+  httpServer.listen(port, 'localhost', () => {
+    log('INFO', `HTTP Server listening on http://localhost:${port}`);
+    log('WARN', 'Running in HTTP mode - not compatible with Claude Desktop');
+  });
+
+  httpServer.on('error', (err) => {
+    log('ERROR', `HTTP Server error: ${err.message}`);
+  });
+
+  return httpServer;
+}
+
 // ── HTTPS Server (for Claude Desktop) ──────────────────────────────────────
 function startHttpsServer(port) {
   const tlsConfig = getCertificate();
@@ -264,62 +338,7 @@ function startHttpsServer(port) {
     return startHttpServer(port);
   }
 
-  const httpsServer = https.createServer(tlsConfig, async (req, res) => {
-    const parsedUrl = url.parse(req.url, true);
-    const pathname = parsedUrl.pathname;
-
-    // Health check endpoint
-    if (pathname === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
-      return;
-    }
-
-    // Tool execution endpoint
-    if (pathname === '/execute' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', async () => {
-        try {
-          const { tool, arguments: args } = JSON.parse(body);
-          log('INFO', `HTTP Request: Tool=${tool}`);
-
-          let result;
-          switch (tool) {
-            case 'getGLAccountAnalysis':
-              result = await getGLAccountAnalysis(args);
-              break;
-            case 'getGLTransactions':
-              result = await getGLTransactions(args);
-              break;
-            case 'getAccountBalance':
-              result = await getAccountBalance(args);
-              break;
-            case 'searchAccounts':
-              result = await searchAccounts(args);
-              break;
-            case 'getJournalEntry':
-              result = await getJournalEntry(args);
-              break;
-            default:
-              throw new Error(`Unknown tool: ${tool}`);
-          }
-
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, data: result }));
-        } catch (error) {
-          log('ERROR', `HTTP Error: ${error.message}`);
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: error.message }));
-        }
-      });
-      return;
-    }
-
-    // 404
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not found' }));
-  });
+  const httpsServer = https.createServer(tlsConfig, requestHandler);
 
   httpsServer.listen(port, 'localhost', () => {
     log('INFO', `HTTPS Server listening on https://localhost:${port}`);
