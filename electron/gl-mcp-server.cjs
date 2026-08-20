@@ -104,14 +104,16 @@ async function getGLAccountAnalysis(params) {
   const cached = getCachedValue(cacheKey);
   if (cached) return { ...cached, cached: true };
 
-  const result = await fetchAPI('/gl/accountanalysis', {
+  // Build query string with parameters
+  const queryParams = new URLSearchParams({
+    ledger_name: ledger_name || '',
+    period_names: period_names || '',
+    company: company || '',
+    account: account || '',
+  }).toString();
+
+  const result = await fetchAPI(`/gl/accountanalysis?${queryParams}`, {
     method: 'GET',
-    headers: {
-      'ledger_name': encodeURIComponent(ledger_name),
-      'period_names': encodeURIComponent(period_names),
-      'company': company,
-      'account': account,
-    },
   });
 
   setCachedValue(cacheKey, result);
@@ -126,14 +128,18 @@ async function getGLTransactions(params) {
   const cached = getCachedValue(cacheKey);
   if (cached) return { ...cached, cached: true };
 
-  const result = await fetchAPI(`/gl/transactions?limit=${limit}&offset=${offset}`, {
+  // Build query string with parameters
+  const queryParams = new URLSearchParams({
+    ledger_name: ledger_name || '',
+    period_names: period_names || '',
+    company: company || '',
+    account: account || '',
+    limit: limit.toString(),
+    offset: offset.toString(),
+  }).toString();
+
+  const result = await fetchAPI(`/gl/transactions?${queryParams}`, {
     method: 'GET',
-    headers: {
-      'ledger_name': encodeURIComponent(ledger_name),
-      'period_names': encodeURIComponent(period_names),
-      'company': company,
-      'account': account,
-    },
   });
 
   setCachedValue(cacheKey, result);
@@ -148,13 +154,15 @@ async function getAccountBalance(params) {
   const cached = getCachedValue(cacheKey);
   if (cached) return { ...cached, cached: true };
 
-  const result = await fetchAPI('/gl/accountbalance', {
+  // Build query string with parameters
+  const queryParams = new URLSearchParams({
+    ledger_name: ledger_name || '',
+    period_names: period_names || '',
+    account: account || '',
+  }).toString();
+
+  const result = await fetchAPI(`/gl/accountbalance?${queryParams}`, {
     method: 'GET',
-    headers: {
-      'ledger_name': encodeURIComponent(ledger_name),
-      'period_names': encodeURIComponent(period_names),
-      'account': account,
-    },
   });
 
   setCachedValue(cacheKey, result);
