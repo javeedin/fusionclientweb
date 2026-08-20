@@ -1143,19 +1143,34 @@ ipcMain.handle('clear-fusion-credentials', () => {
 // ── GL MCP Server IPC Handlers ─────────────────────────────────────────────
 const GL_CREDS_FILE = path.join(app.getPath('userData'), 'gl-api-creds.json');
 
-ipcMain.handle('gl-mcp:save-credentials', (_event, { oracleBaseUrl, username, password }) => {
+ipcMain.handle('gl-mcp:save-credentials', (_event, { oracleBaseUrl, username, password, skipAuth, httpPort }) => {
   try {
     let storedPassword, encrypted;
-    if (safeStorage.isEncryptionAvailable()) {
-      storedPassword = safeStorage.encryptString(password).toString('base64');
-      encrypted = true;
+    if (!skipAuth && password) {
+      if (safeStorage.isEncryptionAvailable()) {
+        storedPassword = safeStorage.encryptString(password).toString('base64');
+        encrypted = true;
+      } else {
+        storedPassword = Buffer.from(password).toString('base64');
+        encrypted = false;
+      }
     } else {
-      storedPassword = Buffer.from(password).toString('base64');
-      encrypted = false;
+      storedPassword = '';
+      encrypted = true;
     }
-    fs.writeFileSync(GL_CREDS_FILE, JSON.stringify({ oracleBaseUrl, username, password: storedPassword, encrypted }, null, 2), 'utf8');
+    const creds = {
+      oracleBaseUrl,
+      username: skipAuth ? '' : (username || ''),
+      password: storedPassword,
+      skipAuth: skipAuth || false,
+      httpPort: httpPort || 3001,
+      encrypted,
+    };
+    fs.writeFileSync(GL_CREDS_FILE, JSON.stringify(creds, null, 2), 'utf8');
+    console.log(`[GL MCP] Credentials saved: skipAuth=${creds.skipAuth}, httpPort=${creds.httpPort}`);
     return { success: true };
   } catch (e) {
+    console.error('[GL MCP] Failed to save credentials:', e.message);
     return { success: false, error: e.message };
   }
 });
@@ -1164,14 +1179,23 @@ ipcMain.handle('gl-mcp:get-credentials', () => {
   try {
     if (!fs.existsSync(GL_CREDS_FILE)) return null;
     const data = JSON.parse(fs.readFileSync(GL_CREDS_FILE, 'utf8'));
-    let password;
-    if (data.encrypted && safeStorage.isEncryptionAvailable()) {
-      password = safeStorage.decryptString(Buffer.from(data.password, 'base64'));
-    } else {
-      password = Buffer.from(data.password, 'base64').toString();
+    let password = '';
+    if (data.password) {
+      if (data.encrypted && safeStorage.isEncryptionAvailable()) {
+        password = safeStorage.decryptString(Buffer.from(data.password, 'base64'));
+      } else if (data.password) {
+        password = Buffer.from(data.password, 'base64').toString();
+      }
     }
-    return { oracleBaseUrl: data.oracleBaseUrl, username: data.username, password };
+    return {
+      oracleBaseUrl: data.oracleBaseUrl,
+      username: data.username || '',
+      password,
+      skipAuth: data.skipAuth || false,
+      httpPort: data.httpPort || 3001,
+    };
   } catch (e) {
+    console.error('[GL MCP] Error reading credentials:', e.message);
     return null;
   }
 });

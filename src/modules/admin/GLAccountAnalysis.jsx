@@ -6,6 +6,7 @@ export default function GLAccountAnalysis() {
   const [serverStatus, setServerStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [queryLoading, setQueryLoading] = useState(false);
+  const [settingsLoading, setSettingsLoading] = useState(false);
   const [credentials, setCredentials] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsForm] = Form.useForm();
@@ -94,17 +95,26 @@ export default function GLAccountAnalysis() {
   }
 
   async function saveCredentials(values) {
+    setSettingsLoading(true);
     try {
+      console.log('Saving GL credentials:', { ...values, password: '***' });
       const response = await window.electronAPI.glMcpSaveCredentials(values);
-      if (response.success) {
+      console.log('Save response:', response);
+
+      if (response?.success) {
         setCredentials(values);
         messageApi.success('Credentials saved successfully');
         setShowSettings(false);
       } else {
-        messageApi.error(response.error || 'Failed to save credentials');
+        const errorMsg = response?.error || 'Failed to save credentials';
+        console.error('Save failed:', errorMsg);
+        messageApi.error(errorMsg);
       }
     } catch (err) {
-      messageApi.error(err.message);
+      console.error('Save error:', err);
+      messageApi.error(`Error: ${err.message || 'Unknown error'}`);
+    } finally {
+      setSettingsLoading(false);
     }
   }
 
@@ -306,8 +316,13 @@ export default function GLAccountAnalysis() {
         title="GL API Settings"
         open={showSettings}
         onOk={() => settingsForm.submit()}
-        onCancel={() => setShowSettings(false)}
+        onCancel={() => {
+          setShowSettings(false);
+          setSettingsLoading(false);
+        }}
         width={600}
+        okButtonProps={{ loading: settingsLoading }}
+        maskClosable={!settingsLoading}
       >
         <Form
           form={settingsForm}
