@@ -133,60 +133,43 @@ export const AccountSegmentSelector: React.FC<AccountSegmentSelectorProps> = ({
 
   return (
     <div>
-      {label && <Text strong style={{ display: 'block', marginBottom: 8 }}>{label}</Text>}
-      <Space direction="vertical" style={{ width: '100%' }} size="middle">
-        {segments.map((segment, idx) => {
-          const availableValues = segmentValueOptions.get(segment.code) || [];
-          return (
-            <div key={idx} style={{ borderLeft: '2px solid #f0f0f0', paddingLeft: 12 }}>
-              <Row gutter={[12, 8]}>
-                <Col xs={24} sm={12}>
-                  <div style={{ marginBottom: 4 }}>
-                    <Text strong style={{ fontSize: 12 }}>{segment.name}</Text>
-                  </div>
-                  <Select
-                    style={{ width: '100%' }}
-                    value={segment.value}
-                    onChange={(newValue) => handleSegmentChange(idx, newValue)}
-                    placeholder={`Select ${segment.name.toLowerCase()}`}
-                    optionFilterProp="label"
-                    filterOption={(input, option) =>
-                      (option?.label ?? '').toLowerCase().includes(input.toLowerCase()) ||
-                      (option?.value ?? '').toLowerCase().includes(input.toLowerCase())
-                    }
-                  >
-                    {availableValues.map((opt) => (
-                      <Option key={opt.value} value={opt.value} label={`${opt.value} - ${opt.description}`}>
-                        <div>
-                          <div><Text strong>{opt.value}</Text></div>
-                          <Text type="secondary" style={{ fontSize: 11 }}>{opt.description}</Text>
-                        </div>
-                      </Option>
-                    ))}
-                  </Select>
-                </Col>
-                {segment.description && (
-                  <Col xs={24} sm={12}>
-                    <div style={{ marginBottom: 4 }}>
-                      <Text type="secondary" style={{ fontSize: 11 }}>Description</Text>
+      {segments.map((segment, idx) => {
+        const availableValues = segmentValueOptions.get(segment.code) || [];
+        return (
+          <Row key={idx} gutter={[16, 12]} align="middle" style={{ marginBottom: idx < segments.length - 1 ? 8 : 0 }}>
+            <Col xs={24} sm={6} style={{ textAlign: 'right' }}>
+              <Text strong style={{ fontSize: 12 }}>{segment.name}</Text>
+            </Col>
+            <Col xs={24} sm={6}>
+              <Select
+                style={{ width: '100%' }}
+                value={segment.value}
+                onChange={(newValue) => handleSegmentChange(idx, newValue)}
+                placeholder={`Select`}
+                optionFilterProp="label"
+                filterOption={(input, option) =>
+                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase()) ||
+                  (option?.value ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+              >
+                {availableValues.map((opt) => (
+                  <Option key={opt.value} value={opt.value} label={`${opt.value}`}>
+                    <div>
+                      <div><Text strong>{opt.value}</Text></div>
+                      <Text type="secondary" style={{ fontSize: 11 }}>{opt.description}</Text>
                     </div>
-                    <div style={{
-                      padding: '6px 8px',
-                      background: '#fafafa',
-                      borderRadius: 4,
-                      minHeight: 32,
-                      display: 'flex',
-                      alignItems: 'center',
-                    }}>
-                      <Text style={{ fontSize: 12 }}>{segment.description}</Text>
-                    </div>
-                  </Col>
-                )}
-              </Row>
-            </div>
-          );
-        })}
-      </Space>
+                  </Option>
+                ))}
+              </Select>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {segment.description || 'Default'}
+              </Text>
+            </Col>
+          </Row>
+        );
+      })}
     </div>
   );
 };
