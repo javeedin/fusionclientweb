@@ -331,30 +331,29 @@ export default function GLAccountAnalysis() {
             <Checkbox>Disable Basic Auth (for public APEX endpoints)</Checkbox>
           </Form.Item>
 
-          <Form.Item
-            noStyle
-            shouldUpdate={(prevValues, currentValues) => prevValues.skipAuth !== currentValues.skipAuth}
-          >
-            {({ getFieldValue }) =>
-              !getFieldValue('skipAuth') && (
-                <>
-                  <Form.Item
-                    label="Username"
-                    name="username"
-                    rules={[{ required: true, message: 'Please enter username' }]}
-                  >
-                    <Input placeholder="Oracle APEX username" />
-                  </Form.Item>
-                  <Form.Item
-                    label="Password"
-                    name="password"
-                    rules={[{ required: true, message: 'Please enter password' }]}
-                  >
-                    <Input.Password placeholder="Oracle APEX password" />
-                  </Form.Item>
-                </>
-              )
-            }
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.skipAuth !== currentValues.skipAuth}>
+            {({ getFieldValue }) => (
+              <>
+                {!getFieldValue('skipAuth') && (
+                  <>
+                    <Form.Item
+                      label="Username"
+                      name="username"
+                      rules={[{ required: true, message: 'Please enter username' }]}
+                    >
+                      <Input placeholder="Oracle APEX username" />
+                    </Form.Item>
+                    <Form.Item
+                      label="Password"
+                      name="password"
+                      rules={[{ required: true, message: 'Please enter password' }]}
+                    >
+                      <Input.Password placeholder="Oracle APEX password" />
+                    </Form.Item>
+                  </>
+                )}
+              </>
+            )}
           </Form.Item>
 
           <Form.Item
