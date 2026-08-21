@@ -299,7 +299,7 @@ export default function GLAccountAnalysis() {
     try {
       // Call the actual HTTPS endpoint (self-signed cert safe for localhost)
       const httpPort = credentials?.httpPort || 3001;
-      const endpoint = `https://localhost:${httpPort}/execute`;
+      const endpoint = `https://127.0.0.1:${httpPort}/execute`;
 
       console.log('Query GL Data:', {
         endpoint,
@@ -456,8 +456,8 @@ export default function GLAccountAnalysis() {
 
   async function testAPI() {
     const httpPort = credentials?.httpPort || 3001;
-    const healthEndpoint = `https://localhost:${httpPort}/health`;
-    const executeEndpoint = `https://localhost:${httpPort}/execute`;
+    const healthEndpoint = `https://127.0.0.1:${httpPort}/health`;
+    const executeEndpoint = `https://127.0.0.1:${httpPort}/execute`;
 
     setApiTestLoading(true);
     setShowAPITest(true);
@@ -486,7 +486,7 @@ export default function GLAccountAnalysis() {
 
       setApiTestResult({
         success: true,
-        baseUrl: `https://localhost:${httpPort}`,
+        baseUrl: `https://127.0.0.1:${httpPort}`,
         healthEndpoint,
         executeEndpoint,
         method: 'POST',
@@ -510,7 +510,7 @@ export default function GLAccountAnalysis() {
       setApiTestResult({
         success: false,
         error: err.message,
-        baseUrl: `https://localhost:${httpPort}`,
+        baseUrl: `https://127.0.0.1:${httpPort}`,
         healthEndpoint,
         executeEndpoint,
       });
@@ -584,7 +584,7 @@ export default function GLAccountAnalysis() {
               <div style={{ fontSize: '12px', color: '#666', marginTop: '8px', marginBottom: '16px', padding: '12px', backgroundColor: '#e6f7ff', borderRadius: '4px', border: '1px solid #91d5ff' }}>
                 <div style={{ marginBottom: '8px' }}>
                   <ApiOutlined style={{ color: '#1677ff', marginRight: '8px', fontSize: '14px' }} />
-                  <strong>HTTP Endpoint (Claude Desktop):</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px' }}>https://localhost:{credentials?.httpPort || 3001}</code>
+                  <strong>HTTP Endpoint (local testing):</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px' }}>https://127.0.0.1:{credentials?.httpPort || 3001}</code>
                 </div>
                 <div style={{ marginBottom: '4px' }}>
                   <strong>Health Check:</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px' }}>GET /health</code>
@@ -644,23 +644,26 @@ export default function GLAccountAnalysis() {
 {`{
   "mcpServers": {
     "gl-server": {
-      "command": "curl",
-      "args": ["-X", "POST",
-        "https://localhost:${credentials?.httpPort || 3001}/execute"],
-      "env": {}
+      "command": "node",
+      "args": ["<path-to-repo>\\\\electron\\\\gl-mcp-server.cjs", "--stdio"],
+      "env": {
+        "ORACLE_BASE_URL": "${credentials?.oracleBaseUrl || 'https://your-oracle-domain'}",
+        "SKIP_AUTH": "true"
+      }
     }
   }
 }`}
+                </div>
+                <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>
+                  Tip: "Add to Claude Desktop" writes this config with the correct absolute server path automatically.
                 </div>
                 <Space size="small">
                   <Button
                     size="small"
                     onClick={() => {
-                      const config = `{\n  "mcpServers": {\n    "gl-server": {\n      "command": "curl",\n      "args": ["-X", "POST", "https://localhost:${
-                        credentials?.httpPort || 3001
-                      }/execute"],\n      "env": {}\n    }\n  }\n}`;
+                      const config = `{\n  "mcpServers": {\n    "gl-server": {\n      "command": "node",\n      "args": ["<path-to-repo>\\\\electron\\\\gl-mcp-server.cjs", "--stdio"],\n      "env": {\n        "ORACLE_BASE_URL": "${credentials?.oracleBaseUrl || 'https://your-oracle-domain'}",\n        "SKIP_AUTH": "true"\n      }\n    }\n  }\n}`;
                       navigator.clipboard.writeText(config);
-                      messageApi.success('Config copied to clipboard!');
+                      messageApi.success('Config copied — replace <path-to-repo> with your actual repo path, or use "Add to Claude Desktop"');
                     }}
                   >
                     Copy Config
