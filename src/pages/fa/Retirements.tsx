@@ -15,13 +15,13 @@ import dayjs from 'dayjs';
 import {
   getRetirements, getBookControls, retireAsset, formatCurrency,
   getRetirementAccountingPreview, createSlaAccounting, markFaDeprnAccounted,
-  updateRetirementStatus,
+  updateRetirementStatus, checkSlaAccountingExists, getSlaAccounting,
 } from '../../services/fa.service';
 import type { RetirementRecord, BookControlRecord } from '../../services/fa.service';
 import { buildApexUrl } from '../../config/api.helper';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { validateAccountCode } from '../../components/AccountSelector';
-import { postSlaToGL, buildGlJournalPayload, makeBatchName } from '../../services/glPosting.service';
+import { postSlaToGL, buildGlJournalPayload, makeBatchName, getGlJournalLines } from '../../services/glPosting.service';
 import type { GlPostingOptions } from '../../services/glPosting.service';
 
 const { Content } = Layout;
@@ -74,7 +74,7 @@ const Retirements: React.FC = () => {
   // Accounting modal
   interface AcctLine { label: string; account: string; desc: string; dr: number; cr: number }
   interface AcctStepUI { label: string; method: string; url: string; payload?: any; status: 'pending' | 'posting' | 'done' | 'error'; detail?: string; response?: any; expanded?: boolean }
-  interface AcctModalState { assetNumber: string; retirementId: string; assetDescription?: string; assetId?: string; bookTypeCode?: string; dateRetired?: string; loading: boolean; error?: string; acctLines?: AcctLine[]; previewHeader?: any; previewLines?: any[]; posting: boolean; posted: boolean; steps: AcctStepUI[] }
+  interface AcctModalState { assetNumber: string; retirementId: string; assetDescription?: string; assetId?: string; bookTypeCode?: string; dateRetired?: string; loading: boolean; error?: string; acctLines?: AcctLine[]; previewHeader?: any; previewLines?: any[]; posting: boolean; posted: boolean; steps: AcctStepUI[]; slaExists?: boolean; glLines?: any[] }
 
   const [acctModal, setAcctModal] = useState<AcctModalState | null>(null);
 
@@ -239,6 +239,40 @@ const Retirements: React.FC = () => {
     });
 
     try {
+      // Check if SLA accounting already exists
+      const slaCheck = await checkSlaAccountingExists('RR_FA_RETIREMENTS', record.retirementId, 'FA_RETIREMENT');
+
+      if (slaCheck?.exists) {
+        // Load existing SLA and GL accounting
+        const existing = await getSlaAccounting('RR_FA_RETIREMENTS', record.retirementId);
+        if (existing?.lines) {
+          const lines: AcctLine[] = await Promise.all((existing.lines as any[]).map(async (l) => ({
+            label: l.description || `Line ${l.lineNumber}`,
+            account: l.accountCombination,
+            desc: await describeCombo(l.accountCombination),
+            dr: Number(l.accountedDr || 0),
+            cr: Number(l.accountedCr || 0),
+          })));
+
+          // Query GL journal lines using reference2 (retirementId) and reference5 (FA_RETIREMENT)
+          const glJournalRes = await getGlJournalLines({ reference2: record.retirementId, reference5: 'FA_RETIREMENT', limit: 500 });
+
+          setAcctModal(m => m && {
+            ...m,
+            acctLines: lines,
+            loading: false,
+            slaExists: true,
+            previewHeader: existing,
+            previewLines: existing.lines,
+            glLines: glJournalRes?.items || [],
+          });
+        } else {
+          setAcctModal(m => m && { ...m, error: 'Failed to load existing accounting', loading: false });
+        }
+        return;
+      }
+
+      // Load preview for creating new accounting
       const preview = await getRetirementAccountingPreview(record.retirementId);
       if (!preview?.lines || preview.lines.length === 0) {
         setAcctModal(m => m && { ...m, error: preview.error || 'No accounting entries generated for this retirement', loading: false });
@@ -258,6 +292,7 @@ const Retirements: React.FC = () => {
         ...m,
         acctLines: lines,
         loading: false,
+        slaExists: false,
         assetDescription: preview.header?.assetDescription || m.assetDescription,
         previewHeader: preview.header,
         previewLines: preview.lines,
@@ -272,7 +307,7 @@ const Retirements: React.FC = () => {
     setAcctModal(m => m && ({ ...m, steps: m.steps.map((x, idx) => idx === i ? { ...x, ...patch } : x) }));
 
   const initializeAccounting = () => {
-    if (!acctModal?.acctLines?.length || !acctModal?.previewHeader) return;
+    if (!acctModal?.acctLines?.length || !acctModal?.previewHeader || acctModal?.slaExists) return;
     const { retirementId, previewHeader, previewLines } = acctModal;
     const userEmail = sessionStorage.getItem('userEmail') || 'reacterp';
 
@@ -500,12 +535,12 @@ const Retirements: React.FC = () => {
                  color: statusColor[v] || REDWOOD.neutral600, border: `1px solid ${statusColor[v] || REDWOOD.neutral600}40` }}>
         {v || '—'}
       </Tag> },
-    { title: '', key: 'actions', width: 100, align: 'center' as const,
+    { title: '', key: 'actions', width: 120, align: 'center' as const,
       render: (_: any, record: RetirementRecord) => (
         <Space size="small">
-          <Tooltip title="Edit accounting">
-            <Button size="small" type="text" style={{ color: FA_COLOR }}
-              onClick={() => openEdit(record)}>Edit</Button>
+          <Tooltip title="View/Create accounting">
+            <Button size="small" type="text" style={{ color: FA_COLOR }} icon={<AuditOutlined />}
+              onClick={() => openAccounting(record)} />
           </Tooltip>
           <Tooltip title="View details">
             <Button size="small" type="text" icon={<InfoCircleOutlined />}
@@ -1025,14 +1060,14 @@ const Retirements: React.FC = () => {
         {/* Accounting Preview & Posting Modal */}
         {acctModal && (
           <Modal
-            title={<Space><AuditOutlined style={{ color: '#722ed1' }} /><span>Create Accounting — Asset {acctModal.assetNumber} · Retirement {acctModal.retirementId}</span></Space>}
+            title={<Space><AuditOutlined style={{ color: '#722ed1' }} /><span>{acctModal.slaExists ? 'View' : 'Create'} Accounting — Asset {acctModal.assetNumber} · Retirement {acctModal.retirementId}</span></Space>}
             open
             onCancel={() => { if (!acctModal.posting) setAcctModal(null); }}
             maskClosable={!acctModal.posting}
             width={1000}
             footer={[
               <Button key="cancel" onClick={() => setAcctModal(null)}>Close</Button>,
-              <Button key="run" type="primary" icon={<AuditOutlined />}
+              !acctModal.slaExists && <Button key="run" type="primary" icon={<AuditOutlined />}
                 disabled={acctModal.loading || !!acctModal.error || acctModal.posted || !acctModal.acctLines?.length || acctModal.steps.length > 0}
                 style={{ background: FA_COLOR, borderColor: FA_COLOR }}
                 onClick={initializeAccounting}>
@@ -1056,10 +1091,20 @@ const Retirements: React.FC = () => {
                   <Text type="secondary" style={{ fontSize: 12 }}>Retirement ID: {acctModal.retirementId}</Text>
                 </div>
 
+                {acctModal.slaExists && acctModal.previewHeader && (
+                  <div style={{ marginBottom: 16, padding: '12px', background: '#f0f7ff', borderRadius: 6, border: `1px solid #b6e3ff` }}>
+                    <Text strong style={{ fontSize: 12, color: '#0050b3' }}>SLA Header #{acctModal.previewHeader?.headerId}</Text>
+                    <br />
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      Status: {acctModal.previewHeader?.accountingStatus} | Accounting Date: {acctModal.previewHeader?.accountingDate}
+                    </Text>
+                  </div>
+                )}
+
                 {acctModal.acctLines && acctModal.acctLines.length > 0 && (
                   <>
                     <Divider style={{ margin: '12px 0' }} />
-                    <Text style={{ fontSize: 12, fontWeight: 600 }}>Journal Entries Preview</Text>
+                    <Text style={{ fontSize: 12, fontWeight: 600 }}>Journal Entries {acctModal.slaExists ? '(Posted)' : 'Preview'}</Text>
                     <Table
                       size="small"
                       style={{ marginTop: 8 }}
@@ -1083,7 +1128,31 @@ const Retirements: React.FC = () => {
                   </>
                 )}
 
-                {acctModal.steps.length > 0 && (
+                {acctModal.slaExists && acctModal.glLines && acctModal.glLines.length > 0 && (
+                  <>
+                    <Divider style={{ margin: '16px 0 12px' }} />
+                    <Text style={{ fontSize: 12, fontWeight: 600 }}>GL Journal Lines</Text>
+                    <Table
+                      size="small"
+                      style={{ marginTop: 8 }}
+                      columns={[
+                        { title: 'Journal', dataIndex: 'journal_name', key: 'journal', width: 150 },
+                        { title: 'Line #', dataIndex: 'line_num', key: 'line_num', width: 60, align: 'center' as const },
+                        { title: 'Account', dataIndex: 'account', key: 'account', width: 180,
+                          render: (v) => <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text> },
+                        { title: 'Description', dataIndex: 'description', key: 'description', ellipsis: true, width: 180 },
+                        { title: 'Debit', dataIndex: 'accounted_dr', key: 'debit', width: 100, align: 'right' as const,
+                          render: (v) => v > 0 ? formatCurrency(v) : '—' },
+                        { title: 'Credit', dataIndex: 'accounted_cr', key: 'credit', width: 100, align: 'right' as const,
+                          render: (v) => v > 0 ? formatCurrency(v) : '—' },
+                      ]}
+                      dataSource={acctModal.glLines.map((l, i) => ({ ...l, key: i }))}
+                      pagination={{ pageSize: 10 }}
+                    />
+                  </>
+                )}
+
+                {!acctModal.slaExists && acctModal.steps.length > 0 && (
                   <div style={{ border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 6, marginTop: 16 }}>
                     {acctModal.steps.map((s, i) => {
                       const color = s.status === 'done' ? REDWOOD.success : s.status === 'error' ? REDWOOD.primary : s.status === 'posting' ? '#1677ff' : REDWOOD.neutral500;
