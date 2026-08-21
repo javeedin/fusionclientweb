@@ -128,16 +128,17 @@ const RetirementAccountsTable: React.FC<RetirementAccountsTableProps> = ({ retir
 
   const getAmounts = (key: string) => {
     const cost = Number(retirement.costRetired || 0);
-    const reserve = Number(retirement.nbvRetired || 0) ? cost - Number(retirement.nbvRetired || 0) : 0;
+    const nbv = Number(retirement.nbvRetired || 0);
+    const reserve = cost - nbv;
     const proceeds = Number(retirement.proceedsOfSale || 0);
     const removal = Number(retirement.costOfRemoval || 0);
-    const gainLoss = proceeds - removal - (cost - reserve);
+    const gainLoss = proceeds - removal - nbv;
 
     switch (key) {
       case 'deprnReserveAccount': return { dr: reserve, cr: 0 };
       case 'assetCostAccount': return { dr: 0, cr: cost };
       case 'proceedsAccount': return proceeds > 0 ? { dr: 0, cr: proceeds } : { dr: Math.abs(proceeds), cr: 0 };
-      case 'costOfRemovalAccount': return removal > 0 ? { dr: 0, cr: removal } : { dr: Math.abs(removal), cr: 0 };
+      case 'costOfRemovalAccount': return removal > 0 ? { dr: removal, cr: 0 } : { dr: 0, cr: Math.abs(removal) };
       case 'gainAccount': return gainLoss > 0 ? { dr: 0, cr: gainLoss } : { dr: 0, cr: 0 };
       case 'lossAccount': return gainLoss < 0 ? { dr: Math.abs(gainLoss), cr: 0 } : { dr: 0, cr: 0 };
       default: return { dr: 0, cr: 0 };
