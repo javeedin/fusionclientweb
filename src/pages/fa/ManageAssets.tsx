@@ -1026,24 +1026,49 @@ const AssetTabContent: React.FC<{
         // Asset is already retired - show details, not retire dialog
         Modal.info({
           title: `Retirement Details — ${asset.asset_number || asset.assetNumber}`,
-          width: 600,
+          width: 900,
           content: (
-            <Descriptions column={2} size="small" bordered labelStyle={{ fontWeight: 500, width: 140 }}>
-              <Descriptions.Item label="Retirement ID">{assetRetirement.retirementId}</Descriptions.Item>
-              <Descriptions.Item label="Status">{assetRetirement.status || '—'}</Descriptions.Item>
-              <Descriptions.Item label="Date Retired">{assetRetirement.dateRetired}</Descriptions.Item>
-              <Descriptions.Item label="Retirement Type">{assetRetirement.retirementTypeCode || '—'}</Descriptions.Item>
-              <Descriptions.Item label="Cost Retired">{formatCurrency(assetRetirement.costRetired)}</Descriptions.Item>
-              <Descriptions.Item label="NBV Retired">{formatCurrency(assetRetirement.nbvRetired)}</Descriptions.Item>
-              <Descriptions.Item label="Proceeds">{formatCurrency(assetRetirement.proceedsOfSale)}</Descriptions.Item>
-              <Descriptions.Item label="Cost of Removal">{formatCurrency(assetRetirement.costOfRemoval)}</Descriptions.Item>
-              <Descriptions.Item label="Gain / Loss" span={2}>
-                <Text style={{ fontWeight: 600, color: parseFloat(assetRetirement.gainLossAmount || '0') >= 0 ? REDWOOD.success : REDWOOD.primary }}>
-                  {formatCurrency(assetRetirement.gainLossAmount)}
-                </Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="Sold To" span={2}>{assetRetirement.soldTo || '—'}</Descriptions.Item>
-            </Descriptions>
+            <>
+              <Text strong style={{ fontSize: 13, marginBottom: 12, display: 'block' }}>Financial Summary</Text>
+              <Descriptions column={2} size="small" bordered labelStyle={{ fontWeight: 500, width: 140 }}>
+                <Descriptions.Item label="Retirement ID">{assetRetirement.retirementId}</Descriptions.Item>
+                <Descriptions.Item label="Status">{assetRetirement.status || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Date Retired">{assetRetirement.dateRetired}</Descriptions.Item>
+                <Descriptions.Item label="Retirement Type">{assetRetirement.retirementTypeCode || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Cost Retired">{formatCurrency(assetRetirement.costRetired)}</Descriptions.Item>
+                <Descriptions.Item label="NBV Retired">{formatCurrency(assetRetirement.nbvRetired)}</Descriptions.Item>
+                <Descriptions.Item label="Proceeds">{formatCurrency(assetRetirement.proceedsOfSale)}</Descriptions.Item>
+                <Descriptions.Item label="Cost of Removal">{formatCurrency(assetRetirement.costOfRemoval)}</Descriptions.Item>
+                <Descriptions.Item label="Gain / Loss" span={2}>
+                  <Text style={{ fontWeight: 600, color: parseFloat(assetRetirement.gainLossAmount || '0') >= 0 ? REDWOOD.success : REDWOOD.primary }}>
+                    {formatCurrency(assetRetirement.gainLossAmount)}
+                  </Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Sold To" span={2}>{assetRetirement.soldTo || '—'}</Descriptions.Item>
+              </Descriptions>
+
+              <Text strong style={{ fontSize: 13, marginTop: 20, marginBottom: 12, display: 'block' }}>Accounting Accounts</Text>
+              <Descriptions column={2} size="small" bordered labelStyle={{ fontWeight: 500, width: 140 }}>
+                <Descriptions.Item label="Asset Cost Account" span={2}>
+                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.assetCostAccount || '—'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Depreciation Reserve" span={2}>
+                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.deprnReserveAccount || '—'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Proceeds Account" span={2}>
+                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.proceedsAccount || '—'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Cost of Removal Account" span={2}>
+                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.costOfRemovalAccount || '—'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Gain Account" span={2}>
+                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.gainAccount || '—'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="Loss Account" span={2}>
+                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.lossAccount || '—'}</Text>
+                </Descriptions.Item>
+              </Descriptions>
+            </>
           ),
           okText: 'Close',
         });
