@@ -353,6 +353,12 @@ export interface RetirementRecord {
   costOfRemoval: string;
   retirementTypeCode: string;
   soldTo: string;
+  assetCostAccount?: string;
+  deprnReserveAccount?: string;
+  proceedsAccount?: string;
+  costOfRemovalAccount?: string;
+  gainAccount?: string;
+  lossAccount?: string;
 }
 
 export interface DeprnWorkbenchRecord {
@@ -713,6 +719,7 @@ export const retireAssetWithAccounting = async (payload: {
   assetId: string | number;
   bookTypeCode: string;
   dateRetired?: string;
+  costRetired?: number;
   proceedsOfSale?: number;
   costOfRemoval?: number;
   soldTo?: string;
@@ -721,15 +728,9 @@ export const retireAssetWithAccounting = async (payload: {
   lines: RetireLine[];
 }): Promise<{ success: boolean; retirementId?: number; nbvRetired?: number; gainLoss?: number; error?: string }> => {
   try {
-    const { assetId, ...body } = payload;
-    const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/fa/assets/${assetId}/retire-post`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
-    });
-    return await res.json();
+    return await insertToApex('fa/retirements', payload);
   } catch (e: any) {
-    return { success: false, error: e.message };
+    return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
   }
 };
 
@@ -833,6 +834,30 @@ export const getRetirements = async (bookTypeCode?: string): Promise<RetirementR
   } catch { return []; }
 };
 
+export const getRetirementAccountingPreview = async (retirementId: string): Promise<any> => {
+  try {
+    const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/fa/retirements/${encodeURIComponent(retirementId)}/accounting-preview`, {
+      headers: { Accept: 'application/json' },
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+};
+
+export const updateRetirementStatus = async (retirementId: string, status: string): Promise<any> => {
+  try {
+    const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/fa/retirements/${encodeURIComponent(retirementId)}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+};
+
 // ── Depreciation Workbench ────────────────────────────────────────────────────
 
 export const getDeprnWorkbench = async (params: {
@@ -866,7 +891,7 @@ export const createAsset = async (payload: any): Promise<{ success: boolean; ass
 };
 
 export const retireAsset = async (assetId: string, payload: any): Promise<{ success: boolean; message?: string; gainLoss?: string; error?: string }> => {
-  try { return await putToApex(`fa/assets/${assetId}/retire`, payload); }
+  try { return await insertToApex('fa/retirements', payload); }
   catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
 };
 

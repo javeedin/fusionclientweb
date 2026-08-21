@@ -2,19 +2,25 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Layout, Card, Form, Input, Select, Button, Space, Typography, Table,
   Row, Col, Breadcrumb, Tag, Modal, InputNumber, DatePicker, Descriptions,
-  Divider, message, Badge, Tooltip,
+  Divider, message, Badge, Tooltip, Spin,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   HomeOutlined, SearchOutlined, ReloadOutlined, AuditOutlined,
-  DollarOutlined, InfoCircleOutlined, StopOutlined,
+  DollarOutlined, InfoCircleOutlined, StopOutlined, ApiOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
 import {
   getRetirements, getBookControls, retireAsset, formatCurrency,
+  getRetirementAccountingPreview, createSlaAccounting, markFaDeprnAccounted,
+  updateRetirementStatus,
 } from '../../services/fa.service';
 import type { RetirementRecord, BookControlRecord } from '../../services/fa.service';
+import { buildApexUrl } from '../../config/api.helper';
+import { APEX_DB_CONFIG } from '../../config/api.config';
+import { validateAccountCode } from '../../components/AccountSelector';
+import { postSlaToGL } from '../../services/glPosting.service';
 
 const { Content } = Layout;
 const { Text, Title } = Typography;
@@ -57,6 +63,28 @@ const Retirements: React.FC = () => {
   const [detailOpen,   setDetailOpen]   = useState(false);
   const [detailRecord, setDetailRecord] = useState<RetirementRecord | null>(null);
 
+  // Edit modal
+  const [editOpen,   setEditOpen]   = useState(false);
+  const [editRecord, setEditRecord] = useState<RetirementRecord | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+  const [accountsWithDesc, setAccountsWithDesc] = useState<Record<string, { combo: string; segments: string }>>({});
+
+  // Accounting modal
+  interface AcctLine { label: string; account: string; desc: string; dr: number; cr: number }
+  const [acctModalOpen, setAcctModalOpen] = useState(false);
+  const [acctModalRec, setAcctModalRec] = useState<RetirementRecord | null>(null);
+  const [acctLoading, setAcctLoading] = useState(false);
+  const [acctLines, setAcctLines] = useState<AcctLine[]>([]);
+  const [acctPosting, setAcctPosting] = useState(false);
+  const [acctPosted, setAcctPosted] = useState(false);
+
+  // API test modal
+  const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string; data?: any } | null>(null);
+  const [apiTestLoading, setApiTestLoading] = useState(false);
+
+  // Retire API details modal
+  const [retireApiOpen, setRetireApiOpen] = useState(false);
+
   useEffect(() => {
     getBookControls().then(setBookControls);
     loadRetirements();
@@ -75,12 +103,214 @@ const Retirements: React.FC = () => {
 
   const runSearch = useCallback(async () => {
     const { bookTypeCode } = form.getFieldsValue();
-    await loadRetirements(bookTypeCode || undefined);
+    setLoading(true);
+    try {
+      // Build the API endpoint with query params
+      const params = new URLSearchParams();
+      if (bookTypeCode) params.append('bookTypeCode', bookTypeCode);
+      const apiUrl = buildApexUrl(`fa/retirements${params.toString() ? '?' + params.toString() : ''}`);
+
+      // Call the GET endpoint
+      const response = await fetch(apiUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+
+      // Update table with results
+      const records = data.items || data || [];
+      setRows(records);
+      setSearched(true);
+
+      // Show API response modal
+      Modal.info({
+        title: 'GET Retirements API Response',
+        width: 900,
+        content: (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 12, color: '#52c41a', marginBottom: 12, fontWeight: 600 }}>
+              ✓ Success! Retrieved {records.length} retirement records
+            </div>
+            <div style={{ fontSize: 11, color: '#888', marginBottom: 8, fontWeight: 600 }}>ENDPOINT (GET)</div>
+            <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
+              {apiUrl}
+            </Text>
+            <div style={{ fontSize: 11, color: '#888', margin: '16px 0 8px', fontWeight: 600 }}>RESPONSE ({records.length} records)</div>
+            <div style={{ background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 6, padding: 12, maxHeight: 500, overflow: 'auto' }}>
+              <pre style={{ margin: 0, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#333' }}>
+                {JSON.stringify(data, null, 2)}
+              </pre>
+            </div>
+          </div>
+        ),
+      });
+    } catch (error) {
+      message.error(`API Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setLoading(false);
+    }
   }, [form]);
 
   const handleReset = () => {
     form.resetFields();
     loadRetirements();
+  };
+
+  const fetchAccountSegmentDescriptions = async (accountCombos: Record<string, string | null>) => {
+    const results: Record<string, { combo: string; segments: string }> = {};
+    const combosToFetch = Object.entries(accountCombos).filter(([_, v]) => v);
+
+    for (const [key, combo] of combosToFetch) {
+      if (!combo) continue;
+      try {
+        const validation = await validateAccountCode(combo);
+        if (validation.segmentsLoaded && Object.keys(validation.segmentDetails).length > 0) {
+          // Format segment descriptions: "Company: 01 | LOB: 00 | Dept: 00 | Account: 1111103 | ..."
+          const descriptions = Object.entries(validation.segmentDetails)
+            .map(([_, detail]) => `${detail.description || detail.value}`)
+            .filter(d => d && d !== '')
+            .join(' | ');
+          results[key] = { combo, segments: descriptions || combo };
+        } else {
+          results[key] = { combo, segments: combo };
+        }
+      } catch (error) {
+        console.error(`Error fetching segment details for ${combo}:`, error);
+        results[key] = { combo, segments: combo };
+      }
+    }
+    return results;
+  };
+
+  const openEdit = async (record: RetirementRecord) => {
+    setEditRecord(record);
+    setEditOpen(true);
+    setEditLoading(true);
+
+    try {
+      const accounts = {
+        assetCost: record.assetCostAccount || '',
+        deprnReserve: record.deprnReserveAccount || '',
+        proceeds: record.proceedsAccount || '',
+        costOfRemoval: record.costOfRemovalAccount || '',
+        gain: record.gainAccount || '',
+        loss: record.lossAccount || '',
+      };
+
+      const descs = await fetchAccountSegmentDescriptions(accounts);
+      setAccountsWithDesc(descs);
+    } catch (error) {
+      console.error('Error fetching accounts:', error);
+      message.error('Failed to load account details');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const describeCombo = async (combo: string): Promise<string> => {
+    try {
+      const result = await validateAccountCode(combo);
+      if (result.segmentDetails) {
+        return Object.values(result.segmentDetails).map(s => s.description || s.value).join(' | ');
+      }
+    } catch (error) {
+      console.error('Error describing combo:', error);
+    }
+    return combo;
+  };
+
+  const openAccounting = async (record: RetirementRecord | null) => {
+    if (!record) return;
+    setAcctModalRec(record);
+    setAcctModalOpen(true);
+    setAcctLoading(true);
+    setAcctPosted(false);
+    setAcctLines([]);
+
+    try {
+      const preview = await getRetirementAccountingPreview(record.retirementId);
+      if (!preview?.lines || preview.lines.length === 0) {
+        message.error(preview.error || 'No accounting entries generated for this retirement');
+        setAcctLoading(false);
+        return;
+      }
+
+      const lines: AcctLine[] = await Promise.all((preview.lines as any[]).map(async (l) => ({
+        label: l.lineType || `Line ${l.lineNumber}`,
+        account: l.accountCombination,
+        desc: await describeCombo(l.accountCombination),
+        dr: Number(l.enteredDr || 0),
+        cr: Number(l.enteredCr || 0),
+      })));
+      setAcctLines(lines);
+    } catch (error) {
+      console.error('Error loading accounting preview:', error);
+      message.error('Failed to load accounting preview');
+    } finally {
+      setAcctLoading(false);
+    }
+  };
+
+  const postAccounting = async () => {
+    if (!acctModalRec || !acctLines.length) return;
+    setAcctPosting(true);
+    try {
+      const slaBody = {
+        header: {
+          sourceTable: 'RR_FA_RETIREMENTS',
+          sourceId: acctModalRec.retirementId,
+          reference1: acctModalRec.assetId,
+          reference2: acctModalRec.retirementId,
+          reference5: 'ASSET_RETIREMENT',
+          description: `Asset Retirement ${acctModalRec.assetNumber}`,
+        },
+        lines: acctLines.map((l, i) => ({
+          lineNumber: i + 1,
+          accountCombination: l.account,
+          lineType: l.label,
+          enteredDr: l.dr,
+          enteredCr: l.cr,
+        })),
+      };
+
+      // Step 1: Create SLA accounting
+      const slaRes = await createSlaAccounting(slaBody as any);
+      if (!slaRes.headerId) {
+        message.error(slaRes.error || 'Failed to create SLA accounting');
+        setAcctPosting(false);
+        return;
+      }
+
+      // Step 2: Post SLA to GL
+      const glRes = await postSlaToGL({
+        slaHeaderId: slaRes.headerId,
+        sourceNumber: acctModalRec.assetNumber,
+        sourceId: acctModalRec.retirementId,
+      });
+
+      if (!glRes.success) {
+        message.error(glRes.error || 'Failed to post to GL');
+        setAcctPosting(false);
+        return;
+      }
+
+      // Step 3: Update retirement status to ACCOUNTED
+      const statusRes = await updateRetirementStatus(acctModalRec.retirementId, 'ACCOUNTED');
+      if (!statusRes.success) {
+        message.error(statusRes.error || 'Failed to update retirement status');
+        setAcctPosting(false);
+        return;
+      }
+
+      setAcctPosted(true);
+      message.success('Accounting posted successfully');
+      setEditOpen(false);
+      setAcctModalOpen(false);
+      runSearch();
+    } catch (error: any) {
+      console.error('Error posting accounting:', error);
+      message.error(error.message || 'Failed to post accounting');
+    } finally {
+      setAcctPosting(false);
+    }
   };
 
   const handleRetireSubmit = async () => {
@@ -93,12 +323,15 @@ const Retirements: React.FC = () => {
       }
       setRetireSaving(true);
       const res = await retireAsset(retireTarget.assetId, {
-        bookTypeCode:      retireTarget.bookTypeCode,
-        dateRetired:       vals.dateRetired,
-        retirementTypeCode:vals.retirementTypeCode,
-        proceedsOfSale:    vals.proceedsOfSale    || 0,
-        costOfRemoval:     vals.costOfRemoval     || 0,
-        soldTo:            vals.soldTo            || '',
+        bookTypeCode:        retireTarget.bookTypeCode,
+        assetId:             retireTarget.assetId,
+        dateRetired:         vals.dateRetired,
+        retirementTypeCode:  vals.retirementTypeCode || 'ORDINARY',
+        proceedsOfSale:      vals.proceedsOfSale    || 0,
+        costOfRemoval:       vals.costOfRemoval     || 0,
+        soldTo:              vals.soldTo            || '',
+        createdBy:           sessionStorage.getItem('userEmail') || 'reacterp',
+        lines:               [],
       });
       if (res.success) {
         message.success(`Asset ${retireTarget.assetNumber} retired. Gain/Loss: ${formatCurrency(res.gainLoss || '0')}`);
@@ -142,12 +375,18 @@ const Retirements: React.FC = () => {
                  color: statusColor[v] || REDWOOD.neutral600, border: `1px solid ${statusColor[v] || REDWOOD.neutral600}40` }}>
         {v || '—'}
       </Tag> },
-    { title: '', key: 'actions', width: 60, align: 'center' as const,
+    { title: '', key: 'actions', width: 100, align: 'center' as const,
       render: (_: any, record: RetirementRecord) => (
-        <Tooltip title="View details">
-          <Button size="small" type="text" icon={<InfoCircleOutlined />}
-            onClick={() => { setDetailRecord(record); setDetailOpen(true); }} />
-        </Tooltip>
+        <Space size="small">
+          <Tooltip title="Edit accounting">
+            <Button size="small" type="text" style={{ color: FA_COLOR }}
+              onClick={() => openEdit(record)}>Edit</Button>
+          </Tooltip>
+          <Tooltip title="View details">
+            <Button size="small" type="text" icon={<InfoCircleOutlined />}
+              onClick={() => { setDetailRecord(record); setDetailOpen(true); }} />
+          </Tooltip>
+        </Space>
       ),
     },
   ];
@@ -197,7 +436,7 @@ const Retirements: React.FC = () => {
                     </Select>
                   </Form.Item>
                 </Col>
-                <Col xs={24} sm={8} md={4} style={{ display: 'flex', alignItems: 'flex-end' }}>
+                <Col xs={24} sm={16} md={18} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
                   <Form.Item style={{ marginBottom: 8 }}>
                     <Space>
                       <Button type="primary" htmlType="submit" icon={<SearchOutlined />} loading={loading}
@@ -207,6 +446,102 @@ const Retirements: React.FC = () => {
                       <Button icon={<ReloadOutlined />} onClick={handleReset}>Reset</Button>
                     </Space>
                   </Form.Item>
+                  <Tooltip title="View API endpoint and test">
+                    <Button
+                      size="small"
+                      icon={<ApiOutlined />}
+                      style={{ color: FA_COLOR, borderColor: FA_COLOR, fontSize: 11 }}
+                      onClick={() => {
+                        const { bookTypeCode } = form.getFieldsValue();
+                        const params = new URLSearchParams();
+                        if (bookTypeCode) params.append('bookTypeCode', bookTypeCode);
+                        const apiUrl = buildApexUrl(`fa/retirements${params.toString() ? '?' + params.toString() : ''}`);
+
+                        Modal.info({
+                          title: 'Retirements API — GET Request',
+                          width: 760,
+                          content: (
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>ENDPOINT (GET)</div>
+                              <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                                {apiUrl}
+                              </Text>
+                              {bookTypeCode && (
+                                <div style={{ marginTop: 12, fontSize: 11, color: '#666' }}>
+                                  <div><strong>Query Parameters:</strong></div>
+                                  <div style={{ marginLeft: 8, marginTop: 4 }}>
+                                    <code>bookTypeCode = {bookTypeCode}</code>
+                                  </div>
+                                </div>
+                              )}
+                              <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+                                <Button
+                                  size="small"
+                                  type="primary"
+                                  loading={apiTestLoading}
+                                  onClick={() => {
+                                    setApiTestResult(null);
+                                    setApiTestLoading(true);
+                                    fetch(apiUrl)
+                                      .then(r => {
+                                        if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+                                        return r.json();
+                                      })
+                                      .then(data => {
+                                        setApiTestResult({
+                                          success: true,
+                                          message: `Success! Retrieved ${(data.items || data).length || 0} records`,
+                                          data,
+                                        });
+                                      })
+                                      .catch(err => {
+                                        setApiTestResult({
+                                          success: false,
+                                          message: `Error: ${err.message}`,
+                                        });
+                                      })
+                                      .finally(() => setApiTestLoading(false));
+                                  }}
+                                >
+                                  Test API
+                                </Button>
+                              </div>
+                              {apiTestResult && (
+                                <div style={{
+                                  marginTop: 12,
+                                  padding: 12,
+                                  borderRadius: 4,
+                                  background: apiTestResult.success ? '#f6ffed' : '#fff2f0',
+                                  border: `1px solid ${apiTestResult.success ? '#b7eb8f' : '#ffa39e'}`,
+                                }}>
+                                  <Text style={{ color: apiTestResult.success ? '#52c41a' : '#f5222d', fontSize: 12 }}>
+                                    {apiTestResult.success ? '✓' : '✗'} {apiTestResult.message}
+                                  </Text>
+                                  {apiTestResult.data && (
+                                    <div style={{ marginTop: 8, maxHeight: 300, overflow: 'auto' }}>
+                                      <pre style={{
+                                        background: '#f5f5f5',
+                                        padding: 8,
+                                        borderRadius: 2,
+                                        fontSize: 10,
+                                        fontFamily: 'monospace',
+                                        whiteSpace: 'pre-wrap',
+                                        wordBreak: 'break-all',
+                                      }}>
+                                        {JSON.stringify(apiTestResult.data, null, 2)}
+                                      </pre>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ),
+                        });
+                      }}
+                    >
+                      API
+                    </Button>
+                  </Tooltip>
                 </Col>
               </Row>
             </Form>
@@ -238,10 +573,21 @@ const Retirements: React.FC = () => {
         <Modal
           open={retireOpen}
           title={
-            <Space>
-              <StopOutlined style={{ color: REDWOOD.primary }} />
-              <span>Retire Asset — {retireTarget?.assetNumber}</span>
-            </Space>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Space>
+                <StopOutlined style={{ color: REDWOOD.primary }} />
+                <span>Retire Asset — {retireTarget?.assetNumber}</span>
+              </Space>
+              <Tooltip title="View API endpoint and test">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ApiOutlined />}
+                  style={{ color: FA_COLOR, fontSize: 12 }}
+                  onClick={() => setRetireApiOpen(true)}
+                />
+              </Tooltip>
+            </div>
           }
           onCancel={() => { setRetireOpen(false); retireForm.resetFields(); }}
           onOk={handleRetireSubmit}
@@ -339,9 +685,274 @@ const Retirements: React.FC = () => {
             </Descriptions>
           )}
         </Modal>
+
+        {/* Edit Retirement Modal */}
+        <Modal
+          open={editOpen}
+          title={
+            <Space>
+              <StopOutlined style={{ color: REDWOOD.primary }} />
+              <span>Edit Retirement — {editRecord?.retirementId}</span>
+            </Space>
+          }
+          onCancel={() => setEditOpen(false)}
+          footer={[
+            <Button key="acct" type="primary" onClick={() => openAccounting(editRecord)} disabled={!editRecord || editRecord.status === 'PROCESSED'}>Create Accounting</Button>,
+            <Button key="close" onClick={() => setEditOpen(false)}>Close</Button>,
+          ]}
+          width={1000}
+          loading={editLoading}
+        >
+          {editRecord && (
+            <>
+              {/* Header Info */}
+              <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+                <Col xs={24} sm={6}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>RETIREMENT ID</div>
+                  <Text strong style={{ fontSize: 14 }}>{editRecord.retirementId}</Text>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>ASSET</div>
+                  <Text strong style={{ fontSize: 14 }}>{editRecord.assetNumber}</Text>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>DATE RETIRED</div>
+                  <Text style={{ fontSize: 14 }}>{editRecord.dateRetired}</Text>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>STATUS</div>
+                  <Tag style={{ borderRadius: 4, background: `${statusColor[editRecord.status] || REDWOOD.neutral600}20`,
+                    color: statusColor[editRecord.status] || REDWOOD.neutral600 }}>
+                    {editRecord.status}
+                  </Tag>
+                </Col>
+              </Row>
+
+              {/* Financial Summary */}
+              <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+                <Col xs={24} sm={6}>
+                  <Card size="small" styles={{ body: { padding: '8px 12px' } }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Cost Retired</Text>
+                    <Text strong style={{ fontSize: 13, color: REDWOOD.neutral900 }}>{formatCurrency(editRecord.costRetired)}</Text>
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small" styles={{ body: { padding: '8px 12px' } }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>NBV Retired</Text>
+                    <Text strong style={{ fontSize: 13, color: REDWOOD.neutral900 }}>{formatCurrency(editRecord.nbvRetired)}</Text>
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small" styles={{ body: { padding: '8px 12px' } }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Proceeds</Text>
+                    <Text strong style={{ fontSize: 13, color: REDWOOD.neutral900 }}>{formatCurrency(editRecord.proceedsOfSale)}</Text>
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small" styles={{ body: { padding: '8px 12px' } }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Gain / Loss</Text>
+                    <Text strong style={{ fontSize: 13, color: parseFloat(editRecord.gainLossAmount || '0') >= 0 ? REDWOOD.success : REDWOOD.primary }}>
+                      {formatCurrency(editRecord.gainLossAmount)}
+                    </Text>
+                  </Card>
+                </Col>
+              </Row>
+
+              <Divider style={{ margin: '16px 0' }} />
+
+              {/* Accounting Accounts - 2 Rows x 3 Columns */}
+              {!editLoading && (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 12, color: REDWOOD.neutral900 }}>ACCOUNTING ACCOUNTS</div>
+                  <Row gutter={[16, 16]}>
+                    {[
+                      { label: 'Asset Cost Account', key: 'assetCost', value: editRecord.assetCostAccount },
+                      { label: 'Depreciation Reserve Account', key: 'deprnReserve', value: editRecord.deprnReserveAccount },
+                      { label: 'Proceeds of Sale Account', key: 'proceeds', value: editRecord.proceedsAccount },
+                      { label: 'Cost of Removal Account', key: 'costOfRemoval', value: editRecord.costOfRemovalAccount },
+                      { label: 'Gain Account', key: 'gain', value: editRecord.gainAccount },
+                      { label: 'Loss Account', key: 'loss', value: editRecord.lossAccount },
+                    ].map(({ label, key, value }) => (
+                      <Col xs={24} sm={8} key={key}>
+                        <Card size="small" style={{ background: REDWOOD.neutral100, height: '100%' }}>
+                          <Text strong style={{ fontSize: 11, display: 'block', marginBottom: 8, color: REDWOOD.neutral900 }}>
+                            {label}
+                          </Text>
+                          {value ? (
+                            <>
+                              <Text copyable style={{ fontFamily: 'monospace', fontSize: 10, color: '#0572CE', display: 'block', marginBottom: 6, wordBreak: 'break-all' }}>
+                                {value}
+                              </Text>
+                              {accountsWithDesc[key] && (
+                                <Text type="secondary" style={{ fontSize: 10, display: 'block', lineHeight: '1.4' }}>
+                                  {accountsWithDesc[key].segments}
+                                </Text>
+                              )}
+                            </>
+                          ) : (
+                            <Text type="secondary" style={{ fontSize: 10 }}>—</Text>
+                          )}
+                        </Card>
+                      </Col>
+                    ))}
+                  </Row>
+                </>
+              )}
+            </>
+          )}
+        </Modal>
+
+        {/* Retire Asset API Details Modal */}
+        <Modal
+          open={retireApiOpen}
+          title="Retire Asset API Details"
+          onCancel={() => setRetireApiOpen(false)}
+          footer={[
+            <Button key="close" onClick={() => setRetireApiOpen(false)}>Close</Button>,
+            <Button
+              key="test"
+              type="primary"
+              loading={apiTestLoading}
+              style={{ background: FA_COLOR, borderColor: FA_COLOR }}
+              onClick={() => {
+                if (!retireTarget) return;
+                setApiTestLoading(true);
+                const vals = retireForm.getFieldsValue();
+                let dateRetired = vals.dateRetired;
+                if (dayjs.isDayjs(dateRetired)) {
+                  dateRetired = dateRetired.format('YYYY-MM-DD');
+                }
+                const payload = {
+                  bookTypeCode:        retireTarget.bookTypeCode,
+                  assetId:             retireTarget.assetId,
+                  dateRetired:         dateRetired,
+                  retirementTypeCode:  vals.retirementTypeCode || 'ORDINARY',
+                  proceedsOfSale:      vals.proceedsOfSale    || 0,
+                  costOfRemoval:       vals.costOfRemoval     || 0,
+                  soldTo:              vals.soldTo            || '',
+                  createdBy:           sessionStorage.getItem('userEmail') || 'reacterp',
+                  lines:               [],
+                };
+                const apiUrl = buildApexUrl('fa/retirements');
+                fetch(apiUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload),
+                })
+                  .then(r => {
+                    if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+                    return r.json();
+                  })
+                  .then(data => {
+                    setApiTestResult({ success: true, message: 'Success', data });
+                    message.success('API test successful');
+                  })
+                  .catch(e => {
+                    setApiTestResult({ success: false, message: e.message });
+                    message.error(`API test failed: ${e.message}`);
+                  })
+                  .finally(() => setApiTestLoading(false));
+              }}
+            >
+              Test API
+            </Button>,
+          ]}
+          width={900}
+        >
+          {retireTarget && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>ENDPOINT (POST)</div>
+              <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                {buildApexUrl('fa/retirements')}
+              </Text>
+
+              <div style={{ fontSize: 11, color: '#888', margin: '16px 0 8px', fontWeight: 600 }}>REQUEST BODY</div>
+              <div style={{ background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 6, padding: 12, maxHeight: 400, overflow: 'auto' }}>
+                <pre style={{ margin: 0, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#333' }}>
+                  {JSON.stringify({
+                    bookTypeCode:        retireTarget.bookTypeCode,
+                    assetId:             retireTarget.assetId,
+                    dateRetired:         retireForm.getFieldValue('dateRetired') ? (dayjs.isDayjs(retireForm.getFieldValue('dateRetired')) ? retireForm.getFieldValue('dateRetired').format('YYYY-MM-DD') : retireForm.getFieldValue('dateRetired')) : new Date().toISOString().split('T')[0],
+                    retirementTypeCode:  retireForm.getFieldValue('retirementTypeCode') || 'ORDINARY',
+                    proceedsOfSale:      retireForm.getFieldValue('proceedsOfSale') || 0,
+                    costOfRemoval:       retireForm.getFieldValue('costOfRemoval') || 0,
+                    soldTo:              retireForm.getFieldValue('soldTo') || '',
+                    createdBy:           sessionStorage.getItem('userEmail') || 'reacterp',
+                    lines:               [],
+                  }, null, 2)}
+                </pre>
+              </div>
+
+              {apiTestResult && (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 8, fontWeight: 600 }}>RESPONSE</div>
+                  <div style={{ background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 6, padding: 12, maxHeight: 300, overflow: 'auto' }}>
+                    <pre style={{ margin: 0, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#333' }}>
+                      {JSON.stringify(apiTestResult.data, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </Modal>
+
+        {/* Accounting Preview & Posting Modal */}
+        <Modal
+          title={`Post Accounting - Retirement ${acctModalRec?.retirementId}`}
+          open={acctModalOpen}
+          onCancel={() => setAcctModalOpen(false)}
+          width={1000}
+          footer={[
+            <Button key="cancel" onClick={() => setAcctModalOpen(false)} disabled={acctPosting}>Cancel</Button>,
+            <Button key="post" type="primary" onClick={postAccounting} loading={acctPosting} disabled={acctPosted}>Post Accounting</Button>,
+          ]}
+        >
+          {acctLoading ? (
+            <div style={{ textAlign: 'center', padding: '40px' }}>
+              <Spin tip="Loading preview..." />
+            </div>
+          ) : acctPosted ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: REDWOOD.success }}>
+              <Text strong style={{ fontSize: 16 }}>✓ Accounting posted successfully</Text>
+            </div>
+          ) : (
+            <>
+              <div style={{ marginBottom: 20 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Asset: {acctModalRec?.assetNumber}</Text>
+                <br />
+                <Text type="secondary" style={{ fontSize: 12 }}>Retirement ID: {acctModalRec?.retirementId}</Text>
+              </div>
+
+              <Divider style={{ margin: '16px 0' }} />
+
+              <Table
+                size="small"
+                columns={[
+                  { title: 'Line', dataIndex: 'label', key: 'label', width: 150 },
+                  { title: 'Account', dataIndex: 'account', key: 'account', width: 180,
+                    render: (v) => <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text> },
+                  { title: 'Description', dataIndex: 'desc', key: 'desc', ellipsis: true },
+                  { title: 'Debit', dataIndex: 'dr', key: 'dr', width: 100, align: 'right' as const,
+                    render: (v) => v > 0 ? formatCurrency(v) : '—' },
+                  { title: 'Credit', dataIndex: 'cr', key: 'cr', width: 100, align: 'right' as const,
+                    render: (v) => v > 0 ? formatCurrency(v) : '—' },
+                ]}
+                dataSource={acctLines.map((l, i) => ({ ...l, key: i }))}
+                pagination={false}
+              />
+
+              <div style={{ marginTop: 16, textAlign: 'right' }}>
+                <Text strong style={{ marginRight: 20 }}>Total:</Text>
+                <Text strong style={{ marginRight: 40 }}>Dr: {formatCurrency(acctLines.reduce((sum, l) => sum + l.dr, 0))}</Text>
+                <Text strong>Cr: {formatCurrency(acctLines.reduce((sum, l) => sum + l.cr, 0))}</Text>
+              </div>
+            </>
+          )}
+        </Modal>
       </Content>
 
-      
+
     </Layout>
   );
 };
