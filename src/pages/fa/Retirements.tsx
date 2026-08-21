@@ -320,6 +320,7 @@ const Retirements: React.FC = () => {
       { label: '1 · Create SLA Accounting', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/sla/accounting/create`, payload: slaBody, status: 'pending', expanded: true },
       { label: '2 · Post SLA to GL Journal', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/gl/journals/create`, payload: glPayload, status: 'pending', expanded: false },
       { label: '3 · Update Retirement Status', method: 'PUT', url: `${APEX_DB_CONFIG.baseUrl}/fa/retirements/${retirementId}/status`, payload: { status: 'ACCOUNTED' }, status: 'pending', expanded: false },
+      { label: '4 · Journal Posting', method: 'PUT', url: `${APEX_DB_CONFIG.baseUrl}/gl/journals/{batchId}/post`, payload: { note: 'Post journal — batchId from Step 2 response' }, status: 'pending', expanded: false },
     ];
     setAcctModal(m => m && ({ ...m, steps }));
   };
@@ -395,7 +396,7 @@ const Retirements: React.FC = () => {
         }
         setAcctStep(1, { status: 'done', detail: `GL Batch ${glRes.batchId} · Header ${glRes.headerId}`, response: glRes });
       } else if (stepIndex === 2) {
-        // Step 3 — Update status
+        // Step 3 — Update status to ACCOUNTED
         setAcctStep(2, { status: 'posting' });
         const statusRes = await updateRetirementStatus(retirementId, 'ACCOUNTED');
         if (!statusRes.success) {
@@ -404,8 +405,33 @@ const Retirements: React.FC = () => {
           return;
         }
         setAcctStep(2, { status: 'done', detail: 'Status updated to ACCOUNTED', response: statusRes });
-        setAcctModal(m => m && ({ ...m, posted: true }));
-        message.success(`Retirement ${assetNumber} accounted and posted to GL`);
+      } else if (stepIndex === 3) {
+        // Step 4 — Journal Posting
+        const glBatchId = acctModal.steps[1]?.response?.batchId;
+        if (!glBatchId) {
+          message.error('Please run Step 2 first to get batch ID');
+          return;
+        }
+        setAcctStep(3, { status: 'posting' });
+        try {
+          const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/gl/journals/${glBatchId}/post`, {
+            method: 'PUT',
+            headers: { Accept: 'application/json' },
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || data?.success === false) {
+            const err = data?.error || data?.message || `HTTP ${res.status}`;
+            setAcctStep(3, { status: 'error', detail: err, response: data });
+            message.error(err || 'Journal posting failed');
+            return;
+          }
+          setAcctStep(3, { status: 'done', detail: `Journal batch ${glBatchId} posted`, response: data });
+          setAcctModal(m => m && ({ ...m, posted: true }));
+          message.success(`Retirement ${assetNumber} accounted and posted to GL`);
+        } catch (e: any) {
+          setAcctStep(3, { status: 'error', detail: e.message, response: { error: e.message } });
+          message.error(e.message || 'Journal posting failed');
+        }
       }
     } catch (e: any) {
       message.error(e?.message || 'Step failed');
