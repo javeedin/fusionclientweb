@@ -132,40 +132,49 @@ async function getGLTransactions(params) {
   return { count: items.length, items: items.slice(0, Number(limit) || 100) };
 }
 
-// GL balances from RR_GL_BALANCES. account/company are optional — omit them
-// to list balances for ALL accounts in a period.
+// Shared fetch of the standard trial balance — one row per account for a
+// ledger + period, with account_combination, account_desc, opening, debit,
+// credit, closing. Same endpoint the Trial Balance screen uses.
+async function fetchTrialBalance(ledger_name, period, company) {
+  const queryParams = new URLSearchParams({
+    ledger_name: ledger_name || 'BUIMERC LEDGER',
+    period_name: period,
+  });
+  if (company) queryParams.set('company', company);
+  const result = await fetchAPI(`/gl/rr-trialbalance/standard?${queryParams.toString()}`, { method: 'GET' });
+  return Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
+}
+
+// GL balances for a period from the standard trial balance. account is an
+// optional filter — omit it to list balances for ALL accounts in the period.
 async function getAccountBalance(params) {
-  const { period_names, company, account, account_type } = params;
+  const { ledger_name, period_names, company, account } = params;
   const period = String(period_names || '').split(',')[0].trim();
-  const cacheKey = `gl_balance_${period}_${company}_${account}_${account_type}`;
+  const cacheKey = `gl_balance_${ledger_name}_${period}_${company}_${account}`;
   const cached = getCachedValue(cacheKey);
   if (cached) return { ...cached, cached: true };
 
-  const queryParams = new URLSearchParams();
-  if (period)       queryParams.set('period_name', period);
-  if (company)      queryParams.set('company', company);
-  if (account)      queryParams.set('account', account);
-  if (account_type) queryParams.set('account_type', account_type);
-  queryParams.set('limit', '2000');
-
-  const result = await fetchAPI(`/gl/balances?${queryParams.toString()}`, { method: 'GET' });
-  const items = Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
+  let items = await fetchTrialBalance(ledger_name, period, company);
+  if (account) {
+    items = items.filter((r) => String(r.account_combination || '').includes(String(account)));
+  }
   const out = { count: items.length, items };
   setCachedValue(cacheKey, out);
   return { ...out, cached: false };
 }
 
-// Search the chart of accounts by number or description, built from the
-// distinct accounts present in RR_GL_BALANCES.
+// Search the chart of accounts by number or description, from the distinct
+// accounts in the period's trial balance.
 async function searchAccounts(params) {
-  const { search_term } = params;
-  const result = await fetchAPI('/gl/balances?limit=5000', { method: 'GET' });
-  const items = Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
+  const { ledger_name, period_names, search_term } = params;
+  const period = String(period_names || '').split(',')[0].trim();
+  const items = await fetchTrialBalance(ledger_name, period);
 
   const seen = new Map();
   for (const r of items) {
-    if (r.account && !seen.has(r.account)) {
-      seen.set(r.account, { account: r.account, description: r.account_desc || '', accountType: r.account_type || '' });
+    const combo = r.account_combination;
+    if (combo && !seen.has(combo)) {
+      seen.set(combo, { account: combo, description: r.account_desc || '' });
     }
   }
   let accounts = Array.from(seen.values());
@@ -175,7 +184,7 @@ async function searchAccounts(params) {
       a.account.toLowerCase().includes(term) || a.description.toLowerCase().includes(term));
   }
   accounts.sort((a, b) => a.account.localeCompare(b.account));
-  return { count: accounts.length, accounts: accounts.slice(0, 200) };
+  return { count: accounts.length, accounts: accounts.slice(0, 300) };
 }
 
 async function getJournalEntry(params) {
@@ -214,27 +223,29 @@ const MCP_TOOLS = [
   },
   {
     name: 'getAccountBalance',
-    description: 'Get GL balances (opening/activity/closing, debit, credit) for a period. Omit account to list balances for ALL accounts in the period.',
+    description: 'Get GL trial-balance figures (opening, debit, credit, closing) for every account in a period. Omit account to list ALL accounts.',
     inputSchema: {
       type: 'object',
       properties: {
+        ledger_name: { type: 'string', description: 'General Ledger name (e.g., BUIMERC LEDGER)' },
         period_names: { type: 'string', description: 'Period name (e.g., Jan-26)' },
         company: { type: 'string', description: 'Company code (optional)' },
-        account_type: { type: 'string', description: 'Account type filter, e.g. Asset, Liability (optional)' },
         account: { type: 'string', description: 'GL Account number (optional — omit to list all accounts)' }
       },
-      required: ['period_names']
+      required: ['ledger_name', 'period_names']
     }
   },
   {
     name: 'searchAccounts',
-    description: 'Search the chart of accounts by account number or description',
+    description: 'List or search the chart of accounts (account combination + description) active in a period',
     inputSchema: {
       type: 'object',
       properties: {
+        ledger_name: { type: 'string', description: 'General Ledger name (e.g., BUIMERC LEDGER)' },
+        period_names: { type: 'string', description: 'Period name (e.g., Jan-26)' },
         search_term: { type: 'string', description: 'Search term — matches account number or description (optional, omit to list all accounts)' }
       },
-      required: []
+      required: ['ledger_name', 'period_names']
     }
   },
   {
