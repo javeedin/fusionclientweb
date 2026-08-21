@@ -8,6 +8,7 @@ import type { ColumnsType } from 'antd/es/table';
 import {
   HomeOutlined, SearchOutlined, ReloadOutlined, AuditOutlined,
   DollarOutlined, InfoCircleOutlined, StopOutlined, ApiOutlined,
+  SyncOutlined, CheckCircleOutlined, ClockCircleOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -70,12 +71,10 @@ const Retirements: React.FC = () => {
 
   // Accounting modal
   interface AcctLine { label: string; account: string; desc: string; dr: number; cr: number }
-  const [acctModalOpen, setAcctModalOpen] = useState(false);
-  const [acctModalRec, setAcctModalRec] = useState<RetirementRecord | null>(null);
-  const [acctLoading, setAcctLoading] = useState(false);
-  const [acctLines, setAcctLines] = useState<AcctLine[]>([]);
-  const [acctPosting, setAcctPosting] = useState(false);
-  const [acctPosted, setAcctPosted] = useState(false);
+  interface AcctStepUI { label: string; method: string; url: string; payload?: any; status: 'pending' | 'posting' | 'done' | 'error'; detail?: string; response?: any; expanded?: boolean }
+  interface AcctModalState { assetNumber: string; retirementId: string; loading: boolean; error?: string; acctLines?: AcctLine[]; posting: boolean; posted: boolean; steps: AcctStepUI[] }
+
+  const [acctModal, setAcctModal] = useState<AcctModalState | null>(null);
 
   // API test modal
   const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string; data?: any } | null>(null);
@@ -218,17 +217,20 @@ const Retirements: React.FC = () => {
 
   const openAccounting = async (record: RetirementRecord | null) => {
     if (!record) return;
-    setAcctModalRec(record);
-    setAcctModalOpen(true);
-    setAcctLoading(true);
-    setAcctPosted(false);
-    setAcctLines([]);
+    setAcctModal({
+      assetNumber: record.assetNumber,
+      retirementId: record.retirementId,
+      loading: true,
+      acctLines: [],
+      posting: false,
+      posted: false,
+      steps: [],
+    });
 
     try {
       const preview = await getRetirementAccountingPreview(record.retirementId);
       if (!preview?.lines || preview.lines.length === 0) {
-        message.error(preview.error || 'No accounting entries generated for this retirement');
-        setAcctLoading(false);
+        setAcctModal(m => m && { ...m, error: preview.error || 'No accounting entries generated for this retirement', loading: false });
         return;
       }
 
@@ -239,76 +241,91 @@ const Retirements: React.FC = () => {
         dr: Number(l.enteredDr || 0),
         cr: Number(l.enteredCr || 0),
       })));
-      setAcctLines(lines);
+      setAcctModal(m => m && { ...m, acctLines: lines, loading: false });
     } catch (error) {
       console.error('Error loading accounting preview:', error);
-      message.error('Failed to load accounting preview');
-    } finally {
-      setAcctLoading(false);
+      setAcctModal(m => m && { ...m, error: 'Failed to load accounting preview', loading: false });
     }
   };
 
-  const postAccounting = async () => {
-    if (!acctModalRec || !acctLines.length) return;
-    setAcctPosting(true);
-    try {
-      const slaBody = {
-        header: {
-          sourceTable: 'RR_FA_RETIREMENTS',
-          sourceId: acctModalRec.retirementId,
-          reference1: acctModalRec.assetId,
-          reference2: acctModalRec.retirementId,
-          reference5: 'ASSET_RETIREMENT',
-          description: `Asset Retirement ${acctModalRec.assetNumber}`,
-        },
-        lines: acctLines.map((l, i) => ({
-          lineNumber: i + 1,
-          accountCombination: l.account,
-          lineType: l.label,
-          enteredDr: l.dr,
-          enteredCr: l.cr,
-        })),
-      };
+  const setAcctStep = (i: number, patch: Partial<AcctStepUI>) =>
+    setAcctModal(m => m && ({ ...m, steps: m.steps.map((x, idx) => idx === i ? { ...x, ...patch } : x) }));
 
-      // Step 1: Create SLA accounting
+  const postAccounting = async () => {
+    if (!acctModal?.acctLines?.length) return;
+    const { acctLines, retirementId, assetNumber } = acctModal;
+
+    const slaBody = {
+      header: {
+        sourceTable: 'RR_FA_RETIREMENTS',
+        sourceId: retirementId,
+        reference1: editRecord?.assetId,
+        reference2: retirementId,
+        reference5: 'ASSET_RETIREMENT',
+        description: `Asset Retirement ${assetNumber}`,
+      },
+      lines: acctLines.map((l, i) => ({
+        lineNumber: i + 1,
+        accountCombination: l.account,
+        lineType: l.label,
+        enteredDr: l.dr,
+        enteredCr: l.cr,
+      })),
+    };
+
+    const steps: AcctStepUI[] = [
+      { label: '1 · Create SLA Accounting', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/sla/accounting/create`, payload: slaBody, status: 'pending', expanded: true },
+      { label: '2 · Post SLA to GL Journal', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/gl/journals/create`, payload: { note: 'built by postSlaToGL from the SLA header' }, status: 'pending', expanded: false },
+      { label: '3 · Update Retirement Status', method: 'PUT', url: `${APEX_DB_CONFIG.baseUrl}/fa/retirements/${retirementId}/status`, payload: { status: 'ACCOUNTED' }, status: 'pending', expanded: false },
+    ];
+    setAcctModal(m => m && ({ ...m, posting: true, steps }));
+
+    try {
+      // Step 1 — SLA
+      setAcctStep(0, { status: 'posting' });
       const slaRes = await createSlaAccounting(slaBody as any);
       if (!slaRes.headerId) {
-        message.error(slaRes.error || 'Failed to create SLA accounting');
-        setAcctPosting(false);
+        setAcctStep(0, { status: 'error', detail: slaRes.error || slaRes.message || 'SLA failed', response: slaRes });
+        setAcctModal(m => m && ({ ...m, posting: false }));
+        message.error(slaRes.error || slaRes.message || 'SLA accounting failed');
         return;
       }
+      setAcctStep(0, { status: 'done', detail: `SLA Header #${slaRes.headerId}`, response: slaRes });
 
-      // Step 2: Post SLA to GL
+      // Step 2 — GL
+      setAcctStep(1, { status: 'posting' });
       const glRes = await postSlaToGL({
         slaHeaderId: slaRes.headerId,
-        sourceNumber: acctModalRec.assetNumber,
-        sourceId: acctModalRec.retirementId,
+        sourceNumber: assetNumber,
+        sourceId: retirementId,
       });
-
       if (!glRes.success) {
-        message.error(glRes.error || 'Failed to post to GL');
-        setAcctPosting(false);
+        setAcctStep(1, { status: 'error', detail: glRes.error || 'GL post failed', response: glRes });
+        setAcctModal(m => m && ({ ...m, posting: false }));
+        message.error(glRes.error || 'GL journal post failed');
         return;
       }
+      setAcctStep(1, { status: 'done', detail: `GL Batch ${glRes.batchId} · Header ${glRes.headerId}`, response: glRes });
 
-      // Step 3: Update retirement status to ACCOUNTED
-      const statusRes = await updateRetirementStatus(acctModalRec.retirementId, 'ACCOUNTED');
+      // Step 3 — Update status
+      setAcctStep(2, { status: 'posting' });
+      const statusRes = await updateRetirementStatus(retirementId, 'ACCOUNTED');
       if (!statusRes.success) {
+        setAcctStep(2, { status: 'error', detail: statusRes.error || 'Status update failed', response: statusRes });
+        setAcctModal(m => m && ({ ...m, posting: false }));
         message.error(statusRes.error || 'Failed to update retirement status');
-        setAcctPosting(false);
         return;
       }
+      setAcctStep(2, { status: 'done', detail: 'Status updated to ACCOUNTED', response: statusRes });
 
-      setAcctPosted(true);
-      message.success('Accounting posted successfully');
+      setAcctModal(m => m && ({ ...m, posting: false, posted: true }));
+      message.success(`Retirement ${assetNumber} accounted and posted to GL`);
       setEditOpen(false);
-      setAcctModalOpen(false);
+      setAcctModal(null);
       runSearch();
-    } catch (error: any) {
-      console.error('Error posting accounting:', error);
-      message.error(error.message || 'Failed to post accounting');
-    } finally {
-      setAcctPosting(false);
+    } catch (e: any) {
+      setAcctModal(m => m && ({ ...m, posting: false }));
+      message.error(e?.message || 'Accounting failed');
     }
   };
 
@@ -897,58 +914,106 @@ const Retirements: React.FC = () => {
         </Modal>
 
         {/* Accounting Preview & Posting Modal */}
-        <Modal
-          title={`Post Accounting - Retirement ${acctModalRec?.retirementId}`}
-          open={acctModalOpen}
-          onCancel={() => setAcctModalOpen(false)}
-          width={1000}
-          footer={[
-            <Button key="cancel" onClick={() => setAcctModalOpen(false)} disabled={acctPosting}>Cancel</Button>,
-            <Button key="post" type="primary" onClick={postAccounting} loading={acctPosting} disabled={acctPosted}>Post Accounting</Button>,
-          ]}
-        >
-          {acctLoading ? (
-            <div style={{ textAlign: 'center', padding: '40px' }}>
+        {acctModal && (
+          <Modal
+            title={<Space><AuditOutlined style={{ color: '#722ed1' }} /><span>Create Accounting — Asset {acctModal.assetNumber} · Retirement {acctModal.retirementId}</span></Space>}
+            open
+            onCancel={() => { if (!acctModal.posting) setAcctModal(null); }}
+            maskClosable={!acctModal.posting}
+            width={1000}
+            footer={[
+              <Button key="cancel" disabled={acctModal.posting} onClick={() => setAcctModal(null)}>Close</Button>,
+              <Button key="run" type="primary" icon={<AuditOutlined />} loading={acctModal.posting}
+                disabled={acctModal.loading || !!acctModal.error || acctModal.posted || !acctModal.acctLines?.length}
+                style={{ background: acctModal.posted ? undefined : FA_COLOR, borderColor: acctModal.posted ? undefined : FA_COLOR }}
+                onClick={postAccounting}>
+                {acctModal.posted ? 'Accounted' : 'Run Accounting'}
+              </Button>,
+            ]}
+          >
+            {acctModal.loading ? (
               <Spin tip="Loading preview..." />
-            </div>
-          ) : acctPosted ? (
-            <div style={{ textAlign: 'center', padding: '40px', color: REDWOOD.success }}>
-              <Text strong style={{ fontSize: 16 }}>✓ Accounting posted successfully</Text>
-            </div>
-          ) : (
-            <>
-              <div style={{ marginBottom: 20 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>Asset: {acctModalRec?.assetNumber}</Text>
-                <br />
-                <Text type="secondary" style={{ fontSize: 12 }}>Retirement ID: {acctModalRec?.retirementId}</Text>
+            ) : acctModal.error ? (
+              <Alert type="warning" showIcon message="Cannot create accounting" description={acctModal.error} />
+            ) : acctModal.posted ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: REDWOOD.success }}>
+                <Text strong style={{ fontSize: 16 }}>✓ Accounting posted successfully</Text>
               </div>
+            ) : (
+              <>
+                <div style={{ marginBottom: 16 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>Asset: {acctModal.assetNumber}</Text>
+                  <br />
+                  <Text type="secondary" style={{ fontSize: 12 }}>Retirement ID: {acctModal.retirementId}</Text>
+                </div>
 
-              <Divider style={{ margin: '16px 0' }} />
+                {acctModal.acctLines && acctModal.acctLines.length > 0 && (
+                  <>
+                    <Divider style={{ margin: '12px 0' }} />
+                    <Text style={{ fontSize: 12, fontWeight: 600 }}>Journal Entries Preview</Text>
+                    <Table
+                      size="small"
+                      style={{ marginTop: 8 }}
+                      columns={[
+                        { title: 'Line', dataIndex: 'label', key: 'label', width: 150 },
+                        { title: 'Account', dataIndex: 'account', key: 'account', width: 180,
+                          render: (v) => <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text> },
+                        { title: 'Description', dataIndex: 'desc', key: 'desc', ellipsis: true },
+                        { title: 'Debit', dataIndex: 'dr', key: 'dr', width: 100, align: 'right' as const,
+                          render: (v) => v > 0 ? formatCurrency(v) : '—' },
+                        { title: 'Credit', dataIndex: 'cr', key: 'cr', width: 100, align: 'right' as const,
+                          render: (v) => v > 0 ? formatCurrency(v) : '—' },
+                      ]}
+                      dataSource={acctModal.acctLines.map((l, i) => ({ ...l, key: i }))}
+                      pagination={false}
+                    />
+                    <div style={{ marginTop: 12, textAlign: 'right', paddingRight: 20 }}>
+                      <Text strong style={{ marginRight: 40 }}>Dr: {formatCurrency(acctModal.acctLines.reduce((sum, l) => sum + l.dr, 0))}</Text>
+                      <Text strong>Cr: {formatCurrency(acctModal.acctLines.reduce((sum, l) => sum + l.cr, 0))}</Text>
+                    </div>
+                  </>
+                )}
 
-              <Table
-                size="small"
-                columns={[
-                  { title: 'Line', dataIndex: 'label', key: 'label', width: 150 },
-                  { title: 'Account', dataIndex: 'account', key: 'account', width: 180,
-                    render: (v) => <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text> },
-                  { title: 'Description', dataIndex: 'desc', key: 'desc', ellipsis: true },
-                  { title: 'Debit', dataIndex: 'dr', key: 'dr', width: 100, align: 'right' as const,
-                    render: (v) => v > 0 ? formatCurrency(v) : '—' },
-                  { title: 'Credit', dataIndex: 'cr', key: 'cr', width: 100, align: 'right' as const,
-                    render: (v) => v > 0 ? formatCurrency(v) : '—' },
-                ]}
-                dataSource={acctLines.map((l, i) => ({ ...l, key: i }))}
-                pagination={false}
-              />
-
-              <div style={{ marginTop: 16, textAlign: 'right' }}>
-                <Text strong style={{ marginRight: 20 }}>Total:</Text>
-                <Text strong style={{ marginRight: 40 }}>Dr: {formatCurrency(acctLines.reduce((sum, l) => sum + l.dr, 0))}</Text>
-                <Text strong>Cr: {formatCurrency(acctLines.reduce((sum, l) => sum + l.cr, 0))}</Text>
-              </div>
-            </>
-          )}
-        </Modal>
+                {acctModal.steps.length > 0 && (
+                  <div style={{ border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 6, marginTop: 16 }}>
+                    {acctModal.steps.map((s, i) => {
+                      const color = s.status === 'done' ? REDWOOD.success : s.status === 'error' ? REDWOOD.primary : s.status === 'posting' ? '#1677ff' : REDWOOD.neutral500;
+                      return (
+                        <div key={i} style={{ borderTop: i === 0 ? 'none' : `1px solid ${REDWOOD.neutral200}` }}>
+                          <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: s.expanded ? '#fafafa' : '#fff' }}
+                            onClick={() => setAcctModal(m => m && ({ ...m, steps: m.steps.map((x, idx) => idx === i ? { ...x, expanded: !x.expanded } : x) }))}>
+                            {s.status === 'posting' ? <SyncOutlined spin style={{ color: '#1677ff' }} />
+                              : s.status === 'done' ? <CheckCircleOutlined style={{ color: REDWOOD.success }} />
+                              : s.status === 'error' ? <Tag color="error" style={{ margin: 0 }}>ERR</Tag>
+                              : <ClockCircleOutlined style={{ color: REDWOOD.neutral500 }} />}
+                            <Text strong style={{ fontSize: 12 }}>{s.label}</Text>
+                            <Text style={{ fontSize: 11, fontFamily: 'monospace', color: REDWOOD.neutral500, flex: 1 }} ellipsis>{s.method} {s.url}</Text>
+                            <Text style={{ fontSize: 11, color, fontWeight: 600 }}>{s.detail}</Text>
+                            <Text style={{ fontSize: 10, color: '#999' }}>{s.expanded ? '▲' : '▼'}</Text>
+                          </div>
+                          {s.expanded && (
+                            <div style={{ padding: '0 12px 10px 32px', display: 'flex', gap: 12 }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <Text style={{ fontSize: 10, color: '#888' }}>Request Payload</Text>
+                                <pre style={{ fontSize: 11, background: '#0d0d0d', color: '#a8ff78', borderRadius: 4, padding: 8, margin: '4px 0 0', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{JSON.stringify(s.payload, null, 2)}</pre>
+                              </div>
+                              {s.response !== undefined && (
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <Text style={{ fontSize: 10, color: '#888' }}>Response</Text>
+                                  <pre style={{ fontSize: 11, background: '#0d0d0d', color: '#79c0ff', borderRadius: 4, padding: 8, margin: '4px 0 0', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{JSON.stringify(s.response, null, 2)}</pre>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </Modal>
+        )}
       </Content>
 
 
