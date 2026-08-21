@@ -23,6 +23,7 @@ import { APEX_DB_CONFIG } from '../../config/api.config';
 import { buildApexUrl } from '../../config/api.helper';
 import AccountSegmentSelector from '../../components/AccountSegmentSelector';
 import AccountSegmentDescriptions from '../../components/AccountSegmentDescriptions';
+import { validateAccountCode } from '../../components/AccountSelector';
 import {
   searchAssets, getAssetDetail, getAssetBooks, getAssetDeprn,
   getAssetDistributions, getAssetInvoices, getAssetTransactions,
@@ -75,6 +76,95 @@ const statusTag = (retiredFlag: string) => (
     {assetStatusLabel(retiredFlag)}
   </Tag>
 );
+
+// ── Retirement Accounts Table Component ─────────────────────────────────────────
+interface RetirementAccountsTableProps {
+  retirement: any;
+}
+
+const RetirementAccountsTable: React.FC<RetirementAccountsTableProps> = ({ retirement }) => {
+  const [descriptions, setDescriptions] = React.useState<Record<string, string>>({});
+
+  React.useEffect(() => {
+    const loadDescriptions = async () => {
+      const descs: Record<string, string> = {};
+      const accounts = [
+        { key: 'deprnReserveAccount', label: 'Depreciation Reserve', dr: true },
+        { key: 'assetCostAccount', label: 'Asset Cost', cr: true },
+        { key: 'proceedsAccount', label: 'Proceeds', mixed: true },
+        { key: 'costOfRemovalAccount', label: 'Cost of Removal', mixed: true },
+        { key: 'gainAccount', label: 'Gain', cr: true },
+        { key: 'lossAccount', label: 'Loss', dr: true },
+      ];
+
+      for (const acc of accounts) {
+        const combo = retirement[acc.key];
+        if (combo && combo !== '—') {
+          try {
+            const result = await validateAccountCode(combo);
+            if (result.segmentDetails) {
+              const segments = Object.values(result.segmentDetails);
+              const segment4 = segments[3];
+              descs[acc.key] = segment4?.description || segment4?.value || combo;
+            }
+          } catch (e) {
+            descs[acc.key] = combo;
+          }
+        }
+      }
+      setDescriptions(descs);
+    };
+    loadDescriptions();
+  }, [retirement]);
+
+  const accounts = [
+    { key: 'deprnReserveAccount', combo: retirement.deprnReserveAccount, desc: descriptions.deprnReserveAccount, label: 'Depreciation Reserve', dr: true },
+    { key: 'assetCostAccount', combo: retirement.assetCostAccount, desc: descriptions.assetCostAccount, label: 'Asset Cost', cr: true },
+    { key: 'proceedsAccount', combo: retirement.proceedsAccount, desc: descriptions.proceedsAccount, label: 'Proceeds', mixed: true },
+    { key: 'costOfRemovalAccount', combo: retirement.costOfRemovalAccount, desc: descriptions.costOfRemovalAccount, label: 'Cost of Removal', mixed: true },
+    { key: 'gainAccount', combo: retirement.gainAccount, desc: descriptions.gainAccount, label: 'Gain', cr: true },
+    { key: 'lossAccount', combo: retirement.lossAccount, desc: descriptions.lossAccount, label: 'Loss', dr: true },
+  ];
+
+  const getAmounts = (key: string) => {
+    const cost = Number(retirement.costRetired || 0);
+    const reserve = Number(retirement.nbvRetired || 0) ? cost - Number(retirement.nbvRetired || 0) : 0;
+    const proceeds = Number(retirement.proceedsOfSale || 0);
+    const removal = Number(retirement.costOfRemoval || 0);
+    const gainLoss = proceeds - removal - (cost - reserve);
+
+    switch (key) {
+      case 'deprnReserveAccount': return { dr: reserve, cr: 0 };
+      case 'assetCostAccount': return { dr: 0, cr: cost };
+      case 'proceedsAccount': return proceeds > 0 ? { dr: 0, cr: proceeds } : { dr: Math.abs(proceeds), cr: 0 };
+      case 'costOfRemovalAccount': return removal > 0 ? { dr: 0, cr: removal } : { dr: Math.abs(removal), cr: 0 };
+      case 'gainAccount': return gainLoss > 0 ? { dr: 0, cr: gainLoss } : { dr: 0, cr: 0 };
+      case 'lossAccount': return gainLoss < 0 ? { dr: Math.abs(gainLoss), cr: 0 } : { dr: 0, cr: 0 };
+      default: return { dr: 0, cr: 0 };
+    }
+  };
+
+  return (
+    <Table
+      size="small"
+      columns={[
+        { title: 'Account Type', dataIndex: 'label', key: 'label', width: 150 },
+        { title: 'Account', dataIndex: 'combo', key: 'combo', width: 200, render: (v) => v ? <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text> : '—' },
+        { title: 'Description (Segment 4)', dataIndex: 'desc', key: 'desc', ellipsis: true },
+        { title: 'Debit', dataIndex: 'dr', key: 'dr', width: 90, align: 'right' as const, render: (_, rec) => {
+          const amt = getAmounts(rec.key).dr;
+          return amt > 0 ? formatCurrency(amt) : '—';
+        }},
+        { title: 'Credit', dataIndex: 'cr', key: 'cr', width: 90, align: 'right' as const, render: (_, rec) => {
+          const amt = getAmounts(rec.key).cr;
+          return amt > 0 ? formatCurrency(amt) : '—';
+        }},
+      ]}
+      dataSource={accounts.filter(a => a.combo).map((a, i) => ({ ...a, key: i }))}
+      pagination={false}
+    />
+  );
+};
 
 // ── Per-tab data ───────────────────────────────────────────────────────────────
 interface OpenAssetTab {
@@ -1048,26 +1138,7 @@ const AssetTabContent: React.FC<{
               </Descriptions>
 
               <Text strong style={{ fontSize: 13, marginTop: 20, marginBottom: 12, display: 'block' }}>Accounting Accounts</Text>
-              <Descriptions column={2} size="small" bordered labelStyle={{ fontWeight: 500, width: 140 }}>
-                <Descriptions.Item label="Asset Cost Account" span={2}>
-                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.assetCostAccount || '—'}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="Depreciation Reserve" span={2}>
-                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.deprnReserveAccount || '—'}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="Proceeds Account" span={2}>
-                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.proceedsAccount || '—'}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="Cost of Removal Account" span={2}>
-                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.costOfRemovalAccount || '—'}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="Gain Account" span={2}>
-                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.gainAccount || '—'}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="Loss Account" span={2}>
-                  <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{assetRetirement.lossAccount || '—'}</Text>
-                </Descriptions.Item>
-              </Descriptions>
+              <RetirementAccountsTable retirement={assetRetirement} />
             </>
           ),
           okText: 'Close',
