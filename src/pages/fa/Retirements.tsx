@@ -21,7 +21,7 @@ import type { RetirementRecord, BookControlRecord } from '../../services/fa.serv
 import { buildApexUrl } from '../../config/api.helper';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { validateAccountCode } from '../../components/AccountSelector';
-import { postSlaToGL } from '../../services/glPosting.service';
+import { postSlaToGL, buildGlJournalPayload, makeBatchName } from '../../services/glPosting.service';
 import type { GlPostingOptions } from '../../services/glPosting.service';
 
 const { Content } = Layout;
@@ -274,14 +274,51 @@ const Retirements: React.FC = () => {
   const initializeAccounting = () => {
     if (!acctModal?.acctLines?.length || !acctModal?.previewHeader) return;
     const { retirementId, previewHeader, previewLines } = acctModal;
+    const userEmail = sessionStorage.getItem('userEmail') || 'reacterp';
 
     // Build SLA body for display
     const slaBody = { header: previewHeader, lines: previewLines || [] };
 
+    // Build GL payload for display (using same logic as runStep)
+    const glOptions: GlPostingOptions = {
+      slaHeaderId: 0,  // Will be populated from SLA response
+      sourceNumber: String(previewHeader.sourceNumber),
+      sourceId: previewHeader.sourceId,
+      eventTypeCode: previewHeader.eventTypeCode,
+      periodName: previewHeader.periodName,
+      ledgerName: previewHeader.ledgerName,
+      ledgerId: previewHeader.ledgerId,
+      currency: previewHeader.currencyCode,
+      accountingDate: previewHeader.accountingDate,
+      legalEntity: '',
+      businessUnit: '',
+      jeCategory: 'Retirement',
+      jeSource: 'Fixed Assets',
+      batchSource: 'Fixed Assets',
+      journalName: `FA Retirement — ${previewHeader.sourceNumber} — ${previewHeader.periodName}`,
+      journalDescription: previewHeader.description,
+      lines: (previewLines || []).map(l => ({
+        lineType: l.lineType,
+        enteredDr: l.enteredDr || null,
+        enteredCr: l.enteredCr || null,
+        accountedDr: l.accountedDr || null,
+        accountedCr: l.accountedCr || null,
+        description: l.description,
+        currencyCode: previewHeader.currencyCode,
+        accountingDate: previewHeader.accountingDate,
+        accountCombination: l.accountCombination,
+        accountingClass: l.accountingClass,
+        legalEntity: null,
+      })),
+      createdBy: userEmail,
+    };
+    const batchName = makeBatchName(previewHeader.eventTypeCode, previewHeader.sourceNumber);
+    const glPayload = buildGlJournalPayload(glOptions, batchName);
+
     // Just initialize the steps panel without running
     const steps: AcctStepUI[] = [
       { label: '1 · Create SLA Accounting', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/sla/accounting/create`, payload: slaBody, status: 'pending', expanded: true },
-      { label: '2 · Post SLA to GL Journal', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/gl/journals/create`, payload: { note: 'built by postSlaToGL' }, status: 'pending', expanded: false },
+      { label: '2 · Post SLA to GL Journal', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/gl/journals/create`, payload: glPayload, status: 'pending', expanded: false },
       { label: '3 · Update Retirement Status', method: 'PUT', url: `${APEX_DB_CONFIG.baseUrl}/fa/retirements/${retirementId}/status`, payload: { status: 'ACCOUNTED' }, status: 'pending', expanded: false },
     ];
     setAcctModal(m => m && ({ ...m, steps }));
