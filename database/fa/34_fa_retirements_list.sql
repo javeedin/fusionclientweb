@@ -136,6 +136,8 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
     v_acc_gain             VARCHAR2(200);
     v_acc_loss             VARCHAR2(200);
     v_i                    NUMBER;
+    v_nbv_retired          NUMBER;
+    v_gain_loss            NUMBER;
   BEGIN
     -- Parse JSON request body
     APEX_JSON.PARSE(p_body);
@@ -165,6 +167,20 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
       RETURN;
     END IF;
 
+    -- Calculate NBV and Gain/Loss from current asset books
+    BEGIN
+      SELECT NVL(COST, 0) - NVL(DEPRN_RESERVE, 0)
+      INTO v_nbv_retired
+      FROM RR_FA_BOOKS
+      WHERE ASSET_ID = v_asset_id AND BOOK_TYPE_CODE = v_book_type_code;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        v_nbv_retired := 0;
+    END;
+
+    -- Calculate gain/loss: proceeds - removal cost - nbv
+    v_gain_loss := v_proceeds_of_sale - v_cost_of_removal - v_nbv_retired;
+
     -- Insert retirement record
     INSERT INTO RR_FA_RETIREMENTS (
       RETIREMENT_ID,
@@ -172,8 +188,10 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
       ASSET_ID,
       DATE_RETIRED,
       COST_RETIRED,
+      NBV_RETIRED,
       PROCEEDS_OF_SALE,
       COST_OF_REMOVAL,
+      GAIN_LOSS_AMOUNT,
       RETIREMENT_TYPE_CODE,
       STATUS,
       CREATION_DATE,
@@ -186,8 +204,10 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
       v_asset_id,
       TO_DATE(v_date_retired, 'YYYY-MM-DD'),
       v_cost_retired,
+      v_nbv_retired,
       v_proceeds_of_sale,
       v_cost_of_removal,
+      v_gain_loss,
       v_retirement_type_code,
       'DRAFT',
       SYSTIMESTAMP,
