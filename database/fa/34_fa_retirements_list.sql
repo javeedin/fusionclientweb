@@ -56,7 +56,13 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
              r.PROCEEDS_OF_SALE,
              r.COST_OF_REMOVAL,
              r.RETIREMENT_TYPE_CODE,
-             r.SOLD_TO
+             r.SOLD_TO,
+             r.ASSET_COST_ACCOUNT,
+             r.DEPRN_RESERVE_ACCOUNT,
+             r.PROCEEDS_ACCOUNT,
+             r.COST_OF_REMOVAL_ACCOUNT,
+             r.GAIN_ACCOUNT,
+             r.LOSS_ACCOUNT
       FROM RR_FA_RETIREMENTS r
       LEFT JOIN RR_FA_ADDITIONS a ON r.ASSET_ID = a.ASSET_ID
       WHERE (r.BOOK_TYPE_CODE = p_book_type_code OR p_book_type_code IS NULL)
@@ -78,6 +84,12 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
       APEX_JSON.WRITE('costOfRemoval', r.COST_OF_REMOVAL);
       APEX_JSON.WRITE('retirementTypeCode', r.RETIREMENT_TYPE_CODE);
       APEX_JSON.WRITE('soldTo', r.SOLD_TO);
+      APEX_JSON.WRITE('assetCostAccount', r.ASSET_COST_ACCOUNT);
+      APEX_JSON.WRITE('deprnReserveAccount', r.DEPRN_RESERVE_ACCOUNT);
+      APEX_JSON.WRITE('proceedsAccount', r.PROCEEDS_ACCOUNT);
+      APEX_JSON.WRITE('costOfRemovalAccount', r.COST_OF_REMOVAL_ACCOUNT);
+      APEX_JSON.WRITE('gainAccount', r.GAIN_ACCOUNT);
+      APEX_JSON.WRITE('lossAccount', r.LOSS_ACCOUNT);
       APEX_JSON.CLOSE_OBJECT;
     END LOOP;
 

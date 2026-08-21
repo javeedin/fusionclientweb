@@ -59,6 +59,12 @@ const Retirements: React.FC = () => {
   const [detailOpen,   setDetailOpen]   = useState(false);
   const [detailRecord, setDetailRecord] = useState<RetirementRecord | null>(null);
 
+  // Edit modal
+  const [editOpen,   setEditOpen]   = useState(false);
+  const [editRecord, setEditRecord] = useState<RetirementRecord | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+  const [accountsWithDesc, setAccountsWithDesc] = useState<Record<string, { combo: string; segments: string }>>({});
+
   // API test modal
   const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string; data?: any } | null>(null);
   const [apiTestLoading, setApiTestLoading] = useState(false);
@@ -135,6 +141,54 @@ const Retirements: React.FC = () => {
     loadRetirements();
   };
 
+  const fetchAccountSegmentDescriptions = async (accountCombos: Record<string, string | null>) => {
+    const results: Record<string, { combo: string; segments: string }> = {};
+    const combosToFetch = Object.entries(accountCombos).filter(([_, v]) => v);
+
+    for (const [key, combo] of combosToFetch) {
+      if (!combo) continue;
+      try {
+        const params = new URLSearchParams({ combination: combo });
+        const url = `${APEX_DB_CONFIG.baseUrl}/fa/gl-code-combination?${params}`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json();
+          results[key] = { combo, segments: data.description || combo };
+        } else {
+          results[key] = { combo, segments: combo };
+        }
+      } catch (error) {
+        results[key] = { combo, segments: combo };
+      }
+    }
+    return results;
+  };
+
+  const openEdit = async (record: RetirementRecord) => {
+    setEditRecord(record);
+    setEditOpen(true);
+    setEditLoading(true);
+
+    try {
+      const accounts = {
+        assetCost: record.assetCostAccount || '',
+        deprnReserve: record.deprnReserveAccount || '',
+        proceeds: record.proceedsAccount || '',
+        costOfRemoval: record.costOfRemovalAccount || '',
+        gain: record.gainAccount || '',
+        loss: record.lossAccount || '',
+      };
+
+      const descs = await fetchAccountSegmentDescriptions(accounts);
+      setAccountsWithDesc(descs);
+    } catch (error) {
+      console.error('Error fetching accounts:', error);
+      message.error('Failed to load account details');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   const handleRetireSubmit = async () => {
     if (!retireTarget) return;
     try {
@@ -197,12 +251,18 @@ const Retirements: React.FC = () => {
                  color: statusColor[v] || REDWOOD.neutral600, border: `1px solid ${statusColor[v] || REDWOOD.neutral600}40` }}>
         {v || '—'}
       </Tag> },
-    { title: '', key: 'actions', width: 60, align: 'center' as const,
+    { title: '', key: 'actions', width: 100, align: 'center' as const,
       render: (_: any, record: RetirementRecord) => (
-        <Tooltip title="View details">
-          <Button size="small" type="text" icon={<InfoCircleOutlined />}
-            onClick={() => { setDetailRecord(record); setDetailOpen(true); }} />
-        </Tooltip>
+        <Space size="small">
+          <Tooltip title="Edit accounting">
+            <Button size="small" type="text" style={{ color: FA_COLOR }}
+              onClick={() => openEdit(record)}>Edit</Button>
+          </Tooltip>
+          <Tooltip title="View details">
+            <Button size="small" type="text" icon={<InfoCircleOutlined />}
+              onClick={() => { setDetailRecord(record); setDetailOpen(true); }} />
+          </Tooltip>
+        </Space>
       ),
     },
   ];
@@ -499,6 +559,80 @@ const Retirements: React.FC = () => {
               </Descriptions.Item>
               <Descriptions.Item label="Sold To">{detailRecord.soldTo || '—'}</Descriptions.Item>
             </Descriptions>
+          )}
+        </Modal>
+
+        {/* Edit Retirement Modal */}
+        <Modal
+          open={editOpen}
+          title={
+            <Space>
+              <StopOutlined style={{ color: REDWOOD.primary }} />
+              <span>Edit Retirement — {editRecord?.retirementId}</span>
+            </Space>
+          }
+          onCancel={() => setEditOpen(false)}
+          footer={[
+            <Button key="close" onClick={() => setEditOpen(false)}>Close</Button>,
+          ]}
+          width={800}
+          loading={editLoading}
+        >
+          {editRecord && (
+            <>
+              <Descriptions column={2} size="small" bordered style={{ marginBottom: 24 }} labelStyle={{ fontWeight: 500, width: 150 }}>
+                <Descriptions.Item label="Retirement ID">{editRecord.retirementId}</Descriptions.Item>
+                <Descriptions.Item label="Asset Number">{editRecord.assetNumber}</Descriptions.Item>
+                <Descriptions.Item label="Book">{editRecord.bookTypeCode}</Descriptions.Item>
+                <Descriptions.Item label="Date Retired">{editRecord.dateRetired}</Descriptions.Item>
+                <Descriptions.Item label="Status">
+                  <Tag style={{ borderRadius: 4, background: `${statusColor[editRecord.status] || REDWOOD.neutral600}20`,
+                    color: statusColor[editRecord.status] || REDWOOD.neutral600 }}>
+                    {editRecord.status}
+                  </Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Retirement Type">{editRecord.retirementTypeCode || '—'}</Descriptions.Item>
+              </Descriptions>
+
+              <Divider orientation="left" style={{ fontSize: 12, margin: '16px 0 12px' }}>
+                Accounting Accounts
+              </Divider>
+
+              {!editLoading && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {[
+                    { label: 'Asset Cost Account', key: 'assetCost', value: editRecord.assetCostAccount },
+                    { label: 'Depreciation Reserve Account', key: 'deprnReserve', value: editRecord.deprnReserveAccount },
+                    { label: 'Proceeds of Sale Account', key: 'proceeds', value: editRecord.proceedsAccount },
+                    { label: 'Cost of Removal Account', key: 'costOfRemoval', value: editRecord.costOfRemovalAccount },
+                    { label: 'Gain Account', key: 'gain', value: editRecord.gainAccount },
+                    { label: 'Loss Account', key: 'loss', value: editRecord.lossAccount },
+                  ].map(({ label, key, value }) => (
+                    <Card key={key} size="small" style={{ background: REDWOOD.neutral100 }}>
+                      <div style={{ marginBottom: 8 }}>
+                        <Text strong style={{ fontSize: 12, color: REDWOOD.neutral900 }}>{label}</Text>
+                      </div>
+                      {value ? (
+                        <>
+                          <div style={{ marginBottom: 4 }}>
+                            <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, color: '#0572CE' }}>
+                              {value}
+                            </Text>
+                          </div>
+                          {accountsWithDesc[key] && (
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                              {accountsWithDesc[key].segments}
+                            </Text>
+                          )}
+                        </>
+                      ) : (
+                        <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </Modal>
 

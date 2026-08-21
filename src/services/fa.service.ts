@@ -353,6 +353,12 @@ export interface RetirementRecord {
   costOfRemoval: string;
   retirementTypeCode: string;
   soldTo: string;
+  assetCostAccount?: string;
+  deprnReserveAccount?: string;
+  proceedsAccount?: string;
+  costOfRemovalAccount?: string;
+  gainAccount?: string;
+  lossAccount?: string;
 }
 
 export interface DeprnWorkbenchRecord {
