@@ -139,7 +139,7 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       ||   ',"eventDate":' || jstr(TO_CHAR(NVL(v_date_retired, SYSDATE), 'YYYY-MM-DD'))
       ||   ',"accountingDate":' || jstr(TO_CHAR(NVL(v_date_retired, SYSDATE), 'YYYY-MM-DD'))
       ||   ',"periodName":' || jstr(TO_CHAR(NVL(v_date_retired, SYSDATE), 'Mon-YY'))
-      ||   ',"ledgerId":' || TO_CHAR(v_ledger_id)
+      ||   ',"ledgerId":' || NVL(TO_CHAR(v_ledger_id), '1')
       ||   ',"ledgerName":' || jstr(NVL(v_ledger_name, 'Primary Ledger'))
       ||   ',"currencyCode":' || jstr(v_currency_code)
       ||   ',"ledgerCurrency":' || jstr(v_currency_code)
@@ -148,8 +148,8 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       ||   ',"bookTypeCode":' || jstr(v_book_type_code)
       ||   ',"assetNumber":' || jstr(v_asset_number)
       ||   ',"assetDescription":' || jstr(v_asset_description)
-      ||   ',"costRetired":' || TO_CHAR(v_cost_retired)
-      ||   ',"totalAmount":' || TO_CHAR(v_cost_retired)
+      ||   ',"costRetired":' || NVL(TO_CHAR(v_cost_retired), '0')
+      ||   ',"totalAmount":' || NVL(TO_CHAR(v_cost_retired), '0')
       || '}'
       || ',"lines":[';
 
@@ -158,9 +158,9 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       || '"lineNumber":1,"lineType":"DR","accountingClass":"ACCUMULATED_DEPRECIATION"'
       || ',"description":"Retirement Accumulated Depreciation — ' || REPLACE(v_asset_number, '"', '\"')
       ||                                        ' — ' || REPLACE(SUBSTR(v_asset_description, 1, 100), '"', '\"') || '"'
-      || ',"accountedDr":' || NVL(TO_CHAR(v_accumulated_deprn), '0')
+      || ',"accountedDr":' || TO_CHAR(NVL(v_accumulated_deprn, 0))
       || ',"accountedCr":0'
-      || ',"enteredDr":' || NVL(TO_CHAR(v_accumulated_deprn), '0')
+      || ',"enteredDr":' || TO_CHAR(NVL(v_accumulated_deprn, 0))
       || ',"enteredCr":0'
       || ',"accountCombination":' || NVL(jstr(v_deprn_account), 'null')
       || ',"reference1":' || jstr(v_asset_number)
@@ -171,9 +171,9 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       || ',"description":"Retirement Asset Cost — ' || REPLACE(v_asset_number, '"', '\"')
       ||                               ' — ' || REPLACE(SUBSTR(v_asset_description, 1, 100), '"', '\"') || '"'
       || ',"accountedDr":0'
-      || ',"accountedCr":' || NVL(TO_CHAR(v_cost_retired), '0')
+      || ',"accountedCr":' || TO_CHAR(NVL(v_cost_retired, 0))
       || ',"enteredDr":0'
-      || ',"enteredCr":' || NVL(TO_CHAR(v_cost_retired), '0')
+      || ',"enteredCr":' || TO_CHAR(NVL(v_cost_retired, 0))
       || ',"accountCombination":' || NVL(jstr(v_asset_cost_account), 'null')
       || ',"reference1":' || jstr(v_asset_number)
       || ',"reference2":' || jstr(p_retirement_id)
@@ -186,9 +186,9 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
         || '"lineNumber":3,"lineType":"DR","accountingClass":"PROCEEDS"'
         || ',"description":"Proceeds of Sale — ' || REPLACE(v_asset_number, '"', '\"')
         ||                           ' — ' || REPLACE(SUBSTR(v_asset_description, 1, 100), '"', '\"') || '"'
-        || ',"accountedDr":' || TO_CHAR(v_proceeds_of_sale)
+        || ',"accountedDr":' || TO_CHAR(NVL(v_proceeds_of_sale, 0))
         || ',"accountedCr":0'
-        || ',"enteredDr":' || TO_CHAR(v_proceeds_of_sale)
+        || ',"enteredDr":' || TO_CHAR(NVL(v_proceeds_of_sale, 0))
         || ',"enteredCr":0'
         || ',"accountCombination":' || NVL(jstr(v_proceeds_account), 'null')
         || ',"reference1":' || jstr(v_asset_number)
