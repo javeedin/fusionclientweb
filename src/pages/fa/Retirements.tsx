@@ -259,9 +259,12 @@ const Retirements: React.FC = () => {
       header: {
         sourceTable: 'RR_FA_RETIREMENTS',
         sourceId: retirementId,
-        reference1: editRecord?.assetId,
-        reference2: retirementId,
-        reference5: 'ASSET_RETIREMENT',
+        sourceNumber: assetNumber,
+        reference1: editRecord?.assetId,      // Asset ID
+        reference2: retirementId,               // Retirement ID
+        reference3: editRecord?.bookTypeCode,  // Book Type Code
+        reference4: editRecord?.dateRetired,   // Date Retired
+        reference5: 'ASSET_RETIREMENT',        // Event Type
         description: `Asset Retirement ${assetNumber}`,
       },
       lines: acctLines.map((l, i) => ({
