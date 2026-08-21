@@ -543,6 +543,17 @@ function runStdioServer() {
   const readline = require('readline');
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
+  // Don't exit while tool calls are still in flight — stdin can close (or the
+  // client can cycle the pipe) while an Oracle request is awaiting its response.
+  let pending = 0;
+  let stdinClosed = false;
+  const maybeExit = () => {
+    if (stdinClosed && pending === 0) {
+      log('INFO', 'stdin closed and no pending requests, shutting down');
+      process.exit(0);
+    }
+  };
+
   rl.on('line', async (line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
@@ -556,15 +567,21 @@ function runStdioServer() {
       }) + '\n');
       return;
     }
-    const response = await handleMcpRequest(request);
-    if (response) {
-      process.stdout.write(JSON.stringify(response) + '\n');
+    pending++;
+    try {
+      const response = await handleMcpRequest(request);
+      if (response) {
+        process.stdout.write(JSON.stringify(response) + '\n');
+      }
+    } finally {
+      pending--;
+      maybeExit();
     }
   });
 
   rl.on('close', () => {
-    log('INFO', 'stdin closed, shutting down');
-    process.exit(0);
+    stdinClosed = true;
+    maybeExit();
   });
 }
 
