@@ -41,7 +41,7 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     v_asset_number        VARCHAR2(100);
     v_asset_description   VARCHAR2(500);
     v_book_type_code      VARCHAR2(100);
-    v_date_retired        VARCHAR2(30);
+    v_date_retired        DATE;
     v_cost_retired        NUMBER := 0;
     v_nbv_retired         NUMBER := 0;
     v_gain_loss_amount    NUMBER := 0;
@@ -54,7 +54,6 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     v_gain_account        VARCHAR2(200);
     v_loss_account        VARCHAR2(200);
     v_acct_status         VARCHAR2(30);
-    v_acct_date           VARCHAR2(30);
     v_company_code        VARCHAR2(30);
     v_ledger_name         VARCHAR2(100);
     v_ledger_id           NUMBER := 1;
@@ -66,20 +65,19 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     BEGIN
       SELECT
         r.RETIREMENT_ID, r.ASSET_ID, r.BOOK_TYPE_CODE, r.DATE_RETIRED,
-        NVL(CAST(r.COST_RETIRED AS NUMBER), 0),
-        NVL(CAST(r.NBV_RETIRED AS NUMBER), 0),
-        NVL(CAST(r.GAIN_LOSS_AMOUNT AS NUMBER), 0),
-        NVL(CAST(r.PROCEEDS_OF_SALE AS NUMBER), 0),
-        NVL(CAST(r.COST_OF_REMOVAL AS NUMBER), 0),
+        NVL(r.COST_RETIRED, 0),
+        NVL(r.NBV_RETIRED, 0),
+        NVL(r.GAIN_LOSS_AMOUNT, 0),
+        NVL(r.PROCEEDS_OF_SALE, 0),
+        NVL(r.COST_OF_REMOVAL, 0),
         r.STATUS,
-        NVL(TO_CHAR(r.DATE_RETIRED, 'YYYY-MM-DD'), TO_CHAR(SYSDATE, 'YYYY-MM-DD')),
         r.ASSET_COST_ACCOUNT, r.DEPRN_RESERVE_ACCOUNT, r.PROCEEDS_ACCOUNT,
         r.COST_OF_REMOVAL_ACCOUNT, r.GAIN_ACCOUNT, r.LOSS_ACCOUNT,
-        a.ASSET_NUMBER, a.DESCRIPTION
+        NVL(a.ASSET_NUMBER, ''), NVL(a.DESCRIPTION, '')
       INTO
         v_retirement_id, v_asset_id, v_book_type_code, v_date_retired,
         v_cost_retired, v_nbv_retired, v_gain_loss_amount,
-        v_proceeds_of_sale, v_cost_of_removal, v_acct_status, v_acct_date,
+        v_proceeds_of_sale, v_cost_of_removal, v_acct_status,
         v_asset_cost_account, v_deprn_account, v_proceeds_account,
         v_removal_account, v_gain_account, v_loss_account,
         v_asset_number, v_asset_description
@@ -93,7 +91,11 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
         RETURN;
       WHEN VALUE_ERROR THEN
         p_http_status := 500;
-        p_result := '{"success":false,"error":"Invalid numeric data in retirement record"}';
+        p_result := '{"success":false,"error":"Invalid numeric data in retirement record: ' || SQLERRM || '"}';
+        RETURN;
+      WHEN OTHERS THEN
+        p_http_status := 500;
+        p_result := '{"success":false,"error":"Error fetching retirement data: ' || REPLACE(SQLERRM, '"', '\"') || '"}';
         RETURN;
     END;
 
@@ -123,7 +125,7 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     v_json_response := '{'
       || '"success":true'
       || ',"accountedStatus":' || jstr(v_acct_status)
-      || ',"accountedDate":' || NVL(jstr(v_acct_date), 'null')
+      || ',"accountedDate":' || jstr(TO_CHAR(NVL(v_date_retired, SYSDATE), 'YYYY-MM-DD'))
       || ',"header":{'
       ||   '"moduleName":"FA"'
       ||   ',"source":"Fixed Assets"'
@@ -134,12 +136,10 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       ||   ',"sourceNumber":' || jstr(v_asset_number)
       ||   ',"sourceType":"RETIREMENT"'
       ||   ',"eventTypeCode":"FA_RETIREMENT"'
-      ||   ',"eventDate":' || jstr(NVL(SUBSTR(v_date_retired, 1, 10), TO_CHAR(SYSDATE, 'YYYY-MM-DD')))
-      ||   ',"accountingDate":' || jstr(NVL(SUBSTR(v_date_retired, 1, 10), TO_CHAR(SYSDATE, 'YYYY-MM-DD')))
-      ||   ',"periodName":"' || UPPER(SUBSTR(TO_CHAR(TO_DATE(NVL(SUBSTR(v_date_retired, 1, 10), TO_CHAR(SYSDATE, 'YYYY-MM-DD')), 'YYYY-MM-DD'), 'Mon'), 1, 1))
-      ||                        LOWER(SUBSTR(TO_CHAR(TO_DATE(NVL(SUBSTR(v_date_retired, 1, 10), TO_CHAR(SYSDATE, 'YYYY-MM-DD')), 'YYYY-MM-DD'), 'Mon'), 2))
-      ||                        TO_CHAR(TO_DATE(NVL(SUBSTR(v_date_retired, 1, 10), TO_CHAR(SYSDATE, 'YYYY-MM-DD')), 'YYYY-MM-DD'), '-YY') || '"'
-      ||   ',"ledgerId":' || NVL(TO_CHAR(v_ledger_id), '1')
+      ||   ',"eventDate":' || jstr(TO_CHAR(NVL(v_date_retired, SYSDATE), 'YYYY-MM-DD'))
+      ||   ',"accountingDate":' || jstr(TO_CHAR(NVL(v_date_retired, SYSDATE), 'YYYY-MM-DD'))
+      ||   ',"periodName":' || jstr(TO_CHAR(NVL(v_date_retired, SYSDATE), 'Mon-YY'))
+      ||   ',"ledgerId":' || TO_CHAR(v_ledger_id)
       ||   ',"ledgerName":' || jstr(NVL(v_ledger_name, 'Primary Ledger'))
       ||   ',"currencyCode":' || jstr(v_currency_code)
       ||   ',"ledgerCurrency":' || jstr(v_currency_code)
@@ -148,8 +148,8 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       ||   ',"bookTypeCode":' || jstr(v_book_type_code)
       ||   ',"assetNumber":' || jstr(v_asset_number)
       ||   ',"assetDescription":' || jstr(v_asset_description)
-      ||   ',"costRetired":' || NVL(TO_CHAR(v_cost_retired), '0')
-      ||   ',"totalAmount":' || NVL(TO_CHAR(v_cost_retired), '0')
+      ||   ',"costRetired":' || TO_CHAR(v_cost_retired)
+      ||   ',"totalAmount":' || TO_CHAR(v_cost_retired)
       || '}'
       || ',"lines":[';
 
