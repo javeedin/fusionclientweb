@@ -74,6 +74,11 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
         RETURN;
     END;
 
+    -- Calculate gain/loss if not already set (for retirements created before this change)
+    IF v_gain_loss_amount IS NULL THEN
+      v_gain_loss_amount := NVL(v_proceeds_of_sale, 0) - NVL(v_cost_of_removal, 0) - NVL(v_nbv_retired, 0);
+    END IF;
+
     -- Return header info
     APEX_JSON.WRITE('success', TRUE);
     APEX_JSON.WRITE('retirementId', p_retirement_id);
