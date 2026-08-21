@@ -15,12 +15,14 @@ import dayjs from 'dayjs';
 import {
   getRetirements, getBookControls, retireAsset, formatCurrency,
   getRetirementAccountingPreview, createSlaAccounting, markFaDeprnAccounted,
+  updateRetirementStatus,
 } from '../../services/fa.service';
 import type { RetirementRecord, BookControlRecord } from '../../services/fa.service';
 import { buildApexUrl } from '../../config/api.helper';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { validateAccountCode } from '../../components/AccountSelector';
 import { postSlaToGL } from '../../services/glPosting.service';
+import type { GlPostingOptions } from '../../services/glPosting.service';
 
 const { Content } = Layout;
 const { Text, Title } = Typography;
@@ -72,7 +74,7 @@ const Retirements: React.FC = () => {
   // Accounting modal
   interface AcctLine { label: string; account: string; desc: string; dr: number; cr: number }
   interface AcctStepUI { label: string; method: string; url: string; payload?: any; status: 'pending' | 'posting' | 'done' | 'error'; detail?: string; response?: any; expanded?: boolean }
-  interface AcctModalState { assetNumber: string; retirementId: string; loading: boolean; error?: string; acctLines?: AcctLine[]; posting: boolean; posted: boolean; steps: AcctStepUI[] }
+  interface AcctModalState { assetNumber: string; retirementId: string; assetDescription?: string; assetId?: string; bookTypeCode?: string; dateRetired?: string; loading: boolean; error?: string; acctLines?: AcctLine[]; posting: boolean; posted: boolean; steps: AcctStepUI[] }
 
   const [acctModal, setAcctModal] = useState<AcctModalState | null>(null);
 
@@ -225,6 +227,10 @@ const Retirements: React.FC = () => {
     setAcctModal({
       assetNumber: record.assetNumber,
       retirementId: record.retirementId,
+      assetDescription: record.description,
+      assetId: record.assetId,
+      bookTypeCode: record.bookTypeCode,
+      dateRetired: record.dateRetired,
       loading: true,
       acctLines: [],
       posting: false,
@@ -246,7 +252,14 @@ const Retirements: React.FC = () => {
         dr: Number(l.enteredDr || 0),
         cr: Number(l.enteredCr || 0),
       })));
-      setAcctModal(m => m && { ...m, acctLines: lines, loading: false });
+
+      // Update with asset description from preview if available
+      setAcctModal(m => m && {
+        ...m,
+        acctLines: lines,
+        loading: false,
+        assetDescription: preview.assetDescription || m.assetDescription,
+      });
     } catch (error) {
       console.error('Error loading accounting preview:', error);
       setAcctModal(m => m && { ...m, error: 'Failed to load accounting preview', loading: false });
@@ -258,19 +271,21 @@ const Retirements: React.FC = () => {
 
   const postAccounting = async () => {
     if (!acctModal?.acctLines?.length) return;
-    const { acctLines, retirementId, assetNumber } = acctModal;
+    const { acctLines, retirementId, assetNumber, assetDescription, assetId, bookTypeCode, dateRetired } = acctModal;
+    const userEmail = sessionStorage.getItem('userEmail') || 'reacterp';
 
+    // SLA body with asset description included
     const slaBody = {
       header: {
         sourceTable: 'RR_FA_RETIREMENTS',
         sourceId: retirementId,
         sourceNumber: assetNumber,
-        reference1: editRecord?.assetId,      // Asset ID
-        reference2: retirementId,               // Retirement ID
-        reference3: editRecord?.bookTypeCode,  // Book Type Code
-        reference4: editRecord?.dateRetired,   // Date Retired
-        reference5: 'ASSET_RETIREMENT',        // Event Type
-        description: `Asset Retirement ${assetNumber}`,
+        reference1: assetId,           // Asset ID
+        reference2: retirementId,       // Retirement ID
+        reference3: bookTypeCode,       // Book Type Code
+        reference4: dateRetired,        // Date Retired
+        reference5: 'ASSET_RETIREMENT', // Event Type
+        description: assetDescription || `Asset Retirement ${assetNumber}`,
       },
       lines: acctLines.map((l, i) => ({
         lineNumber: i + 1,
@@ -278,12 +293,43 @@ const Retirements: React.FC = () => {
         lineType: l.label,
         enteredDr: l.dr,
         enteredCr: l.cr,
+        description: l.desc || l.label,
       })),
+    };
+
+    // GL posting options with all required metadata
+    const glOptions: GlPostingOptions = {
+      slaHeaderId: 0, // Will be set after SLA creation
+      sourceNumber: assetNumber,
+      sourceId: retirementId,
+      eventTypeCode: 'ASSET_RETIREMENT',
+      periodName: '', // Will be determined from accounting date
+      ledgerName: bookTypeCode,
+      ledgerId: 1, // Default ledger ID
+      currency: 'USD', // Default currency
+      accountingDate: dateRetired || new Date().toISOString().split('T')[0],
+      legalEntity: '', // Optional
+      businessUnit: bookTypeCode,
+      journalDescription: assetDescription || `Asset Retirement ${assetNumber}`,
+      lines: acctLines.map((l, i) => ({
+        lineType: l.dr > 0 ? 'DR' : 'CR',
+        enteredDr: l.dr > 0 ? l.dr : null,
+        enteredCr: l.cr > 0 ? l.cr : null,
+        accountedDr: l.dr > 0 ? l.dr : null,
+        accountedCr: l.cr > 0 ? l.cr : null,
+        description: `${l.label} - ${assetDescription || assetNumber}`,
+        currencyCode: 'USD',
+        accountingDate: dateRetired || new Date().toISOString().split('T')[0],
+        accountCombination: l.account,
+        accountingClass: null,
+        legalEntity: null,
+      })),
+      createdBy: userEmail,
     };
 
     const steps: AcctStepUI[] = [
       { label: '1 · Create SLA Accounting', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/sla/accounting/create`, payload: slaBody, status: 'pending', expanded: true },
-      { label: '2 · Post SLA to GL Journal', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/gl/journals/create`, payload: { note: 'built by postSlaToGL from the SLA header' }, status: 'pending', expanded: false },
+      { label: '2 · Post SLA to GL Journal', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/gl/journals/create`, payload: { note: 'built by postSlaToGL from SLA header' }, status: 'pending', expanded: false },
       { label: '3 · Update Retirement Status', method: 'PUT', url: `${APEX_DB_CONFIG.baseUrl}/fa/retirements/${retirementId}/status`, payload: { status: 'ACCOUNTED' }, status: 'pending', expanded: false },
     ];
     setAcctModal(m => m && ({ ...m, posting: true, steps }));
@@ -303,9 +349,8 @@ const Retirements: React.FC = () => {
       // Step 2 — GL
       setAcctStep(1, { status: 'posting' });
       const glRes = await postSlaToGL({
+        ...glOptions,
         slaHeaderId: slaRes.headerId,
-        sourceNumber: assetNumber,
-        sourceId: retirementId,
       });
       if (!glRes.success) {
         setAcctStep(1, { status: 'error', detail: glRes.error || 'GL post failed', response: glRes });
