@@ -575,62 +575,103 @@ const Retirements: React.FC = () => {
           footer={[
             <Button key="close" onClick={() => setEditOpen(false)}>Close</Button>,
           ]}
-          width={800}
+          width={1000}
           loading={editLoading}
         >
           {editRecord && (
             <>
-              <Descriptions column={2} size="small" bordered style={{ marginBottom: 24 }} labelStyle={{ fontWeight: 500, width: 150 }}>
-                <Descriptions.Item label="Retirement ID">{editRecord.retirementId}</Descriptions.Item>
-                <Descriptions.Item label="Asset Number">{editRecord.assetNumber}</Descriptions.Item>
-                <Descriptions.Item label="Book">{editRecord.bookTypeCode}</Descriptions.Item>
-                <Descriptions.Item label="Date Retired">{editRecord.dateRetired}</Descriptions.Item>
-                <Descriptions.Item label="Status">
+              {/* Header Info */}
+              <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+                <Col xs={24} sm={6}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>RETIREMENT ID</div>
+                  <Text strong style={{ fontSize: 14 }}>{editRecord.retirementId}</Text>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>ASSET</div>
+                  <Text strong style={{ fontSize: 14 }}>{editRecord.assetNumber}</Text>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>DATE RETIRED</div>
+                  <Text style={{ fontSize: 14 }}>{editRecord.dateRetired}</Text>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 600 }}>STATUS</div>
                   <Tag style={{ borderRadius: 4, background: `${statusColor[editRecord.status] || REDWOOD.neutral600}20`,
                     color: statusColor[editRecord.status] || REDWOOD.neutral600 }}>
                     {editRecord.status}
                   </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="Retirement Type">{editRecord.retirementTypeCode || '—'}</Descriptions.Item>
-              </Descriptions>
+                </Col>
+              </Row>
 
-              <Divider orientation="left" style={{ fontSize: 12, margin: '16px 0 12px' }}>
-                Accounting Accounts
-              </Divider>
+              {/* Financial Summary */}
+              <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+                <Col xs={24} sm={6}>
+                  <Card size="small" styles={{ body: { padding: '8px 12px' } }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Cost Retired</Text>
+                    <Text strong style={{ fontSize: 13, color: REDWOOD.neutral900 }}>{formatCurrency(editRecord.costRetired)}</Text>
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small" styles={{ body: { padding: '8px 12px' } }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>NBV Retired</Text>
+                    <Text strong style={{ fontSize: 13, color: REDWOOD.neutral900 }}>{formatCurrency(editRecord.nbvRetired)}</Text>
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small" styles={{ body: { padding: '8px 12px' } }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Proceeds</Text>
+                    <Text strong style={{ fontSize: 13, color: REDWOOD.neutral900 }}>{formatCurrency(editRecord.proceedsOfSale)}</Text>
+                  </Card>
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Card size="small" styles={{ body: { padding: '8px 12px' } }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Gain / Loss</Text>
+                    <Text strong style={{ fontSize: 13, color: parseFloat(editRecord.gainLossAmount || '0') >= 0 ? REDWOOD.success : REDWOOD.primary }}>
+                      {formatCurrency(editRecord.gainLossAmount)}
+                    </Text>
+                  </Card>
+                </Col>
+              </Row>
 
+              <Divider style={{ margin: '16px 0' }} />
+
+              {/* Accounting Accounts - 2 Rows x 3 Columns */}
               {!editLoading && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {[
-                    { label: 'Asset Cost Account', key: 'assetCost', value: editRecord.assetCostAccount },
-                    { label: 'Depreciation Reserve Account', key: 'deprnReserve', value: editRecord.deprnReserveAccount },
-                    { label: 'Proceeds of Sale Account', key: 'proceeds', value: editRecord.proceedsAccount },
-                    { label: 'Cost of Removal Account', key: 'costOfRemoval', value: editRecord.costOfRemovalAccount },
-                    { label: 'Gain Account', key: 'gain', value: editRecord.gainAccount },
-                    { label: 'Loss Account', key: 'loss', value: editRecord.lossAccount },
-                  ].map(({ label, key, value }) => (
-                    <Card key={key} size="small" style={{ background: REDWOOD.neutral100 }}>
-                      <div style={{ marginBottom: 8 }}>
-                        <Text strong style={{ fontSize: 12, color: REDWOOD.neutral900 }}>{label}</Text>
-                      </div>
-                      {value ? (
-                        <>
-                          <div style={{ marginBottom: 4 }}>
-                            <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, color: '#0572CE' }}>
-                              {value}
-                            </Text>
-                          </div>
-                          {accountsWithDesc[key] && (
-                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
-                              {accountsWithDesc[key].segments}
-                            </Text>
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 12, color: REDWOOD.neutral900 }}>ACCOUNTING ACCOUNTS</div>
+                  <Row gutter={[16, 16]}>
+                    {[
+                      { label: 'Asset Cost Account', key: 'assetCost', value: editRecord.assetCostAccount },
+                      { label: 'Depreciation Reserve Account', key: 'deprnReserve', value: editRecord.deprnReserveAccount },
+                      { label: 'Proceeds of Sale Account', key: 'proceeds', value: editRecord.proceedsAccount },
+                      { label: 'Cost of Removal Account', key: 'costOfRemoval', value: editRecord.costOfRemovalAccount },
+                      { label: 'Gain Account', key: 'gain', value: editRecord.gainAccount },
+                      { label: 'Loss Account', key: 'loss', value: editRecord.lossAccount },
+                    ].map(({ label, key, value }) => (
+                      <Col xs={24} sm={8} key={key}>
+                        <Card size="small" style={{ background: REDWOOD.neutral100, height: '100%' }}>
+                          <Text strong style={{ fontSize: 11, display: 'block', marginBottom: 8, color: REDWOOD.neutral900 }}>
+                            {label}
+                          </Text>
+                          {value ? (
+                            <>
+                              <Text copyable style={{ fontFamily: 'monospace', fontSize: 10, color: '#0572CE', display: 'block', marginBottom: 6, wordBreak: 'break-all' }}>
+                                {value}
+                              </Text>
+                              {accountsWithDesc[key] && (
+                                <Text type="secondary" style={{ fontSize: 10, display: 'block', lineHeight: '1.4' }}>
+                                  {accountsWithDesc[key].segments}
+                                </Text>
+                              )}
+                            </>
+                          ) : (
+                            <Text type="secondary" style={{ fontSize: 10 }}>—</Text>
                           )}
-                        </>
-                      ) : (
-                        <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
-                      )}
-                    </Card>
-                  ))}
-                </div>
+                        </Card>
+                      </Col>
+                    ))}
+                  </Row>
+                </>
               )}
             </>
           )}
