@@ -17,6 +17,7 @@ import {
 import type { RetirementRecord, BookControlRecord } from '../../services/fa.service';
 import { buildApexUrl } from '../../config/api.helper';
 import { APEX_DB_CONFIG } from '../../config/api.config';
+import { validateAccountCode } from '../../components/AccountSelector';
 
 const { Content } = Layout;
 const { Text, Title } = Typography;
@@ -148,16 +149,19 @@ const Retirements: React.FC = () => {
     for (const [key, combo] of combosToFetch) {
       if (!combo) continue;
       try {
-        const params = new URLSearchParams({ combination: combo });
-        const url = `${APEX_DB_CONFIG.baseUrl}/fa/gl-code-combination?${params}`;
-        const response = await fetch(url);
-        if (response.ok) {
-          const data = await response.json();
-          results[key] = { combo, segments: data.description || combo };
+        const validation = await validateAccountCode(combo);
+        if (validation.segmentsLoaded && Object.keys(validation.segmentDetails).length > 0) {
+          // Format segment descriptions: "Company: 01 | LOB: 00 | Dept: 00 | Account: 1111103 | ..."
+          const descriptions = Object.entries(validation.segmentDetails)
+            .map(([_, detail]) => `${detail.description || detail.value}`)
+            .filter(d => d && d !== '')
+            .join(' | ');
+          results[key] = { combo, segments: descriptions || combo };
         } else {
           results[key] = { combo, segments: combo };
         }
       } catch (error) {
+        console.error(`Error fetching segment details for ${combo}:`, error);
         results[key] = { combo, segments: combo };
       }
     }
