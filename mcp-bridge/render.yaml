@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: gl-account-analysis-mcp
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: us-east
+    autoDeploy: true
+
+    # Port configuration
+    port: 3000
+
+    # Environment variables - configure in Render dashboard
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: NODE_ENV
+        value: production
+      # These should be configured in Render dashboard for security:
+      # ORACLE_BASE_URL: https://your-oracle-url
+      # ORACLE_USERNAME: your_username
+      # ORACLE_PASSWORD: your_password
+      # MCP_TOOLS_SCHEMA: optional custom schema
+
+    # Resource limits
+    plan: free  # Change to 'standard' or higher for production
+
+    # Build configuration
+    buildCommand: npm install && npm run build
+    startCommand: node dist/server.js
+
+    # Health check
+    healthCheckPath: /health
+    healthCheckInterval: 30
+
+    # Timeout
+    timeoutSeconds: 30
