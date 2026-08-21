@@ -1932,12 +1932,6 @@ Use these tools to fetch real-time data and provide accurate responses. Call the
         </div>
       )}
 
-      {/* Button to enter fullscreen */}
-      {!isFullScreen && (
-        <Tooltip title="Full screen mode">
-          <Button onClick={() => setIsFullScreen(true)} icon={<MenuUnfoldOutlined />} style={{ position: 'fixed', top: 20, right: 20, zIndex: 1999 }} type="primary" />
-        </Tooltip>
-      )}
 
       {/* CSS Animations */}
       <style>{`
