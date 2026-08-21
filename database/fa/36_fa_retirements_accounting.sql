@@ -36,6 +36,7 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     p_http_status    OUT NUMBER,
     p_result         OUT CLOB
   ) IS
+    v_retirement_id       VARCHAR2(100);
     v_asset_id            VARCHAR2(400);
     v_asset_number        VARCHAR2(100);
     v_asset_description   VARCHAR2(500);
