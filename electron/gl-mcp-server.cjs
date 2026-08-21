@@ -136,6 +136,9 @@ async function getGLTransactions(params) {
 // ledger + period, with account_combination, account_desc, opening, debit,
 // credit, closing. Same endpoint the Trial Balance screen uses.
 async function fetchTrialBalance(ledger_name, period, company) {
+  if (!period) {
+    throw new Error('period_names is required (e.g., "Jan-26")');
+  }
   const queryParams = new URLSearchParams({
     ledger_name: ledger_name || 'BUIMERC LEDGER',
     period_name: period,
