@@ -13,6 +13,14 @@
 -- and provides a list/search interface for retirements.
 -- =============================================================================
 
+-- Create sequence for retirement IDs (idempotent)
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE SEQUENCE RR_FA_RETIREMENTS_SEQ START WITH 1000001 INCREMENT BY 1 NOCACHE';
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END;
+/
+
 CREATE OR REPLACE PACKAGE RR_FA_RETIREMENTS_PKG AS
   PROCEDURE GET_RETIREMENTS_LIST(
     p_book_type_code IN VARCHAR2,
@@ -139,8 +147,8 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
     v_retirement_type_code := NVL(APEX_JSON.GET_VARCHAR2(p_path => 'retirementTypeCode'), 'ORDINARY');
     v_created_by           := NVL(APEX_JSON.GET_VARCHAR2(p_path => 'createdBy'), 'REACTERP');
 
-    -- Generate RETIREMENT_ID using timestamp + GUID
-    v_retirement_id := 'RET-' || TO_CHAR(SYSDATE, 'YYYYMMDD-HH24MISS') || '-' || SUBSTR(SYS_GUID(), 1, 8);
+    -- Generate RETIREMENT_ID using sequence
+    v_retirement_id := TO_CHAR(RR_FA_RETIREMENTS_SEQ.NEXTVAL);
 
     -- Validate required fields
     IF v_book_type_code IS NULL THEN
