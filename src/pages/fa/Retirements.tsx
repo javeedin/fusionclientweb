@@ -74,7 +74,7 @@ const Retirements: React.FC = () => {
   // Accounting modal
   interface AcctLine { label: string; account: string; desc: string; dr: number; cr: number }
   interface AcctStepUI { label: string; method: string; url: string; payload?: any; status: 'pending' | 'posting' | 'done' | 'error'; detail?: string; response?: any; expanded?: boolean }
-  interface AcctModalState { assetNumber: string; retirementId: string; assetDescription?: string; assetId?: string; bookTypeCode?: string; dateRetired?: string; loading: boolean; error?: string; acctLines?: AcctLine[]; posting: boolean; posted: boolean; steps: AcctStepUI[] }
+  interface AcctModalState { assetNumber: string; retirementId: string; assetDescription?: string; assetId?: string; bookTypeCode?: string; dateRetired?: string; loading: boolean; error?: string; acctLines?: AcctLine[]; previewHeader?: any; previewLines?: any[]; posting: boolean; posted: boolean; steps: AcctStepUI[] }
 
   const [acctModal, setAcctModal] = useState<AcctModalState | null>(null);
 
@@ -246,19 +246,21 @@ const Retirements: React.FC = () => {
       }
 
       const lines: AcctLine[] = await Promise.all((preview.lines as any[]).map(async (l) => ({
-        label: l.lineType || `Line ${l.lineNumber}`,
+        label: l.description || `Line ${l.lineNumber}`,
         account: l.accountCombination,
         desc: await describeCombo(l.accountCombination),
         dr: Number(l.enteredDr || 0),
         cr: Number(l.enteredCr || 0),
       })));
 
-      // Update with asset description from preview if available
+      // Store preview header for SLA payload
       setAcctModal(m => m && {
         ...m,
         acctLines: lines,
         loading: false,
-        assetDescription: preview.assetDescription || m.assetDescription,
+        assetDescription: preview.header?.assetDescription || m.assetDescription,
+        previewHeader: preview.header,
+        previewLines: preview.lines,
       });
     } catch (error) {
       console.error('Error loading accounting preview:', error);
@@ -270,59 +272,43 @@ const Retirements: React.FC = () => {
     setAcctModal(m => m && ({ ...m, steps: m.steps.map((x, idx) => idx === i ? { ...x, ...patch } : x) }));
 
   const postAccounting = async () => {
-    if (!acctModal?.acctLines?.length) return;
-    const { acctLines, retirementId, assetNumber, assetDescription, assetId, bookTypeCode, dateRetired } = acctModal;
+    if (!acctModal?.acctLines?.length || !acctModal?.previewHeader) return;
+    const { retirementId, assetNumber, previewHeader, previewLines } = acctModal;
     const userEmail = sessionStorage.getItem('userEmail') || 'reacterp';
 
-    // SLA body with asset description included
+    // SLA body built from database preview (contains all required SLA metadata)
     const slaBody = {
-      header: {
-        sourceTable: 'RR_FA_RETIREMENTS',
-        sourceId: retirementId,
-        sourceNumber: assetNumber,
-        reference1: assetId,           // Asset ID
-        reference2: retirementId,       // Retirement ID
-        reference3: bookTypeCode,       // Book Type Code
-        reference4: dateRetired,        // Date Retired
-        reference5: 'ASSET_RETIREMENT', // Event Type
-        description: assetDescription || `Asset Retirement ${assetNumber}`,
-      },
-      lines: acctLines.map((l, i) => ({
-        lineNumber: i + 1,
-        accountCombination: l.account,
-        lineType: l.label,
-        enteredDr: l.dr,
-        enteredCr: l.cr,
-        description: l.desc || l.label,
-      })),
+      header: previewHeader,
+      lines: previewLines || [],
     };
 
-    // GL posting options with all required metadata
+    // GL posting options from preview header metadata
     const glOptions: GlPostingOptions = {
       slaHeaderId: 0, // Will be set after SLA creation
-      sourceNumber: assetNumber,
-      sourceId: retirementId,
-      eventTypeCode: 'ASSET_RETIREMENT',
-      periodName: '', // Will be determined from accounting date
-      ledgerName: bookTypeCode,
-      ledgerId: 1, // Default ledger ID
-      currency: 'USD', // Default currency
-      accountingDate: dateRetired || new Date().toISOString().split('T')[0],
-      legalEntity: '', // Optional
-      businessUnit: bookTypeCode,
-      journalDescription: assetDescription || `Asset Retirement ${assetNumber}`,
-      lines: acctLines.map((l, i) => ({
-        lineType: l.dr > 0 ? 'DR' : 'CR',
-        enteredDr: l.dr > 0 ? l.dr : null,
-        enteredCr: l.cr > 0 ? l.cr : null,
-        accountedDr: l.dr > 0 ? l.dr : null,
-        accountedCr: l.cr > 0 ? l.cr : null,
-        description: `${l.label} - ${assetDescription || assetNumber}`,
-        currencyCode: 'USD',
-        accountingDate: dateRetired || new Date().toISOString().split('T')[0],
-        accountCombination: l.account,
-        accountingClass: null,
+      sourceNumber: previewHeader.sourceNumber,
+      sourceId: previewHeader.sourceId,
+      eventTypeCode: previewHeader.eventTypeCode,
+      periodName: previewHeader.periodName,
+      ledgerName: previewHeader.ledgerName,
+      ledgerId: previewHeader.ledgerId,
+      currency: previewHeader.currencyCode,
+      accountingDate: previewHeader.accountingDate,
+      legalEntity: previewHeader.companyCode || '',
+      businessUnit: previewHeader.bookTypeCode,
+      journalDescription: previewHeader.description,
+      lines: (previewLines || []).map(l => ({
+        lineType: l.lineType,
+        enteredDr: l.enteredDr,
+        enteredCr: l.enteredCr,
+        accountedDr: l.accountedDr,
+        accountedCr: l.accountedCr,
+        description: l.description,
+        currencyCode: previewHeader.currencyCode,
+        accountingDate: previewHeader.accountingDate,
+        accountCombination: l.accountCombination,
+        accountingClass: l.accountingClass,
         legalEntity: null,
+        reference6: null,
       })),
       createdBy: userEmail,
     };
