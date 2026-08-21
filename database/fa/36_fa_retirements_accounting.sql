@@ -42,11 +42,11 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     v_asset_description   VARCHAR2(500);
     v_book_type_code      VARCHAR2(100);
     v_date_retired        VARCHAR2(30);
-    v_cost_retired        NUMBER;
-    v_nbv_retired         NUMBER;
-    v_gain_loss_amount    NUMBER;
-    v_proceeds_of_sale    NUMBER;
-    v_cost_of_removal     NUMBER;
+    v_cost_retired        NUMBER := 0;
+    v_nbv_retired         NUMBER := 0;
+    v_gain_loss_amount    NUMBER := 0;
+    v_proceeds_of_sale    NUMBER := 0;
+    v_cost_of_removal     NUMBER := 0;
     v_asset_cost_account  VARCHAR2(200);
     v_deprn_account       VARCHAR2(200);
     v_proceeds_account    VARCHAR2(200);
@@ -57,17 +57,21 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     v_acct_date           VARCHAR2(30);
     v_company_code        VARCHAR2(30);
     v_ledger_name         VARCHAR2(100);
-    v_ledger_id           NUMBER;
+    v_ledger_id           NUMBER := 1;
     v_currency_code       VARCHAR2(15);
-    v_accumulated_deprn   NUMBER;
+    v_accumulated_deprn   NUMBER := 0;
     v_json_response       CLOB;
   BEGIN
     -- Fetch retirement and asset details
     BEGIN
       SELECT
         r.RETIREMENT_ID, r.ASSET_ID, r.BOOK_TYPE_CODE, r.DATE_RETIRED,
-        r.COST_RETIRED, r.NBV_RETIRED, r.GAIN_LOSS_AMOUNT,
-        r.PROCEEDS_OF_SALE, r.COST_OF_REMOVAL, r.STATUS,
+        NVL(CAST(r.COST_RETIRED AS NUMBER), 0),
+        NVL(CAST(r.NBV_RETIRED AS NUMBER), 0),
+        NVL(CAST(r.GAIN_LOSS_AMOUNT AS NUMBER), 0),
+        NVL(CAST(r.PROCEEDS_OF_SALE AS NUMBER), 0),
+        NVL(CAST(r.COST_OF_REMOVAL AS NUMBER), 0),
+        r.STATUS,
         NVL(TO_CHAR(r.DATE_RETIRED, 'YYYY-MM-DD'), TO_CHAR(SYSDATE, 'YYYY-MM-DD')),
         r.ASSET_COST_ACCOUNT, r.DEPRN_RESERVE_ACCOUNT, r.PROCEEDS_ACCOUNT,
         r.COST_OF_REMOVAL_ACCOUNT, r.GAIN_ACCOUNT, r.LOSS_ACCOUNT,
@@ -87,6 +91,10 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
         p_http_status := 404;
         p_result := '{"success":false,"error":"Retirement record not found"}';
         RETURN;
+      WHEN VALUE_ERROR THEN
+        p_http_status := 500;
+        p_result := '{"success":false,"error":"Invalid numeric data in retirement record"}';
+        RETURN;
     END;
 
     -- Get book controls (ledger, currency, company)
@@ -104,12 +112,12 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     END;
 
     -- Calculate gain/loss if not already set
-    IF v_gain_loss_amount IS NULL THEN
-      v_gain_loss_amount := NVL(v_proceeds_of_sale, 0) - NVL(v_cost_of_removal, 0) - NVL(v_nbv_retired, 0);
+    IF v_gain_loss_amount = 0 THEN
+      v_gain_loss_amount := v_proceeds_of_sale - v_cost_of_removal - v_nbv_retired;
     END IF;
 
     -- Accumulated Depreciation = Cost - NBV
-    v_accumulated_deprn := NVL(v_cost_retired, 0) - NVL(v_nbv_retired, 0);
+    v_accumulated_deprn := v_cost_retired - v_nbv_retired;
 
     -- Build complete SLA accounting preview (header + lines) matching FA depreciation pattern
     v_json_response := '{'
@@ -173,14 +181,14 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       || '}';
 
     -- Line 3: Proceeds of Sale (only if proceeds > 0)
-    IF v_proceeds_of_sale > 0 THEN
+    IF NVL(v_proceeds_of_sale, 0) > 0 THEN
       v_json_response := v_json_response || ',{'
         || '"lineNumber":3,"lineType":"DR","accountingClass":"PROCEEDS"'
         || ',"description":"Proceeds of Sale — ' || REPLACE(v_asset_number, '"', '\"')
         ||                           ' — ' || REPLACE(SUBSTR(v_asset_description, 1, 100), '"', '\"') || '"'
-        || ',"accountedDr":' || NVL(TO_CHAR(v_proceeds_of_sale), '0')
+        || ',"accountedDr":' || TO_CHAR(v_proceeds_of_sale)
         || ',"accountedCr":0'
-        || ',"enteredDr":' || NVL(TO_CHAR(v_proceeds_of_sale), '0')
+        || ',"enteredDr":' || TO_CHAR(v_proceeds_of_sale)
         || ',"enteredCr":0'
         || ',"accountCombination":' || NVL(jstr(v_proceeds_account), 'null')
         || ',"reference1":' || jstr(v_asset_number)
@@ -190,17 +198,17 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     END IF;
 
     -- Line 4: Cost of Removal (only if cost_of_removal != 0)
-    IF v_cost_of_removal != 0 THEN
+    IF NVL(v_cost_of_removal, 0) != 0 THEN
       v_json_response := v_json_response || ',{'
-        || '"lineNumber":' || CASE WHEN v_proceeds_of_sale > 0 THEN '4' ELSE '3' END
-        || ',"lineType":"' || CASE WHEN v_cost_of_removal > 0 THEN 'DR' ELSE 'CR' END || '"'
+        || '"lineNumber":' || CASE WHEN NVL(v_proceeds_of_sale, 0) > 0 THEN '4' ELSE '3' END
+        || ',"lineType":"' || CASE WHEN NVL(v_cost_of_removal, 0) > 0 THEN 'DR' ELSE 'CR' END || '"'
         || ',"accountingClass":"REMOVAL"'
         || ',"description":"Cost of Removal — ' || REPLACE(v_asset_number, '"', '\"')
         ||                               ' — ' || REPLACE(SUBSTR(v_asset_description, 1, 100), '"', '\"') || '"'
-        || ',"accountedDr":' || CASE WHEN v_cost_of_removal > 0 THEN TO_CHAR(v_cost_of_removal) ELSE '0' END
-        || ',"accountedCr":' || CASE WHEN v_cost_of_removal < 0 THEN TO_CHAR(ABS(v_cost_of_removal)) ELSE '0' END
-        || ',"enteredDr":' || CASE WHEN v_cost_of_removal > 0 THEN TO_CHAR(v_cost_of_removal) ELSE '0' END
-        || ',"enteredCr":' || CASE WHEN v_cost_of_removal < 0 THEN TO_CHAR(ABS(v_cost_of_removal)) ELSE '0' END
+        || ',"accountedDr":' || CASE WHEN NVL(v_cost_of_removal, 0) > 0 THEN TO_CHAR(v_cost_of_removal) ELSE '0' END
+        || ',"accountedCr":' || CASE WHEN NVL(v_cost_of_removal, 0) < 0 THEN TO_CHAR(ABS(v_cost_of_removal)) ELSE '0' END
+        || ',"enteredDr":' || CASE WHEN NVL(v_cost_of_removal, 0) > 0 THEN TO_CHAR(v_cost_of_removal) ELSE '0' END
+        || ',"enteredCr":' || CASE WHEN NVL(v_cost_of_removal, 0) < 0 THEN TO_CHAR(ABS(v_cost_of_removal)) ELSE '0' END
         || ',"accountCombination":' || NVL(jstr(v_removal_account), 'null')
         || ',"reference1":' || jstr(v_asset_number)
         || ',"reference2":' || jstr(p_retirement_id)
@@ -209,18 +217,18 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     END IF;
 
     -- Line 5: Gain/Loss (only if gain_loss_amount != 0)
-    IF v_gain_loss_amount != 0 THEN
+    IF NVL(v_gain_loss_amount, 0) != 0 THEN
       v_json_response := v_json_response || ',{'
-        || '"lineNumber":' || CASE WHEN v_proceeds_of_sale > 0 AND v_cost_of_removal != 0 THEN '5' WHEN v_proceeds_of_sale > 0 OR v_cost_of_removal != 0 THEN '4' ELSE '3' END
-        || ',"lineType":"' || CASE WHEN v_gain_loss_amount > 0 THEN 'CR' ELSE 'DR' END || '"'
-        || ',"accountingClass":"' || CASE WHEN v_gain_loss_amount > 0 THEN 'GAIN' ELSE 'LOSS' END || '"'
-        || ',"description":"' || CASE WHEN v_gain_loss_amount > 0 THEN 'Gain' ELSE 'Loss' END || ' on Sale — ' || REPLACE(v_asset_number, '"', '\"')
+        || '"lineNumber":' || CASE WHEN NVL(v_proceeds_of_sale, 0) > 0 AND NVL(v_cost_of_removal, 0) != 0 THEN '5' WHEN NVL(v_proceeds_of_sale, 0) > 0 OR NVL(v_cost_of_removal, 0) != 0 THEN '4' ELSE '3' END
+        || ',"lineType":"' || CASE WHEN NVL(v_gain_loss_amount, 0) > 0 THEN 'CR' ELSE 'DR' END || '"'
+        || ',"accountingClass":"' || CASE WHEN NVL(v_gain_loss_amount, 0) > 0 THEN 'GAIN' ELSE 'LOSS' END || '"'
+        || ',"description":"' || CASE WHEN NVL(v_gain_loss_amount, 0) > 0 THEN 'Gain' ELSE 'Loss' END || ' on Sale — ' || REPLACE(v_asset_number, '"', '\"')
         ||                                           ' — ' || REPLACE(SUBSTR(v_asset_description, 1, 100), '"', '\"') || '"'
-        || ',"accountedDr":' || CASE WHEN v_gain_loss_amount < 0 THEN TO_CHAR(ABS(v_gain_loss_amount)) ELSE '0' END
-        || ',"accountedCr":' || CASE WHEN v_gain_loss_amount > 0 THEN TO_CHAR(v_gain_loss_amount) ELSE '0' END
-        || ',"enteredDr":' || CASE WHEN v_gain_loss_amount < 0 THEN TO_CHAR(ABS(v_gain_loss_amount)) ELSE '0' END
-        || ',"enteredCr":' || CASE WHEN v_gain_loss_amount > 0 THEN TO_CHAR(v_gain_loss_amount) ELSE '0' END
-        || ',"accountCombination":' || NVL(jstr(CASE WHEN v_gain_loss_amount > 0 THEN v_gain_account ELSE v_loss_account END), 'null')
+        || ',"accountedDr":' || CASE WHEN NVL(v_gain_loss_amount, 0) < 0 THEN TO_CHAR(ABS(v_gain_loss_amount)) ELSE '0' END
+        || ',"accountedCr":' || CASE WHEN NVL(v_gain_loss_amount, 0) > 0 THEN TO_CHAR(v_gain_loss_amount) ELSE '0' END
+        || ',"enteredDr":' || CASE WHEN NVL(v_gain_loss_amount, 0) < 0 THEN TO_CHAR(ABS(v_gain_loss_amount)) ELSE '0' END
+        || ',"enteredCr":' || CASE WHEN NVL(v_gain_loss_amount, 0) > 0 THEN TO_CHAR(v_gain_loss_amount) ELSE '0' END
+        || ',"accountCombination":' || NVL(jstr(CASE WHEN NVL(v_gain_loss_amount, 0) > 0 THEN v_gain_account ELSE v_loss_account END), 'null')
         || ',"reference1":' || jstr(v_asset_number)
         || ',"reference2":' || jstr(p_retirement_id)
         || ',"reference5":"FA_RETIREMENT"'
