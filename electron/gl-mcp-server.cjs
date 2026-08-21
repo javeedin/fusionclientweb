@@ -253,6 +253,69 @@ async function executeTool(toolName, args) {
   }
 }
 
+// ── MCP JSON-RPC dispatch (shared by HTTP and stdio transports) ────────────
+// Returns a response object, or null for notifications (no id → no response).
+async function handleMcpRequest(request) {
+  const { jsonrpc = '2.0', method, params, id } = request;
+  const isNotification = (id === undefined || id === null);
+
+  try {
+    log('INFO', `MCP Request: ${method}`);
+
+    if (method === 'initialize') {
+      return {
+        jsonrpc,
+        id,
+        result: {
+          protocolVersion: '2024-11-05',
+          capabilities: { tools: {} },
+          serverInfo: {
+            name: 'GL MCP Server',
+            version: '1.0.0'
+          }
+        }
+      };
+    }
+    if (method === 'notifications/initialized' || method.startsWith('notifications/')) {
+      return null;
+    }
+    if (method === 'ping') {
+      return { jsonrpc, id, result: {} };
+    }
+    if (method === 'resources/list') {
+      return { jsonrpc, id, result: { resources: [] } };
+    }
+    if (method === 'prompts/list') {
+      return { jsonrpc, id, result: { prompts: [] } };
+    }
+    if (method === 'tools/list') {
+      return { jsonrpc, id, result: { tools: MCP_TOOLS } };
+    }
+    if (method === 'tools/call') {
+      const { name, arguments: toolArgs } = params;
+      const result = await executeTool(name, toolArgs);
+      return {
+        jsonrpc,
+        id,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        }
+      };
+    }
+    if (isNotification) return null;
+    return { jsonrpc, id, error: { code: -32601, message: `Method not found: ${method}` } };
+  } catch (error) {
+    log('ERROR', `MCP Error: ${error.message}`);
+    if (isNotification) return null;
+    return { jsonrpc, id, error: { code: -32603, message: error.message } };
+  }
+}
+
 // ── Request handler (HTTP and HTTPS) ──────────────────────────────────────
 async function requestHandler(req, res) {
   const parsedUrl = url.parse(req.url, true);
@@ -272,61 +335,9 @@ async function requestHandler(req, res) {
     req.on('end', async () => {
       try {
         const request = JSON.parse(body);
-        log('INFO', `MCP Request: ${request.method}`);
-
-        let response;
-        const { jsonrpc = '2.0', method, params, id } = request;
-
-        if (method === 'initialize') {
-          response = {
-            jsonrpc,
-            id,
-            result: {
-              protocolVersion: '2024-11-05',
-              capabilities: {},
-              serverInfo: {
-                name: 'GL MCP Server',
-                version: '1.0.0'
-              }
-            }
-          };
-        }
-        else if (method === 'resources/list') {
-          response = {
-            jsonrpc,
-            id,
-            result: { resources: [] }
-          };
-        }
-        else if (method === 'tools/list') {
-          response = {
-            jsonrpc,
-            id,
-            result: { tools: MCP_TOOLS }
-          };
-        }
-        else if (method === 'tools/call') {
-          const { name, arguments: toolArgs } = params;
-          const result = await executeTool(name, toolArgs);
-          response = {
-            jsonrpc,
-            id,
-            result: {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(result, null, 2)
-                }
-              ]
-            }
-          };
-        }
-        else {
-          throw new Error(`Unknown MCP method: ${method}`);
-        }
-
+        const response = await handleMcpRequest(request);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(response));
+        res.end(JSON.stringify(response || {}));
       } catch (error) {
         log('ERROR', `MCP Error: ${error.message}`);
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -473,7 +484,7 @@ async function getCertificateAsync() {
 function startHttpServer(port) {
   const httpServer = http.createServer(requestHandler);
 
-  httpServer.listen(port, 'localhost', () => {
+  httpServer.listen(port, '127.0.0.1', () => {
     log('INFO', `HTTP Server listening on http://localhost:${port}`);
     log('WARN', 'Running in HTTP mode - not compatible with Claude Desktop');
   });
@@ -496,7 +507,7 @@ function startHttpsServer(port) {
 
   const httpsServer = https.createServer(tlsConfig, requestHandler);
 
-  httpsServer.listen(port, 'localhost', () => {
+  httpsServer.listen(port, '127.0.0.1', () => {
     log('INFO', `HTTPS Server listening on https://localhost:${port}`);
     log('INFO', `MCP Endpoint: https://localhost:${port}/`);
     log('INFO', `Certificate: Self-signed (safe for localhost testing)`);
@@ -509,9 +520,48 @@ function startHttpsServer(port) {
   return httpsServer;
 }
 
+// ── stdio transport (for Claude Desktop — no port, no TLS, no wrapper) ─────
+// Reads newline-delimited JSON-RPC from stdin, writes responses to stdout.
+// All logging goes to stderr (log() uses console.error), so stdout stays clean.
+function runStdioServer() {
+  log('INFO', 'Starting GL MCP Server in stdio mode');
+  const readline = require('readline');
+  const rl = readline.createInterface({ input: process.stdin, terminal: false });
+
+  rl.on('line', async (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let request;
+    try {
+      request = JSON.parse(trimmed);
+    } catch (e) {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: '2.0', id: null,
+        error: { code: -32700, message: 'Parse error' }
+      }) + '\n');
+      return;
+    }
+    const response = await handleMcpRequest(request);
+    if (response) {
+      process.stdout.write(JSON.stringify(response) + '\n');
+    }
+  });
+
+  rl.on('close', () => {
+    log('INFO', 'stdin closed, shutting down');
+    process.exit(0);
+  });
+}
+
 // ── Main startup ──────────────────────────────────────────────────────────
 async function main() {
   try {
+    // stdio mode: spawned directly by Claude Desktop via claude_desktop_config.json
+    if (process.argv.includes('--stdio') || process.env.MCP_STDIO === '1') {
+      runStdioServer();
+      return;
+    }
+
     log('INFO', 'Starting GL MCP Server (HTTPS mode with MCP protocol)');
 
     if (HTTP_PORT) {
@@ -527,7 +577,7 @@ async function main() {
 
       const httpsServer = https.createServer(tlsConfig, requestHandler);
 
-      httpsServer.listen(HTTP_PORT, 'localhost', () => {
+      httpsServer.listen(HTTP_PORT, '127.0.0.1', () => {
         log('INFO', `HTTPS Server listening on https://localhost:${HTTP_PORT}`);
         log('INFO', `MCP Endpoint: https://localhost:${HTTP_PORT}/`);
         log('INFO', 'GL MCP Server started successfully - ready for Claude Desktop');

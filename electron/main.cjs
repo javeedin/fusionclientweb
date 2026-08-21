@@ -1420,17 +1420,35 @@ ipcMain.handle('gl-mcp:add-to-claude-desktop', async (_event, { httpPort = 3001 
       console.log('[GL MCP] Created mcpServers object');
     }
 
-    // Path to the stdio wrapper script
-    const wrapperPath = path.join(__dirname, 'gl-mcp-stdio-wrapper.cjs');
-    console.log('[GL MCP] Wrapper script path:', wrapperPath);
+    // Spawn the GL MCP server directly in stdio mode — no HTTP port, no TLS,
+    // no wrapper, and the Electron app does not need to be running.
+    const serverPath = path.join(__dirname, 'gl-mcp-server.cjs');
+    console.log('[GL MCP] Server script path:', serverPath);
+
+    // Pass Oracle connection settings from the saved credentials file
+    const mcpEnv = {};
+    try {
+      if (fs.existsSync(GL_CREDS_FILE)) {
+        const data = JSON.parse(fs.readFileSync(GL_CREDS_FILE, 'utf8'));
+        if (data.oracleBaseUrl) mcpEnv.ORACLE_BASE_URL = data.oracleBaseUrl;
+        mcpEnv.SKIP_AUTH = data.skipAuth ? 'true' : 'false';
+        if (!data.skipAuth && data.username) {
+          mcpEnv.ORACLE_USERNAME = data.username;
+          if (data.password) {
+            mcpEnv.ORACLE_PASSWORD = data.encrypted && safeStorage.isEncryptionAvailable()
+              ? safeStorage.decryptString(Buffer.from(data.password, 'base64'))
+              : Buffer.from(data.password, 'base64').toString();
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[GL MCP] Could not read saved credentials for Claude Desktop config:', e.message);
+    }
 
     const mcpConfig = {
       command: 'node',
-      args: [wrapperPath],
-      env: {
-        GL_MCP_URL: `https://localhost:${httpPort}`,
-        NODE_TLS_REJECT_UNAUTHORIZED: '0' // Allow self-signed certs for localhost
-      }
+      args: [serverPath, '--stdio'],
+      env: mcpEnv
     };
 
     console.log('[GL MCP] MCP Server config:', JSON.stringify(mcpConfig, null, 2));
