@@ -1162,6 +1162,19 @@ ipcMain.handle('clear-fusion-credentials', () => {
 // ── GL MCP Server IPC Handlers ─────────────────────────────────────────────
 const GL_CREDS_FILE = path.join(app.getPath('userData'), 'gl-api-creds.json');
 
+// Extract just the protocol + host from whatever the user pasted — they often
+// paste a full endpoint URL (with /ords/... path and query params) into the
+// Base URL field, which would otherwise produce a garbled endpoint.
+function extractOracleDomain(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    return `${u.protocol}//${u.host}`;
+  } catch (e) {
+    const match = String(urlStr || '').match(/^https?:\/\/[^/]+/);
+    return match ? match[0] : urlStr;
+  }
+}
+
 async function fetchClaudeKeyFromOracleAPEX(oracleBaseUrl) {
   try {
     if (!oracleBaseUrl) {
@@ -1169,7 +1182,8 @@ async function fetchClaudeKeyFromOracleAPEX(oracleBaseUrl) {
       return null;
     }
 
-    const endpoint = `${oracleBaseUrl}/ords/bcldifc/reerp/settings/claudekey`;
+    const domain = extractOracleDomain(oracleBaseUrl);
+    const endpoint = `${domain}/ords/bcldifc/reerp/settings/claudekey`;
     console.log('[GL MCP] Fetching Claude key from:', endpoint);
 
     const response = await fetch(endpoint);
@@ -1179,8 +1193,9 @@ async function fetchClaudeKeyFromOracleAPEX(oracleBaseUrl) {
     }
 
     const data = await response.json();
-    if (data.claudeKey || data.key) {
-      const key = data.claudeKey || data.key;
+    // rr_claude_key.sql returns { "status": "success", "apiKey": "sk-ant-..." }
+    const key = data.apiKey || data.claudeKey || data.key;
+    if (key) {
       console.log('[GL MCP] Successfully fetched Claude key from Oracle APEX');
       return key;
     } else {
@@ -1195,6 +1210,8 @@ async function fetchClaudeKeyFromOracleAPEX(oracleBaseUrl) {
 
 ipcMain.handle('gl-mcp:save-credentials', async (_event, { oracleBaseUrl, username, password, skipAuth, httpPort }) => {
   try {
+    // Clean a pasted full endpoint URL down to just the domain
+    oracleBaseUrl = oracleBaseUrl ? extractOracleDomain(oracleBaseUrl.trim()) : oracleBaseUrl;
     let storedPassword, encrypted;
     if (!skipAuth && password) {
       if (safeStorage.isEncryptionAvailable()) {
