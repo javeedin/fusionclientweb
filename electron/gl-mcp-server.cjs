@@ -115,54 +115,72 @@ async function getGLAccountAnalysis(params) {
   return { ...result, cached: false };
 }
 
+// GL journal lines, filtered by period. The ORDS handler filters on
+// period_name/reference1/reference2/reference5/limit; account filtering is
+// applied client-side on the returned rows.
 async function getGLTransactions(params) {
-  const { ledger_name, period_names, company, account, limit = 100, offset = 0 } = params;
-  const cacheKey = `gl_txns_${ledger_name}_${period_names}_${company}_${account}_${limit}_${offset}`;
-  const cached = getCachedValue(cacheKey);
-  if (cached) return { ...cached, cached: true };
+  const { period_names, account, limit = 100 } = params;
+  const period = String(period_names || '').split(',')[0].trim();
 
-  const queryParams = new URLSearchParams({
-    ledger_name: ledger_name || '',
-    period_names: period_names || '',
-    company: company || '',
-    account: account || '',
-    limit: limit.toString(),
-    offset: offset.toString(),
-  }).toString();
+  const queryParams = new URLSearchParams();
+  if (period) queryParams.set('period_name', period);
+  queryParams.set('limit', String(Math.max(Number(limit) || 100, 100)));
 
-  const result = await fetchAPI(`/gl/transactions?${queryParams}`, { method: 'GET' });
-  setCachedValue(cacheKey, result);
-  return { ...result, cached: false };
+  const result = await fetchAPI(`/gl/journals/lines?${queryParams.toString()}`, { method: 'GET' });
+  let items = Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
+  if (account) items = items.filter((r) => String(r.account || '').includes(String(account)));
+  return { count: items.length, items: items.slice(0, Number(limit) || 100) };
 }
 
+// GL balances from RR_GL_BALANCES. account/company are optional — omit them
+// to list balances for ALL accounts in a period.
 async function getAccountBalance(params) {
-  const { ledger_name, period_names, account } = params;
-  const cacheKey = `gl_balance_${ledger_name}_${period_names}_${account}`;
+  const { period_names, company, account, account_type } = params;
+  const period = String(period_names || '').split(',')[0].trim();
+  const cacheKey = `gl_balance_${period}_${company}_${account}_${account_type}`;
   const cached = getCachedValue(cacheKey);
   if (cached) return { ...cached, cached: true };
 
-  const queryParams = new URLSearchParams({
-    ledger_name: ledger_name || '',
-    period_names: period_names || '',
-    account: account || '',
-  }).toString();
+  const queryParams = new URLSearchParams();
+  if (period)       queryParams.set('period_name', period);
+  if (company)      queryParams.set('company', company);
+  if (account)      queryParams.set('account', account);
+  if (account_type) queryParams.set('account_type', account_type);
+  queryParams.set('limit', '2000');
 
-  const result = await fetchAPI(`/gl/accountbalance?${queryParams}`, { method: 'GET' });
-  setCachedValue(cacheKey, result);
-  return { ...result, cached: false };
+  const result = await fetchAPI(`/gl/balances?${queryParams.toString()}`, { method: 'GET' });
+  const items = Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
+  const out = { count: items.length, items };
+  setCachedValue(cacheKey, out);
+  return { ...out, cached: false };
 }
 
+// Search the chart of accounts by number or description, built from the
+// distinct accounts present in RR_GL_BALANCES.
 async function searchAccounts(params) {
-  const { ledger_name, search_term } = params;
-  return await fetchAPI('/gl/accounts/search', {
-    method: 'POST',
-    body: { ledger_name, search_term },
-  });
+  const { search_term } = params;
+  const result = await fetchAPI('/gl/balances?limit=5000', { method: 'GET' });
+  const items = Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
+
+  const seen = new Map();
+  for (const r of items) {
+    if (r.account && !seen.has(r.account)) {
+      seen.set(r.account, { account: r.account, description: r.account_desc || '', accountType: r.account_type || '' });
+    }
+  }
+  let accounts = Array.from(seen.values());
+  if (search_term) {
+    const term = String(search_term).toLowerCase();
+    accounts = accounts.filter((a) =>
+      a.account.toLowerCase().includes(term) || a.description.toLowerCase().includes(term));
+  }
+  accounts.sort((a, b) => a.account.localeCompare(b.account));
+  return { count: accounts.length, accounts: accounts.slice(0, 200) };
 }
 
 async function getJournalEntry(params) {
   const { je_header_id } = params;
-  return await fetchAPI(`/gl/journalentry/${je_header_id}`, { method: 'GET' });
+  return await fetchAPI(`/gl/journals/${je_header_id}/lines`, { method: 'GET' });
 }
 
 // ── MCP Tool Definitions ──────────────────────────────────────────────────
@@ -183,43 +201,40 @@ const MCP_TOOLS = [
   },
   {
     name: 'getGLTransactions',
-    description: 'Get GL transactions with pagination support',
+    description: 'Get GL journal line transactions for a period, optionally filtered by account',
     inputSchema: {
       type: 'object',
       properties: {
-        ledger_name: { type: 'string', description: 'General Ledger name' },
-        period_names: { type: 'string', description: 'Period name' },
-        company: { type: 'string', description: 'Company code' },
-        account: { type: 'string', description: 'GL Account number' },
-        limit: { type: 'integer', description: 'Max results (default 100)' },
-        offset: { type: 'integer', description: 'Pagination offset (default 0)' }
+        period_names: { type: 'string', description: 'Period name (e.g., Jan-26)' },
+        account: { type: 'string', description: 'GL Account number (optional filter)' },
+        limit: { type: 'integer', description: 'Max results (default 100)' }
       },
-      required: ['ledger_name', 'period_names', 'company', 'account']
+      required: ['period_names']
     }
   },
   {
     name: 'getAccountBalance',
-    description: 'Get account balance for a specific period',
+    description: 'Get GL balances (opening/activity/closing, debit, credit) for a period. Omit account to list balances for ALL accounts in the period.',
     inputSchema: {
       type: 'object',
       properties: {
-        ledger_name: { type: 'string', description: 'General Ledger name' },
-        period_names: { type: 'string', description: 'Period name' },
-        account: { type: 'string', description: 'GL Account number' }
+        period_names: { type: 'string', description: 'Period name (e.g., Jan-26)' },
+        company: { type: 'string', description: 'Company code (optional)' },
+        account_type: { type: 'string', description: 'Account type filter, e.g. Asset, Liability (optional)' },
+        account: { type: 'string', description: 'GL Account number (optional — omit to list all accounts)' }
       },
-      required: ['ledger_name', 'period_names', 'account']
+      required: ['period_names']
     }
   },
   {
     name: 'searchAccounts',
-    description: 'Search for GL accounts by term',
+    description: 'Search the chart of accounts by account number or description',
     inputSchema: {
       type: 'object',
       properties: {
-        ledger_name: { type: 'string', description: 'General Ledger name' },
-        search_term: { type: 'string', description: 'Search term' }
+        search_term: { type: 'string', description: 'Search term — matches account number or description (optional, omit to list all accounts)' }
       },
-      required: ['ledger_name', 'search_term']
+      required: []
     }
   },
   {
