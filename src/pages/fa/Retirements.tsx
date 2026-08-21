@@ -271,100 +271,104 @@ const Retirements: React.FC = () => {
   const setAcctStep = (i: number, patch: Partial<AcctStepUI>) =>
     setAcctModal(m => m && ({ ...m, steps: m.steps.map((x, idx) => idx === i ? { ...x, ...patch } : x) }));
 
-  const postAccounting = async () => {
+  const initializeAccounting = () => {
+    if (!acctModal?.acctLines?.length || !acctModal?.previewHeader) return;
+    const { retirementId, previewHeader, previewLines } = acctModal;
+
+    // Build SLA body for display
+    const slaBody = { header: previewHeader, lines: previewLines || [] };
+
+    // Just initialize the steps panel without running
+    const steps: AcctStepUI[] = [
+      { label: '1 · Create SLA Accounting', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/sla/accounting/create`, payload: slaBody, status: 'pending', expanded: true },
+      { label: '2 · Post SLA to GL Journal', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/gl/journals/create`, payload: { note: 'built by postSlaToGL' }, status: 'pending', expanded: false },
+      { label: '3 · Update Retirement Status', method: 'PUT', url: `${APEX_DB_CONFIG.baseUrl}/fa/retirements/${retirementId}/status`, payload: { status: 'ACCOUNTED' }, status: 'pending', expanded: false },
+    ];
+    setAcctModal(m => m && ({ ...m, steps }));
+  };
+
+  const runStep = async (stepIndex: number) => {
     if (!acctModal?.acctLines?.length || !acctModal?.previewHeader) return;
     const { retirementId, assetNumber, previewHeader, previewLines } = acctModal;
     const userEmail = sessionStorage.getItem('userEmail') || 'reacterp';
-
-    // SLA body built from database preview (contains all required SLA metadata)
-    const slaBody = {
-      header: previewHeader,
-      lines: previewLines || [],
-    };
-
-    // GL posting options from preview header metadata
-    const glOptions: GlPostingOptions = {
-      slaHeaderId: 0, // Will be set after SLA creation
-      sourceNumber: previewHeader.sourceNumber,
-      sourceId: previewHeader.sourceId,
-      eventTypeCode: previewHeader.eventTypeCode,
-      periodName: previewHeader.periodName,
-      ledgerName: previewHeader.ledgerName,
-      ledgerId: previewHeader.ledgerId,
-      currency: previewHeader.currencyCode,
-      accountingDate: previewHeader.accountingDate,
-      legalEntity: previewHeader.companyCode || '',
-      businessUnit: previewHeader.bookTypeCode,
-      journalDescription: previewHeader.description,
-      lines: (previewLines || []).map(l => ({
-        lineType: l.lineType,
-        enteredDr: l.enteredDr,
-        enteredCr: l.enteredCr,
-        accountedDr: l.accountedDr,
-        accountedCr: l.accountedCr,
-        description: l.description,
-        currencyCode: previewHeader.currencyCode,
-        accountingDate: previewHeader.accountingDate,
-        accountCombination: l.accountCombination,
-        accountingClass: l.accountingClass,
-        legalEntity: null,
-        reference6: null,
-      })),
-      createdBy: userEmail,
-    };
-
-    const steps: AcctStepUI[] = [
-      { label: '1 · Create SLA Accounting', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/sla/accounting/create`, payload: slaBody, status: 'pending', expanded: true },
-      { label: '2 · Post SLA to GL Journal', method: 'POST', url: `${APEX_DB_CONFIG.baseUrl}/gl/journals/create`, payload: { note: 'built by postSlaToGL from SLA header' }, status: 'pending', expanded: false },
-      { label: '3 · Update Retirement Status', method: 'PUT', url: `${APEX_DB_CONFIG.baseUrl}/fa/retirements/${retirementId}/status`, payload: { status: 'ACCOUNTED' }, status: 'pending', expanded: false },
-    ];
-    setAcctModal(m => m && ({ ...m, posting: true, steps }));
+    let slaHeaderId = 0;
 
     try {
-      // Step 1 — SLA
-      setAcctStep(0, { status: 'posting' });
-      const slaRes = await createSlaAccounting(slaBody as any);
-      if (!slaRes.headerId) {
-        setAcctStep(0, { status: 'error', detail: slaRes.error || slaRes.message || 'SLA failed', response: slaRes });
-        setAcctModal(m => m && ({ ...m, posting: false }));
-        message.error(slaRes.error || slaRes.message || 'SLA accounting failed');
-        return;
+      // Get SLA header ID from step 0 if already completed
+      if (stepIndex > 0 && acctModal.steps[0]?.response?.headerId) {
+        slaHeaderId = acctModal.steps[0].response.headerId;
       }
-      setAcctStep(0, { status: 'done', detail: `SLA Header #${slaRes.headerId}`, response: slaRes });
 
-      // Step 2 — GL
-      setAcctStep(1, { status: 'posting' });
-      const glRes = await postSlaToGL({
-        ...glOptions,
-        slaHeaderId: slaRes.headerId,
-      });
-      if (!glRes.success) {
-        setAcctStep(1, { status: 'error', detail: glRes.error || 'GL post failed', response: glRes });
-        setAcctModal(m => m && ({ ...m, posting: false }));
-        message.error(glRes.error || 'GL journal post failed');
-        return;
+      if (stepIndex === 0) {
+        // Step 1 — SLA
+        setAcctStep(0, { status: 'posting' });
+        const slaBody = { header: previewHeader, lines: previewLines || [] };
+        const slaRes = await createSlaAccounting(slaBody as any);
+        if (!slaRes.headerId) {
+          setAcctStep(0, { status: 'error', detail: slaRes.error || slaRes.message || 'SLA failed', response: slaRes });
+          message.error(slaRes.error || slaRes.message || 'SLA accounting failed');
+          return;
+        }
+        setAcctStep(0, { status: 'done', detail: `SLA Header #${slaRes.headerId}`, response: slaRes });
+        slaHeaderId = slaRes.headerId;
+      } else if (stepIndex === 1) {
+        // Step 2 — GL
+        if (!slaHeaderId) {
+          message.error('Please run Step 1 first');
+          return;
+        }
+        setAcctStep(1, { status: 'posting' });
+        const glOptions: GlPostingOptions = {
+          slaHeaderId,
+          sourceNumber: previewHeader.sourceNumber,
+          sourceId: previewHeader.sourceId,
+          eventTypeCode: previewHeader.eventTypeCode,
+          periodName: previewHeader.periodName,
+          ledgerName: previewHeader.ledgerName,
+          ledgerId: previewHeader.ledgerId,
+          currency: previewHeader.currencyCode,
+          accountingDate: previewHeader.accountingDate,
+          legalEntity: previewHeader.companyCode || '',
+          businessUnit: previewHeader.bookTypeCode,
+          journalDescription: previewHeader.description,
+          lines: (previewLines || []).map(l => ({
+            lineType: l.lineType,
+            enteredDr: l.enteredDr,
+            enteredCr: l.enteredCr,
+            accountedDr: l.accountedDr,
+            accountedCr: l.accountedCr,
+            description: l.description,
+            currencyCode: previewHeader.currencyCode,
+            accountingDate: previewHeader.accountingDate,
+            accountCombination: l.accountCombination,
+            accountingClass: l.accountingClass,
+            legalEntity: null,
+            reference6: null,
+          })),
+          createdBy: userEmail,
+        };
+        const glRes = await postSlaToGL(glOptions);
+        if (!glRes.success) {
+          setAcctStep(1, { status: 'error', detail: glRes.error || 'GL post failed', response: glRes });
+          message.error(glRes.error || 'GL journal post failed');
+          return;
+        }
+        setAcctStep(1, { status: 'done', detail: `GL Batch ${glRes.batchId} · Header ${glRes.headerId}`, response: glRes });
+      } else if (stepIndex === 2) {
+        // Step 3 — Update status
+        setAcctStep(2, { status: 'posting' });
+        const statusRes = await updateRetirementStatus(retirementId, 'ACCOUNTED');
+        if (!statusRes.success) {
+          setAcctStep(2, { status: 'error', detail: statusRes.error || 'Status update failed', response: statusRes });
+          message.error(statusRes.error || 'Failed to update retirement status');
+          return;
+        }
+        setAcctStep(2, { status: 'done', detail: 'Status updated to ACCOUNTED', response: statusRes });
+        setAcctModal(m => m && ({ ...m, posted: true }));
+        message.success(`Retirement ${assetNumber} accounted and posted to GL`);
       }
-      setAcctStep(1, { status: 'done', detail: `GL Batch ${glRes.batchId} · Header ${glRes.headerId}`, response: glRes });
-
-      // Step 3 — Update status
-      setAcctStep(2, { status: 'posting' });
-      const statusRes = await updateRetirementStatus(retirementId, 'ACCOUNTED');
-      if (!statusRes.success) {
-        setAcctStep(2, { status: 'error', detail: statusRes.error || 'Status update failed', response: statusRes });
-        setAcctModal(m => m && ({ ...m, posting: false }));
-        message.error(statusRes.error || 'Failed to update retirement status');
-        return;
-      }
-      setAcctStep(2, { status: 'done', detail: 'Status updated to ACCOUNTED', response: statusRes });
-
-      setAcctModal(m => m && ({ ...m, posting: false, posted: true }));
-      message.success(`Retirement ${assetNumber} accounted and posted to GL`);
-      setEditOpen(false);
-      setAcctModal(null);
-      runSearch();
     } catch (e: any) {
-      setAcctModal(m => m && ({ ...m, posting: false }));
-      message.error(e?.message || 'Accounting failed');
+      message.error(e?.message || 'Step failed');
     }
   };
 
@@ -961,12 +965,12 @@ const Retirements: React.FC = () => {
             maskClosable={!acctModal.posting}
             width={1000}
             footer={[
-              <Button key="cancel" disabled={acctModal.posting} onClick={() => setAcctModal(null)}>Close</Button>,
-              <Button key="run" type="primary" icon={<AuditOutlined />} loading={acctModal.posting}
-                disabled={acctModal.loading || !!acctModal.error || acctModal.posted || !acctModal.acctLines?.length}
-                style={{ background: acctModal.posted ? undefined : FA_COLOR, borderColor: acctModal.posted ? undefined : FA_COLOR }}
-                onClick={postAccounting}>
-                {acctModal.posted ? 'Accounted' : 'Run Accounting'}
+              <Button key="cancel" onClick={() => setAcctModal(null)}>Close</Button>,
+              <Button key="run" type="primary" icon={<AuditOutlined />}
+                disabled={acctModal.loading || !!acctModal.error || acctModal.posted || !acctModal.acctLines?.length || acctModal.steps.length > 0}
+                style={{ background: FA_COLOR, borderColor: FA_COLOR }}
+                onClick={initializeAccounting}>
+                {acctModal.posted ? 'Accounted' : 'Show Steps'}
               </Button>,
             ]}
           >
@@ -1017,6 +1021,7 @@ const Retirements: React.FC = () => {
                   <div style={{ border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 6, marginTop: 16 }}>
                     {acctModal.steps.map((s, i) => {
                       const color = s.status === 'done' ? REDWOOD.success : s.status === 'error' ? REDWOOD.primary : s.status === 'posting' ? '#1677ff' : REDWOOD.neutral500;
+                      const isRunnable = s.status === 'pending' && (i === 0 || acctModal.steps[i - 1]?.status === 'done');
                       return (
                         <div key={i} style={{ borderTop: i === 0 ? 'none' : `1px solid ${REDWOOD.neutral200}` }}>
                           <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: s.expanded ? '#fafafa' : '#fff' }}
@@ -1028,6 +1033,11 @@ const Retirements: React.FC = () => {
                             <Text strong style={{ fontSize: 12 }}>{s.label}</Text>
                             <Text style={{ fontSize: 11, fontFamily: 'monospace', color: REDWOOD.neutral500, flex: 1 }} ellipsis>{s.method} {s.url}</Text>
                             <Text style={{ fontSize: 11, color, fontWeight: 600 }}>{s.detail}</Text>
+                            {isRunnable && (
+                              <Button size="small" type="primary" style={{ marginLeft: 8 }} onClick={(e) => { e.stopPropagation(); runStep(i); }}>
+                                Run
+                              </Button>
+                            )}
                             <Text style={{ fontSize: 10, color: '#999' }}>{s.expanded ? '▲' : '▼'}</Text>
                           </div>
                           {s.expanded && (
