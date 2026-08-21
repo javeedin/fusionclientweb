@@ -1111,6 +1111,7 @@ const AssetTabContent: React.FC<{
         assetId: asset.assetId,
         bookTypeCode: book,
         dateRetired: retireDate.format('YYYY-MM-DD'),
+        costRetired: retirePreview ? Number(retirePreview.cost || 0) : 0,
         proceedsOfSale: retireSold ? Number(retireProceeds || 0) : 0,
         costOfRemoval: Number(retireRemoval || 0),
         soldTo: retireSold ? retireSoldTo : undefined,

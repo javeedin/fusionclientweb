@@ -120,6 +120,7 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
     v_book_type_code       VARCHAR2(100);
     v_asset_id             VARCHAR2(400);
     v_date_retired         VARCHAR2(40);
+    v_cost_retired         NUMBER;
     v_proceeds_of_sale     NUMBER;
     v_cost_of_removal      NUMBER;
     v_retirement_type_code VARCHAR2(100);
@@ -142,6 +143,7 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
     v_book_type_code       := APEX_JSON.GET_VARCHAR2(p_path => 'bookTypeCode');
     v_asset_id             := APEX_JSON.GET_VARCHAR2(p_path => 'assetId');
     v_date_retired         := NVL(APEX_JSON.GET_VARCHAR2(p_path => 'dateRetired'), TO_CHAR(SYSDATE, 'YYYY-MM-DD'));
+    v_cost_retired         := NVL(APEX_JSON.GET_NUMBER(p_path => 'costRetired'), 0);
     v_proceeds_of_sale     := NVL(APEX_JSON.GET_NUMBER(p_path => 'proceedsOfSale'), 0);
     v_cost_of_removal      := NVL(APEX_JSON.GET_NUMBER(p_path => 'costOfRemoval'), 0);
     v_retirement_type_code := NVL(APEX_JSON.GET_VARCHAR2(p_path => 'retirementTypeCode'), 'ORDINARY');
@@ -169,6 +171,7 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
       BOOK_TYPE_CODE,
       ASSET_ID,
       DATE_RETIRED,
+      COST_RETIRED,
       PROCEEDS_OF_SALE,
       COST_OF_REMOVAL,
       RETIREMENT_TYPE_CODE,
@@ -182,6 +185,7 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_PKG AS
       v_book_type_code,
       v_asset_id,
       TO_DATE(v_date_retired, 'YYYY-MM-DD'),
+      v_cost_retired,
       v_proceeds_of_sale,
       v_cost_of_removal,
       v_retirement_type_code,

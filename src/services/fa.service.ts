@@ -719,6 +719,7 @@ export const retireAssetWithAccounting = async (payload: {
   assetId: string | number;
   bookTypeCode: string;
   dateRetired?: string;
+  costRetired?: number;
   proceedsOfSale?: number;
   costOfRemoval?: number;
   soldTo?: string;
