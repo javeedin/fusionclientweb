@@ -270,6 +270,7 @@ const Retirements: React.FC = () => {
         })),
       };
 
+      // Step 1: Create SLA accounting
       const slaRes = await createSlaAccounting(slaBody as any);
       if (!slaRes.headerId) {
         message.error(slaRes.error || 'Failed to create SLA accounting');
@@ -277,21 +278,32 @@ const Retirements: React.FC = () => {
         return;
       }
 
+      // Step 2: Post SLA to GL
       const glRes = await postSlaToGL({
         slaHeaderId: slaRes.headerId,
         sourceNumber: acctModalRec.assetNumber,
         sourceId: acctModalRec.retirementId,
       });
 
-      if (glRes.success) {
-        setAcctPosted(true);
-        message.success('Accounting posted successfully');
-        setEditOpen(false);
-        setAcctModalOpen(false);
-        runSearch();
-      } else {
+      if (!glRes.success) {
         message.error(glRes.error || 'Failed to post to GL');
+        setAcctPosting(false);
+        return;
       }
+
+      // Step 3: Update retirement status to ACCOUNTED
+      const statusRes = await updateRetirementStatus(acctModalRec.retirementId, 'ACCOUNTED');
+      if (!statusRes.success) {
+        message.error(statusRes.error || 'Failed to update retirement status');
+        setAcctPosting(false);
+        return;
+      }
+
+      setAcctPosted(true);
+      message.success('Accounting posted successfully');
+      setEditOpen(false);
+      setAcctModalOpen(false);
+      runSearch();
     } catch (error: any) {
       console.error('Error posting accounting:', error);
       message.error(error.message || 'Failed to post accounting');
