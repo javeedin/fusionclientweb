@@ -833,6 +833,17 @@ export const getRetirements = async (bookTypeCode?: string): Promise<RetirementR
   } catch { return []; }
 };
 
+export const getRetirementAccountingPreview = async (retirementId: string): Promise<any> => {
+  try {
+    const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/fa/retirements/${encodeURIComponent(retirementId)}/accounting-preview`, {
+      headers: { Accept: 'application/json' },
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+};
+
 // ── Depreciation Workbench ────────────────────────────────────────────────────
 
 export const getDeprnWorkbench = async (params: {
