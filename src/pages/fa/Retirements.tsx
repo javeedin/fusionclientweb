@@ -207,7 +207,12 @@ const Retirements: React.FC = () => {
     try {
       const result = await validateAccountCode(combo);
       if (result.segmentDetails) {
-        return Object.values(result.segmentDetails).map(s => s.description || s.value).join(' | ');
+        // Get only segment4 (the last/most specific segment)
+        const segments = Object.values(result.segmentDetails);
+        const segment4 = segments[3]; // 0-indexed, so segment 4 is at index 3
+        if (segment4) {
+          return segment4.description || segment4.value || '';
+        }
       }
     } catch (error) {
       console.error('Error describing combo:', error);

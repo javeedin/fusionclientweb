@@ -109,14 +109,14 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       v_line_num := v_line_num + 1;
     END IF;
 
-    -- Line 3: Debit/Credit Proceeds of Sale Account
+    -- Line 3: Debit/Credit Proceeds of Sale Account (positive = money received = credit)
     IF v_proceeds_account IS NOT NULL AND v_proceeds_of_sale != 0 THEN
       APEX_JSON.OPEN_OBJECT;
       APEX_JSON.WRITE('lineNumber', v_line_num);
       APEX_JSON.WRITE('lineType', 'Proceeds of Sale');
       APEX_JSON.WRITE('accountCombination', v_proceeds_account);
-      APEX_JSON.WRITE('enteredDr', CASE WHEN v_proceeds_of_sale > 0 THEN v_proceeds_of_sale ELSE 0 END);
-      APEX_JSON.WRITE('enteredCr', CASE WHEN v_proceeds_of_sale < 0 THEN ABS(v_proceeds_of_sale) ELSE 0 END);
+      APEX_JSON.WRITE('enteredDr', CASE WHEN v_proceeds_of_sale < 0 THEN ABS(v_proceeds_of_sale) ELSE 0 END);
+      APEX_JSON.WRITE('enteredCr', CASE WHEN v_proceeds_of_sale > 0 THEN v_proceeds_of_sale ELSE 0 END);
       APEX_JSON.CLOSE_OBJECT;
       v_line_num := v_line_num + 1;
     END IF;
