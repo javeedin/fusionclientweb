@@ -1538,8 +1538,14 @@ Provide clear, concise analysis focused on the GL data context.`;
     const data = await response.json();
     console.log('[GL MCP Chat] Claude response received');
 
-    if (data.content && data.content.length > 0) {
-      const responseText = data.content[0].text;
+    // content is an array of blocks (thinking, text, ...) — collect the text
+    // blocks; content[0] may be a thinking block with no .text field.
+    const responseText = (data.content || [])
+      .filter((b) => b.type === 'text' && b.text)
+      .map((b) => b.text)
+      .join('\n');
+
+    if (responseText) {
       return {
         success: true,
         response: responseText,
@@ -1547,7 +1553,7 @@ Provide clear, concise analysis focused on the GL data context.`;
     } else {
       return {
         success: false,
-        error: 'No response from Claude API'
+        error: 'No text response from Claude API (stop_reason: ' + (data.stop_reason || 'unknown') + ')'
       };
     }
   } catch (err) {
