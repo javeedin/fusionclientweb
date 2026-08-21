@@ -14,6 +14,13 @@ CREATE OR REPLACE PACKAGE RR_FA_RETIREMENTS_ACCT_PKG AS
     p_http_status    OUT NUMBER,
     p_result         OUT CLOB
   );
+
+  PROCEDURE PUT_RETIREMENT_STATUS(
+    p_retirement_id  IN VARCHAR2,
+    p_status         IN VARCHAR2,
+    p_http_status    OUT NUMBER,
+    p_result         OUT CLOB
+  );
 END RR_FA_RETIREMENTS_ACCT_PKG;
 /
 
@@ -77,13 +84,14 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
     -- Generate journal lines based on account assignments
     APEX_JSON.OPEN_ARRAY('lines');
 
-    -- Line 1: Debit Depreciation Reserve Account (contra-asset)
+    -- Line 1: Debit Depreciation Reserve Account (accumulated depreciation)
+    -- Accumulated Depreciation = Cost - NBV
     IF v_deprn_account IS NOT NULL THEN
       APEX_JSON.OPEN_OBJECT;
       APEX_JSON.WRITE('lineNumber', v_line_num);
-      APEX_JSON.WRITE('lineType', 'Depreciation Reserve');
+      APEX_JSON.WRITE('lineType', 'Accumulated Depreciation');
       APEX_JSON.WRITE('accountCombination', v_deprn_account);
-      APEX_JSON.WRITE('enteredDr', NVL(v_nbv_retired, 0) - NVL(v_cost_retired, 0));
+      APEX_JSON.WRITE('enteredDr', NVL(v_cost_retired, 0) - NVL(v_nbv_retired, 0));
       APEX_JSON.WRITE('enteredCr', 0);
       APEX_JSON.CLOSE_OBJECT;
       v_line_num := v_line_num + 1;
@@ -149,6 +157,42 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       p_result := '{"success":false,"error":"' || REPLACE(SQLERRM, '"', '\"') || '"}';
   END GET_RETIREMENT_ACCT_PREVIEW;
 
+  PROCEDURE PUT_RETIREMENT_STATUS(
+    p_retirement_id  IN VARCHAR2,
+    p_status         IN VARCHAR2,
+    p_http_status    OUT NUMBER,
+    p_result         OUT CLOB
+  ) IS
+  BEGIN
+    UPDATE RR_FA_RETIREMENTS
+    SET
+      STATUS = p_status,
+      LAST_UPDATE_DATE = SYSTIMESTAMP,
+      LAST_UPDATED_BY = NVL(SYS_CONTEXT('apex$session','app_user'), 'REACTERP')
+    WHERE RETIREMENT_ID = p_retirement_id;
+
+    IF SQL%ROWCOUNT = 0 THEN
+      p_http_status := 404;
+      p_result := '{"success":false,"error":"Retirement record not found"}';
+    ELSE
+      COMMIT;
+      p_http_status := 200;
+      APEX_JSON.INITIALIZE_CLOB_OUTPUT;
+      APEX_JSON.OPEN_OBJECT;
+      APEX_JSON.WRITE('success', TRUE);
+      APEX_JSON.WRITE('message', 'Retirement status updated to ' || p_status);
+      APEX_JSON.CLOSE_OBJECT;
+      p_result := APEX_JSON.GET_CLOB_OUTPUT;
+      APEX_JSON.FREE_OUTPUT;
+    END IF;
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      ROLLBACK;
+      p_http_status := 500;
+      p_result := '{"success":false,"error":"' || REPLACE(SQLERRM, '"', '\"') || '"}';
+  END PUT_RETIREMENT_STATUS;
+
 END RR_FA_RETIREMENTS_ACCT_PKG;
 /
 
@@ -176,6 +220,44 @@ BEGIN
     p_http_status    => v_status,
     p_result         => v_result);
   :status := v_status;
+  HTP.P(v_result);
+END;
+]'
+  );
+  COMMIT;
+END;
+/
+
+-- ── PUT reerp/fa/retirements/:retirementId/status ─────────────────────────
+BEGIN ORDS.DELETE_HANDLER(p_module_name => 'reerp', p_pattern => 'fa/retirements/:retirementId/status', p_method => 'PUT'); COMMIT; EXCEPTION WHEN OTHERS THEN NULL; END;
+/
+BEGIN
+  ORDS.DEFINE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'fa/retirements/:retirementId/status', p_priority => 0, p_etag_type => 'HASH');
+  COMMIT;
+END;
+/
+BEGIN
+  ORDS.DEFINE_HANDLER(
+    p_module_name    => 'reerp',
+    p_pattern        => 'fa/retirements/:retirementId/status',
+    p_method         => 'PUT',
+    p_source_type    => ORDS.source_type_plsql,
+    p_items_per_page => 0,
+    p_mimes_allowed  => 'application/json',
+    p_source         => q'[
+DECLARE
+  v_status NUMBER; v_result CLOB; v_body CLOB; v_new_status VARCHAR2(100);
+BEGIN
+  v_body := :body_text;
+  APEX_JSON.PARSE(v_body);
+  v_new_status := APEX_JSON.GET_VARCHAR2(p_path => 'status');
+
+  RR_FA_RETIREMENTS_ACCT_PKG.PUT_RETIREMENT_STATUS(
+    p_retirement_id  => :retirementId,
+    p_status         => v_new_status,
+    p_http_status    => v_status,
+    p_result         => v_result);
+  :status_code := v_status;
   HTP.P(v_result);
 END;
 ]'
