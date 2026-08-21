@@ -162,10 +162,8 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       || ',"accountedCr":0'
       || ',"enteredDr":' || TO_CHAR(NVL(v_accumulated_deprn, 0))
       || ',"enteredCr":0'
+      || ',"currencyCode":' || jstr(v_currency_code)
       || ',"accountCombination":' || NVL(jstr(v_deprn_account), 'null')
-      || ',"reference1":' || jstr(v_asset_number)
-      || ',"reference2":' || jstr(p_retirement_id)
-      || ',"reference5":"FA_RETIREMENT"'
       || '},{'
       || '"lineNumber":2,"lineType":"CR","accountingClass":"ASSET_COST"'
       || ',"description":"Retirement Asset Cost — ' || REPLACE(v_asset_number, '"', '\"')
@@ -174,10 +172,8 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
       || ',"accountedCr":' || TO_CHAR(NVL(v_cost_retired, 0))
       || ',"enteredDr":0'
       || ',"enteredCr":' || TO_CHAR(NVL(v_cost_retired, 0))
+      || ',"currencyCode":' || jstr(v_currency_code)
       || ',"accountCombination":' || NVL(jstr(v_asset_cost_account), 'null')
-      || ',"reference1":' || jstr(v_asset_number)
-      || ',"reference2":' || jstr(p_retirement_id)
-      || ',"reference5":"FA_RETIREMENT"'
       || '}';
 
     -- Line 3: Proceeds of Sale (only if proceeds > 0)
@@ -190,10 +186,8 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
         || ',"accountedCr":0'
         || ',"enteredDr":' || TO_CHAR(NVL(v_proceeds_of_sale, 0))
         || ',"enteredCr":0'
+        || ',"currencyCode":' || jstr(v_currency_code)
         || ',"accountCombination":' || NVL(jstr(v_proceeds_account), 'null')
-        || ',"reference1":' || jstr(v_asset_number)
-        || ',"reference2":' || jstr(p_retirement_id)
-        || ',"reference5":"FA_RETIREMENT"'
         || '}';
     END IF;
 
@@ -209,10 +203,8 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
         || ',"accountedCr":' || CASE WHEN NVL(v_cost_of_removal, 0) < 0 THEN TO_CHAR(ABS(v_cost_of_removal)) ELSE '0' END
         || ',"enteredDr":' || CASE WHEN NVL(v_cost_of_removal, 0) > 0 THEN TO_CHAR(v_cost_of_removal) ELSE '0' END
         || ',"enteredCr":' || CASE WHEN NVL(v_cost_of_removal, 0) < 0 THEN TO_CHAR(ABS(v_cost_of_removal)) ELSE '0' END
+        || ',"currencyCode":' || jstr(v_currency_code)
         || ',"accountCombination":' || NVL(jstr(v_removal_account), 'null')
-        || ',"reference1":' || jstr(v_asset_number)
-        || ',"reference2":' || jstr(p_retirement_id)
-        || ',"reference5":"FA_RETIREMENT"'
         || '}';
     END IF;
 
@@ -228,10 +220,8 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_RETIREMENTS_ACCT_PKG AS
         || ',"accountedCr":' || CASE WHEN NVL(v_gain_loss_amount, 0) > 0 THEN TO_CHAR(v_gain_loss_amount) ELSE '0' END
         || ',"enteredDr":' || CASE WHEN NVL(v_gain_loss_amount, 0) < 0 THEN TO_CHAR(ABS(v_gain_loss_amount)) ELSE '0' END
         || ',"enteredCr":' || CASE WHEN NVL(v_gain_loss_amount, 0) > 0 THEN TO_CHAR(v_gain_loss_amount) ELSE '0' END
+        || ',"currencyCode":' || jstr(v_currency_code)
         || ',"accountCombination":' || NVL(jstr(CASE WHEN NVL(v_gain_loss_amount, 0) > 0 THEN v_gain_account ELSE v_loss_account END), 'null')
-        || ',"reference1":' || jstr(v_asset_number)
-        || ',"reference2":' || jstr(p_retirement_id)
-        || ',"reference5":"FA_RETIREMENT"'
         || '}';
     END IF;
 
