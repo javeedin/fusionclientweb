@@ -239,7 +239,7 @@ const McpRegistry: React.FC = () => {
         <div style={{ padding: '16px 24px', background: REDWOOD.surface, borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
           <Breadcrumb items={[
             { title: <Link to="/home"><HomeOutlined /> Home</Link> },
-            { title: 'Administration' },
+            { title: <Link to="/admin">Administration</Link> },
             { title: 'MCP Registry' },
           ]} />
         </div>
