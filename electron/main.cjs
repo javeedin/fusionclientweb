@@ -1497,12 +1497,14 @@ ipcMain.handle('mcp-registry:add-to-claude-desktop', async (_event, { fusionUser
 
     const serverPath = path.join(__dirname, 'mcp-registry-server.cjs');
 
-    // Oracle domain from saved GL credentials, falling back to the default
+    // Oracle domain from saved GL credentials, falling back to the default.
+    // Always reduce to protocol + host — older saved settings may contain a
+    // full endpoint URL with path and query params.
     let oracleBaseUrl = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com';
     try {
       if (fs.existsSync(GL_CREDS_FILE)) {
         const creds = JSON.parse(fs.readFileSync(GL_CREDS_FILE, 'utf8'));
-        if (creds.oracleBaseUrl) oracleBaseUrl = creds.oracleBaseUrl;
+        if (creds.oracleBaseUrl) oracleBaseUrl = extractOracleDomain(creds.oracleBaseUrl);
       }
     } catch (e) { /* keep default */ }
 
