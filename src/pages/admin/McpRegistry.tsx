@@ -198,9 +198,13 @@ const McpRegistry: React.FC = () => {
       render: (v) => v === 'Y'
         ? <Tag color="success" style={{ margin: 0 }}>Yes</Tag>
         : <Tag style={{ margin: 0 }}>No</Tag> },
-    { title: '', key: 'actions', width: 90, align: 'center',
+    { title: '', key: 'actions', width: 120, align: 'center',
       render: (_, record) => (
         <Space size="small">
+          <Tooltip title={isElectron ? 'Add to Claude Desktop (registers the MCP registry server in claude_desktop_config.json)' : 'Available only in the desktop (Electron) app'}>
+            <Button size="small" type="text" icon={<DesktopOutlined style={{ color: isElectron ? REDWOOD.info : undefined }} />}
+              disabled={!isElectron} onClick={() => setDesktopModalOpen(true)} />
+          </Tooltip>
           <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEdit(record)} />
           <Popconfirm title="Delete this tool?" onConfirm={() => handleDelete(record)}>
             <Button size="small" type="text" danger icon={<DeleteOutlined />} />
@@ -239,12 +243,6 @@ const McpRegistry: React.FC = () => {
             </Space>
             <Space>
               <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
-              <Tooltip title={isElectron ? 'Write the mcp-registry server into claude_desktop_config.json' : 'Available only in the desktop (Electron) app'}>
-                <Button icon={<DesktopOutlined />} disabled={!isElectron}
-                  onClick={() => setDesktopModalOpen(true)}>
-                  Add to Claude Desktop
-                </Button>
-              </Tooltip>
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}
                 style={{ background: REDWOOD.info, borderColor: REDWOOD.info }}>
                 New Tool
