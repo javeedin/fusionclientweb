@@ -103,6 +103,14 @@ const adminCards: AdminCard[] = [
     path: '/admin/gl-account-analysis',
   },
   {
+    key: 'mcp-registry',
+    title: 'MCP Registry',
+    description: 'Data-driven MCP tool definitions for Claude Desktop. Add a REST API as a new tool with a registry row — no code, no redeploy.',
+    icon: <LinkOutlined />,
+    color: '#0572CE',
+    path: '/admin/mcp-registry',
+  },
+  {
     key: 'change-requests',
     title: 'Data Change Requests',
     description: 'Controlled, audited updates to transactional records. Search a transaction, edit specific fields, preview the generated SQL, and execute with full audit trail.',
