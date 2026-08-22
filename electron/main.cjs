@@ -1532,25 +1532,93 @@ ipcMain.handle('mcp-registry:add-to-claude-desktop', async (_event, { fusionUser
 // on next launch. Windows: taskkill /F /IM claude.exe; macOS/Linux: pkill.
 ipcMain.handle('mcp-registry:kill-claude-desktop', async () => {
   const { exec } = require('child_process');
-  const cmd = process.platform === 'win32'
-    ? 'taskkill /F /IM claude.exe'
-    : 'pkill -f "Claude"';
-  return new Promise((resolve) => {
-    exec(cmd, (error, stdout, stderr) => {
-      if (error) {
-        // taskkill exits non-zero when no process was found — treat as "not running"
-        const notFound = /not found|no process/i.test(`${stdout} ${stderr} ${error.message}`);
-        resolve({
-          success: notFound,
-          notRunning: notFound,
-          message: notFound ? 'Claude Desktop was not running' : (stderr || error.message),
-        });
-      } else {
-        console.log('[MCP Registry] Claude Desktop killed:', (stdout || '').trim());
-        resolve({ success: true, notRunning: false, message: (stdout || 'Claude Desktop terminated').trim() });
-      }
-    });
+  const run = (cmd) => new Promise((resolve) => {
+    exec(cmd, (error, stdout, stderr) => resolve({ error, stdout: stdout || '', stderr: stderr || '' }));
   });
+
+  if (process.platform === 'win32') {
+    // Image name can vary by install (claude.exe, Claude.exe, "Claude Desktop.exe").
+    // /T kills the whole Electron process tree; wildcard catches name variants.
+    const attempts = [
+      'taskkill /F /T /IM claude.exe',
+      'taskkill /F /T /IM "Claude Desktop.exe"',
+      'taskkill /F /T /IM claude*',
+    ];
+    let killed = false;
+    let lastMsg = '';
+    for (const cmd of attempts) {
+      const r = await run(cmd);
+      const out = `${r.stdout} ${r.stderr}`.trim();
+      if (!r.error || /SUCCESS/i.test(out)) {
+        killed = true;
+        console.log('[MCP Registry] Kill succeeded via:', cmd, '—', out);
+      }
+      lastMsg = out || (r.error ? r.error.message : '');
+    }
+    // Report what claude processes remain (empty = all gone)
+    const check = await run('tasklist /FI "IMAGENAME eq claude.exe" /FO CSV /NH');
+    const stillRunning = /claude/i.test(check.stdout);
+    if (killed && !stillRunning) {
+      return { success: true, notRunning: false, message: 'Claude Desktop terminated' };
+    }
+    if (!killed && /not found|no tasks/i.test(lastMsg)) {
+      return { success: true, notRunning: true, message: 'Claude Desktop was not running' };
+    }
+    return {
+      success: killed,
+      notRunning: false,
+      message: killed ? 'Kill sent, but a claude process may remain — check Task Manager' : lastMsg,
+    };
+  }
+
+  // macOS / Linux
+  const r = await run('pkill -f "Claude"');
+  if (!r.error) return { success: true, notRunning: false, message: 'Claude Desktop terminated' };
+  return { success: true, notRunning: true, message: 'Claude Desktop was not running' };
+});
+
+// ── Start Claude Desktop ────────────────────────────────────────────────────
+ipcMain.handle('mcp-registry:start-claude-desktop', async () => {
+  try {
+    if (process.platform === 'win32') {
+      const localAppData = process.env.LOCALAPPDATA || '';
+      const candidates = [
+        path.join(localAppData, 'AnthropicClaude', 'claude.exe'),
+        path.join(localAppData, 'AnthropicClaude', 'Claude.exe'),
+        path.join(localAppData, 'Programs', 'Claude', 'Claude.exe'),
+        path.join(localAppData, 'Programs', 'claude-desktop', 'Claude.exe'),
+      ];
+      const exe = candidates.find((p) => fs.existsSync(p));
+      if (exe) {
+        const child = spawn(exe, [], { detached: true, stdio: 'ignore' });
+        child.unref();
+        console.log('[MCP Registry] Started Claude Desktop:', exe);
+        return { success: true, message: `Claude Desktop starting (${exe})` };
+      }
+      // Fall back to the claude:// protocol handler registered by the installer
+      const { exec } = require('child_process');
+      return await new Promise((resolve) => {
+        exec('start "" "claude://"', (error) => {
+          if (error) {
+            resolve({ success: false, message: 'Claude Desktop executable not found. Checked: ' + candidates.join(' ; ') });
+          } else {
+            resolve({ success: true, message: 'Claude Desktop starting (via claude:// protocol)' });
+          }
+        });
+      });
+    }
+    if (process.platform === 'darwin') {
+      const { exec } = require('child_process');
+      return await new Promise((resolve) => {
+        exec('open -a "Claude"', (error) => resolve(
+          error ? { success: false, message: error.message }
+                : { success: true, message: 'Claude Desktop starting' }));
+      });
+    }
+    return { success: false, message: 'Unsupported platform: ' + process.platform };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
 });
 
 // ── GL MCP Chat with Claude API ─────────────────────────────────────────────

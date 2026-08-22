@@ -8,7 +8,7 @@ import type { ColumnsType } from 'antd/es/table';
 import {
   HomeOutlined, ApiOutlined, PlusOutlined, ReloadOutlined,
   EditOutlined, DeleteOutlined, ThunderboltOutlined, DesktopOutlined,
-  PoweroffOutlined,
+  PoweroffOutlined, PlayCircleOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 
@@ -74,6 +74,20 @@ const McpRegistry: React.FC = () => {
       message.error(e.message || 'Failed');
     } finally {
       setKilling(false);
+    }
+  };
+
+  const [starting, setStarting] = useState(false);
+  const handleStartClaudeDesktop = async () => {
+    setStarting(true);
+    try {
+      const res = await (window as any).electronAPI.mcpRegistryStartClaudeDesktop();
+      if (res?.success) message.success(res.message || 'Claude Desktop starting');
+      else message.error(res?.message || 'Failed to start Claude Desktop');
+    } catch (e: any) {
+      message.error(e.message || 'Failed');
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -263,7 +277,7 @@ const McpRegistry: React.FC = () => {
             </Space>
             <Space>
               <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
-              <Popconfirm title="Force-quit Claude Desktop?" description="Runs taskkill /F /IM claude.exe — unsaved chats close immediately."
+              <Popconfirm title="Force-quit Claude Desktop?" description="Kills the whole Claude process tree — unsaved chats close immediately."
                 onConfirm={handleKillClaudeDesktop} okText="Kill" okButtonProps={{ danger: true }} disabled={!isElectron}>
                 <Tooltip title={isElectron ? 'Force-quit Claude Desktop so it reloads the config on next launch' : 'Available only in the desktop (Electron) app'}>
                   <Button danger icon={<PoweroffOutlined />} loading={killing} disabled={!isElectron}>
@@ -271,6 +285,13 @@ const McpRegistry: React.FC = () => {
                   </Button>
                 </Tooltip>
               </Popconfirm>
+              <Tooltip title={isElectron ? 'Launch the Claude Desktop client' : 'Available only in the desktop (Electron) app'}>
+                <Button icon={<PlayCircleOutlined />} loading={starting} disabled={!isElectron}
+                  style={{ color: isElectron ? '#1D7B4D' : undefined, borderColor: isElectron ? '#1D7B4D' : undefined }}
+                  onClick={handleStartClaudeDesktop}>
+                  Start Claude Desktop
+                </Button>
+              </Tooltip>
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}
                 style={{ background: REDWOOD.info, borderColor: REDWOOD.info }}>
                 New Tool
