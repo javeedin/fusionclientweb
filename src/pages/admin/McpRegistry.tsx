@@ -384,7 +384,7 @@ const McpRegistry: React.FC = () => {
         </Modal>
 
         <Modal
-          title="Add MCP Registry Server to Claude Desktop"
+          title="Add AR Server to Claude Desktop"
           open={desktopModalOpen}
           onCancel={() => setDesktopModalOpen(false)}
           onOk={handleAddToClaudeDesktop}
@@ -393,18 +393,19 @@ const McpRegistry: React.FC = () => {
           width={520}
         >
           <Alert type="info" showIcon style={{ marginBottom: 16, fontSize: 12 }}
-            message="This writes the mcp-registry server into claude_desktop_config.json, keeping existing servers (gl-server) untouched." />
+            message="This registers the standalone AR server (ar-mcp-server.cjs — Oracle Fusion Receivables tools) in claude_desktop_config.json, keeping existing servers (gl-server) untouched." />
           <Form form={desktopForm} layout="vertical">
-            <Form.Item name="fusionUsername" label="Oracle Fusion Username (for BASIC_FUSION tools, e.g. AR)"
-              extra="Leave blank if no registry tools use Fusion authentication">
+            <Form.Item name="fusionUsername" label="Oracle Fusion Username"
+              rules={[{ required: true, message: 'Fusion username is required' }]}>
               <Input placeholder="fusion.user@company.com" autoComplete="off" />
             </Form.Item>
-            <Form.Item name="fusionPassword" label="Oracle Fusion Password">
+            <Form.Item name="fusionPassword" label="Oracle Fusion Password"
+              rules={[{ required: true, message: 'Fusion password is required' }]}>
               <Input.Password placeholder="••••••••" autoComplete="new-password" />
             </Form.Item>
           </Form>
           <Text type="secondary" style={{ fontSize: 11 }}>
-            After writing, fully quit Claude Desktop from the system tray and reopen it.
+            After writing, use Kill Claude Desktop then Start Claude Desktop to reload the config.
           </Text>
         </Modal>
       </Content>
