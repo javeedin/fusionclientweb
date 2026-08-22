@@ -1527,6 +1527,32 @@ ipcMain.handle('mcp-registry:add-to-claude-desktop', async (_event, { fusionUser
   }
 });
 
+// ── Kill Claude Desktop ─────────────────────────────────────────────────────
+// Force-quits the Claude Desktop client so it reloads claude_desktop_config.json
+// on next launch. Windows: taskkill /F /IM claude.exe; macOS/Linux: pkill.
+ipcMain.handle('mcp-registry:kill-claude-desktop', async () => {
+  const { exec } = require('child_process');
+  const cmd = process.platform === 'win32'
+    ? 'taskkill /F /IM claude.exe'
+    : 'pkill -f "Claude"';
+  return new Promise((resolve) => {
+    exec(cmd, (error, stdout, stderr) => {
+      if (error) {
+        // taskkill exits non-zero when no process was found — treat as "not running"
+        const notFound = /not found|no process/i.test(`${stdout} ${stderr} ${error.message}`);
+        resolve({
+          success: notFound,
+          notRunning: notFound,
+          message: notFound ? 'Claude Desktop was not running' : (stderr || error.message),
+        });
+      } else {
+        console.log('[MCP Registry] Claude Desktop killed:', (stdout || '').trim());
+        resolve({ success: true, notRunning: false, message: (stdout || 'Claude Desktop terminated').trim() });
+      }
+    });
+  });
+});
+
 // ── GL MCP Chat with Claude API ─────────────────────────────────────────────
 ipcMain.handle('gl-mcp:chat', async (_event, { message, glData, apiKey } = {}) => {
   try {

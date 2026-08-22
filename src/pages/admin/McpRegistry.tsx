@@ -8,6 +8,7 @@ import type { ColumnsType } from 'antd/es/table';
 import {
   HomeOutlined, ApiOutlined, PlusOutlined, ReloadOutlined,
   EditOutlined, DeleteOutlined, ThunderboltOutlined, DesktopOutlined,
+  PoweroffOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 
@@ -56,6 +57,25 @@ const McpRegistry: React.FC = () => {
   const [desktopForm] = Form.useForm();
   const [addingToDesktop, setAddingToDesktop] = useState(false);
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.mcpRegistryAddToClaudeDesktop;
+
+  const [killing, setKilling] = useState(false);
+  const handleKillClaudeDesktop = async () => {
+    setKilling(true);
+    try {
+      const res = await (window as any).electronAPI.mcpRegistryKillClaudeDesktop();
+      if (res?.success && !res?.notRunning) {
+        message.success('Claude Desktop terminated — relaunch it to load the updated config');
+      } else if (res?.notRunning) {
+        message.info('Claude Desktop was not running');
+      } else {
+        message.error(res?.message || 'Failed to kill Claude Desktop');
+      }
+    } catch (e: any) {
+      message.error(e.message || 'Failed');
+    } finally {
+      setKilling(false);
+    }
+  };
 
   const handleAddToClaudeDesktop = async () => {
     try {
@@ -243,6 +263,14 @@ const McpRegistry: React.FC = () => {
             </Space>
             <Space>
               <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
+              <Popconfirm title="Force-quit Claude Desktop?" description="Runs taskkill /F /IM claude.exe — unsaved chats close immediately."
+                onConfirm={handleKillClaudeDesktop} okText="Kill" okButtonProps={{ danger: true }} disabled={!isElectron}>
+                <Tooltip title={isElectron ? 'Force-quit Claude Desktop so it reloads the config on next launch' : 'Available only in the desktop (Electron) app'}>
+                  <Button danger icon={<PoweroffOutlined />} loading={killing} disabled={!isElectron}>
+                    Kill Claude Desktop
+                  </Button>
+                </Tooltip>
+              </Popconfirm>
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}
                 style={{ background: REDWOOD.info, borderColor: REDWOOD.info }}>
                 New Tool
