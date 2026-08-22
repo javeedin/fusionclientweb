@@ -107,6 +107,7 @@ const ManageExpenses          = lazy(() => import('./pages/rm').then(m => ({ def
 const AdminModule             = lazy(() => import('./pages/admin/index'));
 const UserManagement          = lazy(() => import('./pages/admin/UserManagement'));
 const ClaudeKeySettings       = lazy(() => import('./pages/admin/ClaudeKeySettings'));
+const McpRegistry             = lazy(() => import('./pages/admin/McpRegistry'));
 const RagAssistant            = lazy(() => import('./pages/admin/RagAssistant'));
 const GLAccountAnalysis       = lazy(() => import('./modules/admin/GLAccountAnalysis'));
 const ApprovalEngine          = lazy(() => import('./pages/admin/ApprovalEngine'));
@@ -367,6 +368,7 @@ function App() {
               <Route path="admin" element={<AdminModule />} />
               <Route path="admin/users" element={<UserManagement />} />
               <Route path="admin/claude-key" element={<ClaudeKeySettings />} />
+              <Route path="admin/mcp-registry" element={<McpRegistry />} />
               <Route path="admin/ai-assistant" element={<RagAssistant />} />
               <Route path="admin/gl-account-analysis" element={<GLAccountAnalysis />} />
               <Route path="admin/approvals" element={<ApprovalEngine />} />
