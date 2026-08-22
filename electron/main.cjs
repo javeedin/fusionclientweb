@@ -1510,7 +1510,10 @@ ipcMain.handle('mcp-registry:add-to-claude-desktop', async (_event, { fusionUser
     if (fusionUsername) env.FUSION_USERNAME = fusionUsername;
     if (fusionPassword) env.FUSION_PASSWORD = fusionPassword;
 
-    config.mcpServers['mcp-registry'] = {
+    // NOTE: the name "mcp-registry" collides with a reserved internal server
+    // name in Claude Desktop — use "erp-tools" instead.
+    delete config.mcpServers['mcp-registry'];
+    config.mcpServers['erp-tools'] = {
       command: 'node',
       args: [serverPath, '--stdio'],
       env,
