@@ -7,7 +7,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   HomeOutlined, ApiOutlined, PlusOutlined, ReloadOutlined,
-  EditOutlined, DeleteOutlined, ThunderboltOutlined,
+  EditOutlined, DeleteOutlined, ThunderboltOutlined, DesktopOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 
@@ -50,6 +50,46 @@ const McpRegistry: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<McpTool | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Add to Claude Desktop
+  const [desktopModalOpen, setDesktopModalOpen] = useState(false);
+  const [desktopForm] = Form.useForm();
+  const [addingToDesktop, setAddingToDesktop] = useState(false);
+  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.mcpRegistryAddToClaudeDesktop;
+
+  const handleAddToClaudeDesktop = async () => {
+    try {
+      const vals = await desktopForm.validateFields();
+      setAddingToDesktop(true);
+      const res = await (window as any).electronAPI.mcpRegistryAddToClaudeDesktop({
+        fusionUsername: vals.fusionUsername || '',
+        fusionPassword: vals.fusionPassword || '',
+      });
+      if (res?.success) {
+        Modal.success({
+          title: 'Added to Claude Desktop',
+          content: (
+            <div style={{ fontSize: 12 }}>
+              <p>Config updated at:</p>
+              <Text code style={{ fontSize: 11, wordBreak: 'break-all' }}>{res.configPath}</Text>
+              <p style={{ marginTop: 8 }}>Servers in config: <Text strong>{(res.servers || []).join(', ')}</Text></p>
+              <p style={{ marginTop: 8, color: '#C74634' }}>
+                Now fully quit Claude Desktop (system tray → Quit) and reopen it to load the server.
+              </p>
+            </div>
+          ),
+        });
+        setDesktopModalOpen(false);
+      } else {
+        message.error(res?.error || 'Failed to update Claude Desktop config');
+      }
+    } catch (e: any) {
+      if (e?.errorFields) return;
+      message.error(e.message || 'Failed');
+    } finally {
+      setAddingToDesktop(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -199,6 +239,12 @@ const McpRegistry: React.FC = () => {
             </Space>
             <Space>
               <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
+              <Tooltip title={isElectron ? 'Write the mcp-registry server into claude_desktop_config.json' : 'Available only in the desktop (Electron) app'}>
+                <Button icon={<DesktopOutlined />} disabled={!isElectron}
+                  onClick={() => setDesktopModalOpen(true)}>
+                  Add to Claude Desktop
+                </Button>
+              </Tooltip>
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}
                 style={{ background: REDWOOD.info, borderColor: REDWOOD.info }}>
                 New Tool
@@ -288,6 +334,31 @@ const McpRegistry: React.FC = () => {
               <Switch checkedChildren="Y" unCheckedChildren="N" />
             </Form.Item>
           </Form>
+        </Modal>
+
+        <Modal
+          title="Add MCP Registry Server to Claude Desktop"
+          open={desktopModalOpen}
+          onCancel={() => setDesktopModalOpen(false)}
+          onOk={handleAddToClaudeDesktop}
+          confirmLoading={addingToDesktop}
+          okText="Write Config"
+          width={520}
+        >
+          <Alert type="info" showIcon style={{ marginBottom: 16, fontSize: 12 }}
+            message="This writes the mcp-registry server into claude_desktop_config.json, keeping existing servers (gl-server) untouched." />
+          <Form form={desktopForm} layout="vertical">
+            <Form.Item name="fusionUsername" label="Oracle Fusion Username (for BASIC_FUSION tools, e.g. AR)"
+              extra="Leave blank if no registry tools use Fusion authentication">
+              <Input placeholder="fusion.user@company.com" autoComplete="off" />
+            </Form.Item>
+            <Form.Item name="fusionPassword" label="Oracle Fusion Password">
+              <Input.Password placeholder="••••••••" autoComplete="new-password" />
+            </Form.Item>
+          </Form>
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            After writing, fully quit Claude Desktop from the system tray and reopen it.
+          </Text>
         </Modal>
       </Content>
     </Layout>

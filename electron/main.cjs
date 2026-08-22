@@ -1481,6 +1481,52 @@ ipcMain.handle('gl-mcp:add-to-claude-desktop', async (_event, { httpPort = 3001 
   }
 });
 
+// ── MCP Registry server → Claude Desktop config ─────────────────────────────
+// Merges an 'mcp-registry' entry into claude_desktop_config.json, preserving
+// every other server (gl-server included).
+ipcMain.handle('mcp-registry:add-to-claude-desktop', async (_event, { fusionUsername, fusionPassword } = {}) => {
+  try {
+    const configPath = getClaudeDesktopConfigPath();
+    const configDir = path.dirname(configPath);
+
+    let config = {};
+    if (fs.existsSync(configPath)) {
+      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    }
+    if (!config.mcpServers) config.mcpServers = {};
+
+    const serverPath = path.join(__dirname, 'mcp-registry-server.cjs');
+
+    // Oracle domain from saved GL credentials, falling back to the default
+    let oracleBaseUrl = 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com';
+    try {
+      if (fs.existsSync(GL_CREDS_FILE)) {
+        const creds = JSON.parse(fs.readFileSync(GL_CREDS_FILE, 'utf8'));
+        if (creds.oracleBaseUrl) oracleBaseUrl = creds.oracleBaseUrl;
+      }
+    } catch (e) { /* keep default */ }
+
+    const env = { ORACLE_BASE_URL: oracleBaseUrl };
+    if (fusionUsername) env.FUSION_USERNAME = fusionUsername;
+    if (fusionPassword) env.FUSION_PASSWORD = fusionPassword;
+
+    config.mcpServers['mcp-registry'] = {
+      command: 'node',
+      args: [serverPath, '--stdio'],
+      env,
+    };
+
+    if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+    console.log('[MCP Registry] Added mcp-registry to Claude Desktop config at', configPath);
+
+    return { success: true, configPath, servers: Object.keys(config.mcpServers) };
+  } catch (e) {
+    console.error('[MCP Registry] Failed to update Claude Desktop config:', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
 // ── GL MCP Chat with Claude API ─────────────────────────────────────────────
 ipcMain.handle('gl-mcp:chat', async (_event, { message, glData, apiKey } = {}) => {
   try {
