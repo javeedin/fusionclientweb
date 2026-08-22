@@ -1495,10 +1495,8 @@ ipcMain.handle('mcp-registry:add-to-claude-desktop', async (_event, { fusionUser
     }
     if (!config.mcpServers) config.mcpServers = {};
 
-    // Independent per-domain server: dedicated AR server for Oracle Fusion
-    // receivables (standalone, like gl-server — easy to track which is running).
-    const serverPath = path.join(__dirname, 'ar-mcp-server.cjs');
-
+    // Independent per-domain servers (standalone, like gl-server — easy to
+    // track which is running in Claude Desktop's Developer panel).
     const env = {};
     if (fusionUsername) env.FUSION_USERNAME = fusionUsername;
     if (fusionPassword) env.FUSION_PASSWORD = fusionPassword;
@@ -1506,9 +1504,15 @@ ipcMain.handle('mcp-registry:add-to-claude-desktop', async (_event, { fusionUser
     // Clean up entries from earlier iterations of this feature
     delete config.mcpServers['mcp-registry'];
     delete config.mcpServers['erp-tools'];
+
     config.mcpServers['ar-server'] = {
       command: 'node',
-      args: [serverPath, '--stdio'],
+      args: [path.join(__dirname, 'ar-mcp-server.cjs'), '--stdio'],
+      env,
+    };
+    config.mcpServers['ar-customer-balance'] = {
+      command: 'node',
+      args: [path.join(__dirname, 'ar-customer-balance-server.cjs'), '--stdio'],
       env,
     };
 
