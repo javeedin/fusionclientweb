@@ -111,6 +111,14 @@ const adminCards: AdminCard[] = [
     path: '/admin/mcp-registry',
   },
   {
+    key: 'mcp-logs',
+    title: 'MCP Activity Log',
+    description: 'Audit trail of every Claude tool call and scheduled agent run — success/failure, duration, machine, user, and output preview.',
+    icon: <DatabaseOutlined />,
+    color: '#C74634',
+    path: '/admin/mcp-logs',
+  },
+  {
     key: 'change-requests',
     title: 'Data Change Requests',
     description: 'Controlled, audited updates to transactional records. Search a transaction, edit specific fields, preview the generated SQL, and execute with full audit trail.',
