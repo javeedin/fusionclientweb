@@ -5,6 +5,7 @@ const http = require('http');
 const url = require('url');
 const fs = require('fs');
 const path = require('path');
+const { logToolCall } = require('./mcp-call-logger.cjs');
 
 // ── Logging utility ────────────────────────────────────────────────────────
 function log(level, message) {
@@ -322,7 +323,15 @@ async function handleMcpRequest(request) {
     }
     if (method === 'tools/call') {
       const { name, arguments: toolArgs } = params;
-      const result = await executeTool(name, toolArgs);
+      const t0 = Date.now();
+      let result;
+      try {
+        result = await executeTool(name, toolArgs);
+      } catch (e) {
+        logToolCall('gl-server', { tool: name, args: toolArgs, ok: false, ms: Date.now() - t0, error: e.message });
+        throw e;
+      }
+      logToolCall('gl-server', { tool: name, args: toolArgs, ok: true, ms: Date.now() - t0, result });
       return {
         jsonrpc,
         id,

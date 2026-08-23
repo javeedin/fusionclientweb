@@ -23,6 +23,8 @@
 //       FUSION_USERNAME / FUSION_PASSWORD  (required)
 // ============================================================================
 
+const { logToolCall } = require('./mcp-call-logger.cjs');
+
 function log(level, message) {
   console.error(`[${new Date().toISOString()}] [AR BALANCE ${level}] ${message}`);
 }
@@ -246,8 +248,15 @@ async function handleMcpRequest(request) {
     if (method === 'tools/list') return { jsonrpc, id, result: { tools: MCP_TOOLS } };
     if (method === 'tools/call') {
       const { name, arguments: toolArgs } = params || {};
-      const result = await executeTool(name, toolArgs);
-      return { jsonrpc, id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
+      const t0 = Date.now();
+      try {
+        const result = await executeTool(name, toolArgs);
+        logToolCall('ar-customer-balance', { tool: name, args: toolArgs, ok: true, ms: Date.now() - t0, result });
+        return { jsonrpc, id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } };
+      } catch (e) {
+        logToolCall('ar-customer-balance', { tool: name, args: toolArgs, ok: false, ms: Date.now() - t0, error: e.message });
+        throw e;
+      }
     }
     if (isNotification) return null;
     return { jsonrpc, id, error: { code: -32601, message: `Method not found: ${method}` } };
