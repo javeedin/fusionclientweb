@@ -157,7 +157,37 @@ const MCP_TOOLS = [
       required: ['filename'],
     },
   },
+  {
+    name: 'logAgentRun',
+    description: 'Record the outcome of a scheduled/agent task run into the monitoring log (RR_MCP_CALL_LOG in Oracle). Call this at the END of every scheduled task run with the task name, status, and a short summary of what was found/done — this is how run history is monitored.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_name: { type: 'string', description: 'Stable task identifier, e.g. "morning-balance-check"' },
+        status: { type: 'string', enum: ['success', 'failed'], description: 'Run outcome (default success)' },
+        summary: { type: 'string', description: 'Short summary of the run output / findings, or the error if failed' },
+      },
+      required: ['task_name'],
+    },
+  },
 ];
+
+// Self-reporting for scheduled/agent runs: writes a row with server name
+// "agent-run" into the call log (file + RR_MCP_CALL_LOG in Oracle), so
+// monitoring can answer "did the morning task run today, and did it succeed?"
+async function logAgentRun({ task_name, status, summary }) {
+  if (!task_name) throw new Error('task_name is required');
+  const ok = String(status || 'success').toLowerCase() === 'success';
+  logToolCall('agent-run', {
+    tool: task_name,
+    args: { status: status || 'success' },
+    ok,
+    ms: null,
+    result: summary || '',
+    error: ok ? undefined : (summary || 'failed'),
+  });
+  return { logged: true, task: task_name, status: ok ? 'success' : 'failed' };
+}
 
 async function executeTool(name, args) {
   switch (name) {
@@ -165,6 +195,7 @@ async function executeTool(name, args) {
     case 'saveDocument':            return await saveDocument(args || {});
     case 'listArchive':             return await listArchive(args || {});
     case 'readArchiveFile':         return await readArchiveFile(args || {});
+    case 'logAgentRun':             return await logAgentRun(args || {});
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }
