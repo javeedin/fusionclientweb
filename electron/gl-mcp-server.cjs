@@ -283,6 +283,47 @@ async function executeTool(toolName, args) {
   }
 }
 
+// ── MCP Prompts — appear as "/" slash commands in Claude Desktop ───────────
+const MCP_PROMPTS = [
+  {
+    name: 'trial-balance',
+    description: 'Trial balance for a period — all accounts with balances',
+    arguments: [
+      { name: 'period', description: 'Period name, e.g. Jan-26', required: true },
+      { name: 'ledger', description: 'Ledger name (default BUIMERC LEDGER)', required: false },
+    ],
+    template: (a) => `Use getAccountBalance for ledger "${a.ledger || 'BUIMERC LEDGER'}" and period "${a.period}" (no account filter). Present the trial balance grouped by account type with opening, debit, credit, and closing columns, and highlight the largest closing balances.`,
+  },
+  {
+    name: 'account-analysis',
+    description: 'Analyze one GL account for a period',
+    arguments: [
+      { name: 'account', description: 'GL account number, e.g. 1222107', required: true },
+      { name: 'period', description: 'Period name, e.g. Jan-26', required: true },
+      { name: 'company', description: 'Company code (default 01)', required: false },
+    ],
+    template: (a) => `Use getGLAccountAnalysis for ledger "BUIMERC LEDGER", period "${a.period}", company "${a.company || '01'}", account "${a.account}". Summarize the activity, balances, and anything unusual.`,
+  },
+  {
+    name: 'account-search',
+    description: 'Search the chart of accounts by name or number',
+    arguments: [
+      { name: 'term', description: 'Search term, e.g. vehicle', required: true },
+      { name: 'period', description: 'Period name, e.g. Jan-26', required: true },
+    ],
+    template: (a) => `Use searchAccounts on ledger "BUIMERC LEDGER" for period "${a.period}" with search term "${a.term}" and list the matching accounts with their descriptions.`,
+  },
+  {
+    name: 'period-transactions',
+    description: 'GL journal transactions for a period, optionally one account',
+    arguments: [
+      { name: 'period', description: 'Period name, e.g. Jan-26', required: true },
+      { name: 'account', description: 'Account filter (optional)', required: false },
+    ],
+    template: (a) => `Use getGLTransactions for period "${a.period}"${a.account ? ` filtered to account "${a.account}"` : ''}. Summarize the journal activity by source and category, and point out large or unusual entries.`,
+  },
+];
+
 // ── MCP JSON-RPC dispatch (shared by HTTP and stdio transports) ────────────
 // Returns a response object, or null for notifications (no id → no response).
 async function handleMcpRequest(request) {
@@ -298,7 +339,7 @@ async function handleMcpRequest(request) {
         id,
         result: {
           protocolVersion: '2024-11-05',
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, prompts: {} },
           serverInfo: {
             name: 'GL MCP Server',
             version: '1.0.0'
@@ -316,7 +357,13 @@ async function handleMcpRequest(request) {
       return { jsonrpc, id, result: { resources: [] } };
     }
     if (method === 'prompts/list') {
-      return { jsonrpc, id, result: { prompts: [] } };
+      return { jsonrpc, id, result: { prompts: MCP_PROMPTS.map((p) => ({ name: p.name, description: p.description, arguments: p.arguments })) } };
+    }
+    if (method === 'prompts/get') {
+      const { name, arguments: pargs } = params || {};
+      const p = MCP_PROMPTS.find((x) => x.name === name);
+      if (!p) return { jsonrpc, id, error: { code: -32602, message: `Unknown prompt: ${name}` } };
+      return { jsonrpc, id, result: { description: p.description, messages: [{ role: 'user', content: { type: 'text', text: p.template(pargs || {}) } }] } };
     }
     if (method === 'tools/list') {
       return { jsonrpc, id, result: { tools: MCP_TOOLS } };

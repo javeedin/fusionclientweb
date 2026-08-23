@@ -158,6 +158,11 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: 'showSamplePrompts',
+    description: 'Show the catalog of sample prompts / example questions for all ERP MCP servers (GL, AR, customer balance, archive). Use when the user asks what they can ask, what the ERP tools can do, or wants ideas.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
     name: 'logAgentRun',
     description: 'Record the outcome of a scheduled/agent task run into the monitoring log (RR_MCP_CALL_LOG in Oracle). Call this at the END of every scheduled task run with the task name, status, and a short summary of what was found/done — this is how run history is monitored.',
     inputSchema: {
@@ -189,6 +194,39 @@ async function logAgentRun({ task_name, status, summary }) {
   return { logged: true, task: task_name, status: ok ? 'success' : 'failed' };
 }
 
+// Cross-server prompt catalog — lets the user ask "what can I ask?" in chat.
+const SAMPLE_PROMPT_CATALOG = {
+  'gl-server (General Ledger)': [
+    'Show the trial balance for Jan-26 on BUIMERC LEDGER — which accounts have the largest closing balances?',
+    'Analyze account 1222107 for company 01, period Jan-26, on BUIMERC LEDGER',
+    'List all accounts with their balances for Jan-26 and group them by account type',
+    'Show GL journal line transactions for Jan-26 on account 1222107 — anything unusual?',
+    'Search the chart of accounts for anything related to "vehicle"',
+  ],
+  'ar-server (Receivables — quick)': [
+    'What are the open installments for PICK AND BUY TRIBECA LTD?',
+    'Draft a payment reminder email for PICK AND BUY TRIBECA LTD listing overdue invoices',
+    'Give me a receivables overview for PICK AND BUY TRIBECA LTD — total open and total due per site',
+  ],
+  'ar-customer-balance (Receivables — deep)': [
+    'What is the correct total balance for PICK AND BUY TRIBECA LTD? Reconcile against the site totals',
+    'Build a full customer statement for PICK AND BUY TRIBECA LTD from all underlying records',
+  ],
+  'archive-server (Memory)': [
+    'Save this analysis to the archive with a suitable title',
+    'What did we archive about Tribeca? Read it back and summarize',
+    'Save that table as a CSV document in the archive',
+  ],
+  'Tip': [
+    'Type / in the message box to see these as clickable slash commands',
+    'End a scheduled task prompt with: call logAgentRun with the task name, status and summary',
+  ],
+};
+
+async function showSamplePrompts() {
+  return SAMPLE_PROMPT_CATALOG;
+}
+
 async function executeTool(name, args) {
   switch (name) {
     case 'saveConversationSummary': return await saveConversationSummary(args || {});
@@ -196,9 +234,32 @@ async function executeTool(name, args) {
     case 'listArchive':             return await listArchive(args || {});
     case 'readArchiveFile':         return await readArchiveFile(args || {});
     case 'logAgentRun':             return await logAgentRun(args || {});
+    case 'showSamplePrompts':       return await showSamplePrompts();
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }
+
+// ── MCP Prompts — appear as "/" slash commands in Claude Desktop ───────────
+const MCP_PROMPTS = [
+  {
+    name: 'erp-help',
+    description: 'Show what you can ask the ERP tools (sample prompts for all servers)',
+    arguments: [],
+    template: () => `Call showSamplePrompts and present the catalog nicely, grouped by server, so I can see everything I can ask about the ERP. Briefly explain what each server does.`,
+  },
+  {
+    name: 'save-analysis',
+    description: 'Save this conversation\'s analysis to the archive',
+    arguments: [{ name: 'title', description: 'Title for the archived analysis', required: false }],
+    template: (a) => `Save the full analysis from this conversation to the archive using saveConversationSummary${a.title ? ` with the title "${a.title}"` : ' with a suitable descriptive title'}. Include the key data, tables, and conclusions in markdown.`,
+  },
+  {
+    name: 'find-in-archive',
+    description: 'Find and read back a past archived analysis',
+    arguments: [{ name: 'topic', description: 'What to search for, e.g. tribeca', required: true }],
+    template: (a) => `Use listArchive with search "${a.topic}", pick the most relevant file, read it with readArchiveFile, and summarize what we concluded back then.`,
+  },
+];
 
 // ── MCP JSON-RPC dispatch ──────────────────────────────────────────────────
 async function handleMcpRequest(request) {
@@ -211,7 +272,7 @@ async function handleMcpRequest(request) {
         jsonrpc, id,
         result: {
           protocolVersion: '2024-11-05',
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, prompts: {} },
           serverInfo: { name: 'Archive MCP Server', version: '1.0.0' },
         },
       };
@@ -219,7 +280,15 @@ async function handleMcpRequest(request) {
     if (method === 'notifications/initialized' || method.startsWith('notifications/')) return null;
     if (method === 'ping') return { jsonrpc, id, result: {} };
     if (method === 'resources/list') return { jsonrpc, id, result: { resources: [] } };
-    if (method === 'prompts/list') return { jsonrpc, id, result: { prompts: [] } };
+    if (method === 'prompts/list') {
+      return { jsonrpc, id, result: { prompts: MCP_PROMPTS.map((p) => ({ name: p.name, description: p.description, arguments: p.arguments })) } };
+    }
+    if (method === 'prompts/get') {
+      const { name, arguments: pargs } = params || {};
+      const p = MCP_PROMPTS.find((x) => x.name === name);
+      if (!p) return { jsonrpc, id, error: { code: -32602, message: `Unknown prompt: ${name}` } };
+      return { jsonrpc, id, result: { description: p.description, messages: [{ role: 'user', content: { type: 'text', text: p.template(pargs || {}) } }] } };
+    }
     if (method === 'tools/list') return { jsonrpc, id, result: { tools: MCP_TOOLS } };
     if (method === 'tools/call') {
       const { name, arguments: toolArgs } = params || {};

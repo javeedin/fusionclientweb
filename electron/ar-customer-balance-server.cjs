@@ -225,6 +225,22 @@ async function executeTool(name, args) {
   throw new Error(`Unknown tool: ${name}`);
 }
 
+// ── MCP Prompts — appear as "/" slash commands in Claude Desktop ───────────
+const MCP_PROMPTS = [
+  {
+    name: 'customer-balance',
+    description: 'Full customer balance with reconciliation (all transactions, all pages)',
+    arguments: [{ name: 'customer', description: 'Customer name, e.g. PICK AND BUY TRIBECA LTD', required: true }],
+    template: (a) => `Use getCustomerBalance for customer "${a.customer}". Report: the computed open balance, the site-reported open receivables, the reconciliation difference, and totals for each child collection (invoices, credit memos, receipts, adjustments). Explain any discrepancy.`,
+  },
+  {
+    name: 'customer-statement',
+    description: 'Detailed customer statement from all underlying records',
+    arguments: [{ name: 'customer', description: 'Customer name', required: true }],
+    template: (a) => `Use getCustomerBalance for customer "${a.customer}" with detail_level "full". Build a customer statement: open invoices with due dates and balances, credit memos, receipts applied, and adjustments — ending with the net open balance. Present it as a clean statement layout.`,
+  },
+];
+
 // ── MCP JSON-RPC dispatch ──────────────────────────────────────────────────
 async function handleMcpRequest(request) {
   const { jsonrpc = '2.0', method, params, id } = request;
@@ -236,7 +252,7 @@ async function handleMcpRequest(request) {
         jsonrpc, id,
         result: {
           protocolVersion: '2024-11-05',
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, prompts: {} },
           serverInfo: { name: 'AR Customer Balance MCP Server', version: '1.0.0' },
         },
       };
@@ -244,7 +260,15 @@ async function handleMcpRequest(request) {
     if (method === 'notifications/initialized' || method.startsWith('notifications/')) return null;
     if (method === 'ping') return { jsonrpc, id, result: {} };
     if (method === 'resources/list') return { jsonrpc, id, result: { resources: [] } };
-    if (method === 'prompts/list') return { jsonrpc, id, result: { prompts: [] } };
+    if (method === 'prompts/list') {
+      return { jsonrpc, id, result: { prompts: MCP_PROMPTS.map((p) => ({ name: p.name, description: p.description, arguments: p.arguments })) } };
+    }
+    if (method === 'prompts/get') {
+      const { name, arguments: pargs } = params || {};
+      const p = MCP_PROMPTS.find((x) => x.name === name);
+      if (!p) return { jsonrpc, id, error: { code: -32602, message: `Unknown prompt: ${name}` } };
+      return { jsonrpc, id, result: { description: p.description, messages: [{ role: 'user', content: { type: 'text', text: p.template(pargs || {}) } }] } };
+    }
     if (method === 'tools/list') return { jsonrpc, id, result: { tools: MCP_TOOLS } };
     if (method === 'tools/call') {
       const { name, arguments: toolArgs } = params || {};

@@ -124,6 +124,28 @@ async function executeTool(name, args) {
   }
 }
 
+// ── MCP Prompts — appear as "/" slash commands in Claude Desktop ───────────
+const MCP_PROMPTS = [
+  {
+    name: 'open-installments',
+    description: 'Show unpaid installments for a customer',
+    arguments: [{ name: 'customer', description: 'Customer name, e.g. PICK AND BUY TRIBECA LTD', required: true }],
+    template: (a) => `Use getOpenInstallments for customer "${a.customer}". Show the open installments as a table with transaction number, transaction date, due date, original amount, and remaining balance. Total the remaining balances and flag anything overdue.`,
+  },
+  {
+    name: 'payment-reminder',
+    description: 'Draft a payment reminder email for a customer',
+    arguments: [{ name: 'customer', description: 'Customer name', required: true }],
+    template: (a) => `Use getOpenInstallments for customer "${a.customer}", then draft a polite but firm payment reminder email listing each overdue invoice with number, due date, and amount, and the total outstanding. Keep it professional and ready to send.`,
+  },
+  {
+    name: 'customer-overview',
+    description: 'Quick receivables overview for a customer (site totals)',
+    arguments: [{ name: 'customer', description: 'Customer name', required: true }],
+    template: (a) => `Use getCustomerActivities for customer "${a.customer}" and summarize: each site, its address, total open receivables, and total due. Highlight the largest exposure.`,
+  },
+];
+
 // ── MCP JSON-RPC dispatch ──────────────────────────────────────────────────
 async function handleMcpRequest(request) {
   const { jsonrpc = '2.0', method, params, id } = request;
@@ -135,7 +157,7 @@ async function handleMcpRequest(request) {
         jsonrpc, id,
         result: {
           protocolVersion: '2024-11-05',
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, prompts: {} },
           serverInfo: { name: 'AR MCP Server', version: '1.0.0' },
         },
       };
@@ -143,7 +165,15 @@ async function handleMcpRequest(request) {
     if (method === 'notifications/initialized' || method.startsWith('notifications/')) return null;
     if (method === 'ping') return { jsonrpc, id, result: {} };
     if (method === 'resources/list') return { jsonrpc, id, result: { resources: [] } };
-    if (method === 'prompts/list') return { jsonrpc, id, result: { prompts: [] } };
+    if (method === 'prompts/list') {
+      return { jsonrpc, id, result: { prompts: MCP_PROMPTS.map((p) => ({ name: p.name, description: p.description, arguments: p.arguments })) } };
+    }
+    if (method === 'prompts/get') {
+      const { name, arguments: pargs } = params || {};
+      const p = MCP_PROMPTS.find((x) => x.name === name);
+      if (!p) return { jsonrpc, id, error: { code: -32602, message: `Unknown prompt: ${name}` } };
+      return { jsonrpc, id, result: { description: p.description, messages: [{ role: 'user', content: { type: 'text', text: p.template(pargs || {}) } }] } };
+    }
     if (method === 'tools/list') return { jsonrpc, id, result: { tools: MCP_TOOLS } };
     if (method === 'tools/call') {
       const { name, arguments: toolArgs } = params || {};
