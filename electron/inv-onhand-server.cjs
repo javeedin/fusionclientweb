@@ -3,7 +3,7 @@
 // INV On-Hand MCP Server — Oracle Fusion Cloud Inventory
 //
 // Standalone, self-contained MCP server for on-hand balance queries against
-// Oracle Fusion (fscmRestApi/onhandQuantityDetails). Independent of the other
+// Oracle Fusion (fscmRestApi/inventoryOnhandBalances). Independent of the other
 // servers — one server per domain, easy to see which is running.
 //
 // "Run all underlying links": in full detail mode, every child link that each
@@ -35,7 +35,10 @@ const FUSION_DOMAIN = (() => {
   catch (e) { return raw; }
 })();
 const API_BASE = `${FUSION_DOMAIN}/fscmRestApi/resources/11.13.18.05`;
-const RESOURCE = 'onhandQuantityDetails';
+// Verified working resource + query syntax (user-confirmed on efmh pod):
+//   /inventoryOnhandBalances?q=OrganizationCode=GIC;SubinventoryCode=DUTY PAID;
+//     ItemNumber LIKE 'GFI153825018I%'&expand=lots&onlyData=true&limit=100
+const RESOURCE = 'inventoryOnhandBalances';
 
 const PAGE_SIZE = 500;   // Fusion max per page
 const MAX_PAGES = 100;   // safety cap: 50,000 rows per collection
@@ -105,15 +108,27 @@ function compactRow(r) {
   return out;
 }
 
+// Fusion q syntax: ';' joins conditions (AND). '=' takes the bare value,
+// LIKE takes a quoted pattern — matching the verified URL exactly.
 function buildQuery({ item_number, organization_code, subinventory_code }) {
   const parts = [];
+  if (organization_code) parts.push(`OrganizationCode=${organization_code}`);
+  if (subinventory_code) parts.push(`SubinventoryCode=${subinventory_code}`);
   if (item_number) {
-    const op = String(item_number).includes('%') ? 'LIKE' : '=';
-    parts.push(`ItemNumber ${op} '${item_number}'`);
+    if (String(item_number).includes('%')) parts.push(`ItemNumber LIKE '${item_number}'`);
+    else parts.push(`ItemNumber=${item_number}`);
   }
-  if (organization_code) parts.push(`OrganizationCode = '${organization_code}'`);
-  if (subinventory_code) parts.push(`SubinventoryCode = '${subinventory_code}'`);
-  return parts.length ? `q=${encodeURIComponent(parts.join(' AND '))}` : '';
+  return parts.length ? `q=${encodeURIComponent(parts.join(';'))}` : '';
+}
+
+// Best-guess primary quantity for a row (field names vary by resource shape).
+function qtyOf(r) {
+  if (typeof r.PrimaryQuantity === 'number') return r.PrimaryQuantity;
+  if (typeof r.OnhandQuantity === 'number') return r.OnhandQuantity;
+  for (const [k, v] of Object.entries(r)) {
+    if (/Quantity$/.test(k) && typeof v === 'number') return v;
+  }
+  return 0;
 }
 
 // ── Tools ──────────────────────────────────────────────────────────────────
@@ -135,8 +150,8 @@ async function getOnhandBalances(params) {
   for (const r of rows) {
     const k1 = `${r.ItemNumber || '?'} @ ${r.OrganizationCode || '?'}`;
     const k2 = `${r.OrganizationCode || '?'} / ${r.SubinventoryCode || '(none)'}`;
-    byItemOrg.set(k1, round4((byItemOrg.get(k1) || 0) + (Number(r.PrimaryQuantity) || 0)));
-    bySubinv.set(k2, round4((bySubinv.get(k2) || 0) + (Number(r.PrimaryQuantity) || 0)));
+    byItemOrg.set(k1, round4((byItemOrg.get(k1) || 0) + qtyOf(r)));
+    bySubinv.set(k2, round4((bySubinv.get(k2) || 0) + qtyOf(r)));
   }
 
   const result = {
@@ -191,9 +206,9 @@ async function getItemAvailability(params) {
   const byOrg = new Map();
   for (const r of rows) {
     const org = r.OrganizationCode || '?';
-    if (!byOrg.has(org)) byOrg.set(org, { organization: org, organizationName: r.OrganizationName, primaryQuantity: 0, subinventories: new Set(), uom: r.PrimaryUOMCode || r.UOMCode });
+    if (!byOrg.has(org)) byOrg.set(org, { organization: org, organizationName: r.OrganizationName, primaryQuantity: 0, subinventories: new Set(), uom: r.PrimaryUOMCode || r.UOMCode || r.TransactionUOMCode });
     const o = byOrg.get(org);
-    o.primaryQuantity = round4(o.primaryQuantity + (Number(r.PrimaryQuantity) || 0));
+    o.primaryQuantity = round4(o.primaryQuantity + qtyOf(r));
     if (r.SubinventoryCode) o.subinventories.add(r.SubinventoryCode);
   }
   const orgs = [...byOrg.values()].map((o) => ({ ...o, subinventories: [...o.subinventories] }))
@@ -211,7 +226,7 @@ async function getItemAvailability(params) {
 const MCP_TOOLS = [
   {
     name: 'getOnhandBalances',
-    description: 'Get on-hand inventory balances from Oracle Fusion Cloud (onhandQuantityDetails) with FULL pagination — all rows, even 10,000+. detail_level "summary" returns rows plus quantity totals by item/organization/subinventory; "full" additionally walks EVERY underlying child link of each row (lots, serials, consigned details) with full pagination.',
+    description: 'Get on-hand inventory balances from Oracle Fusion Cloud (inventoryOnhandBalances) with FULL pagination — all rows, even 10,000+. detail_level "summary" returns rows plus quantity totals by item/organization/subinventory; "full" additionally walks EVERY underlying child link of each row (lots, serials, consigned details) with full pagination.',
     inputSchema: {
       type: 'object',
       properties: {

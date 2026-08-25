@@ -67,7 +67,7 @@ VALUES (
   'On-hand inventory balances from Oracle Fusion Cloud with full pagination; detail_level=full also walks every child link (lots, serials, consigned) of each row. Served by inv-onhand-server.',
   '{"properties":{"item_number":{"type":"string","description":"Item number (exact or % for LIKE)"},"organization_code":{"type":"string","description":"Inventory organization code"},"subinventory_code":{"type":"string","description":"Subinventory code"},"detail_level":{"type":"string","description":"summary (default) or full"}},"required":[]}',
   'GET',
-  'https://efmh.fa.em3.oraclecloud.com/fscmRestApi/resources/11.13.18.05/onhandQuantityDetails?q=ItemNumber = ''{item_number}''&limit=500',
+  'https://efmh.fa.em3.oraclecloud.com/fscmRestApi/resources/11.13.18.05/inventoryOnhandBalances?q=ItemNumber LIKE ''{item_number}%''&expand=lots&onlyData=true&limit=500',
   'BASIC_FUSION',
   NULL,
   'ADMIN'
@@ -80,7 +80,7 @@ VALUES (
   'Quick availability for one item across all inventory organizations - total primary quantity, per-organization totals, subinventories holding stock. Served by inv-onhand-server.',
   '{"properties":{"item_number":{"type":"string","description":"Item number (exact or % for LIKE)"}},"required":["item_number"]}',
   'GET',
-  'https://efmh.fa.em3.oraclecloud.com/fscmRestApi/resources/11.13.18.05/onhandQuantityDetails?q=ItemNumber = ''{item_number}''&onlyData=true&limit=500',
+  'https://efmh.fa.em3.oraclecloud.com/fscmRestApi/resources/11.13.18.05/inventoryOnhandBalances?q=ItemNumber LIKE ''{item_number}%''&onlyData=true&limit=500',
   'BASIC_FUSION',
   NULL,
   'ADMIN'
