@@ -1,15 +1,16 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   Layout, Typography, Breadcrumb, Card, Row, Col, Tabs, Input, Button, Table, Tag,
-  Statistic, Alert, Space, message, Tooltip,
+  Statistic, Alert, Space, message, Tooltip, Select,
 } from 'antd';
 import {
   HomeOutlined, RobotOutlined, PlayCircleOutlined, CopyOutlined,
   CheckCircleOutlined, WarningOutlined, CloseCircleOutlined, ApiOutlined,
-  ExperimentOutlined, DollarOutlined,
+  ExperimentOutlined, DollarOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../../config/api.config';
+import { STUDIO_WORKFLOWS, StudioWorkflow } from '../../data/fusionAiStudioCatalog';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -169,6 +170,103 @@ const SERVICE_SUMMARY = [
   { verdict: 'NO — internal platform', bos: 11, wfs: 5, color: REDWOOD.primary, desc: 'BOSS / insights platform services for the Fusion agentic framework only — we replace with ORDS' },
   { verdict: 'Mixed / no service', bos: 0, wfs: 8, color: REDWOOD.neutral600, desc: 'Workflows mixing categories, or pure LLM/code logic' },
 ];
+
+const VERDICT_META: Record<StudioWorkflow['verdict'], { label: string; color: string; explain: string }> = {
+  public:   { label: 'Public REST',   color: 'green',   explain: 'Every service this workflow needs is documented Fusion REST — we can call the same APIs from our MCP servers today with Basic auth.' },
+  caution:  { label: 'Undocumented',  color: 'gold',    explain: 'Uses Redwood/search/OTBI APIs that back Oracle’s own UIs. They work with normal auth but are unsupported externally — usable with a re-verify-each-release policy.' },
+  internal: { label: 'Internal only', color: 'red',     explain: 'Runs on BOSS/platform services built for the Fusion agentic framework. Not callable from outside — we replicate the design against our own ORDS endpoints instead.' },
+  mixed:    { label: 'Mixed',         color: 'orange',  explain: 'Combines public REST with at least one internal service — partially replicable directly; the internal part needs an ORDS replacement.' },
+  none:     { label: 'No service',    color: 'default', explain: 'Pure LLM/code logic — no external web service. The prompt/orchestration design is directly reusable.' },
+};
+
+const WorkflowCatalog: React.FC = () => {
+  const [search, setSearch] = useState('');
+  const [moduleFilter, setModuleFilter] = useState<string | undefined>();
+  const [verdictFilter, setVerdictFilter] = useState<StudioWorkflow['verdict'] | undefined>();
+
+  const modules = useMemo(() => [...new Set(STUDIO_WORKFLOWS.map((w) => w.module))], []);
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return STUDIO_WORKFLOWS.filter((w) => {
+      if (moduleFilter && w.module !== moduleFilter) return false;
+      if (verdictFilter && w.verdict !== verdictFilter) return false;
+      if (!term) return true;
+      return w.name.toLowerCase().includes(term)
+        || w.description.toLowerCase().includes(term)
+        || w.area.toLowerCase().includes(term)
+        || w.services.some((s) => s.toLowerCase().includes(term));
+    });
+  }, [search, moduleFilter, verdictFilter]);
+
+  return (
+    <Card style={{ borderRadius: 12 }}>
+      <Paragraph>
+        All <Text strong>{STUDIO_WORKFLOWS.length} sample workflows</Text> in Oracle&apos;s AI Agent Studio repository
+        (<Text code>oracle/fusion-ai-studio</Text>, release-26C), with what each does and the web services behind it.
+        Expand a row for the full explanation, business objects, and service endpoints.
+      </Paragraph>
+      <Space wrap style={{ marginBottom: 16 }}>
+        <Input.Search allowClear placeholder="Search workflows, descriptions, services…"
+          style={{ width: 320 }} onSearch={setSearch} onChange={(e) => !e.target.value && setSearch('')} />
+        <Select allowClear placeholder="Module" style={{ width: 130 }} value={moduleFilter}
+          onChange={setModuleFilter}
+          options={modules.map((m) => ({ value: m, label: m }))} />
+        <Select allowClear placeholder="Callability" style={{ width: 170 }} value={verdictFilter}
+          onChange={setVerdictFilter}
+          options={(Object.keys(VERDICT_META) as StudioWorkflow['verdict'][]).map((v) => ({
+            value: v, label: VERDICT_META[v].label,
+          }))} />
+        <Text type="secondary">{filtered.length} of {STUDIO_WORKFLOWS.length} workflows</Text>
+      </Space>
+      <Table<StudioWorkflow>
+        dataSource={filtered}
+        rowKey={(w) => `${w.area}/${w.name}`}
+        size="small"
+        pagination={{ pageSize: 25, showSizeChanger: false }}
+        columns={[
+          { title: 'Module', dataIndex: 'module', width: 80,
+            render: (m: string) => <Tag>{m}</Tag> },
+          { title: 'Area', dataIndex: 'area', width: 170 },
+          { title: 'Workflow', dataIndex: 'name', width: 260, render: (v: string) => <Text strong>{v}</Text> },
+          { title: 'What it does', dataIndex: 'description', ellipsis: true },
+          { title: 'Can we call it?', dataIndex: 'verdict', width: 140,
+            filters: undefined,
+            render: (v: StudioWorkflow['verdict']) => (
+              <Tooltip title={VERDICT_META[v].explain}>
+                <Tag color={VERDICT_META[v].color}>{VERDICT_META[v].label}</Tag>
+              </Tooltip>
+            ) },
+        ]}
+        expandable={{
+          expandedRowRender: (w) => (
+            <div style={{ padding: '4px 8px' }}>
+              <Paragraph style={{ marginBottom: 8 }}>{w.description}</Paragraph>
+              <Paragraph style={{ marginBottom: 8 }}>
+                <Text type="secondary">{VERDICT_META[w.verdict].explain}</Text>
+              </Paragraph>
+              <div style={{ marginBottom: 8 }}>
+                <Text strong style={{ fontSize: 12 }}>Business objects: </Text>
+                {w.businessObjects.length
+                  ? w.businessObjects.map((b) => <Tag key={b} style={{ marginBottom: 4 }}>{b}</Tag>)
+                  : <Text type="secondary">none — LLM/code logic only</Text>}
+              </div>
+              <div>
+                <Text strong style={{ fontSize: 12 }}>Web services: </Text>
+                {w.services.length
+                  ? (
+                    <ul style={{ margin: '4px 0 0', paddingLeft: 20 }}>
+                      {w.services.map((s) => <li key={s}><Text code style={{ fontSize: 12 }}>{s}</Text></li>)}
+                    </ul>
+                  )
+                  : <Text type="secondary">no external service</Text>}
+              </div>
+            </div>
+          ),
+        }}
+      />
+    </Card>
+  );
+};
 
 const OracleFusionAI: React.FC = () => {
   const [ledger, setLedger] = useState('BUIMERC LEDGER');
@@ -399,6 +497,11 @@ const OracleFusionAI: React.FC = () => {
                     </Card>
                   </>
                 ),
+              },
+              {
+                key: 'workflows',
+                label: <span><UnorderedListOutlined /> Workflow catalog</span>,
+                children: <WorkflowCatalog />,
               },
               {
                 key: 'services',
