@@ -1515,6 +1515,11 @@ ipcMain.handle('mcp-registry:add-to-claude-desktop', async (_event, { fusionUser
       args: [path.join(__dirname, 'ar-customer-balance-server.cjs'), '--stdio'],
       env,
     };
+    config.mcpServers['inv-onhand-server'] = {
+      command: 'node',
+      args: [path.join(__dirname, 'inv-onhand-server.cjs'), '--stdio'],
+      env,
+    };
     // Conversation/document archive + call-log destination (Level 1 + 2 recording)
     config.mcpServers['archive-server'] = {
       command: 'node',
