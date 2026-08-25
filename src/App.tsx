@@ -109,6 +109,7 @@ const UserManagement          = lazy(() => import('./pages/admin/UserManagement'
 const ClaudeKeySettings       = lazy(() => import('./pages/admin/ClaudeKeySettings'));
 const McpRegistry             = lazy(() => import('./pages/admin/McpRegistry'));
 const McpCallLogs             = lazy(() => import('./pages/admin/McpCallLogs'));
+const OracleFusionAI          = lazy(() => import('./pages/admin/OracleFusionAI'));
 const RagAssistant            = lazy(() => import('./pages/admin/RagAssistant'));
 const GLAccountAnalysis       = lazy(() => import('./modules/admin/GLAccountAnalysis'));
 const ApprovalEngine          = lazy(() => import('./pages/admin/ApprovalEngine'));
@@ -371,6 +372,7 @@ function App() {
               <Route path="admin/claude-key" element={<ClaudeKeySettings />} />
               <Route path="admin/mcp-registry" element={<McpRegistry />} />
               <Route path="admin/mcp-logs" element={<McpCallLogs />} />
+              <Route path="admin/oracle-fusion-ai" element={<OracleFusionAI />} />
               <Route path="admin/ai-assistant" element={<RagAssistant />} />
               <Route path="admin/gl-account-analysis" element={<GLAccountAnalysis />} />
               <Route path="admin/approvals" element={<ApprovalEngine />} />

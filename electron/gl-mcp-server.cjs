@@ -196,6 +196,158 @@ async function getJournalEntry(params) {
   return await fetchAPI(`/gl/journals/${je_header_id}/lines`, { method: 'GET' });
 }
 
+// ── Period Close Copilot tools ─────────────────────────────────────────────
+// Modeled on Oracle Fusion AI Agent Studio's "Ledger Insights" close workspace
+// (period status, variance analysis, clearing accounts, TB health), but backed
+// by the Re-ERP ORDS endpoints instead of Fusion-internal BOSS services.
+
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Period status per application (GL/AP/AR) — same endpoint the Trial Balance
+// screen uses (periodsstatus/create?P_APPLICATION_NAME=&P_LEDGER_NAME=).
+async function getPeriodStatus(params) {
+  const { ledger_name, period_names, applications } = params;
+  const period = String(period_names || '').split(',')[0].trim();
+  const ledger = ledger_name || 'BUIMERC LEDGER';
+  const apps = (applications && String(applications).split(',').map((s) => s.trim()).filter(Boolean))
+    || ['General Ledger', 'Payables', 'Receivables'];
+
+  const results = await Promise.all(apps.map(async (app) => {
+    try {
+      const qp = new URLSearchParams({ P_APPLICATION_NAME: app, P_LEDGER_NAME: ledger });
+      const data = await fetchAPI(`/periodsstatus/create?${qp.toString()}`, { method: 'GET' });
+      let items = Array.isArray(data?.items) ? data.items : [];
+      if (period) items = items.filter((r) => String(r.period_name_id || r.period_name || '') === period);
+      return { application: app, periods: items.map((r) => ({
+        period: r.period_name_id || r.period_name, status: r.status,
+        start_date: r.start_date, end_date: r.end_date,
+      })) };
+    } catch (e) {
+      return { application: app, error: e.message };
+    }
+  }));
+  return { ledger, period: period || '(all)', applications: results };
+}
+
+// Trial balance health: totals, Dr=Cr check, net-closing gap, largest closings.
+async function getTrialBalanceHealth(params) {
+  const { ledger_name, period_names, company } = params;
+  const period = String(period_names || '').split(',')[0].trim();
+  const items = await fetchTrialBalance(ledger_name, period, company);
+
+  let opening = 0, debit = 0, credit = 0, closing = 0;
+  const byType = {};
+  for (const r of items) {
+    opening += Number(r.opening) || 0;
+    debit += Number(r.debit) || 0;
+    credit += Number(r.credit) || 0;
+    closing += Number(r.closing) || 0;
+    const t = r.account_type || '?';
+    byType[t] = (byType[t] || 0) + (Number(r.closing) || 0);
+  }
+  const topClosing = [...items]
+    .sort((a, b) => Math.abs(Number(b.closing) || 0) - Math.abs(Number(a.closing) || 0))
+    .slice(0, 10)
+    .map((r) => ({ account: r.account_combination, description: r.account_desc, closing: round2(r.closing) }));
+
+  return {
+    ledger: ledger_name || 'BUIMERC LEDGER', period, company: company || '(all)',
+    accountCount: items.length,
+    totals: { opening: round2(opening), debit: round2(debit), credit: round2(credit), closing: round2(closing) },
+    debitsEqualCredits: Math.abs(debit - credit) < 0.01,
+    drCrDifference: round2(debit - credit),
+    // Net of all closing balances; a non-zero value means the TB does not net
+    // to zero (e.g., missing retained-earnings roll-forward or one-sided rows).
+    netClosingGap: round2(closing),
+    closingByAccountType: Object.fromEntries(Object.entries(byType).map(([k, v]) => [k, round2(v)])),
+    largestClosingBalances: topClosing,
+  };
+}
+
+// Variance vs a prior period: closing balance movement per account, ranked.
+async function getVarianceVsPriorPeriod(params) {
+  const { ledger_name, period_names, prior_period, company, top = 20, min_amount = 0 } = params;
+  const period = String(period_names || '').split(',')[0].trim();
+  const prior = String(prior_period || '').trim();
+  if (!prior) throw new Error('prior_period is required (e.g., "Jun-26")');
+
+  const [cur, prev] = await Promise.all([
+    fetchTrialBalance(ledger_name, period, company),
+    fetchTrialBalance(ledger_name, prior, company),
+  ]);
+  const prevMap = new Map(prev.map((r) => [r.account_combination, r]));
+  const seen = new Set();
+  const rows = [];
+  for (const r of cur) {
+    seen.add(r.account_combination);
+    const p = prevMap.get(r.account_combination);
+    const curClosing = Number(r.closing) || 0;
+    const prevClosing = p ? (Number(p.closing) || 0) : 0;
+    const change = curClosing - prevClosing;
+    if (Math.abs(change) >= (Number(min_amount) || 0)) {
+      rows.push({
+        account: r.account_combination, description: r.account_desc,
+        accountType: r.account_type,
+        current: round2(curClosing), prior: round2(prevClosing), change: round2(change),
+        pctChange: prevClosing !== 0 ? round2((change / Math.abs(prevClosing)) * 100) : null,
+        newAccount: !p,
+      });
+    }
+  }
+  // Accounts that had a balance last period but vanished this period.
+  for (const p of prev) {
+    if (!seen.has(p.account_combination) && (Number(p.closing) || 0) !== 0) {
+      rows.push({
+        account: p.account_combination, description: p.account_desc,
+        accountType: p.account_type,
+        current: 0, prior: round2(p.closing), change: round2(-(Number(p.closing) || 0)),
+        pctChange: -100, droppedAccount: true,
+      });
+    }
+  }
+  rows.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+  return {
+    ledger: ledger_name || 'BUIMERC LEDGER', period, priorPeriod: prior, company: company || '(all)',
+    comparedAccounts: cur.length,
+    totalAbsoluteMovement: round2(rows.reduce((s, r) => s + Math.abs(r.change), 0)),
+    topMovers: rows.slice(0, Number(top) || 20),
+  };
+}
+
+// Clearing / suspense account balances that should be zero at close.
+// account_patterns: comma-separated substrings matched against the account
+// combination or description; defaults to GL_CLEARING_ACCOUNTS env or
+// description keywords "clearing"/"suspense".
+async function getClearingAccountBalances(params) {
+  const { ledger_name, period_names, company, account_patterns } = params;
+  const period = String(period_names || '').split(',')[0].trim();
+  const items = await fetchTrialBalance(ledger_name, period, company);
+
+  const patterns = String(account_patterns || process.env.GL_CLEARING_ACCOUNTS || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const matches = items.filter((r) => {
+    const combo = String(r.account_combination || '').toLowerCase();
+    const desc = String(r.account_desc || '').toLowerCase();
+    if (patterns.length) return patterns.some((p) => combo.includes(p) || desc.includes(p));
+    return desc.includes('clearing') || desc.includes('suspense');
+  });
+  const unreconciled = matches
+    .filter((r) => Math.abs(Number(r.closing) || 0) >= 0.01)
+    .sort((a, b) => Math.abs(Number(b.closing) || 0) - Math.abs(Number(a.closing) || 0))
+    .map((r) => ({
+      account: r.account_combination, description: r.account_desc,
+      opening: round2(r.opening), debit: round2(r.debit), credit: round2(r.credit), closing: round2(r.closing),
+    }));
+  return {
+    ledger: ledger_name || 'BUIMERC LEDGER', period, company: company || '(all)',
+    patternsUsed: patterns.length ? patterns : ['clearing', 'suspense'],
+    clearingAccountsFound: matches.length,
+    unreconciledCount: unreconciled.length,
+    unreconciledBalances: unreconciled,
+    allClear: unreconciled.length === 0,
+  };
+}
+
 // ── MCP Tool Definitions ──────────────────────────────────────────────────
 const MCP_TOOLS = [
   {
@@ -262,6 +414,62 @@ const MCP_TOOLS = [
       },
       required: ['je_header_id']
     }
+  },
+  {
+    name: 'getPeriodStatus',
+    description: 'Period close status per application (General Ledger, Payables, Receivables) for a ledger and period — is each subledger open or closed?',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ledger_name: { type: 'string', description: 'Ledger name (default BUIMERC LEDGER)' },
+        period_names: { type: 'string', description: 'Period name (e.g., Jul-26); omit to list all periods' },
+        applications: { type: 'string', description: 'Comma-separated application names (default "General Ledger,Payables,Receivables")' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'getTrialBalanceHealth',
+    description: 'Period-close health check on the trial balance: total debits vs credits, net closing gap, closing by account type, and the largest closing balances. Use this first in a close review.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ledger_name: { type: 'string', description: 'Ledger name (default BUIMERC LEDGER)' },
+        period_names: { type: 'string', description: 'Period name (e.g., Jul-26)' },
+        company: { type: 'string', description: 'Company code (optional)' }
+      },
+      required: ['period_names']
+    }
+  },
+  {
+    name: 'getVarianceVsPriorPeriod',
+    description: 'Balance variance analysis: closing-balance movement per account between two periods, ranked by absolute change. Flags new accounts and accounts that dropped to zero.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ledger_name: { type: 'string', description: 'Ledger name (default BUIMERC LEDGER)' },
+        period_names: { type: 'string', description: 'Current period (e.g., Jul-26)' },
+        prior_period: { type: 'string', description: 'Prior period to compare against (e.g., Jun-26)' },
+        company: { type: 'string', description: 'Company code (optional)' },
+        top: { type: 'integer', description: 'How many top movers to return (default 20)' },
+        min_amount: { type: 'number', description: 'Ignore movements smaller than this (default 0)' }
+      },
+      required: ['period_names', 'prior_period']
+    }
+  },
+  {
+    name: 'getClearingAccountBalances',
+    description: 'Clearing/suspense accounts that still carry a balance at period end — these should be zero before close. Matches accounts by pattern or by "clearing"/"suspense" in the description.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ledger_name: { type: 'string', description: 'Ledger name (default BUIMERC LEDGER)' },
+        period_names: { type: 'string', description: 'Period name (e.g., Jul-26)' },
+        company: { type: 'string', description: 'Company code (optional)' },
+        account_patterns: { type: 'string', description: 'Comma-separated substrings to match account number or description (optional; default clearing/suspense keywords)' }
+      },
+      required: ['period_names']
+    }
   }
 ];
 
@@ -278,6 +486,14 @@ async function executeTool(toolName, args) {
       return await searchAccounts(args);
     case 'getJournalEntry':
       return await getJournalEntry(args);
+    case 'getPeriodStatus':
+      return await getPeriodStatus(args);
+    case 'getTrialBalanceHealth':
+      return await getTrialBalanceHealth(args);
+    case 'getVarianceVsPriorPeriod':
+      return await getVarianceVsPriorPeriod(args);
+    case 'getClearingAccountBalances':
+      return await getClearingAccountBalances(args);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -321,6 +537,34 @@ const MCP_PROMPTS = [
       { name: 'account', description: 'Account filter (optional)', required: false },
     ],
     template: (a) => `Use getGLTransactions for period "${a.period}"${a.account ? ` filtered to account "${a.account}"` : ''}. Summarize the journal activity by source and category, and point out large or unusual entries.`,
+  },
+  {
+    name: 'close-review',
+    description: 'Period Close Copilot — full close review for a period (status, TB health, variances, clearing accounts)',
+    arguments: [
+      { name: 'period', description: 'Period to review, e.g. Jul-26', required: true },
+      { name: 'prior_period', description: 'Prior period for variance comparison, e.g. Jun-26', required: true },
+      { name: 'ledger', description: 'Ledger name (default BUIMERC LEDGER)', required: false },
+    ],
+    template: (a) => {
+      const ledger = a.ledger || 'BUIMERC LEDGER';
+      return `Run a period close review for ledger "${ledger}", period "${a.period}".
+
+Call these four tools (they are independent — run them all):
+1. getPeriodStatus for period "${a.period}" — is each application (GL/AP/AR) open or closed?
+2. getTrialBalanceHealth for period "${a.period}" — do debits equal credits, and is there a net closing gap?
+3. getVarianceVsPriorPeriod for period "${a.period}" vs prior_period "${a.prior_period}" — what moved the most?
+4. getClearingAccountBalances for period "${a.period}" — do clearing/suspense accounts still carry balances?
+
+Then produce an executive close summary:
+- Overall readiness verdict (Ready / Ready with exceptions / Not ready) with one-line reasoning.
+- Period status per application as a checklist.
+- TB health: state the debit/credit totals and call out any net closing gap explicitly with the amount.
+- Top 5 variances with likely business explanation, flagging any that look like errors rather than activity.
+- Clearing account exceptions that must be cleared before close.
+- A prioritized action list (what to fix first, and which tool/screen to use).
+Keep amounts formatted with thousands separators. If any tool fails, note it and continue with the rest.`;
+    },
   },
 ];
 

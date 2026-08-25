@@ -111,6 +111,14 @@ const adminCards: AdminCard[] = [
     path: '/admin/mcp-registry',
   },
   {
+    key: 'oracle-fusion-ai',
+    title: 'Oracle Fusion AI',
+    description: 'Period Close Copilot modeled on Oracle AI Agent Studio — close readiness checks, variance analysis, clearing accounts — plus the Agent Studio capability and service map.',
+    icon: <RobotOutlined />,
+    color: '#1D7B4D',
+    path: '/admin/oracle-fusion-ai',
+  },
+  {
     key: 'mcp-logs',
     title: 'MCP Activity Log',
     description: 'Audit trail of every Claude tool call and scheduled agent run — success/failure, duration, machine, user, and output preview.',
