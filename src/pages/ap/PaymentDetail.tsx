@@ -34,6 +34,7 @@ import {
   StopOutlined,
   CloseCircleOutlined,
   FileTextOutlined,
+  PaperClipOutlined,
   ScissorOutlined,
   LoadingOutlined,
   CheckCircleOutlined,
@@ -204,6 +205,8 @@ import {
 } from '../../services/sla.service';
 import type { SlaExistsResult, SlaGetResult, SlaCreatePayload } from '../../services/sla.service';
 import { eventTypeToRef5 } from '../../services/glPosting.service';
+import PaymentAttachments from '../../components/PaymentAttachments';
+import { listPaymentAttachments } from '../../services/paymentAttachment.service';
 
 // Fusion API config - direct URL
 const FUSION_CONFIG = {
@@ -215,6 +218,18 @@ const FUSION_CONFIG = {
 const APEX_RELATED_INVOICES_URL = `${APEX_DB_CONFIG.baseUrl}/ap/payments`;
 
 const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
+  // ── Attachments (same pattern as invoice attachments) ──────────────────
+  const [attachModalOpen, setAttachModalOpen] = useState(false);
+  const [attachmentCount, setAttachmentCount] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (payment?.checkId !== null && payment?.checkId !== undefined) {
+      listPaymentAttachments(payment.checkId)
+        .then(rows => { if (!cancelled) setAttachmentCount(rows.length); })
+        .catch(() => { if (!cancelled) setAttachmentCount(null); });
+    }
+    return () => { cancelled = true; };
+  }, [payment?.checkId]);
   const [activeTab, setActiveTab] = useState('paymentDetails');
   const [relatedInvoices, setRelatedInvoices] = useState<RelatedInvoice[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
@@ -2295,7 +2310,10 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
                 </Descriptions.Item>
               ) : null}
               <Descriptions.Item label="Attachments">
-                <a style={{ color: REDWOOD.info }}>None +</a>
+                <a style={{ color: REDWOOD.info }} onClick={() => setAttachModalOpen(true)}>
+                  <PaperClipOutlined style={{ marginRight: 4 }} />
+                  {attachmentCount === null ? 'None +' : attachmentCount === 0 ? 'None +' : `${attachmentCount} file${attachmentCount !== 1 ? 's' : ''} +`}
+                </a>
               </Descriptions.Item>
             </Descriptions>
           </Col>
@@ -3414,6 +3432,28 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
             </div>
           </Space>
         )}
+      </Modal>
+
+      {/* ── Attachments Modal (same pattern as invoice attachments) ───────── */}
+      <Modal
+        open={attachModalOpen}
+        onCancel={() => setAttachModalOpen(false)}
+        footer={null}
+        title={
+          <Space>
+            <PaperClipOutlined />
+            <span>Payment Attachments — {payment.paymentNumber}</span>
+          </Space>
+        }
+        width={780}
+        styles={{ body: { padding: '16px 24px', maxHeight: '70vh', overflowY: 'auto' } }}
+        destroyOnClose={false}
+      >
+        <PaymentAttachments
+          checkId={payment.checkId}
+          readOnly={false}
+          onCountChange={setAttachmentCount}
+        />
       </Modal>
     </div>
   );
