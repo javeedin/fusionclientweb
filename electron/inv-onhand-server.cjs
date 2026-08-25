@@ -109,14 +109,21 @@ function compactRow(r) {
 }
 
 // Fusion q syntax: ';' joins conditions (AND). '=' takes the bare value,
-// LIKE takes a quoted pattern — matching the verified URL exactly.
-function buildQuery({ item_number, organization_code, subinventory_code }) {
+// LIKE takes a quoted pattern — matching the verified URLs exactly:
+//   q=OrganizationCode=GIC;SubinventoryCode=DUTY PAID;ItemNumber LIKE 'GFI153825018I%'
+//   q=OrganizationCode=GIC;ItemDescription LIKE 'DETTOL%'
+function buildQuery({ item_number, item_description, organization_code, subinventory_code }) {
   const parts = [];
   if (organization_code) parts.push(`OrganizationCode=${organization_code}`);
   if (subinventory_code) parts.push(`SubinventoryCode=${subinventory_code}`);
   if (item_number) {
     if (String(item_number).includes('%')) parts.push(`ItemNumber LIKE '${item_number}'`);
     else parts.push(`ItemNumber=${item_number}`);
+  }
+  if (item_description) {
+    // Description searches are always LIKE; add a trailing % if none given.
+    const pat = String(item_description).includes('%') ? item_description : `${item_description}%`;
+    parts.push(`ItemDescription LIKE '${pat}'`);
   }
   return parts.length ? `q=${encodeURIComponent(parts.join(';'))}` : '';
 }
@@ -135,11 +142,11 @@ function qtyOf(r) {
 
 // On-hand balances with optional full child-link walking.
 async function getOnhandBalances(params) {
-  const { item_number, organization_code, subinventory_code, detail_level = 'summary' } = params || {};
-  if (!item_number && !organization_code) {
-    throw new Error('Provide at least item_number or organization_code — an unfiltered query would return the whole warehouse');
+  const { item_number, item_description, organization_code, subinventory_code, detail_level = 'summary' } = params || {};
+  if (!item_number && !item_description && !organization_code) {
+    throw new Error('Provide at least item_number, item_description, or organization_code — an unfiltered query would return the whole warehouse');
   }
-  const q = buildQuery({ item_number, organization_code, subinventory_code });
+  const q = buildQuery({ item_number, item_description, organization_code, subinventory_code });
   // No onlyData: keep each row's "links" so child collections can be walked.
   const parentUrl = `${API_BASE}/${RESOURCE}${q ? `?${q}` : ''}`;
   const { items: rows, complete } = await fetchAllPages(parentUrl);
@@ -156,7 +163,7 @@ async function getOnhandBalances(params) {
 
   const result = {
     resource: RESOURCE,
-    filters: { item_number: item_number || null, organization_code: organization_code || null, subinventory_code: subinventory_code || null },
+    filters: { item_number: item_number || null, item_description: item_description || null, organization_code: organization_code || null, subinventory_code: subinventory_code || null },
     rowCount: rows.length,
     paginationComplete: complete,
     quantityTotals: sumQuantityFields(rows),
@@ -196,30 +203,41 @@ async function getOnhandBalances(params) {
   return result;
 }
 
-// Quick availability check for one item across all organizations.
+// Quick availability check by item number OR description, across all
+// organizations. A description search can match many items, so results are
+// grouped per item, each with its per-organization breakdown.
 async function getItemAvailability(params) {
-  const { item_number } = params || {};
-  if (!item_number) throw new Error('item_number is required');
-  const q = buildQuery({ item_number });
+  const { item_number, item_description } = params || {};
+  if (!item_number && !item_description) throw new Error('item_number or item_description is required');
+  const q = buildQuery({ item_number, item_description });
   const { items: rows, complete } = await fetchAllPages(`${API_BASE}/${RESOURCE}?${q}&onlyData=true`);
 
-  const byOrg = new Map();
+  const byItem = new Map();
   for (const r of rows) {
+    const itemKey = r.ItemNumber || '?';
+    if (!byItem.has(itemKey)) byItem.set(itemKey, { item: itemKey, description: r.ItemDescription, totalPrimaryQuantity: 0, organizations: new Map() });
+    const it = byItem.get(itemKey);
+    it.totalPrimaryQuantity = round4(it.totalPrimaryQuantity + qtyOf(r));
     const org = r.OrganizationCode || '?';
-    if (!byOrg.has(org)) byOrg.set(org, { organization: org, organizationName: r.OrganizationName, primaryQuantity: 0, subinventories: new Set(), uom: r.PrimaryUOMCode || r.UOMCode || r.TransactionUOMCode });
-    const o = byOrg.get(org);
+    if (!it.organizations.has(org)) it.organizations.set(org, { organization: org, organizationName: r.OrganizationName, primaryQuantity: 0, subinventories: new Set(), uom: r.PrimaryUOMCode || r.UOMCode || r.TransactionUOMCode });
+    const o = it.organizations.get(org);
     o.primaryQuantity = round4(o.primaryQuantity + qtyOf(r));
     if (r.SubinventoryCode) o.subinventories.add(r.SubinventoryCode);
   }
-  const orgs = [...byOrg.values()].map((o) => ({ ...o, subinventories: [...o.subinventories] }))
-    .sort((a, b) => b.primaryQuantity - a.primaryQuantity);
+  const items = [...byItem.values()].map((it) => ({
+    ...it,
+    organizations: [...it.organizations.values()]
+      .map((o) => ({ ...o, subinventories: [...o.subinventories] }))
+      .sort((a, b) => b.primaryQuantity - a.primaryQuantity),
+  })).sort((a, b) => b.totalPrimaryQuantity - a.totalPrimaryQuantity);
 
   return {
-    item: item_number,
+    searchedBy: item_number ? { item_number } : { item_description },
     rowCount: rows.length,
     paginationComplete: complete,
-    totalPrimaryQuantity: round4(orgs.reduce((s, o) => s + o.primaryQuantity, 0)),
-    organizations: orgs,
+    itemCount: items.length,
+    totalPrimaryQuantity: round4(items.reduce((s, it) => s + it.totalPrimaryQuantity, 0)),
+    items,
   };
 }
 
@@ -230,9 +248,10 @@ const MCP_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        item_number: { type: 'string', description: 'Item number (exact, or use % for LIKE, e.g. "AS540%")' },
-        organization_code: { type: 'string', description: 'Inventory organization code (optional)' },
-        subinventory_code: { type: 'string', description: 'Subinventory code (optional)' },
+        item_number: { type: 'string', description: 'Item number (exact, or use % for LIKE, e.g. "GFI153825018I%")' },
+        item_description: { type: 'string', description: 'Item description search, e.g. "DETTOL" — always a LIKE match (a trailing % is added automatically)' },
+        organization_code: { type: 'string', description: 'Inventory organization code (optional, e.g. GIC)' },
+        subinventory_code: { type: 'string', description: 'Subinventory code (optional, e.g. DUTY PAID)' },
         detail_level: { type: 'string', enum: ['summary', 'full'], description: 'summary (default) = rows + totals; full = also walk every child link (lots, serials, consigned)' },
       },
       required: [],
@@ -240,13 +259,14 @@ const MCP_TOOLS = [
   },
   {
     name: 'getItemAvailability',
-    description: 'Quick availability for one item across all inventory organizations — total primary quantity, per-organization totals, and the subinventories that hold stock. Fast single-purpose check.',
+    description: 'Quick availability by item number OR item description (e.g. "DETTOL") across all inventory organizations — per-item totals with per-organization breakdown and the subinventories that hold stock.',
     inputSchema: {
       type: 'object',
       properties: {
         item_number: { type: 'string', description: 'Item number (exact, or use % for LIKE)' },
+        item_description: { type: 'string', description: 'Item description search, e.g. "DETTOL" — LIKE match, trailing % added automatically' },
       },
-      required: ['item_number'],
+      required: [],
     },
   },
 ];
@@ -278,6 +298,15 @@ const MCP_PROMPTS = [
     description: 'Quick availability check for an item across all organizations',
     arguments: [{ name: 'item', description: 'Item number', required: true }],
     template: (a) => `Use getItemAvailability for item "${a.item}" and tell me the total quantity, which organizations hold it, and in which subinventories.`,
+  },
+  {
+    name: 'product-search',
+    description: 'Find stock by product description (e.g. DETTOL) — all matching items with quantities',
+    arguments: [
+      { name: 'description', description: 'Product description to search, e.g. DETTOL', required: true },
+      { name: 'org', description: 'Organization code (optional, e.g. GIC)', required: false },
+    ],
+    template: (a) => `Use getOnhandBalances with item_description "${a.description}"${a.org ? ` and organization_code "${a.org}"` : ''} (summary). List every matching item with its description, organization, subinventory and on-hand quantity, then give the totals per item.`,
   },
 ];
 
