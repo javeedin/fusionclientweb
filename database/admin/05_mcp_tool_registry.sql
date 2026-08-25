@@ -58,6 +58,35 @@ VALUES (
 );
 COMMIT;
 
+-- Inventory: on-hand balances (served by the standalone inv-onhand-server.cjs;
+-- this row is registry inventory so admins can see the tool exists).
+INSERT INTO RR_MCP_TOOL_REGISTRY
+  (TOOL_NAME, DESCRIPTION, PARAMS_SCHEMA, HTTP_METHOD, URL_TEMPLATE, AUTH_TYPE, RESULT_FILTER, CREATED_BY)
+VALUES (
+  'inv_getOnhandBalances',
+  'On-hand inventory balances from Oracle Fusion Cloud with full pagination; detail_level=full also walks every child link (lots, serials, consigned) of each row. Served by inv-onhand-server.',
+  '{"properties":{"item_number":{"type":"string","description":"Item number (exact or % for LIKE)"},"organization_code":{"type":"string","description":"Inventory organization code"},"subinventory_code":{"type":"string","description":"Subinventory code"},"detail_level":{"type":"string","description":"summary (default) or full"}},"required":[]}',
+  'GET',
+  'https://efmh.fa.em3.oraclecloud.com/fscmRestApi/resources/11.13.18.05/onhandQuantityDetails?q=ItemNumber = ''{item_number}''&limit=500',
+  'BASIC_FUSION',
+  NULL,
+  'ADMIN'
+);
+
+INSERT INTO RR_MCP_TOOL_REGISTRY
+  (TOOL_NAME, DESCRIPTION, PARAMS_SCHEMA, HTTP_METHOD, URL_TEMPLATE, AUTH_TYPE, RESULT_FILTER, CREATED_BY)
+VALUES (
+  'inv_getItemAvailability',
+  'Quick availability for one item across all inventory organizations - total primary quantity, per-organization totals, subinventories holding stock. Served by inv-onhand-server.',
+  '{"properties":{"item_number":{"type":"string","description":"Item number (exact or % for LIKE)"}},"required":["item_number"]}',
+  'GET',
+  'https://efmh.fa.em3.oraclecloud.com/fscmRestApi/resources/11.13.18.05/onhandQuantityDetails?q=ItemNumber = ''{item_number}''&onlyData=true&limit=500',
+  'BASIC_FUSION',
+  NULL,
+  'ADMIN'
+);
+COMMIT;
+
 -- ============================================================
 -- ORDS: GET /settings/mcptools — active tools for the MCP server
 -- ============================================================
