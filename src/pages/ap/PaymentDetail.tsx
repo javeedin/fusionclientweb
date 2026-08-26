@@ -24,6 +24,7 @@ import {
   Alert,
   Divider,
   Tooltip,
+  Popover,
   message,
 } from 'antd';
 import type { MenuProps } from 'antd';
@@ -200,6 +201,7 @@ import {
   getAccounting,
   getLinesByHeaderId,
   getAccountingLinesBySourceNumber,
+  getAccountingLinesBySourceId,
   checkGLJournalExists,
   derivePeriodName,
 } from '../../services/sla.service';
@@ -492,6 +494,7 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
   const [viewAcctLoading, setViewAcctLoading] = useState(false);
   const [viewAcctData, setViewAcctData] = useState<SlaGetResult | null>(null);
   const [viewAcctAllEvents, setViewAcctAllEvents] = useState<{ headerId: number; eventTypeCode: string; accountingStatus: string; accountingDate: string; lines: any[] }[]>([]);
+  const [viewAcctApiCalls, setViewAcctApiCalls] = useState<{ label: string; url: string }[]>([]);
   const [voidPreviewOpen, setVoidPreviewOpen] = useState(false);
   const [voidPreviewLoading, setVoidPreviewLoading] = useState(false);
   const [voidPreviewLines, setVoidPreviewLines] = useState<any[]>([]);
@@ -1099,16 +1102,35 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
     setViewAcctLoading(true);
     setViewAcctData(null);
     setViewAcctAllEvents([]);
+    const apiCalls: { label: string; url: string }[] = [];
     try {
       // Fetch the primary header (for the Post button check)
+      apiCalls.push({
+        label: 'Primary header (sla/accounting)',
+        url: `${APEX_DB_CONFIG.baseUrl}/sla/accounting?sourceTable=AP_PAYMENTS&sourceId=${payment.checkId}`,
+      });
       const result = await getAccounting('AP_PAYMENTS', payment.checkId);
       setViewAcctData(result);
 
-      // Fetch ALL journal lines by payment number — this returns lines from every event
-      // (original payment + void reversal) unlike sla/accounting which returns only one header
-      const allLinesData = payment.paymentNumber
-        ? await getAccountingLinesBySourceNumber(String(payment.paymentNumber), 'AP').catch(() => ({ items: [] }))
-        : { items: [] };
+      // Fetch ALL journal lines for THIS payment's checkId across all events
+      // (original payment + void reversal). Keyed by sourceId — never by
+      // payment number, which leaked lines from other payments whose
+      // references contained the same digits.
+      apiCalls.push({
+        label: 'All event lines (sla/journals/lines by sourceId)',
+        url: `${APEX_DB_CONFIG.baseUrl}/sla/journals/lines?sourceId=${payment.checkId}&sourceTable=AP_PAYMENTS&moduleName=AP&limit=500`,
+      });
+      let allLinesData: { items: any[] } = await getAccountingLinesBySourceId(payment.checkId, 'AP_PAYMENTS', 'AP')
+        .catch(() => ({ items: [] }));
+
+      // Fallback: legacy lookup by payment number (only if sourceId found nothing)
+      if (!(allLinesData.items || []).length && payment.paymentNumber) {
+        apiCalls.push({
+          label: 'FALLBACK — lines by sourceNumber (legacy, can over-match)',
+          url: `${APEX_DB_CONFIG.baseUrl}/sla/journals/lines?sourceNumber=${encodeURIComponent(String(payment.paymentNumber))}&moduleName=AP&limit=500`,
+        });
+        allLinesData = await getAccountingLinesBySourceNumber(String(payment.paymentNumber), 'AP').catch(() => ({ items: [] }));
+      }
 
       const eventsMap = new Map<number, {
         headerId: number;
@@ -1151,6 +1173,7 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
       message.error(`Failed to fetch accounting: ${err.message}`);
       setViewAcctOpen(false);
     } finally {
+      setViewAcctApiCalls(apiCalls);
       setViewAcctLoading(false);
     }
   };
@@ -3050,7 +3073,40 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
 
       {/* View Accounting Modal */}
       <Modal
-        title={`Accounting Entries — Payment ${payment.paymentNumber}`}
+        title={
+          <Space size={8}>
+            <span>{`Accounting Entries — Payment ${payment.paymentNumber}`}</span>
+            <Popover
+              trigger="click"
+              placement="bottomLeft"
+              title="APIs behind this dialog"
+              content={
+                <div style={{ maxWidth: 640 }}>
+                  {viewAcctApiCalls.map((c, i) => (
+                    <div key={i} style={{ marginBottom: i < viewAcctApiCalls.length - 1 ? 12 : 0 }}>
+                      <Text strong style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>
+                        <Tag color="blue" style={{ fontSize: 10 }}>GET</Tag>{c.label}
+                      </Text>
+                      <Typography.Paragraph
+                        copyable={{ text: c.url }}
+                        style={{ fontFamily: 'monospace', fontSize: 11, margin: 0, wordBreak: 'break-all' }}
+                      >
+                        {c.url}
+                      </Typography.Paragraph>
+                    </div>
+                  ))}
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
+                    Lines are grouped by headerId from the sourceId query — only this payment&apos;s
+                    CHECK_ID ({payment.checkId}) events appear. The legacy sourceNumber lookup runs
+                    only as a fallback when sourceId returns nothing.
+                  </Text>
+                </div>
+              }
+            >
+              <ApiOutlined style={{ color: REDWOOD.info, cursor: 'pointer', fontSize: 15 }} />
+            </Popover>
+          </Space>
+        }
         open={viewAcctOpen}
         onCancel={() => setViewAcctOpen(false)}
         footer={
