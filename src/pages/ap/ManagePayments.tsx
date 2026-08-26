@@ -261,6 +261,30 @@ const FUSION_CONFIG = {
 
 // APEX API config
 const APEX_PAYMENTS_URL = `${APEX_DB_CONFIG.baseUrl}/ap/payments`;
+
+// Accounting Status is derived from GL, not from the payments API/SLA tables:
+// one GET of gl/journals/lines?reference5=AP-PAYMENT returns every payment
+// journal line (reference2 = CHECK_ID — same linkage as View Accounting).
+// A payment whose CHECK_ID appears there is POSTED; otherwise DRAFT.
+const GL_AP_PAYMENT_LINES_URL = `${APEX_DB_CONFIG.baseUrl}/gl/journals/lines?reference5=AP-PAYMENT&limit=100000`;
+
+const fetchGlPostedCheckIds = async (): Promise<Set<string> | null> => {
+  try {
+    const res = await fetch(GL_AP_PAYMENT_LINES_URL, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const items = data.items || data || [];
+    const posted = new Set<string>();
+    if (Array.isArray(items)) {
+      for (const l of items) {
+        if (l.reference2 != null && l.reference2 !== '') posted.add(String(l.reference2));
+      }
+    }
+    return posted;
+  } catch {
+    return null;
+  }
+};
 const APEX_SUPPLIERS_URL = `${APEX_DB_CONFIG.baseUrl}/suppliers`;
 const APEX_BANK_ACCOUNTS_URL = `${APEX_DB_CONFIG.baseUrl}/banks/bankaccounts`;
 const APEX_BUSINESS_UNITS_URL = `${APEX_DB_CONFIG.baseUrl}/gl/businessunits`;
@@ -1539,6 +1563,13 @@ const ManagePayments: React.FC = () => {
         description: 'Fetches paginated payments from ORDS/APEX database with optional filters. Returns JSON with count, limit, offset, items[].',
       },
       {
+        name: '1b. Accounting Status Check (GL)',
+        method: 'GET',
+        url: GL_AP_PAYMENT_LINES_URL,
+        params: 'reference5=AP-PAYMENT (reference2 = CHECK_ID)',
+        description: 'Runs after every search. Payments whose CHECK_ID appears as reference2 on AP-PAYMENT GL journal lines show POSTED; all others show DRAFT.',
+      },
+      {
         name: '2. Get Payment by Check ID',
         method: 'GET',
         url: `${APEX_PAYMENTS_URL}/{check_id}`,
@@ -1832,6 +1863,21 @@ const ManagePayments: React.FC = () => {
             values.reconciledStatus === 'yes' ? p.reconciled : !p.reconciled
           );
         }
+        // Accounting Status from GL: CHECK_ID present as reference2 on
+        // AP-PAYMENT journal lines → POSTED, else DRAFT.
+        if (useApex) {
+          debugLog('REQUEST', `GET ${GL_AP_PAYMENT_LINES_URL} (accounting status check)`);
+          const postedIds = await fetchGlPostedCheckIds();
+          if (postedIds) {
+            mappedPayments = mappedPayments.map(p => ({
+              ...p,
+              accountingStatus: postedIds.has(String(p.checkId)) ? 'POSTED' : 'DRAFT',
+            }));
+            debugLog('RESPONSE', `GL check: ${postedIds.size} check-ids have AP-PAYMENT journal lines; ${mappedPayments.filter(p => p.accountingStatus === 'POSTED').length} of ${mappedPayments.length} payments POSTED`);
+          } else {
+            debugLog('ERROR', 'GL journals/lines fetch failed — keeping AccountingStatus from payments API');
+          }
+        }
         setPayments(mappedPayments);
         debugLog('MAPPED', `Mapped ${mappedPayments.length} payment records to UI model`);
         setLastApiResponse(`Success: ${mappedPayments.length} of ${totalCount} payments returned`);
@@ -2077,7 +2123,9 @@ const ManagePayments: React.FC = () => {
       sorter: (a, b) => (a.accountingStatus || '').localeCompare(b.accountingStatus || ''),
       render: (status: string) => {
         if (!status) return null;
-        const color = status === 'Accounted' ? REDWOOD.success : status === 'Not Accounted' ? REDWOOD.warning : REDWOOD.neutral600;
+        const color = status === 'POSTED' || status === 'Accounted' ? REDWOOD.success
+          : status === 'DRAFT' || status === 'Not Accounted' ? REDWOOD.warning
+          : REDWOOD.neutral600;
         return <Tag style={{ color, borderColor: color, background: 'transparent' }}>{status}</Tag>;
       },
     },
@@ -2243,7 +2291,7 @@ const ManagePayments: React.FC = () => {
                 onClick={() => openVoidModal(record)}
               />
             </Tooltip>
-            {record.accountingStatus !== 'Accounted' && (
+            {record.accountingStatus !== 'Accounted' && record.accountingStatus !== 'POSTED' && (
               <Tooltip title="Create Accounting">
                 <Button type="link" size="small" icon={<AccountBookOutlined />}
                   onClick={() => handleCreateAccounting(record)} />
