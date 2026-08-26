@@ -15,7 +15,7 @@ export const useFusionInitialization = () => {
       try {
         const company = getCurrentCompany();
         if (!company.fusionInstances || company.fusionInstances.length === 0) {
-          console.warn('No Fusion instances configured for company');
+          console.debug('No Fusion instances configured for company');
           return;
         }
 
