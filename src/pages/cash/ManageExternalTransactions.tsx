@@ -6,6 +6,7 @@ import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input, Select,
   DatePicker, InputNumber, Row, Col, Space, Tag, Tooltip, Tabs, Collapse,
   message, Empty, Divider, Badge, Modal, Alert, Spin, Segmented, Upload, Popconfirm, AutoComplete,
+  Popover,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -754,6 +755,59 @@ const ExternalTxnForm: React.FC<{
   const [bmsRateLoading, setBmsRateLoading] = useState(false);
   const isEdit = !!initialValues?.externalTransactionId;
   const [editingEnabled, setEditingEnabled] = useState(false);
+
+  // ── Transaction-date pencil edit (edit mode: date-only PUT) ────────────────
+  const [txnDateEditOpen, setTxnDateEditOpen]   = useState(false);
+  const [txnDateEditValue, setTxnDateEditValue] = useState<Dayjs | null>(null);
+  const [txnDateUpdating, setTxnDateUpdating]   = useState(false);
+  const txnDateUrl = `${APEX_BASE}/cash/externaltransactions/${initialValues?.externalTransactionId ?? ''}/date`;
+  const txnDateBody = {
+    externalTransactionId: initialValues?.externalTransactionId,
+    transactionDate: txnDateEditValue ? txnDateEditValue.format('YYYY-MM-DD') : null,
+    updatedBy: loggedUser,
+  };
+  const txnDateChanged = !!txnDateEditValue &&
+    txnDateEditValue.format('YYYY-MM-DD') !== (initialValues?.transactionDate ? dayjs(initialValues.transactionDate).format('YYYY-MM-DD') : '');
+
+  const startTxnDateEdit = () => {
+    const cur = (form.getFieldValue('transactionDate') as Dayjs | undefined)
+      ?? (initialValues?.transactionDate ? dayjs(initialValues.transactionDate) : null);
+    setTxnDateEditValue(cur ?? null);
+    setTxnDateEditOpen(true);
+  };
+
+  const cancelTxnDateEdit = () => {
+    setTxnDateEditOpen(false);
+    setTxnDateEditValue(null);
+  };
+
+  const saveTxnDateEdit = async () => {
+    if (!txnDateEditValue || !initialValues?.externalTransactionId) return;
+    setTxnDateUpdating(true);
+    try {
+      const res = await fetch(txnDateUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(txnDateBody),
+      });
+      const text = await res.text();
+      let data: any = {};
+      try { data = JSON.parse(text); } catch { /* non-JSON error body */ }
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      const newDate = txnDateEditValue.format('YYYY-MM-DD');
+      form.setFieldsValue({ transactionDate: txnDateEditValue });
+      if (initialValues) initialValues.transactionDate = newDate;
+      message.success(`Transaction date updated to ${txnDateEditValue.format('D-MMM-YYYY')}`);
+      setTxnDateEditOpen(false);
+      setTxnDateEditValue(null);
+    } catch (e: any) {
+      message.error('Date update failed: ' + (e?.message || e));
+    } finally {
+      setTxnDateUpdating(false);
+    }
+  };
   const buSelected = !!selectedBu;
   const [selectedBank, setSelectedBank] = useState<string | undefined>(initialValues?.bankAccountName);
   const bankSelected = !!selectedBank;
@@ -1739,15 +1793,57 @@ const ExternalTxnForm: React.FC<{
             <div className="ext-row">
               <div className="ext-lbl">Transaction Date</div>
               <div className="ext-val">
-                <Form.Item name="transactionDate" rules={[{ required: !isEdit, message: 'Required' }]}>
-                  <DatePicker format="D-MMM-YYYY" variant="borderless" disabled={(isEdit && !editingEnabled) || !bankSelected || (saved && !editingEnabled)} style={{ width: '100%' }}
-                    onChange={(date: Dayjs | null) => {
-                      if (!date || (isEdit && !editingEnabled) || saved) return;
-                      // Default the transaction date into conversion, value and cleared dates.
-                      form.setFieldsValue({ bankConversionDate: date, valueDate: date, clearedDate: date });
-                    }}
-                  />
-                </Form.Item>
+                {isEdit && txnDateEditOpen ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+                    <DatePicker
+                      size="small" format="D-MMM-YYYY" allowClear={false}
+                      value={txnDateEditValue}
+                      onChange={(d: Dayjs | null) => setTxnDateEditValue(d)}
+                      style={{ width: 130, flex: '0 0 auto' }}
+                    />
+                    <Button size="small" type="primary" loading={txnDateUpdating}
+                      disabled={!txnDateChanged} onClick={saveTxnDateEdit}>
+                      Update
+                    </Button>
+                    <Button size="small" disabled={txnDateUpdating} onClick={cancelTxnDateEdit}>Cancel</Button>
+                    <Popover
+                      title="Update Transaction Date API"
+                      content={
+                        <div style={{ maxWidth: 480 }}>
+                          <div style={{ fontFamily: 'monospace', fontSize: 11, background: '#f5f5f5', padding: 8, borderRadius: 4, wordBreak: 'break-all' }}>
+                            PUT {txnDateUrl}
+                          </div>
+                          <pre style={{ fontFamily: 'monospace', fontSize: 11, background: '#f5f5f5', padding: 8, borderRadius: 4, marginTop: 6, marginBottom: 6, whiteSpace: 'pre-wrap' }}>
+                            {JSON.stringify(txnDateBody, null, 2)}
+                          </pre>
+                          <Button size="small" icon={<CopyOutlined />}
+                            onClick={() => { navigator.clipboard.writeText(`PUT ${txnDateUrl}\n${JSON.stringify(txnDateBody, null, 2)}`); message.success('Copied'); }}>
+                            Copy
+                          </Button>
+                        </div>
+                      }
+                    >
+                      <Button size="small" type="text" icon={<ApiOutlined />} />
+                    </Popover>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <Form.Item name="transactionDate" rules={[{ required: !isEdit, message: 'Required' }]} style={{ flex: 1 }}>
+                      <DatePicker format="D-MMM-YYYY" variant="borderless" disabled={(isEdit && !editingEnabled) || !bankSelected || (saved && !editingEnabled)} style={{ width: '100%' }}
+                        onChange={(date: Dayjs | null) => {
+                          if (!date || (isEdit && !editingEnabled) || saved) return;
+                          // Default the transaction date into conversion, value and cleared dates.
+                          form.setFieldsValue({ bankConversionDate: date, valueDate: date, clearedDate: date });
+                        }}
+                      />
+                    </Form.Item>
+                    {isEdit && (
+                      <Tooltip title="Edit transaction date only">
+                        <Button size="small" type="text" icon={<EditOutlined style={{ color: REDWOOD.primary }} />} onClick={startTxnDateEdit} />
+                      </Tooltip>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="ext-lbl">Value Date</div>
               <div className="ext-val">
