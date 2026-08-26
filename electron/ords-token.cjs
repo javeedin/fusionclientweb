@@ -12,12 +12,33 @@ function extractDomain(urlStr) {
   return match ? match[0] : '';
 }
 
+// Credential fallback: the repo's .env.local (the same file that drives the
+// React app). MCP servers run from <repo>/electron via Claude Desktop, which
+// sets no ORDS_* env — reading ../.env.local makes token config zero-setup.
+function loadEnvLocal() {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const txt = fs.readFileSync(path.join(__dirname, '..', '.env.local'), 'utf8');
+    const out = {};
+    for (const line of txt.split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+      if (m && !m[0].trim().startsWith('#')) out[m[1]] = m[2];
+    }
+    return out;
+  } catch (e) {
+    return {};
+  }
+}
+const ENV_FILE = loadEnvLocal();
+const cfg = (envKey, fileKey) => process.env[envKey] || ENV_FILE[fileKey] || '';
+
 const DOMAIN = extractDomain(process.env.ORACLE_BASE_URL || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com');
 const SCHEMA = process.env.ORDS_SCHEMA || 'bcldifc';
 const TOKEN_URL = `${DOMAIN}/ords/${SCHEMA}/oauth/token`;
-const CLIENT_ID = process.env.ORDS_CLIENT_ID || '';
-const CLIENT_SECRET = process.env.ORDS_CLIENT_SECRET || '';
-const USE_TOKEN = String(process.env.ORDS_USE_TOKEN || 'NO').toUpperCase() === 'YES';
+const CLIENT_ID = cfg('ORDS_CLIENT_ID', 'REACT_APP_ORDS_CLIENT_ID');
+const CLIENT_SECRET = cfg('ORDS_CLIENT_SECRET', 'REACT_APP_ORDS_CLIENT_SECRET');
+const USE_TOKEN = String(cfg('ORDS_USE_TOKEN', 'REACT_APP_ORDS_USE_TOKEN') || 'NO').toUpperCase() === 'YES';
 
 let cached = null;   // { token, expiresAt }
 let inflight = null;

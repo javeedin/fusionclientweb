@@ -6,7 +6,7 @@ const url = require('url');
 const fs = require('fs');
 const path = require('path');
 const { logToolCall } = require('./mcp-call-logger.cjs');
-const { getOrdsAuthHeader } = require('./ords-token.cjs');
+const { getOrdsAuthHeader, clearOrdsToken } = require('./ords-token.cjs');
 
 // ── Logging utility ────────────────────────────────────────────────────────
 function log(level, message) {
@@ -78,14 +78,29 @@ async function fetchAPI(endpoint, options = {}) {
   log('DEBUG', `API Call: ${options.method || 'GET'} ${endpoint}`);
 
   try {
-    const response = await fetch(fullUrl, {
+    let response = await fetch(fullUrl, {
       method: options.method || 'GET',
       headers,
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
 
+    // Expired/missing bearer token → refresh once and retry
+    if (response.status === 401) {
+      clearOrdsToken();
+      const retryHeaders = { ...headers, ...(await getOrdsAuthHeader()) };
+      response = await fetch(fullUrl, {
+        method: options.method || 'GET',
+        headers: retryHeaders,
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      });
+    }
+
     if (!response.ok) {
-      const error = new Error(`Oracle API ${response.status}: ${response.statusText}`);
+      const bodyText = await response.text().catch(() => '');
+      const hint = response.status === 401
+        ? ' (ORDS token required — set REACT_APP_ORDS_USE_TOKEN/CLIENT_ID/SECRET in .env.local or ORDS_* env vars)'
+        : '';
+      const error = new Error(`Oracle API ${response.status}: ${(bodyText || response.statusText || '').substring(0, 300)}${hint}`);
       log('ERROR', `API Failed: ${error.message}`);
       throw error;
     }
