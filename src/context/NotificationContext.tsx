@@ -233,7 +233,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     status: 'APPROVED' | 'REJECTED',
     comments?: string,
   ) => {
-    const url = `${APEX_DB_CONFIG.baseUrl}/approvals/requests/${requestId}/status`;
+    const url = buildApexUrl(`approvals/requests/${requestId}/status`);
     const body: Record<string, any> = { status, actorName, actorEmail, comments };
     setLastApprovalApiCall({ url, method: 'PUT', body, status: 'Pending…', response: '', ts: Date.now() });
     let rawText = '';
