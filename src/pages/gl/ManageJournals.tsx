@@ -1967,6 +1967,7 @@ const ManageJournals: React.FC = () => {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify({
+            jeBatchId: journal.jeBatchId,
             periodName: postedPeriodEdit.period,
             accountingDate: postedPeriodEdit.date.format('YYYY-MM-DD'),
             updatedBy: localStorage.getItem('username') || 'REERP',
@@ -2048,6 +2049,7 @@ const ManageJournals: React.FC = () => {
                   content={(() => {
                     const apiUrl = `${APEX_DB_CONFIG.baseUrl}/gl/journals/batches/${journal.jeBatchId}/period`;
                     const apiBody = {
+                      jeBatchId: journal.jeBatchId,
                       periodName: postedPeriodEdit?.period || '',
                       accountingDate: postedPeriodEdit?.date ? postedPeriodEdit.date.format('YYYY-MM-DD') : '',
                       updatedBy: localStorage.getItem('username') || 'REERP',

@@ -144,14 +144,38 @@ BEGIN
         p_items_per_page => 0,
         p_source         => q'[
             DECLARE
-                v_body    CLOB := :body_text;
-                v_status  NUMBER;
-                v_message CLOB;
+                v_body     CLOB := :body_text;
+                v_batch    NUMBER;
+                v_period   VARCHAR2(100);
+                v_date_str VARCHAR2(100);
+                v_status   NUMBER;
+                v_message  CLOB;
             BEGIN
+                -- jeBatchId: URI bind first, JSON body as fallback
+                BEGIN v_batch := TO_NUMBER(:jeBatchId); EXCEPTION WHEN OTHERS THEN v_batch := NULL; END;
+                IF v_batch IS NULL AND v_body IS NOT NULL THEN
+                    v_batch := TO_NUMBER(JSON_VALUE(v_body, '$.jeBatchId'));
+                END IF;
+                IF v_body IS NOT NULL THEN
+                    v_period   := JSON_VALUE(v_body, '$.periodName');
+                    v_date_str := JSON_VALUE(v_body, '$.accountingDate');
+                END IF;
+
+                IF v_batch IS NULL OR v_period IS NULL OR v_date_str IS NULL THEN
+                    :status := 400;
+                    HTP.P('{"success":false,"error":"jeBatchId, periodName and accountingDate are required",'
+                       || '"diag":{"uriBind":"'   || NVL(:jeBatchId, 'NULL') || '",'
+                       || '"bodyLength":'         || NVL(DBMS_LOB.GETLENGTH(v_body), 0) || ','
+                       || '"bodyStart":"'
+                       || REPLACE(REPLACE(REPLACE(NVL(DBMS_LOB.SUBSTR(v_body, 150, 1), '(empty)'), CHR(92), ''), '"', ''''), CHR(10), ' ')
+                       || '"}}');
+                    RETURN;
+                END IF;
+
                 RR_UPDATE_JOURNAL_PERIOD(
-                    p_je_batch_id => TO_NUMBER(:jeBatchId),
-                    p_period_name => JSON_VALUE(v_body, '$.periodName'),
-                    p_date_str    => JSON_VALUE(v_body, '$.accountingDate'),
+                    p_je_batch_id => v_batch,
+                    p_period_name => v_period,
+                    p_date_str    => v_date_str,
                     p_updated_by  => JSON_VALUE(v_body, '$.updatedBy'),
                     p_status      => v_status,
                     p_message     => v_message
