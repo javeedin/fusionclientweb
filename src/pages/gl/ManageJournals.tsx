@@ -29,6 +29,7 @@ import {
   Progress,
   Switch,
   Upload,
+  Popover,
 } from 'antd';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { postJournal, updateJournal, getLookupValues } from '../../services/manage-journals.service';
@@ -2040,6 +2041,41 @@ const ManageJournals: React.FC = () => {
                   Update
                 </Button>
                 <Button size="small" onClick={() => setPostedPeriodEdit(null)} disabled={postedPeriodUpdating}>Cancel</Button>
+                <Popover
+                  trigger="click"
+                  placement="right"
+                  title="Update Period — API"
+                  content={(() => {
+                    const apiUrl = `${APEX_DB_CONFIG.baseUrl}/gl/journals/batches/${journal.jeBatchId}/period`;
+                    const apiBody = {
+                      periodName: postedPeriodEdit?.period || '',
+                      accountingDate: postedPeriodEdit?.date ? postedPeriodEdit.date.format('YYYY-MM-DD') : '',
+                      updatedBy: localStorage.getItem('username') || 'REERP',
+                    };
+                    return (
+                      <div style={{ maxWidth: 560 }}>
+                        <Text strong style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>
+                          <Tag color="orange" style={{ fontSize: 10 }}>PUT</Tag>URL
+                        </Text>
+                        <Typography.Paragraph copyable={{ text: apiUrl }}
+                          style={{ fontFamily: 'monospace', fontSize: 11, margin: '0 0 8px', wordBreak: 'break-all' }}>
+                          {apiUrl}
+                        </Typography.Paragraph>
+                        <Text strong style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>Request body (JSON)</Text>
+                        <Typography.Paragraph copyable={{ text: JSON.stringify(apiBody, null, 2) }}
+                          style={{ fontFamily: 'monospace', fontSize: 11, margin: 0, whiteSpace: 'pre-wrap' }}>
+                          {JSON.stringify(apiBody, null, 2)}
+                        </Typography.Paragraph>
+                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
+                          Updates RR_GL_JOURNAL_BATCHES.DEFAULT_PERIOD_NAME and every RR_GL_JE_HEADERS
+                          row&apos;s PERIOD_NAME + DEFAULT_EFFECTIVE_DATE for JE_BATCH_ID {journal.jeBatchId}.
+                        </Text>
+                      </div>
+                    );
+                  })()}
+                >
+                  <Button size="small" icon={<ApiOutlined />} style={{ color: REDWOOD.info, borderColor: REDWOOD.info }} />
+                </Popover>
               </Space>
             </Col>
           </>
