@@ -16,21 +16,12 @@ export interface CompanyConfig {
 
 const parseFusionInstances = (instancesJson: string, companyCode: string): FusionInstance[] => {
   try {
-    console.log(`[DEBUG] Parsing Fusion instances for ${companyCode}:`, instancesJson);
-    const result = JSON.parse(instancesJson || '[]');
-    console.log(`[DEBUG] Parsed instances for ${companyCode}:`, result);
-    return result;
-  } catch (error) {
-    console.error(`[ERROR] Failed to parse Fusion instances for ${companyCode}:`, error, 'Raw value:', instancesJson);
+    return JSON.parse(instancesJson || '[]');
+  } catch {
+    console.error(`Failed to parse Fusion instances for ${companyCode}`);
     return [];
   }
 };
-
-// Debug: Log all env variables
-console.log('[DEBUG] Environment Variables:');
-console.log('BUIMERC_INSTANCES:', import.meta.env.REACT_APP_BUIMERC_FUSION_INSTANCES);
-console.log('MITSUMI_INSTANCES:', import.meta.env.REACT_APP_MITSUMI_FUSION_INSTANCES);
-console.log('GRAYSINC_INSTANCES:', import.meta.env.REACT_APP_GRAYSINC_FUSION_INSTANCES);
 
 const COMPANIES: Record<CompanyCode, CompanyConfig> = {
   BUIMERC: {

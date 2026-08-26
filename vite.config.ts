@@ -4,7 +4,7 @@ import fs from 'fs'
 import path from 'path'
 
 // https://vite.dev/config/
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
   // Read SMTP/API config from gitignored electron/email.config.json
   let emailCfg: { user?: string; pass?: string } = {};
   try {
@@ -19,6 +19,9 @@ export default defineConfig(() => {
     plugins: [react()],
     base: process.env.GITHUB_ACTIONS ? '/reacterp/' : './',
     envPrefix: ['VITE_', 'REACT_APP_'], // Load both VITE_ and REACT_APP_ env vars
+    // Production builds: strip console.log/info/debug from the bundle entirely
+    // (runtime silencer in src/utils/consoleSilencer.ts covers dev).
+    esbuild: command === 'build' ? { pure: ['console.log', 'console.info', 'console.debug'] } : {},
     server: {
       proxy: {
         // Proxy API calls to local proxy server (port 3001)

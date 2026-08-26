@@ -48,5 +48,5 @@ export function installOrdsFetchInterceptor(): void {
     return res;
   }) as typeof window.fetch;
 
-  console.log('[ords-token] fetch interceptor active for', getOrdsSchemaRoot());
+  console.debug('[ords-token] fetch interceptor active'); // visible only with VITE_DEBUG=true
 }
