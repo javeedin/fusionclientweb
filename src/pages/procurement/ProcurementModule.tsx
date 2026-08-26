@@ -9,7 +9,7 @@ import {
   DollarOutlined, ReconciliationOutlined, CloudOutlined, HistoryOutlined,
   SwapOutlined, CarOutlined, CheckSquareOutlined, FileSearchOutlined, UploadOutlined, RollbackOutlined,
   RightOutlined, SettingOutlined, ShoppingOutlined, TagsOutlined, ProfileOutlined,
-  SyncOutlined, ThunderboltOutlined,
+  SyncOutlined, ThunderboltOutlined, BarcodeOutlined,
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 
@@ -76,6 +76,14 @@ const procurementItems: MenuItemType[] = [
     description: 'Search sales orders and drill into header & lines (Fusion salesOrdersForOrderHub)',
     color: REDWOOD.primary,
     path: '/procurement/sales-orders',
+  },
+  {
+    key: 'pos-sales-order', group: 'Order Management',
+    icon: <BarcodeOutlined />,
+    label: 'POS Sales Order',
+    description: 'Point-of-sale mode — register the customer, then scan barcodes to build and complete the sale',
+    color: REDWOOD.primary,
+    path: '/procurement/pos-sales-order',
   },
   {
     key: 'customers', group: 'Order Management',

@@ -16,6 +16,7 @@ export { default as ManageShipmentLines } from './ManageShipmentLines';
 export { default as ConfirmPicks } from './ConfirmPicks';
 export { default as ReviewInventoryTransactions } from './ReviewInventoryTransactions';
 export { default as SalesOrders } from './SalesOrders';
+export { default as PosSalesOrderPage } from './PosSalesOrderPage';
 export { default as Customers } from './Customers';
 export { default as PriceList } from './PriceList';
 export { default as PurchaseOrderLoading } from './PurchaseOrderLoading';

@@ -18,8 +18,9 @@ import {
   FilePdfOutlined, FileExcelOutlined, SnippetsOutlined, ImportOutlined, TableOutlined, DownOutlined,
   ThunderboltOutlined, CarOutlined, InboxOutlined, WarningFilled, AppstoreOutlined,
   PaperClipOutlined, FileTextOutlined, LinkOutlined, FileOutlined, FileImageOutlined,
+  BarcodeOutlined,
 } from '@ant-design/icons';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { ShipConfirmModal, PickSlipDialog } from './ConfirmPicks';
 import dayjs, { type Dayjs } from 'dayjs';
 import jsPDF from 'jspdf';
@@ -3016,7 +3017,7 @@ const customerFill = (row: any) => {
   };
 };
 
-interface OrderHeader {
+export interface OrderHeader {
   businessUnit?: string; businessUnitId?: number | string; buCode?: string; baseCurrency?: string; txnCurrency?: string; rate?: number;
   orderType?: string; orderDate?: Dayjs | null; customerName?: string; accountNumber?: string;
   billToSite?: string; shipToSite?: string; billToAddress?: string; shipToAddress?: string;
@@ -3029,7 +3030,7 @@ interface OrderHeader {
   // Header EFF (Additional Information) segment values, keyed by segment API name.
   effVals?: Record<string, string>;
 }
-interface NewLine { key: string; itemNumber: string; description?: string; uom?: string; qty: number; unitPrice: number; costUnit?: number; taxCode?: string; taxPct?: number; taxAmount?: number; lot?: string; lots?: string[]; qoh?: number; ohLoading?: boolean; status?: string; statusCode?: string;
+export interface NewLine { key: string; itemNumber: string; description?: string; uom?: string; qty: number; unitPrice: number; costUnit?: number; taxCode?: string; taxPct?: number; taxAmount?: number; lot?: string; lots?: string[]; qoh?: number; ohLoading?: boolean; status?: string; statusCode?: string;
   // Edit mode: original DOO source line keys (preserved so a change order maps
   // onto the existing fulfillment line) + a cancel marker (there is no DELETE).
   srcLineId?: string; srcLineNumber?: string | number; srcScheduleNumber?: string | number; existing?: boolean; canceled?: boolean;
@@ -4620,7 +4621,7 @@ const ItemSearchModal: React.FC<{ open: boolean; org?: string; subinv?: string; 
 };
 
 // Register New Order dialog (collects the header, then opens the creation tab).
-const RegisterOrderModal: React.FC<{ open: boolean; onClose: () => void; onProceed: (h: OrderHeader) => void }> = ({ open, onClose, onProceed }) => {
+export const RegisterOrderModal: React.FC<{ open: boolean; onClose: () => void; onProceed: (h: OrderHeader) => void }> = ({ open, onClose, onProceed }) => {
   const auth = useAuth();
   const [form] = Form.useForm();
   const bUnits = usePayablesBUs();
@@ -10147,6 +10148,20 @@ const SalesOrders: React.FC = () => {
   const [registerOpen, setRegisterOpen] = useState(false);
   const [activeKey, setActiveKey] = useState('search');
   console.log('SalesOrders: State initialized');
+  const location = useLocation();
+
+  // A ticket handed off from the POS Sales Order page ("Order Editor" button)
+  // arrives via router state → open it as a pre-filled draft order tab.
+  useEffect(() => {
+    const d = (location.state as any)?.posDraft;
+    if (d?.header && Array.isArray(d.lines)) {
+      const key = `new-${Date.now()}`;
+      setNewTabs(prev => [...prev, { key, header: d.header, draft: { header: d.header, lines: d.lines } }]);
+      setActiveKey(key);
+      window.history.replaceState({}, '');
+      message.success(`Loaded ${d.lines.length} POS line(s) into a new order`);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openOrder = useCallback((order: any) => {
     const key = String(order.OrderKey ?? order.HeaderId ?? order.OrderNumber);
@@ -10320,6 +10335,9 @@ const SalesOrders: React.FC = () => {
               <Upload accept=".json,application/json" showUploadList={false} beforeUpload={(f) => loadNewOrderFromJson(f)}>
                 <Button icon={<CloudUploadOutlined />}>Load from JSON</Button>
               </Upload>
+              <Link to="/procurement/pos-sales-order">
+                <Button icon={<BarcodeOutlined />} style={{ borderColor: REDWOOD.primary, color: REDWOOD.primary }}>POS Order</Button>
+              </Link>
               <Button type="primary" icon={<PlusOutlined />} onClick={() => setRegisterOpen(true)}
                 style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}>Create New Order</Button>
             </Space>}
