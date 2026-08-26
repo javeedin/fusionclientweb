@@ -141,8 +141,27 @@ const buildReceiptHtml = (opts: {
   </body></html>`;
 };
 
-// Print via a hidden iframe so the POS page itself never re-renders for print.
-const printHtml = (html: string) => {
+// Electron: print via the main-process 'pos:print-receipt' handler — a hidden
+// window with an 80mm page size (the renderer iframe + window.print() path
+// sends an empty job to Electron's print dialog). Browser build: hidden iframe.
+const printHtml = async (html: string, silent = false) => {
+  const api = (window as any).electronAPI;
+  if (api?.printReceipt) {
+    try {
+      const res = await api.printReceipt(html, { silent });
+      if (!res?.success && res?.failureReason && !/cancel/i.test(res.failureReason)) {
+        message.error(`Print failed: ${res.failureReason}`);
+      }
+    } catch (e: any) {
+      message.error(`Print failed: ${e?.message || e}`);
+    }
+    return;
+  }
+  printHtmlViaIframe(html);
+};
+
+// Browser fallback: hidden iframe so the POS page itself never re-renders.
+const printHtmlViaIframe = (html: string) => {
   const frame = document.createElement('iframe');
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
   document.body.appendChild(frame);
@@ -176,6 +195,7 @@ const PosSalesOrder: React.FC<PosSalesOrderProps> = ({ header, onOpenDraft }) =>
   const [taxOpts, setTaxOpts] = useState<TaxOpt[]>([]);
   const [taxCode, setTaxCode] = useState<string | undefined>();
   const [saleDone, setSaleDone] = useState<{ orderNumber: string; total: number; count: number } | null>(null);
+  const [silentPrint, setSilentPrint] = useState(() => localStorage.getItem('pos.silentPrint') === 'Y');
   const [orderSeq, setOrderSeq] = useState(() => Math.floor(Date.now() / 1000) % 100000);
   const inputRef = useRef<any>(null);
   const itemCache = useRef<Record<string, { description: string; uom?: string; price: number } | null>>({});
@@ -381,7 +401,7 @@ const PosSalesOrder: React.FC<PosSalesOrderProps> = ({ header, onOpenDraft }) =>
     printHtml(buildReceiptHtml({
       orderNo: orderNoOverride ?? orderNumber, header, lines, ccy,
       subtotal, taxTotal, grandTotal, units, taxCode, taxPct, cashier, status,
-    }));
+    }), silentPrint);
     focusScan();
   };
 
@@ -544,8 +564,11 @@ const PosSalesOrder: React.FC<PosSalesOrderProps> = ({ header, onOpenDraft }) =>
           </div>
 
           <div style={{ marginTop: 'auto' }}>
-            <Checkbox checked={autoSubmit} onChange={e => setAutoSubmit(e.target.checked)} style={{ fontSize: 12, marginBottom: 8 }}>
+            <Checkbox checked={autoSubmit} onChange={e => setAutoSubmit(e.target.checked)} style={{ fontSize: 12 }}>
               Submit order on completion <Tooltip title="Unchecked: the order is created as DRAFT (same as the order editor) and can be confirmed later. Checked: SubmittedFlag=true — Fusion submits it straight into fulfillment."><Text type="secondary" style={{ fontSize: 11 }}>(?)</Text></Tooltip>
+            </Checkbox>
+            <Checkbox checked={silentPrint} onChange={e => { setSilentPrint(e.target.checked); localStorage.setItem('pos.silentPrint', e.target.checked ? 'Y' : 'N'); }} style={{ fontSize: 12, marginLeft: 0, marginBottom: 8, marginTop: 4 }}>
+              Silent print <Tooltip title="Prints straight to the default printer with no dialog — set the receipt printer as the OS default. Unchecked: the printer dialog opens (its preview pane stays blank in Electron, but the paper output is the receipt)."><Text type="secondary" style={{ fontSize: 11 }}>(?)</Text></Tooltip>
             </Checkbox>
             <Button type="primary" block size="large" loading={posting} disabled={!lines.length}
               onClick={completeSale}

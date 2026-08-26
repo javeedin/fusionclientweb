@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExcel: (buffer, filename) =>
     ipcRenderer.invoke('open-excel', { buffer, filename }),
 
+  // POS receipt printing — hidden window sized for 80mm thermal rolls
+  printReceipt: (html, opts) =>
+    ipcRenderer.invoke('pos:print-receipt', { html, ...(opts || {}) }),
+
   // Folder picker + save file directly to folder
   selectFolder: () =>
     ipcRenderer.invoke('select-folder'),
