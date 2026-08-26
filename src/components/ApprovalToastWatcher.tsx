@@ -41,27 +41,28 @@ const ApprovalToastWatcher: React.FC<Props> = ({ onOpenPanel }) => {
       const toastKey = `approval-toast-${req.requestId}`;
       const amt = `${req.currency} ${Number(req.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
 
+      // The notification id is only used to mark the panel entry "Actioned" —
+      // never let a missing/stale match block the actual PUT (that silently
+      // swallowed clicks when the polled list had rebuilt under the toast).
       const handleApprove = async () => {
         const notif = getNotifForRequest(req.requestId);
-        if (!notif) return;
         try {
-          await approveNotification(req.requestId, notif.id);
+          await approveNotification(req.requestId, notif?.id ?? `approval-${req.requestId}`);
           notification.destroy(toastKey);
           notification.success({ message: `Approved: ${req.transactionRef}`, duration: 3 });
-        } catch {
-          notification.error({ message: 'Approve failed', duration: 4 });
+        } catch (err: any) {
+          notification.error({ message: 'Approve failed', description: err?.message, duration: 5 });
         }
       };
 
       const handleReject = async () => {
         const notif = getNotifForRequest(req.requestId);
-        if (!notif) return;
         try {
-          await rejectNotification(req.requestId, notif.id);
+          await rejectNotification(req.requestId, notif?.id ?? `approval-${req.requestId}`);
           notification.destroy(toastKey);
           notification.warning({ message: `Rejected: ${req.transactionRef}`, duration: 3 });
-        } catch {
-          notification.error({ message: 'Reject failed', duration: 4 });
+        } catch (err: any) {
+          notification.error({ message: 'Reject failed', description: err?.message, duration: 5 });
         }
       };
 
