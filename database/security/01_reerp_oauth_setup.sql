@@ -1,0 +1,39 @@
+-- =============================================================================
+-- REERP ORDS OAuth2 token security — record of setup + the final switch
+--
+-- ALREADY DONE (Aug-2026, via APEX UI + SQL Commands):
+--   * Role      : reerp_client_role
+--   * Privilege : reerp.api.privilege  (role attached, NO protected modules yet)
+--   * Client    : reerp_app_client     (grant_type=client_credentials,
+--                 role granted via OAUTH.GRANT_CLIENT_ROLE)
+--   * Verified  : POST /ords/bcldifc/oauth/token returns access_token (3600s)
+--
+-- App + MCP wiring is in the repo behind switches (everything inert until ON):
+--   React app : .env.local  REACT_APP_ORDS_USE_TOKEN=YES + client id/secret
+--               (global fetch interceptor attaches Bearer to all ORDS calls)
+--   Electron/MCP servers : env  ORDS_USE_TOKEN=YES, ORDS_CLIENT_ID,
+--               ORDS_CLIENT_SECRET  (shared electron/ords-token.cjs helper)
+--
+-- =============================================================================
+-- THE SWITCH — run ONLY after the app + MCP servers are deployed with tokens
+-- ON and verified. From this moment /reerp/* requires a Bearer token.
+-- (reerp.sla: protect via APEX UI — edit privilege → Protected Modules → add
+--  reerp.sla — or with a second mapping for its base path.)
+-- =============================================================================
+-- BEGIN
+--     ORDS.CREATE_PRIVILEGE_MAPPING(
+--         p_privilege_name => 'reerp.api.privilege',
+--         p_pattern        => '/reerp/*'
+--     );
+--     COMMIT;
+-- END;
+-- /
+
+-- =============================================================================
+-- ROLLBACK — instantly reopen everything
+-- =============================================================================
+-- BEGIN
+--     ORDS.DELETE_PRIVILEGE_MAPPING(p_privilege_name => 'reerp.api.privilege', p_pattern => '/reerp/*');
+--     COMMIT;
+-- END;
+-- /

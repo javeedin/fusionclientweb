@@ -20,6 +20,7 @@
 //   FUSION_USERNAME / FUSION_PASSWORD   for authType BASIC_FUSION
 // ============================================================================
 const http = require('http');
+const { getOrdsAuthHeader, isOrdsUrl } = require('./ords-token.cjs');
 
 function log(level, message) {
   console.error(`[${new Date().toISOString()}] [MCP REGISTRY ${level}] ${message}`);
@@ -49,7 +50,7 @@ const REGISTRY_TTL = 60 * 1000;  // re-fetch at most once a minute
 async function loadRegistry(force = false) {
   if (!force && registryTools.length && Date.now() - registryLoadedAt < REGISTRY_TTL) return registryTools;
   try {
-    const res = await fetch(REGISTRY_URL, { headers: { Accept: 'application/json' } });
+    const res = await fetch(REGISTRY_URL, { headers: { Accept: 'application/json', ...(await getOrdsAuthHeader()) } });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const rows = Array.isArray(data?.tools) ? data.tools : [];
@@ -163,6 +164,11 @@ async function executeRegistryTool(tool, args) {
   const headers = { Accept: 'application/json' };
   const auth = buildAuthHeader(tool.authType);
   if (auth) headers.Authorization = auth;
+  // ORDS OAuth2 token for registry tools hitting the protected schema
+  // (no-op while ORDS_USE_TOKEN!=YES; never overrides an explicit authType).
+  if (!headers.Authorization && isOrdsUrl(url)) {
+    Object.assign(headers, await getOrdsAuthHeader());
+  }
 
   let body;
   if (tool.httpMethod !== 'GET' && args?.body) {

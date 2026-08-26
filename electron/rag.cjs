@@ -157,7 +157,7 @@ For trends: use appropriate date range and row_limit=500.`;
   const url = `${apexBase}${planned.endpoint}${params.toString()?'?'+params.toString():''}`;
   let items = [];
   try {
-    const res  = await fetch(url);
+    const res  = await fetch(url, { headers: { ...(await require('./ords-token.cjs').getOrdsAuthHeader()) } });
     const text = await res.text();
     const data = JSON.parse(text);
     items = data.items ?? data.data ?? [];

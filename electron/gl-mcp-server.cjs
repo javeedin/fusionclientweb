@@ -6,6 +6,7 @@ const url = require('url');
 const fs = require('fs');
 const path = require('path');
 const { logToolCall } = require('./mcp-call-logger.cjs');
+const { getOrdsAuthHeader } = require('./ords-token.cjs');
 
 // ── Logging utility ────────────────────────────────────────────────────────
 function log(level, message) {
@@ -62,6 +63,7 @@ async function fetchAPI(endpoint, options = {}) {
 
   const headers = {
     'Content-Type': 'application/json',
+    ...(await getOrdsAuthHeader()),   // ORDS OAuth2 (no-op while ORDS_USE_TOKEN!=YES)
     ...options.headers,
   };
 
