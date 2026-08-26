@@ -200,8 +200,6 @@ import {
   buildApPaymentSlaPayloads,
   getAccounting,
   getLinesByHeaderId,
-  getAccountingLinesBySourceNumber,
-  getAccountingLinesBySourceId,
   checkGLJournalExists,
   derivePeriodName,
 } from '../../services/sla.service';
@@ -1097,40 +1095,21 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
     }
   };
 
+  // Single source of truth: the posted GL journal lines linked to this payment
+  // via reference2 = CHECK_ID and reference5 = 'AP-PAYMENT' — the same exact-
+  // match pattern the FA module and the void flow use. No SLA calls.
   const handleViewAccounting = async () => {
     setViewAcctOpen(true);
     setViewAcctLoading(true);
     setViewAcctData(null);
     setViewAcctAllEvents([]);
-    const apiCalls: { label: string; url: string }[] = [];
+    const url = `${APEX_DB_CONFIG.baseUrl}/gl/journals/lines?reference2=${encodeURIComponent(String(payment.checkId))}&reference5=AP-PAYMENT`;
+    const apiCalls = [{ label: 'GL journal lines (reference2 = Check ID, reference5 = AP-PAYMENT)', url }];
     try {
-      // Fetch the primary header (for the Post button check)
-      apiCalls.push({
-        label: 'Primary header (sla/accounting)',
-        url: `${APEX_DB_CONFIG.baseUrl}/sla/accounting?sourceTable=AP_PAYMENTS&sourceId=${payment.checkId}`,
-      });
-      const result = await getAccounting('AP_PAYMENTS', payment.checkId);
-      setViewAcctData(result);
-
-      // Fetch ALL journal lines for THIS payment's checkId across all events
-      // (original payment + void reversal). Keyed by sourceId — never by
-      // payment number, which leaked lines from other payments whose
-      // references contained the same digits.
-      apiCalls.push({
-        label: 'All event lines (sla/journals/lines by sourceId)',
-        url: `${APEX_DB_CONFIG.baseUrl}/sla/journals/lines?sourceId=${payment.checkId}&sourceTable=AP_PAYMENTS&moduleName=AP&limit=500`,
-      });
-      let allLinesData: { items: any[] } = await getAccountingLinesBySourceId(payment.checkId, 'AP_PAYMENTS', 'AP')
-        .catch(() => ({ items: [] }));
-
-      // Fallback: legacy lookup by payment number (only if sourceId found nothing)
-      if (!(allLinesData.items || []).length && payment.paymentNumber) {
-        apiCalls.push({
-          label: 'FALLBACK — lines by sourceNumber (legacy, can over-match)',
-          url: `${APEX_DB_CONFIG.baseUrl}/sla/journals/lines?sourceNumber=${encodeURIComponent(String(payment.paymentNumber))}&moduleName=AP&limit=500`,
-        });
-        allLinesData = await getAccountingLinesBySourceNumber(String(payment.paymentNumber), 'AP').catch(() => ({ items: [] }));
-      }
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const items: any[] = data.items || [];
 
       const eventsMap = new Map<number, {
         headerId: number;
@@ -1141,34 +1120,34 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
         lines: any[];
       }>();
 
-      for (const line of ((allLinesData as any).items || [])) {
-        const hid = (line as any).headerId as number;
+      for (const l of items) {
+        const hid = Number(l.je_header_id) || 0;
         if (!eventsMap.has(hid)) {
           eventsMap.set(hid, {
             headerId: hid,
-            eventTypeCode: (line as any).eventTypeCode || '',
-            accountingStatus: (line as any).accountingStatus || '',
-            accountingDate: (line as any).accountingDate || '',
-            description: (line as any).headerDescription || (line as any).description || '',
+            eventTypeCode: String(l.journal_name || l.je_category || 'PAYMENT').toUpperCase(),
+            accountingStatus: l.posting_status || '',
+            accountingDate: String(l.accounting_date || '').slice(0, 10),
+            description: [l.journal_name, l.period_name ? `Period ${l.period_name}` : ''].filter(Boolean).join(' · '),
             lines: [],
           });
         }
-        eventsMap.get(hid)!.lines.push(line);
+        eventsMap.get(hid)!.lines.push({
+          ...l,
+          lineNumber: l.line_num,
+          lineType: (Number(l.entered_dr) || 0) > 0 ? 'DR' : 'CR',
+          accountingClass: l.je_category || '',
+          accountCombination: l.account,
+          description: l.description,
+          enteredDr: Number(l.entered_dr) || null,
+          enteredCr: Number(l.entered_cr) || null,
+          accountedDr: Number(l.accounted_dr) || null,
+          accountedCr: Number(l.accounted_cr) || null,
+          currencyCode: l.currency_code,
+        });
       }
 
-      if (eventsMap.size > 0) {
-        setViewAcctAllEvents(Array.from(eventsMap.values()).sort((a, b) => a.headerId - b.headerId));
-      } else if (result.found) {
-        // Last resort: show only what getAccounting returned
-        setViewAcctAllEvents([{
-          headerId: result.headerId,
-          eventTypeCode: result.eventTypeCode || '',
-          accountingStatus: result.accountingStatus || '',
-          accountingDate: result.accountingDate || '',
-          description: result.description || '',
-          lines: result.lines || [],
-        }]);
-      }
+      setViewAcctAllEvents(Array.from(eventsMap.values()).sort((a, b) => a.headerId - b.headerId));
     } catch (err: any) {
       message.error(`Failed to fetch accounting: ${err.message}`);
       setViewAcctOpen(false);
@@ -3096,9 +3075,9 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
                     </div>
                   ))}
                   <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
-                    Lines are grouped by headerId from the sourceId query — only this payment&apos;s
-                    CHECK_ID ({payment.checkId}) events appear. The legacy sourceNumber lookup runs
-                    only as a fallback when sourceId returns nothing.
+                    Single query, exact match: reference2 = this payment&apos;s CHECK_ID ({payment.checkId})
+                    and reference5 = AP-PAYMENT — the same linkage the FA module uses. Lines are grouped
+                    by je_header_id (one block per journal, e.g. payment + void reversal).
                   </Text>
                 </div>
               }
@@ -3109,28 +3088,16 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
         }
         open={viewAcctOpen}
         onCancel={() => setViewAcctOpen(false)}
-        footer={
-          viewAcctData?.found && viewAcctData.accountingStatus === 'DRAFT' ? (
-            <Button
-              type="primary"
-              icon={<SendOutlined />}
-              loading={slaActionLoading}
-              disabled={isVoided}
-              onClick={() => { setViewAcctOpen(false); handlePostToLedgerOpen(); }}
-            >
-              Post Accounting
-            </Button>
-          ) : null
-        }
+        footer={null}
         width={960}
       >
         {viewAcctLoading ? (
           <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
-        ) : viewAcctData?.found ? (() => {
+        ) : viewAcctAllEvents.length > 0 ? (() => {
           const acctLineColumns = [
             { title: '#', dataIndex: 'lineNumber', width: 40 },
             { title: 'Type', dataIndex: 'lineType', width: 50, render: (v: string) => <Tag color={v === 'DR' ? 'blue' : 'green'}>{v}</Tag> },
-            { title: 'Class', dataIndex: 'accountingClass', width: 120 },
+            { title: 'Category', dataIndex: 'accountingClass', width: 100 },
             { title: 'Account', dataIndex: 'accountCombination', width: 200, render: (v: string, r: any) => {
               const desc = r.accountDescription || r.AccountDescription || r.account_description || r.glAccountDescription || '';
               return (
@@ -3151,77 +3118,50 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
           const eventLabel = (code: string) =>
             isVoid(code) ? 'Void Reversal' : code?.includes('PAYMENT') ? 'Payment Accounting' : code || 'Accounting';
 
-          if (viewAcctAllEvents.length > 0) {
-            return (
-              <Collapse
-                defaultActiveKey={viewAcctAllEvents.map(e => String(e.headerId))}
-                style={{ background: 'transparent' }}
-                items={viewAcctAllEvents.map(event => ({
-                  key: String(event.headerId),
-                  label: (
-                    <Space>
-                      <Tag color={isVoid(event.eventTypeCode) ? 'orange' : 'blue'} style={{ fontWeight: 600 }}>
-                        {eventLabel(event.eventTypeCode)}
-                      </Tag>
-                      <Tag color={event.accountingStatus === 'POSTED' ? 'green' : event.accountingStatus === 'DRAFT' ? 'blue' : 'default'}>
-                        {event.accountingStatus}
-                      </Tag>
-                      <span style={{ fontSize: 12, color: '#888' }}>{event.accountingDate}</span>
-                      <span style={{ fontSize: 12, color: '#999' }}>Header #{event.headerId}</span>
-                      {event.description ? <span style={{ fontSize: 11, color: '#aaa' }}>{event.description}</span> : null}
-                    </Space>
-                  ),
-                  children: (
-                    <Table
-                      size="small"
-                      pagination={false}
-                      dataSource={event.lines.map((l: any, i: number) => ({ ...l, key: i }))}
-                      columns={acctLineColumns}
-                      summary={(rows) => {
-                        const tDr = rows.reduce((s, r) => s + (r.enteredDr || 0), 0);
-                        const tCr = rows.reduce((s, r) => s + (r.enteredCr || 0), 0);
-                        return (
-                          <Table.Summary.Row style={{ fontWeight: 600, background: '#fafafa' }}>
-                            <Table.Summary.Cell index={0} colSpan={5} align="right">Total</Table.Summary.Cell>
-                            <Table.Summary.Cell index={1} align="right">{tDr ? tDr.toLocaleString('en-US', { minimumFractionDigits: 2 }) : ''}</Table.Summary.Cell>
-                            <Table.Summary.Cell index={2} align="right">{tCr ? tCr.toLocaleString('en-US', { minimumFractionDigits: 2 }) : ''}</Table.Summary.Cell>
-                            <Table.Summary.Cell index={3} colSpan={3} />
-                          </Table.Summary.Row>
-                        );
-                      }}
-                    />
-                  ),
-                }))}
-              />
-            );
-          }
-
           return (
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Descriptions size="small" column={3} bordered>
-                <Descriptions.Item label="Header ID">{viewAcctData.headerId}</Descriptions.Item>
-                <Descriptions.Item label="Status">
-                  <Tag color={viewAcctData.accountingStatus === 'POSTED' ? 'green' : viewAcctData.accountingStatus === 'DRAFT' ? 'blue' : 'default'}>
-                    {viewAcctData.accountingStatus}
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="Period">{viewAcctData.periodName}</Descriptions.Item>
-                <Descriptions.Item label="Accounting Date">{viewAcctData.accountingDate}</Descriptions.Item>
-                <Descriptions.Item label="Description" span={2}>{viewAcctData.description}</Descriptions.Item>
-                {viewAcctData.postedDate && (
-                  <Descriptions.Item label="Posted Date">{viewAcctData.postedDate}</Descriptions.Item>
-                )}
-              </Descriptions>
-              <Table
-                size="small"
-                pagination={false}
-                dataSource={(viewAcctData.lines || []).map((l, i) => ({ ...l, key: i }))}
-                columns={acctLineColumns}
-              />
-            </Space>
+            <Collapse
+              defaultActiveKey={viewAcctAllEvents.map(e => String(e.headerId))}
+              style={{ background: 'transparent' }}
+              items={viewAcctAllEvents.map(event => ({
+                key: String(event.headerId),
+                label: (
+                  <Space>
+                    <Tag color={isVoid(event.eventTypeCode) ? 'orange' : 'blue'} style={{ fontWeight: 600 }}>
+                      {eventLabel(event.eventTypeCode)}
+                    </Tag>
+                    <Tag color={event.accountingStatus === 'POSTED' ? 'green' : event.accountingStatus === 'UNPOSTED' ? 'blue' : 'default'}>
+                      {event.accountingStatus}
+                    </Tag>
+                    <span style={{ fontSize: 12, color: '#888' }}>{event.accountingDate}</span>
+                    <span style={{ fontSize: 12, color: '#999' }}>Journal #{event.headerId}</span>
+                    {event.description ? <span style={{ fontSize: 11, color: '#aaa' }}>{event.description}</span> : null}
+                  </Space>
+                ),
+                children: (
+                  <Table
+                    size="small"
+                    pagination={false}
+                    dataSource={event.lines.map((l: any, i: number) => ({ ...l, key: i }))}
+                    columns={acctLineColumns}
+                    summary={(rows) => {
+                      const tDr = rows.reduce((s, r) => s + (r.enteredDr || 0), 0);
+                      const tCr = rows.reduce((s, r) => s + (r.enteredCr || 0), 0);
+                      return (
+                        <Table.Summary.Row style={{ fontWeight: 600, background: '#fafafa' }}>
+                          <Table.Summary.Cell index={0} colSpan={5} align="right">Total</Table.Summary.Cell>
+                          <Table.Summary.Cell index={1} align="right">{tDr ? tDr.toLocaleString('en-US', { minimumFractionDigits: 2 }) : ''}</Table.Summary.Cell>
+                          <Table.Summary.Cell index={2} align="right">{tCr ? tCr.toLocaleString('en-US', { minimumFractionDigits: 2 }) : ''}</Table.Summary.Cell>
+                          <Table.Summary.Cell index={3} colSpan={3} />
+                        </Table.Summary.Row>
+                      );
+                    }}
+                  />
+                ),
+              }))}
+            />
           );
         })() : (
-          <Alert message="No accounting entries found for this payment." type="info" />
+          <Alert message="No GL journal lines found for this payment — accounting has not been created yet." type="info" />
         )}
       </Modal>
 
