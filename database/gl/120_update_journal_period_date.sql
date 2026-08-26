@@ -1,93 +1,166 @@
 -- =============================================================================
--- 120 (v2): Update journal batch period + accounting date
+-- 120 (v3): Update journal batch period + accounting date
 --
--- PUT reerp/gl/journals/batches/:batch_id/period
+-- PUT reerp/gl/journals/batches/:jeBatchId/period
 -- Body: { "periodName": "Jun-26", "accountingDate": "2026-06-06", "updatedBy": "name" }
 --
 -- Updates, keyed by JE_BATCH_ID:
 --   RR_GL_JOURNAL_BATCHES.DEFAULT_PERIOD_NAME
 --   RR_GL_JE_HEADERS.PERIOD_NAME + DEFAULT_EFFECTIVE_DATE   (every header in the batch)
 --
--- v2: rewritten to mirror the proven approvals PUT pattern
--- (ORDS.source_type_plsql, JSON_VALUE body parsing, HTP.P responses).
+-- v3: mirrors the PROVEN-WORKING gl/journals/:jeBatchId/post recipe exactly —
+--     camelCase URI bind (no underscores), :status (not :status_code),
+--     stored procedure + APEX_JSON, separate DEFINE_TEMPLATE block.
+--     Earlier variants returned ORDS-25001 / HTTP 555.
 --
--- HOW TO RUN: APEX SQL Workshop → SQL Commands — run the single block below.
+-- HOW TO RUN: APEX SQL Workshop → SQL Commands — run each block separately.
 -- =============================================================================
 
-BEGIN
-    BEGIN
-        ORDS.DELETE_HANDLER(
-            p_module_name => 'reerp',
-            p_pattern     => 'gl/journals/batches/:batch_id/period',
-            p_method      => 'PUT'
-        );
-    EXCEPTION WHEN OTHERS THEN NULL;
-    END;
 
-    BEGIN
-        ORDS.DEFINE_TEMPLATE(
-            p_module_name => 'reerp',
-            p_pattern     => 'gl/journals/batches/:batch_id/period'
-        );
-    EXCEPTION WHEN OTHERS THEN NULL;
-    END;
-
-    ORDS.DEFINE_HANDLER(
-        p_module_name    => 'reerp',
-        p_pattern        => 'gl/journals/batches/:batch_id/period',
-        p_method         => 'PUT',
-        p_source_type    => ORDS.source_type_plsql,
-        p_items_per_page => 0,
-        p_source         => q'[
-DECLARE
-    v_batch_id    NUMBER        := TO_NUMBER(:batch_id);
-    v_body        CLOB          := :body_text;
-    v_period      VARCHAR2(15)  := JSON_VALUE(v_body, '$.periodName');
-    v_date_str    VARCHAR2(30)  := JSON_VALUE(v_body, '$.accountingDate');
-    v_updated_by  VARCHAR2(200) := JSON_VALUE(v_body, '$.updatedBy');
+-- =============================================================================
+-- 1. PROCEDURE: RR_UPDATE_JOURNAL_PERIOD
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE RR_UPDATE_JOURNAL_PERIOD (
+    p_je_batch_id  IN  NUMBER,
+    p_period_name  IN  VARCHAR2,
+    p_date_str     IN  VARCHAR2,
+    p_updated_by   IN  VARCHAR2,
+    p_status       OUT NUMBER,
+    p_message      OUT CLOB
+) AS
     v_date        DATE;
     v_hdr_count   NUMBER := 0;
     v_batch_count NUMBER := 0;
 BEGIN
-    IF v_batch_id IS NULL OR v_period IS NULL OR v_date_str IS NULL THEN
-        :status_code := 400;
-        HTP.P('{"success":false,"error":"batch_id, periodName and accountingDate are required"}');
+    IF p_je_batch_id IS NULL OR p_period_name IS NULL OR p_date_str IS NULL THEN
+        APEX_JSON.INITIALIZE_CLOB_OUTPUT;
+        APEX_JSON.OPEN_OBJECT;
+        APEX_JSON.WRITE('success', FALSE);
+        APEX_JSON.WRITE('error', 'jeBatchId, periodName and accountingDate are required');
+        APEX_JSON.CLOSE_OBJECT;
+        p_status  := 400;
+        p_message := APEX_JSON.GET_CLOB_OUTPUT;
+        APEX_JSON.FREE_OUTPUT;
         RETURN;
     END IF;
 
-    v_date := TO_DATE(SUBSTR(v_date_str, 1, 10), 'YYYY-MM-DD');
+    v_date := TO_DATE(SUBSTR(p_date_str, 1, 10), 'YYYY-MM-DD');
 
     UPDATE RR_GL_JE_HEADERS
-       SET PERIOD_NAME            = v_period,
+       SET PERIOD_NAME            = p_period_name,
            DEFAULT_EFFECTIVE_DATE = v_date
-     WHERE JE_BATCH_ID = v_batch_id;
+     WHERE JE_BATCH_ID = p_je_batch_id;
     v_hdr_count := SQL%ROWCOUNT;
 
     UPDATE RR_GL_JOURNAL_BATCHES
-       SET DEFAULT_PERIOD_NAME = v_period
-     WHERE JE_BATCH_ID = v_batch_id;
+       SET DEFAULT_PERIOD_NAME = p_period_name
+     WHERE JE_BATCH_ID = p_je_batch_id;
     v_batch_count := SQL%ROWCOUNT;
 
     IF v_hdr_count = 0 AND v_batch_count = 0 THEN
         ROLLBACK;
-        :status_code := 404;
-        HTP.P('{"success":false,"error":"No batch or headers found for JE_BATCH_ID ' || v_batch_id || '"}');
+        APEX_JSON.INITIALIZE_CLOB_OUTPUT;
+        APEX_JSON.OPEN_OBJECT;
+        APEX_JSON.WRITE('success', FALSE);
+        APEX_JSON.WRITE('error', 'No batch or headers found for JE_BATCH_ID ' || p_je_batch_id);
+        APEX_JSON.CLOSE_OBJECT;
+        p_status  := 404;
+        p_message := APEX_JSON.GET_CLOB_OUTPUT;
+        APEX_JSON.FREE_OUTPUT;
         RETURN;
     END IF;
 
     COMMIT;
-    :status_code := 200;
-    HTP.P('{"success":true,"jeBatchId":' || v_batch_id
-       || ',"periodName":"' || v_period || '"'
-       || ',"accountingDate":"' || TO_CHAR(v_date, 'YYYY-MM-DD') || '"'
-       || ',"headersUpdated":' || v_hdr_count
-       || ',"batchesUpdated":' || v_batch_count || '}');
+    APEX_JSON.INITIALIZE_CLOB_OUTPUT;
+    APEX_JSON.OPEN_OBJECT;
+    APEX_JSON.WRITE('success',        TRUE);
+    APEX_JSON.WRITE('jeBatchId',      p_je_batch_id);
+    APEX_JSON.WRITE('periodName',     p_period_name);
+    APEX_JSON.WRITE('accountingDate', TO_CHAR(v_date, 'YYYY-MM-DD'));
+    APEX_JSON.WRITE('headersUpdated', v_hdr_count);
+    APEX_JSON.WRITE('batchesUpdated', v_batch_count);
+    APEX_JSON.WRITE('updatedBy',      NVL(p_updated_by, 'REERP'));
+    APEX_JSON.CLOSE_OBJECT;
+    p_status  := 200;
+    p_message := APEX_JSON.GET_CLOB_OUTPUT;
+    APEX_JSON.FREE_OUTPUT;
 EXCEPTION
     WHEN OTHERS THEN
         ROLLBACK;
-        :status_code := 500;
-        HTP.P('{"success":false,"error":"' || REPLACE(SQLERRM, '"', '''') || '"}');
-END;]'
+        APEX_JSON.INITIALIZE_CLOB_OUTPUT;
+        APEX_JSON.OPEN_OBJECT;
+        APEX_JSON.WRITE('success',   FALSE);
+        APEX_JSON.WRITE('error',     SQLERRM);
+        APEX_JSON.WRITE('errorCode', SQLCODE);
+        APEX_JSON.CLOSE_OBJECT;
+        p_status  := 500;
+        p_message := APEX_JSON.GET_CLOB_OUTPUT;
+        APEX_JSON.FREE_OUTPUT;
+END RR_UPDATE_JOURNAL_PERIOD;
+/
+
+
+-- =============================================================================
+-- 2. Clean up any earlier (broken) template variants
+-- =============================================================================
+BEGIN
+    ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'gl/journals/batches/:batch_id/period');
+    COMMIT;
+EXCEPTION WHEN OTHERS THEN NULL;
+END;
+/
+
+BEGIN
+    ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'gl/journals/batches/:jeBatchId/period');
+    COMMIT;
+EXCEPTION WHEN OTHERS THEN NULL;
+END;
+/
+
+
+-- =============================================================================
+-- 3. Template (same style as 12_post_journal_handler.sql)
+-- =============================================================================
+BEGIN
+    ORDS.DEFINE_TEMPLATE(
+        p_module_name => 'reerp',
+        p_pattern     => 'gl/journals/batches/:jeBatchId/period',
+        p_comments    => 'Update a journal batch period + accounting date'
+    );
+    COMMIT;
+END;
+/
+
+
+-- =============================================================================
+-- 4. Handler (same recipe as the working gl/journals/:jeBatchId/post)
+-- =============================================================================
+BEGIN
+    ORDS.DEFINE_HANDLER(
+        p_module_name    => 'reerp',
+        p_pattern        => 'gl/journals/batches/:jeBatchId/period',
+        p_method         => 'PUT',
+        p_source_type    => ORDS.source_type_plsql,
+        p_items_per_page => 0,
+        p_source         => q'[
+            DECLARE
+                v_body    CLOB := :body_text;
+                v_status  NUMBER;
+                v_message CLOB;
+            BEGIN
+                RR_UPDATE_JOURNAL_PERIOD(
+                    p_je_batch_id => TO_NUMBER(:jeBatchId),
+                    p_period_name => JSON_VALUE(v_body, '$.periodName'),
+                    p_date_str    => JSON_VALUE(v_body, '$.accountingDate'),
+                    p_updated_by  => JSON_VALUE(v_body, '$.updatedBy'),
+                    p_status      => v_status,
+                    p_message     => v_message
+                );
+
+                :status := v_status;
+                HTP.P(v_message);
+            END;
+        ]'
     );
     COMMIT;
 END;
