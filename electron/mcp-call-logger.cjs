@@ -75,9 +75,9 @@ function logToolCall(serverName, { tool, args, ok, ms, result, error }) {
 
   // 2. Oracle RR_MCP_CALL_LOG (fire-and-forget — never blocks or fails the call)
   if (!DB_LOG_DISABLED) {
-    fetch(DB_LOG_URL, {
+    require('./ords-token.cjs').getOrdsAuthHeader().then((authHeader) => fetch(DB_LOG_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeader },
       body: JSON.stringify({
         server: serverName,
         tool,
@@ -91,7 +91,7 @@ function logToolCall(serverName, { tool, args, ok, ms, result, error }) {
         ip: CALLER.ip,
         platform: CALLER.platform,
       }),
-    }).catch((e) => console.error(`[mcp-call-logger] db log failed: ${e.message}`));
+    })).catch((e) => console.error(`[mcp-call-logger] db log failed: ${e.message}`));
   }
 }
 

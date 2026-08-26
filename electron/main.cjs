@@ -30,7 +30,7 @@ async function loadSmtpConfig() {
 
   // ── Primary: fetch from APEX DB ──
   try {
-    const res = await fetch(`${APEX_BASE}/config/emailsettings`);
+    const res = await fetch(`${APEX_BASE}/config/emailsettings`, { headers: { ...(await require('./ords-token.cjs').getOrdsAuthHeader()) } });
     const data = await res.json();
     if (data.status === 'success') {
       console.log('[email] Config loaded from APEX DB');
@@ -1217,7 +1217,7 @@ async function fetchClaudeKeyFromOracleAPEX(oracleBaseUrl) {
     const endpoint = `${domain}/ords/bcldifc/reerp/settings/claudekey`;
     console.log('[GL MCP] Fetching Claude key from:', endpoint);
 
-    const response = await fetch(endpoint);
+    const response = await fetch(endpoint, { headers: { ...(await require('./ords-token.cjs').getOrdsAuthHeader()) } });
     if (!response.ok) {
       console.warn('[GL MCP] Failed to fetch Claude key, status:', response.status);
       return null;
@@ -1476,6 +1476,11 @@ ipcMain.handle('gl-mcp:add-to-claude-desktop', async (_event, { httpPort = 3001 
       console.warn('[GL MCP] Could not read saved credentials for Claude Desktop config:', e.message);
     }
 
+    // ORDS OAuth2 token env — keeps the server working once REERP is protected
+    if (process.env.ORDS_USE_TOKEN)     mcpEnv.ORDS_USE_TOKEN     = process.env.ORDS_USE_TOKEN;
+    if (process.env.ORDS_CLIENT_ID)     mcpEnv.ORDS_CLIENT_ID     = process.env.ORDS_CLIENT_ID;
+    if (process.env.ORDS_CLIENT_SECRET) mcpEnv.ORDS_CLIENT_SECRET = process.env.ORDS_CLIENT_SECRET;
+
     const mcpConfig = {
       command: 'node',
       args: [serverPath, '--stdio'],
@@ -1531,6 +1536,11 @@ ipcMain.handle('mcp-registry:add-to-claude-desktop', async (_event, { fusionUser
     const env = {};
     if (fusionUsername) env.FUSION_USERNAME = fusionUsername;
     if (fusionPassword) env.FUSION_PASSWORD = fusionPassword;
+    // ORDS OAuth2 token env — passed through so Claude Desktop-spawned servers
+    // keep working once the REERP module is token-protected.
+    if (process.env.ORDS_USE_TOKEN)     env.ORDS_USE_TOKEN     = process.env.ORDS_USE_TOKEN;
+    if (process.env.ORDS_CLIENT_ID)     env.ORDS_CLIENT_ID     = process.env.ORDS_CLIENT_ID;
+    if (process.env.ORDS_CLIENT_SECRET) env.ORDS_CLIENT_SECRET = process.env.ORDS_CLIENT_SECRET;
 
     // Clean up entries from earlier iterations of this feature
     delete config.mcpServers['mcp-registry'];
@@ -1938,7 +1948,7 @@ async function getClaudeKey() {
   if (_claudeKeyCache && (Date.now() - _claudeKeyCacheAt) < CLAUDE_KEY_CACHE_TTL) {
     return _claudeKeyCache;
   }
-  const res  = await fetch(`${APEX_BASE}/settings/claudekey`);
+  const res  = await fetch(`${APEX_BASE}/settings/claudekey`, { headers: { ...(await require('./ords-token.cjs').getOrdsAuthHeader()) } });
   const text = await res.text();
 
   // If APEX returned an HTML page the endpoint is not deployed yet
