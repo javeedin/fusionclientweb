@@ -326,6 +326,14 @@ const ManageJournals: React.FC = () => {
   // Tab management state
   const [activeTabKey, setActiveTabKey] = useState('search');
   const [openJournalTabs, setOpenJournalTabs] = useState<OpenJournalTab[]>([]);
+
+  // ── Posted-journal period/date correction (pencil edit, works on any status) ──
+  // Backed by PUT gl/journals/batches/:batch_id/period which updates
+  // RR_GL_JOURNAL_BATCHES.DEFAULT_PERIOD_NAME + all RR_GL_JE_HEADERS rows'
+  // PERIOD_NAME / DEFAULT_EFFECTIVE_DATE for the batch.
+  const [postedPeriodEdit, setPostedPeriodEdit] = useState<{ tabKey: string; period: string; date: dayjs.Dayjs | null } | null>(null);
+  const [postedPeriodUpdating, setPostedPeriodUpdating] = useState(false);
+  const [postedPeriods, setPostedPeriods] = useState<Period[]>([]);
   const [createJournalTabOpen, setCreateJournalTabOpen] = useState(false);
 
   // API indicator — tracks the last URL called during search
@@ -1906,6 +1914,139 @@ const ManageJournals: React.FC = () => {
     const isInEditMode = !isPosted && isManual && !!(tabEditMode[tabKey]);
     const isEditable   = isInEditMode; // alias used throughout
 
+    // ── Pencil-edit for Accounting Period + Date (any status, incl. Posted) ──
+    const postedEditActive = postedPeriodEdit?.tabKey === tabKey;
+    const postedPeriodsList = postedPeriods.length ? postedPeriods : periods;
+    const postedInfo = postedPeriodsList.find(p => p.period_name_id === postedPeriodEdit?.period);
+    const postedDateOk = (d: dayjs.Dayjs | null): boolean => {
+      if (!d || !postedInfo) return true;
+      const s = dayjs(String(postedInfo.start_date).slice(0, 10));
+      const e = dayjs(String(postedInfo.end_date).slice(0, 10));
+      return !d.isBefore(s, 'day') && !d.isAfter(e, 'day');
+    };
+    const startPostedPeriodEdit = async () => {
+      const d = dayjs(String(journal.effectiveDate || '').slice(0, 10));
+      setPostedPeriodEdit({ tabKey, period: journal.periodName || '', date: d.isValid() ? d : null });
+      if (!postedPeriodsList.length) {
+        try {
+          const url = `${APEX_DB_CONFIG.baseUrl}/gl/rr-trialbalance/periods?ledger_name=${encodeURIComponent(journal.ledgerName || '')}`;
+          const res = await fetch(url, { headers: { Accept: 'application/json' } });
+          const data = await res.json();
+          setPostedPeriods((data.items || []) as Period[]);
+        } catch { message.warning('Could not load periods list'); }
+      }
+    };
+    const onPostedPeriodChange = (p: string) => {
+      setPostedPeriodEdit(prev => {
+        if (!prev) return prev;
+        const info = postedPeriodsList.find(x => x.period_name_id === p);
+        let date = prev.date;
+        if (info) {
+          const s = dayjs(String(info.start_date).slice(0, 10));
+          const e = dayjs(String(info.end_date).slice(0, 10));
+          if (!date || date.isBefore(s, 'day') || date.isAfter(e, 'day')) date = s;
+        }
+        return { ...prev, period: p, date };
+      });
+    };
+    const postedEditChanged = postedEditActive && !!postedPeriodEdit && (
+      postedPeriodEdit.period !== (journal.periodName || '') ||
+      (postedPeriodEdit.date ? postedPeriodEdit.date.format('YYYY-MM-DD') : '') !== String(journal.effectiveDate || '').slice(0, 10)
+    );
+    const savePostedPeriodEdit = async () => {
+      if (!postedPeriodEdit || !journal.jeBatchId || !postedPeriodEdit.period || !postedPeriodEdit.date) return;
+      if (!postedDateOk(postedPeriodEdit.date)) {
+        message.error(`Accounting date must be within ${postedPeriodEdit.period}`);
+        return;
+      }
+      setPostedPeriodUpdating(true);
+      try {
+        const url = `${APEX_DB_CONFIG.baseUrl}/gl/journals/batches/${journal.jeBatchId}/period`;
+        const res = await fetch(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            periodName: postedPeriodEdit.period,
+            accountingDate: postedPeriodEdit.date.format('YYYY-MM-DD'),
+            updatedBy: localStorage.getItem('username') || 'REERP',
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data?.error || `HTTP ${res.status}`);
+        const newPeriod = postedPeriodEdit.period;
+        const newDate   = postedPeriodEdit.date.format('YYYY-MM-DD');
+        setOpenJournalTabs(prev => prev.map(tab =>
+          tab.journal.jeBatchId === journal.jeBatchId
+            ? { ...tab, journal: { ...tab.journal, periodName: newPeriod, effectiveDate: newDate } }
+            : tab
+        ));
+        setJournals(prev => prev.map(j =>
+          j.jeBatchId === journal.jeBatchId ? { ...j, periodName: newPeriod, effectiveDate: newDate } : j
+        ));
+        message.success(`Period updated to ${newPeriod} (${data.headersUpdated} journal${data.headersUpdated !== 1 ? 's' : ''} updated)`);
+        setPostedPeriodEdit(null);
+      } catch (e: any) {
+        message.error(`Update failed: ${e.message}`);
+      } finally {
+        setPostedPeriodUpdating(false);
+      }
+    };
+    // Rows for the non-edit-mode layouts: view with pencil, or inline editor.
+    const renderPeriodDateRows = (labelSpan: number, valueSpan: number) => (
+      <>
+        <Col span={labelSpan}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Accounting Period</Text></Col>
+        <Col span={valueSpan}>
+          {postedEditActive ? (
+            <Select
+              size="small"
+              style={{ width: 160 }}
+              showSearch
+              value={postedPeriodEdit?.period || undefined}
+              loading={!postedPeriodsList.length}
+              onChange={onPostedPeriodChange}
+              options={postedPeriodsList.map(p => ({ value: p.period_name_id, label: p.period_name_id }))}
+            />
+          ) : (
+            <Space size={4}>
+              <Text style={{ fontSize: 13 }}>{journal.periodName}</Text>
+              <Tooltip title="Edit period and accounting date">
+                <Button size="small" type="text" icon={<EditOutlined />} style={{ color: REDWOOD.info }} onClick={startPostedPeriodEdit} />
+              </Tooltip>
+            </Space>
+          )}
+        </Col>
+        <Col span={labelSpan}><Text type="secondary" style={{ fontSize: 13 }}>Accounting Date</Text></Col>
+        <Col span={valueSpan}>
+          {postedEditActive ? (
+            <DatePicker
+              size="small"
+              style={{ width: 160 }}
+              format="YYYY-MM-DD"
+              value={postedPeriodEdit?.date || null}
+              onChange={(d) => setPostedPeriodEdit(prev => prev ? { ...prev, date: d } : prev)}
+              disabledDate={(d) => !postedDateOk(d)}
+            />
+          ) : (
+            <Text style={{ fontSize: 13 }}>{journal.effectiveDate}</Text>
+          )}
+        </Col>
+        {postedEditActive && (
+          <>
+            <Col span={labelSpan} />
+            <Col span={valueSpan}>
+              <Space size={6}>
+                <Button size="small" type="primary" loading={postedPeriodUpdating}
+                  disabled={!postedEditChanged || !postedPeriodEdit?.date} onClick={savePostedPeriodEdit}>
+                  Update
+                </Button>
+                <Button size="small" onClick={() => setPostedPeriodEdit(null)} disabled={postedPeriodUpdating}>Cancel</Button>
+              </Space>
+            </Col>
+          </>
+        )}
+      </>
+    );
+
     // Derive locked company segment from the first line that already has an account code
     const lockedCompanySegment = (() => {
       const allLines = (editableLines[tabKey] || journal.lines || []).filter(Boolean);
@@ -3038,53 +3179,51 @@ const ManageJournals: React.FC = () => {
                       <Col span={10}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Legal Entity</Text></Col>
                       <Col span={14}><Text style={{ fontSize: 13 }}>{journal.legalEntityName || ledgerLegalEntityMap[journal.ledgerName] || '-'}</Text></Col>
 
-                      <Col span={10}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Accounting Period</Text></Col>
-                      <Col span={14}>
-                        {isEditable ? (
-                          <Select
-                            size="small"
-                            style={{ width: '100%', fontSize: 13 }}
-                            showSearch
-                            optionFilterProp="children"
-                            value={headerFields.periodName || undefined}
-                            placeholder="Select period"
-                            onChange={v => handlePeriodChange(v)}
-                          >
-                            {periods.map(p => (
-                              <Option key={p.period_name_id} value={p.period_name_id}>
-                                {p.period_name_id} ({p.status})
-                              </Option>
-                            ))}
-                          </Select>
-                        ) : (
-                          <Text style={{ fontSize: 13 }}>{journal.periodName}</Text>
-                        )}
-                      </Col>
-
-                      <Col span={10}><Text type="secondary" style={{ fontSize: 13 }}>Accounting Date</Text></Col>
-                      <Col span={14}>
-                        {isEditable ? (() => {
-                          const p = periods.find(pr => pr.period_name_id === (headerFields.periodName || journal.periodName));
-                          const pStart = p?.start_date ? dayjs(p.start_date) : null;
-                          const pEnd   = p?.end_date   ? dayjs(p.end_date)   : null;
-                          return (
-                            <DatePicker
+                      {isEditable ? (
+                        <>
+                          <Col span={10}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Accounting Period</Text></Col>
+                          <Col span={14}>
+                            <Select
                               size="small"
-                              style={{ width: '100%' }}
-                              format="DD-MMM-YYYY"
-                              value={headerFields.effectiveDate ? dayjs(headerFields.effectiveDate) : null}
-                              placeholder={headerFields.periodName ? 'Select date in period' : 'Select a period first'}
-                              onChange={v => handleHeaderFieldChange('effectiveDate', v ? v.format('YYYY-MM-DD') : '')}
-                              disabledDate={current => {
-                                if (!pStart || !pEnd) return false;
-                                return current.isBefore(pStart, 'day') || current.isAfter(pEnd, 'day');
-                              }}
-                            />
-                          );
-                        })() : (
-                          <Text style={{ fontSize: 13 }}>{journal.effectiveDate}</Text>
-                        )}
-                      </Col>
+                              style={{ width: '100%', fontSize: 13 }}
+                              showSearch
+                              optionFilterProp="children"
+                              value={headerFields.periodName || undefined}
+                              placeholder="Select period"
+                              onChange={v => handlePeriodChange(v)}
+                            >
+                              {periods.map(p => (
+                                <Option key={p.period_name_id} value={p.period_name_id}>
+                                  {p.period_name_id} ({p.status})
+                                </Option>
+                              ))}
+                            </Select>
+                          </Col>
+
+                          <Col span={10}><Text type="secondary" style={{ fontSize: 13 }}>Accounting Date</Text></Col>
+                          <Col span={14}>
+                            {(() => {
+                              const p = periods.find(pr => pr.period_name_id === (headerFields.periodName || journal.periodName));
+                              const pStart = p?.start_date ? dayjs(p.start_date) : null;
+                              const pEnd   = p?.end_date   ? dayjs(p.end_date)   : null;
+                              return (
+                                <DatePicker
+                                  size="small"
+                                  style={{ width: '100%' }}
+                                  format="DD-MMM-YYYY"
+                                  value={headerFields.effectiveDate ? dayjs(headerFields.effectiveDate) : null}
+                                  placeholder={headerFields.periodName ? 'Select date in period' : 'Select a period first'}
+                                  onChange={v => handleHeaderFieldChange('effectiveDate', v ? v.format('YYYY-MM-DD') : '')}
+                                  disabledDate={current => {
+                                    if (!pStart || !pEnd) return false;
+                                    return current.isBefore(pStart, 'day') || current.isAfter(pEnd, 'day');
+                                  }}
+                                />
+                              );
+                            })()}
+                          </Col>
+                        </>
+                      ) : renderPeriodDateRows(10, 14)}
 
                       <Col span={10}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Category</Text></Col>
                       <Col span={14}>
@@ -3344,6 +3483,8 @@ const ManageJournals: React.FC = () => {
                       <Col span={8}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Legal Entity</Text></Col>
                       <Col span={16}><Text style={{ fontSize: 13 }}>{journal.legalEntityName || ledgerLegalEntityMap[journal.ledgerName] || '-'}</Text></Col>
 
+                      {!isEditable && renderPeriodDateRows(8, 16)}
+                      {isEditable && (<>
                       <Col span={8}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Accounting Period</Text></Col>
                       <Col span={16}>
                         {isEditable ? (
@@ -3391,6 +3532,7 @@ const ManageJournals: React.FC = () => {
                           <Text style={{ fontSize: 13 }}>{journal.effectiveDate}</Text>
                         )}
                       </Col>
+                      </>)}
 
                       <Col span={8}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Category</Text></Col>
                       <Col span={16}>
