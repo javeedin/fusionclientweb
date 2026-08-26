@@ -996,6 +996,37 @@ ipcMain.handle('open-excel', async (_event, { buffer, filename }) => {
   }
 });
 
+// ── POS receipt printing ───────────────────────────────────────────────────
+// Renders the receipt HTML in a hidden window and prints it with an 80mm
+// page size (microns), so thermal roll printers get the right width. The
+// renderer's iframe + window.print() path shows Electron's dialog but sends
+// an empty job, hence this dedicated handler.
+// silent=true prints straight to the default (or named) printer — no dialog.
+ipcMain.handle('pos:print-receipt', async (_event, { html, silent, deviceName }) => {
+  return new Promise((resolve) => {
+    let win = new BrowserWindow({
+      show: false,
+      webPreferences: { sandbox: true, javascript: false },
+    });
+    const done = (success, failureReason) => {
+      try { if (win && !win.isDestroyed()) win.destroy(); } catch { /* already gone */ }
+      win = null;
+      resolve({ success: !!success, failureReason: failureReason || '' });
+    };
+    win.webContents.once('did-finish-load', () => {
+      win.webContents.print({
+        silent: !!silent,
+        printBackground: true,
+        margins: { marginType: 'none' },
+        pageSize: { width: 80000, height: 297000 }, // 80mm roll (microns)
+        ...(deviceName ? { deviceName } : {}),
+      }, (success, failureReason) => done(success, failureReason));
+    });
+    win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(String(html)))
+      .catch((err) => done(false, err && err.message));
+  });
+});
+
 // ── Screen Recording ───────────────────────────────────────────────────────
 ipcMain.handle('get-screen-sources', async () => {
   const { desktopCapturer } = require('electron');
