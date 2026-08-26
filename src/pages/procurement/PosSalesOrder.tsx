@@ -17,6 +17,7 @@ import {
 import dayjs from 'dayjs';
 import { getCurrentCompany } from '../../config/company.config';
 import { getFusionAuthHeaders, buildApexUrl } from '../../config/api.helper';
+import { useAuth } from '../../context/AuthContext';
 import type { OrderHeader, NewLine } from './SalesOrders';
 
 const { Text } = Typography;
@@ -64,6 +65,98 @@ const beep = (ok: boolean) => {
 
 interface TaxOpt { code: string; pct: number }
 
+const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// ── 80mm thermal receipt ─────────────────────────────────────────────────────
+// Classic POS slip: 72mm printable column, monospace, dashed rules. Printed
+// into a hidden iframe with @page 80mm so the browser/Electron print dialog
+// targets the receipt printer's roll width and cuts to content height.
+const buildReceiptHtml = (opts: {
+  orderNo: string; header: OrderHeader; lines: NewLine[]; ccy: string;
+  subtotal: number; taxTotal: number; grandTotal: number; units: number;
+  taxCode?: string; taxPct: number; cashier: string; status: 'SALE' | 'TICKET';
+}) => {
+  const { orderNo, header, lines, ccy, subtotal, taxTotal, grandTotal, units, taxCode, taxPct, cashier, status } = opts;
+  const company = getCurrentCompany();
+  const lineRows = lines.map((l, i) => `
+      <tr><td colspan="2" class="item">${i + 1}. ${esc(l.itemNumber)}</td></tr>
+      ${l.description ? `<tr><td colspan="2" class="desc">${esc(l.description)}</td></tr>` : ''}
+      <tr>
+        <td class="qp">${l.qty} ${esc(l.uom || 'x')} @ ${fmt2(l.unitPrice)}</td>
+        <td class="amt">${fmt2(l.qty * l.unitPrice)}</td>
+      </tr>`).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(orderNo)}</title>
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #fff; }
+    body { width: 72mm; margin: 0 auto; padding: 3mm 0 6mm; color: #000;
+           font-family: 'Courier New', Courier, monospace; font-size: 11px; line-height: 1.35; }
+    .c { text-align: center; }
+    .b { font-weight: 700; }
+    .store { font-size: 15px; font-weight: 800; letter-spacing: 0.5px; }
+    .sub { font-size: 10px; }
+    .hr { border-top: 1px dashed #000; margin: 5px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    td { padding: 0; vertical-align: top; }
+    .item { font-weight: 700; padding-top: 2px; }
+    .desc { font-size: 10px; }
+    .qp { padding-left: 8px; }
+    .amt { text-align: right; white-space: nowrap; }
+    .tot td { padding-top: 2px; }
+    .grand { font-size: 16px; font-weight: 800; }
+    .meta td { font-size: 10.5px; }
+    .foot { font-size: 10px; margin-top: 6px; }
+    .stamp { display: inline-block; border: 1px solid #000; padding: 1px 10px; font-size: 10px; font-weight: 700; letter-spacing: 2px; margin-top: 3px; }
+  </style></head><body>
+    <div class="c store">${esc(company.name)}</div>
+    <div class="c sub">${esc(header.businessUnit || '')}</div>
+    ${header.warehouse ? `<div class="c sub">Warehouse: ${esc(header.warehouse)}${header.subinventory ? ' / ' + esc(header.subinventory) : ''}</div>` : ''}
+    <div class="c" style="margin-top:4px"><span class="stamp">${status === 'SALE' ? 'SALES RECEIPT' : 'PRE-SALE TICKET'}</span></div>
+    <div class="hr"></div>
+    <table class="meta">
+      <tr><td>Order #</td><td class="amt b">${esc(orderNo)}</td></tr>
+      <tr><td>Date</td><td class="amt">${dayjs().format('DD-MMM-YYYY HH:mm')}</td></tr>
+      <tr><td>Cashier</td><td class="amt">${esc(cashier)}</td></tr>
+      ${header.customerName ? `<tr><td>Customer</td><td class="amt">${esc(header.customerName)}</td></tr>` : ''}
+      ${header.accountNumber ? `<tr><td>Account #</td><td class="amt">${esc(header.accountNumber)}</td></tr>` : ''}
+      ${header.paymentTerms ? `<tr><td>Terms</td><td class="amt">${esc(header.paymentTerms)}</td></tr>` : ''}
+    </table>
+    <div class="hr"></div>
+    <table>${lineRows}</table>
+    <div class="hr"></div>
+    <table class="tot">
+      <tr><td>Items / Units</td><td class="amt">${lines.length} / ${units}</td></tr>
+      <tr><td>Subtotal</td><td class="amt">${fmt2(subtotal)}</td></tr>
+      <tr><td>Tax${taxCode ? ` ${esc(taxCode)} (${taxPct}%)` : ''}</td><td class="amt">${fmt2(taxTotal)}</td></tr>
+    </table>
+    <div class="hr"></div>
+    <table><tr><td class="grand">TOTAL ${esc(ccy)}</td><td class="amt grand">${fmt2(grandTotal)}</td></tr></table>
+    <div class="hr"></div>
+    <div class="c foot">
+      ${status === 'SALE' ? 'Thank you for your business!' : '*** NOT A RECEIPT — SALE NOT COMPLETED ***'}<br/>
+      *${esc(orderNo)}*<br/>
+      Powered by Re-ERP
+    </div>
+  </body></html>`;
+};
+
+// Print via a hidden iframe so the POS page itself never re-renders for print.
+const printHtml = (html: string) => {
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+  document.body.appendChild(frame);
+  const win = frame.contentWindow;
+  const doc = win?.document;
+  if (!doc || !win) { document.body.removeChild(frame); return; }
+  doc.open(); doc.write(html); doc.close();
+  const cleanup = () => { try { document.body.removeChild(frame); } catch { /* already gone */ } };
+  setTimeout(() => {
+    try { win.focus(); win.print(); } catch { /* print blocked */ }
+    setTimeout(cleanup, 3000);
+  }, 150);
+};
+
 interface PosSalesOrderProps {
   header: OrderHeader;
   onOpenDraft?: (draft: { header: OrderHeader; lines: NewLine[] }) => void;
@@ -86,6 +179,8 @@ const PosSalesOrder: React.FC<PosSalesOrderProps> = ({ header, onOpenDraft }) =>
   const [orderSeq, setOrderSeq] = useState(() => Math.floor(Date.now() / 1000) % 100000);
   const inputRef = useRef<any>(null);
   const itemCache = useRef<Record<string, { description: string; uom?: string; price: number } | null>>({});
+  const { user } = useAuth();
+  const cashier = user?.username ?? user?.email ?? 'POS';
 
   const taxPct = taxOpts.find(t => t.code === taxCode)?.pct ?? 0;
   const orderNumber = useMemo(() => `${header.orderType || 'SO'}${dayjs(header.orderDate ?? undefined).format('YYYYMM')}${orderSeq}`, [header.orderType, header.orderDate, orderSeq]);
@@ -281,6 +376,15 @@ const PosSalesOrder: React.FC<PosSalesOrderProps> = ({ header, onOpenDraft }) =>
     }
   };
 
+  const printReceipt = (status: 'SALE' | 'TICKET', orderNoOverride?: string) => {
+    if (!lines.length) { message.warning('Nothing to print'); return; }
+    printHtml(buildReceiptHtml({
+      orderNo: orderNoOverride ?? orderNumber, header, lines, ccy,
+      subtotal, taxTotal, grandTotal, units, taxCode, taxPct, cashier, status,
+    }));
+    focusScan();
+  };
+
   const newSale = () => {
     setLines([]);
     setSaleDone(null);
@@ -459,6 +563,9 @@ const PosSalesOrder: React.FC<PosSalesOrderProps> = ({ header, onOpenDraft }) =>
                 onClick={() => Modal.confirm({ title: 'Clear this sale?', content: 'All scanned lines will be removed.', okText: 'Clear', okButtonProps: { danger: true }, onOk: () => { setLines([]); focusScan(); } })}>
                 Clear
               </Button>
+              <Tooltip title="Print ticket (80mm receipt)">
+                <Button icon={<PrinterOutlined />} disabled={!lines.length} onClick={() => printReceipt('TICKET')} />
+              </Tooltip>
               <Popover content={apiContent} title="Create Order API" trigger="click" placement="topRight">
                 <Button icon={<ApiOutlined />} />
               </Popover>
@@ -475,7 +582,7 @@ const PosSalesOrder: React.FC<PosSalesOrderProps> = ({ header, onOpenDraft }) =>
           <div style={{ fontFamily: 'monospace', fontSize: 15, marginTop: 6, color: POS.info }}>{saleDone?.orderNumber}</div>
           <div style={{ fontSize: 13, color: POS.n600, marginTop: 4 }}>{saleDone?.count} item(s) · {ccy} {fmt2(saleDone?.total ?? 0)} · {autoSubmit ? 'Submitted' : 'Draft — confirm in the order editor'}</div>
           <div style={{ display: 'flex', gap: 10, marginTop: 22 }}>
-            <Button block icon={<PrinterOutlined />} onClick={() => window.print()}>Print</Button>
+            <Button block icon={<PrinterOutlined />} onClick={() => printReceipt('SALE', saleDone?.orderNumber)}>Print Receipt</Button>
             <Button block type="primary" size="large" onClick={newSale}
               style={{ background: POS.primary, borderColor: POS.primary, fontWeight: 700 }}>
               New Sale
