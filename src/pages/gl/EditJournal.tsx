@@ -20,6 +20,7 @@ import {
   Alert,
   Divider,
   Switch,
+  DatePicker,
 } from 'antd';
 import type { MenuProps } from 'antd';
 import {
@@ -38,7 +39,9 @@ import {
   PrinterOutlined,
   ApiOutlined,
   CheckSquareOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import { PROXY_CONFIG, ORACLE_FUSION_CONFIG, APEX_DB_CONFIG } from '../../config/api.config';
@@ -263,6 +266,164 @@ const EditJournal: React.FC = () => {
 
   // Current journal being viewed
   const currentJournal = allJournals[parseInt(activeJournalKey)] || null;
+
+  // ── Period / Accounting Date edit (updates batch + all headers) ──────────
+  interface EditPeriodInfo { period_name_id: string; start_date: string; end_date: string }
+  const [periodEditOpen, setPeriodEditOpen] = useState(false);
+  const [periodOptions, setPeriodOptions] = useState<EditPeriodInfo[]>([]);
+  const [editPeriod, setEditPeriod] = useState<string>('');
+  const [editDate, setEditDate] = useState<dayjs.Dayjs | null>(null);
+  const [periodUpdating, setPeriodUpdating] = useState(false);
+
+  const startPeriodEdit = async () => {
+    if (!currentJournal) return;
+    setEditPeriod(currentJournal.periodName || '');
+    const d = dayjs(String(currentJournal.accountingDate || '').slice(0, 10));
+    setEditDate(d.isValid() ? d : null);
+    setPeriodEditOpen(true);
+    if (!periodOptions.length) {
+      try {
+        const url = `${APEX_DB_CONFIG.baseUrl}/${APEX_DB_CONFIG.endpoints.rrTrialBalancePeriods}?ledger_name=${encodeURIComponent(currentJournal.ledgerName || '')}`;
+        const res = await fetch(url, { headers: { Accept: 'application/json' } });
+        const data = await res.json();
+        setPeriodOptions((data.items || []) as EditPeriodInfo[]);
+      } catch {
+        message.warning('Could not load periods list');
+      }
+    }
+  };
+
+  const editPeriodInfo = periodOptions.find(p => p.period_name_id === editPeriod);
+  const dateInPeriod = (d: dayjs.Dayjs | null): boolean => {
+    if (!d || !editPeriodInfo) return true;
+    const s = dayjs(String(editPeriodInfo.start_date).slice(0, 10));
+    const e = dayjs(String(editPeriodInfo.end_date).slice(0, 10));
+    return !d.isBefore(s, 'day') && !d.isAfter(e, 'day');
+  };
+
+  const onEditPeriodChange = (p: string) => {
+    setEditPeriod(p);
+    const info = periodOptions.find(x => x.period_name_id === p);
+    if (info) {
+      const s = dayjs(String(info.start_date).slice(0, 10));
+      const e = dayjs(String(info.end_date).slice(0, 10));
+      // Keep the day if it fits the new period, else snap to the period start
+      setEditDate(prev => (prev && !prev.isBefore(s, 'day') && !prev.isAfter(e, 'day')) ? prev : s);
+    }
+  };
+
+  const periodEditChanged = !!currentJournal && (
+    editPeriod !== (currentJournal.periodName || '') ||
+    (editDate ? editDate.format('YYYY-MM-DD') : '') !== String(currentJournal.accountingDate || '').slice(0, 10)
+  );
+
+  const cancelPeriodEdit = () => {
+    setPeriodEditOpen(false);
+    setEditPeriod('');
+    setEditDate(null);
+  };
+
+  const handlePeriodUpdate = async () => {
+    if (!currentJournal?.jeBatchId || !editPeriod || !editDate) return;
+    if (!dateInPeriod(editDate)) {
+      message.error(`Accounting date must be within ${editPeriod}`);
+      return;
+    }
+    setPeriodUpdating(true);
+    try {
+      const url = `${APEX_DB_CONFIG.baseUrl}/gl/journals/batches/${currentJournal.jeBatchId}/period`;
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          periodName: editPeriod,
+          accountingDate: editDate.format('YYYY-MM-DD'),
+          updatedBy: localStorage.getItem('username') || 'REERP',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data?.error || `HTTP ${res.status}`);
+      // Reflect on every journal in the batch (the PUT updates all headers)
+      setAllJournals(prev => prev.map(j => ({
+        ...j,
+        periodName: editPeriod,
+        accountingDate: editDate.format('YYYY-MM-DD'),
+      })));
+      message.success(`Period updated to ${editPeriod} (${data.headersUpdated} journal${data.headersUpdated !== 1 ? 's' : ''} updated)`);
+      setPeriodEditOpen(false);
+    } catch (e: any) {
+      message.error(`Update failed: ${e.message}`);
+    } finally {
+      setPeriodUpdating(false);
+    }
+  };
+
+  // Accounting Period + Accounting Date rows, shared by the two journal
+  // detail layouts (labelSpan/valueSpan differ). Pencil opens edit mode:
+  // period Select + DatePicker constrained to the selected period, with
+  // Update (enabled only when changed) and Cancel (reverts).
+  const renderPeriodDateRows = (labelSpan: number, valueSpan: number) => {
+    if (!currentJournal) return null;
+    if (!periodEditOpen) {
+      return (
+        <>
+          <Col span={labelSpan}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Accounting Period</Text></Col>
+          <Col span={valueSpan}>
+            <Space size={6}>
+              <Text style={{ fontSize: 13 }}>{currentJournal.periodName}</Text>
+              <Tooltip title="Edit period and accounting date">
+                <Button size="small" type="text" icon={<EditOutlined />} style={{ color: REDWOOD.info }} onClick={startPeriodEdit} />
+              </Tooltip>
+            </Space>
+          </Col>
+          <Col span={labelSpan}><Text type="secondary" style={{ fontSize: 13 }}>Accounting Date</Text></Col>
+          <Col span={valueSpan}><Text style={{ fontSize: 13 }}>{String(currentJournal.accountingDate || '').slice(0, 10)}</Text></Col>
+        </>
+      );
+    }
+    return (
+      <>
+        <Col span={labelSpan}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Accounting Period</Text></Col>
+        <Col span={valueSpan}>
+          <Select
+            size="small"
+            style={{ width: 150 }}
+            value={editPeriod || undefined}
+            onChange={onEditPeriodChange}
+            loading={!periodOptions.length}
+            showSearch
+            options={periodOptions.map(p => ({ value: p.period_name_id, label: p.period_name_id }))}
+          />
+        </Col>
+        <Col span={labelSpan}><Text type="secondary" style={{ fontSize: 13 }}>Accounting Date</Text></Col>
+        <Col span={valueSpan}>
+          <DatePicker
+            size="small"
+            style={{ width: 150 }}
+            value={editDate}
+            format="YYYY-MM-DD"
+            onChange={(d) => setEditDate(d)}
+            disabledDate={(d) => !dateInPeriod(d)}
+          />
+        </Col>
+        <Col span={labelSpan} />
+        <Col span={valueSpan}>
+          <Space size={6}>
+            <Button
+              size="small"
+              type="primary"
+              loading={periodUpdating}
+              disabled={!periodEditChanged || !editDate}
+              onClick={handlePeriodUpdate}
+            >
+              Update
+            </Button>
+            <Button size="small" onClick={cancelPeriodEdit} disabled={periodUpdating}>Cancel</Button>
+          </Space>
+        </Col>
+      </>
+    );
+  };
 
   // Collapsible states
   const [batchExpanded, setBatchExpanded] = useState(false);
@@ -984,8 +1145,7 @@ const EditJournal: React.FC = () => {
                       <Col span={10}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Legal Entity</Text></Col>
                       <Col span={14}><Text style={{ fontSize: 13 }}>{currentJournal.legalEntityName}</Text></Col>
 
-                      <Col span={10}><Text type="secondary" style={{ fontSize: 13 }}>Accounting Date</Text></Col>
-                      <Col span={14}><Text style={{ fontSize: 13 }}>{currentJournal.accountingDate}</Text></Col>
+                      {renderPeriodDateRows(10, 14)}
 
                       <Col span={10}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Category</Text></Col>
                       <Col span={14}><Text style={{ fontSize: 13 }}>{currentJournal.category}</Text></Col>
@@ -1177,8 +1337,7 @@ const EditJournal: React.FC = () => {
                       <Col span={8}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Legal Entity</Text></Col>
                       <Col span={16}><Text style={{ fontSize: 13 }}>{currentJournal.legalEntityName}</Text></Col>
 
-                      <Col span={8}><Text type="secondary" style={{ fontSize: 13 }}>Accounting Date</Text></Col>
-                      <Col span={16}><Text style={{ fontSize: 13 }}>{currentJournal.accountingDate}</Text></Col>
+                      {renderPeriodDateRows(8, 16)}
 
                       <Col span={8}><Text type="secondary" style={{ fontSize: 13 }}><span style={{ color: REDWOOD.primary }}>*</span> Category</Text></Col>
                       <Col span={16}><Text style={{ fontSize: 13 }}>{currentJournal.category}</Text></Col>
