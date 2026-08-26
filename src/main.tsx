@@ -1,3 +1,4 @@
+import './utils/consoleSilencer' // MUST stay first — mutes console.log/info/debug unless VITE_DEBUG=true
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
