@@ -217,6 +217,26 @@ const FUSION_CONFIG = {
 // APEX endpoint for related invoices
 const APEX_RELATED_INVOICES_URL = `${APEX_DB_CONFIG.baseUrl}/ap/payments`;
 
+// Natural-account (segment4) descriptions from the COA value set, cached for
+// the app session — used to show the account name under each code combination.
+const ACCT_VALUESET_URL = `${APEX_DB_CONFIG.baseUrl}/valuesets/getvalues/BUIMERC_FIN_GLB_COA_ACCOUNT`;
+let ACCT_DESC_CACHE: Record<string, string> | null = null;
+async function getAccountDescMap(): Promise<Record<string, string>> {
+  if (ACCT_DESC_CACHE) return ACCT_DESC_CACHE;
+  try {
+    const res = await fetch(ACCT_VALUESET_URL, { headers: { Accept: 'application/json' } });
+    const data = await res.json();
+    const map: Record<string, string> = {};
+    for (const it of (data.items || [])) {
+      if (it.value) map[String(it.value)] = it.description || '';
+    }
+    ACCT_DESC_CACHE = map;
+  } catch {
+    ACCT_DESC_CACHE = {};
+  }
+  return ACCT_DESC_CACHE;
+}
+
 const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
   // ── Attachments (same pattern as invoice attachments) ──────────────────
   const [attachModalOpen, setAttachModalOpen] = useState(false);
@@ -1104,9 +1124,15 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
     setViewAcctData(null);
     setViewAcctAllEvents([]);
     const url = `${APEX_DB_CONFIG.baseUrl}/gl/journals/lines?reference2=${encodeURIComponent(String(payment.checkId))}&reference5=AP-PAYMENT`;
-    const apiCalls = [{ label: 'GL journal lines (reference2 = Check ID, reference5 = AP-PAYMENT)', url }];
+    const apiCalls = [
+      { label: 'GL journal lines (reference2 = Check ID, reference5 = AP-PAYMENT)', url },
+      { label: 'Account (segment4) descriptions — COA value set (cached)', url: ACCT_VALUESET_URL },
+    ];
     try {
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      const [res, descMap] = await Promise.all([
+        fetch(url, { headers: { Accept: 'application/json' } }),
+        getAccountDescMap(),
+      ]);
       const data = await res.json();
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       const items: any[] = data.items || [];
@@ -1138,6 +1164,8 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
           lineType: (Number(l.entered_dr) || 0) > 0 ? 'DR' : 'CR',
           accountingClass: l.je_category || '',
           accountCombination: l.account,
+          // segment4 (natural account) description, e.g. 2313101 → Accounts Payables
+          accountDescription: descMap[String(l.account || '').split('-')[3] || ''] || '',
           description: l.description,
           enteredDr: Number(l.entered_dr) || null,
           enteredCr: Number(l.entered_cr) || null,
