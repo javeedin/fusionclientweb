@@ -15,10 +15,21 @@ if (!DEBUG) {
     log: console.log.bind(console),
     info: console.info.bind(console),
     debug: console.debug.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
   };
   console.log = noop;
   console.info = noop;
   console.debug = noop;
+
+  // warn/error stay live for real failures, but drop framework deprecation
+  // noise: React/antd emit dev-only lines starting with "Warning:".
+  const isFrameworkWarning = (args: unknown[]) =>
+    typeof args[0] === 'string' && (args[0] as string).startsWith('Warning:');
+  const rawWarn = console.warn.bind(console);
+  const rawError = console.error.bind(console);
+  console.warn = (...args: unknown[]) => { if (!isFrameworkWarning(args)) rawWarn(...args); };
+  console.error = (...args: unknown[]) => { if (!isFrameworkWarning(args)) rawError(...args); };
 }
 
 export {};
