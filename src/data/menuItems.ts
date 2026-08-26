@@ -120,6 +120,7 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
 
   // ── Fusion Supply Chain / Sales & Order Management ────────────────────────────
   { key: 'fsc-sales-orders',      label: 'Sales Orders',               module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/procurement/sales-orders',                         description: 'Search sales orders and drill into header & lines', keywords: 'sales order so customer' },
+  { key: 'fsc-pos-sales-order',   label: 'POS Sales Order',            module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/procurement/pos-sales-order',                      description: 'Point-of-sale mode — scan barcodes to build and complete a sale', keywords: 'pos point of sale barcode scan retail shop till' },
   { key: 'fsc-customer-balances',  label: 'Customer Balances',          module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/ar/customer-site-activities',                      description: 'View customer receivables overview, aging analysis, and payment behavior', keywords: 'customer balance receivable aging payment history site activities' },
   { key: 'fsc-price-list',        label: 'Price List',                 module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/procurement/price-list',                           description: 'Manage and review price lists', keywords: 'price list pricing discount' },
 
