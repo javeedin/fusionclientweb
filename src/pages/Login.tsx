@@ -9,7 +9,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getCurrentCompany, getAllCompanies, setCurrentCompany, isCompanySelectionDisabled, getDefaultCompany } from '../config/company.config';
+import { getCurrentCompany, getAllCompanies, setCurrentCompany, isCompanySelectionDisabled, getDefaultCompany, getAppBranding } from '../config/company.config';
 import type { CompanyCode } from '../config/company.config';
 import { CheckboxOutlined, CheckSquareOutlined } from '@ant-design/icons';
 
@@ -513,9 +513,9 @@ const Login: React.FC = () => {
               </svg>
             </div>
             <Title level={2} style={{ margin: '0 0 4px 0', color: '#1a1a2e', fontSize: 28, fontWeight: 700 }}>
-              FusionClient
+              {getAppBranding().name}
             </Title>
-            <Text type="secondary" style={{ fontSize: 14, letterSpacing: 0.5 }}>Multi-Tenant ERP Platform</Text>
+            <Text type="secondary" style={{ fontSize: 14, letterSpacing: 0.5 }}>{getAppBranding().tagline}</Text>
           </div>
 
           {/* Company Selector - Hidden when company selection is disabled */}
