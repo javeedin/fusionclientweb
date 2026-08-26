@@ -336,6 +336,7 @@ const EditJournal: React.FC = () => {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
+          jeBatchId: currentJournal.jeBatchId,
           periodName: editPeriod,
           accountingDate: editDate.format('YYYY-MM-DD'),
           updatedBy: localStorage.getItem('username') || 'REERP',
