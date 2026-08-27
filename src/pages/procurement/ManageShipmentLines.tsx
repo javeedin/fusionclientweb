@@ -96,7 +96,7 @@ interface Filters {
 }
 
 const ORDER_TYPES = ['Transfer order', 'Sales order', 'Purchase order', 'Return material authorization'];
-const LINE_STATUSES = ['Ready to release', 'Released', 'Staged', 'Shipped', 'Backordered', 'Interfaced', 'Awaiting shipping'];
+const LINE_STATUSES = ['Ready to release', 'Released to warehouse', 'Released', 'Staged', 'Shipped', 'Backordered', 'Interfaced', 'Awaiting shipping'];
 
 const renderVal = (k: string, v: any): React.ReactNode => {
   if (v == null || v === '') return '—';
@@ -473,7 +473,7 @@ const ManageShipmentLines: React.FC = () => {
   const [organizations, setOrganizations] = useState<any[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
 
-  const [filters, setFilters] = useState<Filters>({ dateOp: '>', date: dayjs().subtract(7, 'day') });
+  const [filters, setFilters] = useState<Filters>({ dateOp: '>', date: dayjs().subtract(7, 'day'), lineStatus: 'Ready to release' });
 
   // Load inventory organizations on mount
   useEffect(() => {
@@ -651,7 +651,7 @@ const ManageShipmentLines: React.FC = () => {
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <Button type="primary" size="small" icon={<SearchOutlined />} loading={loading} onClick={runSearch}
                   style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}>Search</Button>
-                <Button size="small" icon={<ClearOutlined />} onClick={() => setFilters({ dateOp: '>', date: dayjs().subtract(7, 'day'), orgCode: undefined })}>Reset</Button>
+                <Button size="small" icon={<ClearOutlined />} onClick={() => setFilters({ dateOp: '>', date: dayjs().subtract(7, 'day'), orgCode: undefined, lineStatus: 'Ready to release' })}>Reset</Button>
                 <Tooltip title="API Inspector — shipmentLines web service">
                   <Button size="small" icon={<ApiOutlined />} style={{ marginLeft: 'auto', borderColor: REDWOOD.info, color: REDWOOD.info }}
                     onClick={() => setApiOpen(true)}>API</Button>
