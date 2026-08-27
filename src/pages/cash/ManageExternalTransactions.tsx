@@ -49,6 +49,31 @@ const REDWOOD = {
 
 const APEX_BASE = buildApexUrl('');
 
+// Accounting status ("Posted") is derived from GL, not from the row's
+// ACCOUNTING_FLAG: a transaction counts as Posted only when GL journal lines
+// exist with reference2 = EXTERNAL_TRANSACTION_ID and
+// reference5 = BANK_EXTERNAL_TRANSACTIONS — the same linkage View Accounting
+// uses. One GET fetches every such line; membership of the reference2 set
+// decides each row.
+const GL_EXT_TXN_LINES_URL = `${APEX_BASE}/gl/journals/lines?reference5=BANK_EXTERNAL_TRANSACTIONS&limit=100000`;
+const fetchGlPostedExtTxnIds = async (): Promise<Set<string> | null> => {
+  try {
+    const res = await fetch(GL_EXT_TXN_LINES_URL, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const items = data.items ?? (Array.isArray(data) ? data : []);
+    const posted = new Set<string>();
+    if (Array.isArray(items)) {
+      for (const l of items) {
+        if (l.reference2 != null && l.reference2 !== '') posted.add(String(l.reference2));
+      }
+    }
+    return posted;
+  } catch {
+    return null;
+  }
+};
+
 // ── Types ────────────────────────────────────────────────────────────────────
 interface ExternalTxnRecord {
   externalTransactionId: number;
@@ -3333,7 +3358,16 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
       const res  = await fetch(url);
       const data = await parseApexJson(res);
       if (data.success) {
-        const items = data.items ?? [];
+        let items = data.items ?? [];
+        // Posted / Not Posted from GL: EXTERNAL_TRANSACTION_ID present as
+        // reference2 on BANK_EXTERNAL_TRANSACTIONS journal lines → Posted.
+        const glPosted = await fetchGlPostedExtTxnIds();
+        if (glPosted) {
+          items = items.map((t: any) => ({
+            ...t,
+            accountingFlag: glPosted.has(String(t.externalTransactionId)) ? 'Y' : 'N',
+          }));
+        }
         setTransactions(items);
         setTotalRecords(items.length);
         const users = [...new Set(items.map((t: any) => t.createdBy).filter(Boolean))] as string[];
