@@ -9,7 +9,7 @@ import {
   HomeOutlined, CarOutlined, SearchOutlined, ReloadOutlined, ClearOutlined,
   ApiOutlined, CopyOutlined, InfoCircleOutlined, ProfileOutlined,
   ExportOutlined, ThunderboltOutlined, CheckCircleOutlined,
-  UnorderedListOutlined, BankOutlined, CheckSquareOutlined,
+  UnorderedListOutlined, BankOutlined, CheckSquareOutlined, DownOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs, { type Dayjs } from 'dayjs';
@@ -63,6 +63,19 @@ const fetchAllPages = async (baseUrl: string): Promise<any[]> => {
     offset += PAGE_LIMIT;
   }
   return all;
+};
+
+// Search results load one server page at a time (Fetch Next button), instead
+// of walking every page like fetchAllPages does.
+const SEARCH_PAGE_SIZE = 50;
+const fetchPage = async (baseUrl: string, offset: number): Promise<{ items: any[]; hasMore: boolean; totalResults?: number }> => {
+  const sep = baseUrl.endsWith('?') ? '' : baseUrl.includes('?') ? '&' : '?';
+  const url = `${baseUrl}${sep}limit=${SEARCH_PAGE_SIZE}&offset=${offset}&totalResults=true`;
+  const r = await fetch(url, { headers: getHeaders() });
+  if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+  const d = await r.json();
+  const items: any[] = Array.isArray(d) ? d : (d.items ?? []);
+  return { items, hasMore: !!d.hasMore, totalResults: typeof d.totalResults === 'number' ? d.totalResults : undefined };
 };
 
 const statusTag = (s?: string) => {
@@ -452,6 +465,11 @@ const ManageShipmentLines: React.FC = () => {
   const [detail, setDetail] = useState<any | null>(null);
   const [orderDialog, setOrderDialog] = useState<any | null>(null);
   const [filterText, setFilterText] = useState('');
+  // Server-side pagination state (Fetch Next button)
+  const [nextOffset, setNextOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [fetchingMore, setFetchingMore] = useState(false);
+  const [totalCount, setTotalCount] = useState<number | undefined>(undefined);
   const [organizations, setOrganizations] = useState<any[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
 
@@ -496,12 +514,28 @@ const ManageShipmentLines: React.FC = () => {
   const runSearch = useCallback(async () => {
     setLoading(true); setError(''); setSearched(true);
     try {
-      const items = await fetchAllPages(searchUrl);
+      const { items, hasMore: more, totalResults } = await fetchPage(searchUrl, 0);
       setRows(items);
+      setNextOffset(items.length);
+      setHasMore(more);
+      setTotalCount(totalResults);
       if (items.length === 0) setError('No shipment lines matched.');
-    } catch (e: any) { setError(e.message); setRows([]); }
+    } catch (e: any) { setError(e.message); setRows([]); setHasMore(false); setTotalCount(undefined); }
     finally { setLoading(false); }
   }, [searchUrl]);
+
+  // Fetch Next: appends the next server page of SEARCH_PAGE_SIZE records.
+  const fetchMore = useCallback(async () => {
+    setFetchingMore(true);
+    try {
+      const { items, hasMore: more, totalResults } = await fetchPage(searchUrl, nextOffset);
+      setRows(prev => [...prev, ...items]);
+      setNextOffset(nextOffset + items.length);
+      setHasMore(more);
+      if (totalResults != null) setTotalCount(totalResults);
+    } catch (e: any) { message.error(`Fetch next failed: ${e.message}`); }
+    finally { setFetchingMore(false); }
+  }, [searchUrl, nextOffset]);
 
   const filtered = useMemo(() => {
     const t = filterText.trim().toLowerCase();
@@ -629,11 +663,16 @@ const ManageShipmentLines: React.FC = () => {
           {/* Results */}
           <Card styles={{ body: { padding: 0 } }} style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}` }}
             title={<Space><CarOutlined style={{ color: REDWOOD.primary }} /><Text strong>Shipment Lines</Text>
-              {rows.length > 0 && <Tag>{filtered.length}{filtered.length !== rows.length ? ` of ${rows.length}` : ''} line{rows.length !== 1 ? 's' : ''}</Tag>}</Space>}
+              {rows.length > 0 && <Tag>{filtered.length}{filtered.length !== rows.length ? ` of ${rows.length}` : ''} loaded{totalCount != null ? ` · ${new Intl.NumberFormat('en-US').format(totalCount)} total` : hasMore ? ' · more available' : ''}</Tag>}</Space>}
             extra={<Space>
               <Input placeholder="Filter any column…" allowClear size="small"
                 prefix={<SearchOutlined style={{ color: REDWOOD.neutral300 }} />}
                 value={filterText} onChange={e => setFilterText(e.target.value)} style={{ width: 240 }} />
+              {hasMore && !loading && (
+                <Button size="small" type="primary" ghost icon={<DownOutlined />} loading={fetchingMore} onClick={fetchMore}>
+                  Fetch next {SEARCH_PAGE_SIZE}
+                </Button>
+              )}
               <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={runSearch}>Refresh</Button>
             </Space>}>
             {loading ? (
@@ -647,8 +686,20 @@ const ManageShipmentLines: React.FC = () => {
             ) : filtered.length === 0 ? (
               <Empty description="No shipment lines" style={{ padding: 60 }} />
             ) : (
-              <Table columns={columns} dataSource={filtered} rowKey={(r, i) => `${r.ShipmentLine ?? i}`} size="small"
-                scroll={{ x: 2220 }} pagination={{ pageSize: 25, size: 'small', showSizeChanger: true, showTotal: t => `${t} lines` }} />
+              <>
+                <Table columns={columns} dataSource={filtered} rowKey={(r, i) => `${r.ShipmentLine ?? i}`} size="small"
+                  scroll={{ x: 2220 }} pagination={{ pageSize: 25, size: 'small', showSizeChanger: true, showTotal: t => `${t} lines loaded` }} />
+                {hasMore && (
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, padding: '10px 0 16px', borderTop: `1px solid ${REDWOOD.neutral200}` }}>
+                    <Button type="primary" ghost icon={<DownOutlined />} loading={fetchingMore} onClick={fetchMore}>
+                      Fetch next {SEARCH_PAGE_SIZE} records
+                    </Button>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {rows.length} loaded{totalCount != null ? ` of ${new Intl.NumberFormat('en-US').format(totalCount)}` : ''}
+                    </Text>
+                  </div>
+                )}
+              </>
             )}
           </Card>
         </div>
@@ -668,7 +719,7 @@ const ManageShipmentLines: React.FC = () => {
                 <Tag color="blue">GET</Tag>{decodeURIComponent(searchUrl)}
               </div>
             </div>
-            <Text type="secondary" style={{ fontSize: 11 }}>Dates are unquoted (CreationDate&gt;2026-07-25); text uses SQL LIKE. Auth: Basic [{getFusionInstance().username}].</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>Dates are unquoted (CreationDate&gt;2026-07-25); text uses SQL LIKE. Auth: Basic [{getFusionInstance().username}]. Search fetches {SEARCH_PAGE_SIZE} records per request (&amp;limit={SEARCH_PAGE_SIZE}&amp;offset=N&amp;totalResults=true) — the Fetch Next button appends the following page.</Text>
           </div>
         </Modal>
 
