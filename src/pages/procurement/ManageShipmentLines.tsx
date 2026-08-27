@@ -68,6 +68,10 @@ const fetchAllPages = async (baseUrl: string): Promise<any[]> => {
 // Search results load one server page at a time (Fetch Next button), instead
 // of walking every page like fetchAllPages does.
 const SEARCH_PAGE_SIZE = 50;
+// Slim row shape for the search grid — fields= keeps Fusion from materializing
+// the full 100+ attribute row; the per-row "…" button fetches the complete
+// record on demand.
+const SEARCH_FIELDS = 'OrganizationCode,OrderType,ShipmentLine,Order,OrderLine,Item,ItemDescription,LineStatus,RequestedDate,RequestedQuantity,RequestedQuantityUOM';
 const fetchPage = async (baseUrl: string, offset: number): Promise<{ items: any[]; hasMore: boolean; totalResults?: number }> => {
   const sep = baseUrl.endsWith('?') ? '' : baseUrl.includes('?') ? '&' : '?';
   const url = `${baseUrl}${sep}limit=${SEARCH_PAGE_SIZE}&offset=${offset}&totalResults=true`;
@@ -507,8 +511,8 @@ const ManageShipmentLines: React.FC = () => {
 
   const searchUrl = useMemo(() => {
     const q = buildQ(filters);
-    const qs = q ? `q=${encodeURIComponent(q)}` : '';
-    return `${FUSION_BASE}/shipmentLines?${qs}`;
+    const qs = q ? `q=${encodeURIComponent(q)}&` : '';
+    return `${FUSION_BASE}/shipmentLines?${qs}onlyData=true&fields=${SEARCH_FIELDS}`;
   }, [filters, buildQ]);
 
   const runSearch = useCallback(async () => {
@@ -523,6 +527,19 @@ const ManageShipmentLines: React.FC = () => {
     } catch (e: any) { setError(e.message); setRows([]); setHasMore(false); setTotalCount(undefined); }
     finally { setLoading(false); }
   }, [searchUrl]);
+
+  // The grid rows are slim (fields=…) — pull the complete record for the
+  // detail modal only when asked.
+  const openDetail = useCallback(async (r: any) => {
+    if (!r?.ShipmentLine) { setDetail(r); return; }
+    const hide = message.loading('Loading full record…', 0);
+    try {
+      const res = await fetch(`${FUSION_BASE}/shipmentLines?q=${encodeURIComponent(`ShipmentLine=${r.ShipmentLine}`)}&onlyData=true&limit=1`, { headers: getHeaders() });
+      const d = await res.json();
+      setDetail((d.items && d.items[0]) || r);
+    } catch { setDetail(r); }
+    finally { hide(); }
+  }, []);
 
   // Fetch Next: appends the next server page of SEARCH_PAGE_SIZE records.
   const fetchMore = useCallback(async () => {
@@ -548,9 +565,7 @@ const ManageShipmentLines: React.FC = () => {
       sorter: (a, b) => String(a.RequestedDate ?? '').localeCompare(String(b.RequestedDate ?? '')) },
     { title: 'Line Status', dataIndex: 'LineStatus', width: 140, render: v => statusTag(v) },
     { title: 'Org', dataIndex: 'OrganizationCode', width: 80, render: (v, r) => <Tooltip title={r.OrganizationName}><Tag style={{ fontSize: 11 }}>{v ?? '—'}</Tag></Tooltip> },
-    { title: 'Src Subinv', dataIndex: 'SourceSubinventoryName', width: 100, render: (v, r) => v ?? r.SourceSubinventory ?? '—' },
     { title: 'Shipment Line', dataIndex: 'ShipmentLine', width: 110, render: v => <Text strong style={{ color: REDWOOD.info, fontSize: 12 }}>{v ?? '—'}</Text> },
-    { title: 'Shipment', dataIndex: 'Shipment', width: 110, render: v => v ?? '—' },
     { title: 'Order Type', dataIndex: 'OrderType', width: 130,
       render: (v, r) => <Tooltip title={r.OrderTypeCode}><Tag color="purple" style={{ fontSize: 11 }}>{v ?? '—'}</Tag></Tooltip> },
     { title: 'Order', dataIndex: 'Order', width: 120,
@@ -565,16 +580,10 @@ const ManageShipmentLines: React.FC = () => {
     { title: 'Item', dataIndex: 'Item', width: 130, render: v => <Text strong style={{ color: REDWOOD.info, fontSize: 12 }}>{v ?? '—'}</Text> },
     { title: 'Description', dataIndex: 'ItemDescription', width: 240, ellipsis: true, render: v => <Text style={{ fontSize: 12 }}>{v ?? '—'}</Text> },
     { title: 'Requested Qty', dataIndex: 'RequestedQuantity', width: 110, align: 'right', render: (v, r) => <span><Text style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmtQty(v)}</Text>{r.RequestedQuantityUOM ? <Text type="secondary" style={{ fontSize: 11 }}> {r.RequestedQuantityUOM}</Text> : ''}</span> },
-    { title: 'Selling Price', dataIndex: 'SellingPrice', width: 110, align: 'right', render: (v, r) => <Text style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmtPrice(v, r.CurrencyCode)}</Text> },
-    { title: 'Currency', dataIndex: 'CurrencyCode', width: 80, align: 'center', render: v => <Tag style={{ fontSize: 11 }}>{v ?? '—'}</Tag> },
-    { title: 'Business Unit', dataIndex: 'BusinessUnit', width: 200, ellipsis: true, render: v => <Text style={{ fontSize: 12 }}>{v ?? '—'}</Text> },
-    { title: 'Line Unit Price', dataIndex: 'LineUnitPrice', width: 120, align: 'right', render: (v, r) => <Text strong style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12, color: REDWOOD.primary }}>{fmtPrice(v, r.CurrencyCode)}</Text> },
-    { title: 'Ship To Location', dataIndex: 'ShipToLocation', width: 200, ellipsis: true, render: v => <Text style={{ fontSize: 12 }}>{v ?? '—'}</Text> },
-    { title: 'Dest Subinv', dataIndex: 'DestinationSubinventory', width: 100, render: (v, r) => v ?? r.DestinationSubinventoryName ?? '—' },
     { title: '', key: 'more', width: 46, fixed: 'right', align: 'center',
       render: (_, r) => (
         <Tooltip title="Show all remaining fields">
-          <Button size="small" type="text" icon={<ProfileOutlined />} style={{ color: REDWOOD.info }} onClick={() => setDetail(r)} />
+          <Button size="small" type="text" icon={<ProfileOutlined />} style={{ color: REDWOOD.info }} onClick={() => openDetail(r)} />
         </Tooltip>
       ) },
   ];
@@ -688,7 +697,7 @@ const ManageShipmentLines: React.FC = () => {
             ) : (
               <>
                 <Table columns={columns} dataSource={filtered} rowKey={(r, i) => `${r.ShipmentLine ?? i}`} size="small"
-                  scroll={{ x: 2220 }} pagination={{ pageSize: 25, size: 'small', showSizeChanger: true, showTotal: t => `${t} lines loaded` }} />
+                  scroll={{ x: 1260 }} pagination={{ pageSize: 25, size: 'small', showSizeChanger: true, showTotal: t => `${t} lines loaded` }} />
                 {hasMore && (
                   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, padding: '10px 0 16px', borderTop: `1px solid ${REDWOOD.neutral200}` }}>
                     <Button type="primary" ghost icon={<DownOutlined />} loading={fetchingMore} onClick={fetchMore}>
