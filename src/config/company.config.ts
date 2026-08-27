@@ -72,17 +72,31 @@ export function getDefaultCompany(): CompanyCode {
   return 'BUIMERC';
 }
 
+// The Fusion pod chosen at login (Test / Production instance) overrides the
+// env default, so every Fusion module queries the instance the user actually
+// logged into. AuthContext writes fusion_instance_url at login and clears it
+// on logout; with nothing stored, the company's env fusionBaseUrl applies.
+function withFusionInstanceOverride(c: CompanyConfig): CompanyConfig {
+  try {
+    const url = localStorage.getItem('fusion_instance_url');
+    if (url && url.startsWith('http') && url.replace(/\/$/, '') !== c.fusionBaseUrl) {
+      return { ...c, fusionBaseUrl: url.replace(/\/$/, '') };
+    }
+  } catch { /* storage unavailable */ }
+  return c;
+}
+
 // Get current company from env or localStorage
 export function getCurrentCompany(): CompanyConfig {
   // If company selection is disabled, always use default company
   if (isCompanySelectionDisabled()) {
     const defaultCompany = getDefaultCompany();
-    return COMPANIES[defaultCompany];
+    return withFusionInstanceOverride(COMPANIES[defaultCompany]);
   }
 
   const storedCompany = localStorage.getItem('selectedCompany') as CompanyCode | null;
   const companyCode = storedCompany || (import.meta.env.REACT_APP_COMPANY as CompanyCode) || 'BUIMERC';
-  return COMPANIES[companyCode] || COMPANIES.BUIMERC;
+  return withFusionInstanceOverride(COMPANIES[companyCode] || COMPANIES.BUIMERC);
 }
 
 export function getCompany(code: CompanyCode): CompanyConfig {
