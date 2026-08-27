@@ -4701,6 +4701,12 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
       render: (v) => <Text style={{ fontSize: 11, fontFamily: 'monospace', color: REDWOOD.neutral600 }}>{v}</Text>,
     },
     {
+      title: 'Accounted', dataIndex: 'accountingFlag', width: 80, align: 'center',
+      render: (v) => v === 'Y'
+        ? <Tag color="green" style={{ fontSize: 11, margin: 0 }}>Posted</Tag>
+        : <Tag color="default" style={{ fontSize: 11, margin: 0 }}>No</Tag>,
+    },
+    {
       title: 'Txn Number', dataIndex: 'transactionId', width: 105,
       render: (v, r) => (
         <Button type="link" size="small" style={{ padding: 0, color: REDWOOD.info }} onClick={() => openEditTab(r)}>
@@ -4769,12 +4775,6 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
     {
       title: 'Origin', dataIndex: 'source', width: 90,
       render: v => <Text style={{ fontSize: 12 }}>{(SOURCE_LABELS[v] ?? v) || '—'}</Text>,
-    },
-    {
-      title: 'Accounted', dataIndex: 'accountingFlag', width: 80, align: 'center',
-      render: (v) => v === 'Y'
-        ? <Tag color="green" style={{ fontSize: 11, margin: 0 }}>Posted</Tag>
-        : <Tag color="default" style={{ fontSize: 11, margin: 0 }}>No</Tag>,
     },
     {
       title: 'Dir', dataIndex: 'transactionDirection', width: 60, align: 'center',
