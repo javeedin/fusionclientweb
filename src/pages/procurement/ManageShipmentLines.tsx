@@ -477,7 +477,9 @@ const ManageShipmentLines: React.FC = () => {
   const [organizations, setOrganizations] = useState<any[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
 
-  const [filters, setFilters] = useState<Filters>({ dateOp: '>', date: dayjs().subtract(30, 'day'), lineStatus: 'Ready to release' });
+  // Creation Date has NO default — it enters the query only when picked.
+  // Organization and Order Type are mandatory; everything else is optional.
+  const [filters, setFilters] = useState<Filters>({ dateOp: '>', lineStatus: 'Ready to release' });
 
   // Load inventory organizations on mount
   useEffect(() => {
@@ -516,6 +518,8 @@ const ManageShipmentLines: React.FC = () => {
   }, [filters, buildQ]);
 
   const runSearch = useCallback(async () => {
+    if (!filters.orgCode)   { message.warning('Organization is required.'); return; }
+    if (!filters.orderType) { message.warning('Order Type is required.');  return; }
     setLoading(true); setError(''); setSearched(true);
     try {
       const { items, hasMore: more, totalResults } = await fetchPage(searchUrl, 0);
@@ -523,7 +527,7 @@ const ManageShipmentLines: React.FC = () => {
       setNextOffset(items.length);
       setHasMore(more);
       setTotalCount(totalResults);
-      if (items.length === 0) setError(`No shipment lines matched. Note: the Creation Date filter (${filters.dateOp || '>'} ${filters.date ? dayjs(filters.date).format('D-MMM-YYYY') : '—'}) is part of the query — clear or widen it to match older lines. The API button shows the exact URL sent.`);
+      if (items.length === 0) setError(`No shipment lines matched.${filters.date ? ` Note: the Creation Date filter (${filters.dateOp || '>'} ${dayjs(filters.date).format('D-MMM-YYYY')}) is part of the query — clear or widen it to match older lines.` : ''} The API button shows the exact URL sent.`);
     } catch (e: any) { setError(e.message); setRows([]); setHasMore(false); setTotalCount(undefined); }
     finally { setLoading(false); }
   }, [searchUrl, filters]);
@@ -618,14 +622,14 @@ const ManageShipmentLines: React.FC = () => {
                   </Form.Item>
                 </Col>
                 <Col xs={12} sm={12} md={4}>
-                  <Form.Item label={<Text style={{ fontSize: 11, fontWeight: 600 }}>Organization</Text>} style={{ marginBottom: 6 }}>
+                  <Form.Item label={<Text style={{ fontSize: 11, fontWeight: 600 }}><Text style={{ color: REDWOOD.error }}>*</Text> Organization</Text>} style={{ marginBottom: 6 }}>
                     <Select allowClear showSearch placeholder="Any" value={filters.orgCode} loading={orgsLoading}
                       onChange={v => setFilters(f => ({ ...f, orgCode: v }))}
                       options={organizations.map(o => ({ value: o.OrganizationCode, label: `${o.OrganizationCode} — ${o.OrganizationName}` }))} />
                   </Form.Item>
                 </Col>
                 <Col xs={12} sm={12} md={4}>
-                  <Form.Item label={<Text style={{ fontSize: 11, fontWeight: 600 }}>Order Type</Text>} style={{ marginBottom: 6 }}>
+                  <Form.Item label={<Text style={{ fontSize: 11, fontWeight: 600 }}><Text style={{ color: REDWOOD.error }}>*</Text> Order Type</Text>} style={{ marginBottom: 6 }}>
                     <Select allowClear showSearch placeholder="Any" value={filters.orderType}
                       onChange={v => setFilters(f => ({ ...f, orderType: v }))}
                       options={ORDER_TYPES.map(s => ({ value: s, label: s }))} />
@@ -660,7 +664,7 @@ const ManageShipmentLines: React.FC = () => {
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <Button type="primary" size="small" icon={<SearchOutlined />} loading={loading} onClick={runSearch}
                   style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}>Search</Button>
-                <Button size="small" icon={<ClearOutlined />} onClick={() => setFilters({ dateOp: '>', date: dayjs().subtract(30, 'day'), orgCode: undefined, lineStatus: 'Ready to release' })}>Reset</Button>
+                <Button size="small" icon={<ClearOutlined />} onClick={() => setFilters({ dateOp: '>', orgCode: undefined, lineStatus: 'Ready to release' })}>Reset</Button>
                 <Tooltip title="API Inspector — shipmentLines web service">
                   <Button size="small" icon={<ApiOutlined />} style={{ marginLeft: 'auto', borderColor: REDWOOD.info, color: REDWOOD.info }}
                     onClick={() => setApiOpen(true)}>API</Button>
