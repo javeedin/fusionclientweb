@@ -469,6 +469,9 @@ const ManageShipmentLines: React.FC = () => {
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState('');
   const [apiOpen, setApiOpen] = useState(false);
+  // API dialog "Run" — executes the exact displayed URL with the app's auth
+  const [apiRunLoading, setApiRunLoading] = useState(false);
+  const [apiRun, setApiRun] = useState<{ ok: boolean; status: string; ms: number; count: number; hasMore: boolean; snippet: string } | null>(null);
   const [detail, setDetail] = useState<any | null>(null);
   const [orderDialog, setOrderDialog] = useState<any | null>(null);
   const [filterText, setFilterText] = useState('');
@@ -534,6 +537,24 @@ const ManageShipmentLines: React.FC = () => {
     } catch (e: any) { setError(e.message); setRows([]); setHasMore(false); setTotalCount(undefined); }
     finally { setLoading(false); }
   }, [searchUrl, filters]);
+
+  // Live test from the API dialog: runs the exact URL shown there, with the
+  // same headers Search uses, and reports status + elapsed time + body head.
+  const runApiTest = useCallback(async () => {
+    setApiRunLoading(true); setApiRun(null);
+    const url = `${searchUrl}&limit=${SEARCH_PAGE_SIZE}&offset=0`;
+    const t0 = performance.now();
+    try {
+      const r = await fetch(url, { headers: getHeaders() });
+      const text = await r.text();
+      const ms = performance.now() - t0;
+      let count = 0; let hasMore = false;
+      try { const d = JSON.parse(text); count = (d.items ?? []).length; hasMore = !!d.hasMore; } catch { /* non-JSON body */ }
+      setApiRun({ ok: r.ok, status: `HTTP ${r.status}`, ms, count, hasMore, snippet: text.substring(0, 1200) || '(empty body)' });
+    } catch (e: any) {
+      setApiRun({ ok: false, status: 'FETCH FAILED', ms: performance.now() - t0, count: 0, hasMore: false, snippet: e?.message || String(e) });
+    } finally { setApiRunLoading(false); }
+  }, [searchUrl]);
 
   // The grid rows are slim (fields=…) — pull the complete record for the
   // detail modal only when asked.
@@ -728,14 +749,26 @@ const ManageShipmentLines: React.FC = () => {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Text style={{ fontSize: 11, fontWeight: 700, color: REDWOOD.neutral600, textTransform: 'uppercase' }}>Search shipment lines</Text>
-                <Button size="small" type="text" icon={<CopyOutlined />} style={{ marginLeft: 'auto' }}
-                  onClick={() => { navigator.clipboard.writeText(decodeURIComponent(searchUrl)); message.success('Copied'); }}>Copy</Button>
+                <Button size="small" type="primary" ghost icon={<ThunderboltOutlined />} loading={apiRunLoading}
+                  style={{ marginLeft: 'auto' }} onClick={runApiTest}>Run</Button>
+                <Button size="small" type="text" icon={<CopyOutlined />}
+                  onClick={() => { navigator.clipboard.writeText(`${decodeURIComponent(searchUrl)}&limit=${SEARCH_PAGE_SIZE}&offset=0`); message.success('Copied'); }}>Copy</Button>
               </div>
               <div style={{ marginTop: 4, padding: '8px 12px', borderRadius: 6, background: REDWOOD.neutral100, border: `1px solid ${REDWOOD.neutral200}`, fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', color: REDWOOD.info }}>
-                <Tag color="blue">GET</Tag>{decodeURIComponent(searchUrl)}
+                <Tag color="blue">GET</Tag>{decodeURIComponent(searchUrl)}&amp;limit={SEARCH_PAGE_SIZE}&amp;offset=0
               </div>
             </div>
-            <Text type="secondary" style={{ fontSize: 11 }}>Dates are unquoted (CreationDate&gt;2026-07-25); text uses SQL LIKE. Auth: Basic [{getFusionInstance().username}]. Search fetches {SEARCH_PAGE_SIZE} records per request (&amp;limit={SEARCH_PAGE_SIZE}&amp;offset=N) — the Fetch Next button appends the following page. totalResults is intentionally NOT requested (counting the full set is slow).</Text>
+            {apiRun && (
+              <div style={{ padding: '8px 12px', borderRadius: 6, border: `1px solid ${apiRun.ok ? REDWOOD.success : REDWOOD.error}44`, background: (apiRun.ok ? REDWOOD.success : REDWOOD.error) + '0d' }}>
+                <Space size={10} wrap>
+                  <Tag color={apiRun.ok ? 'green' : 'red'}>{apiRun.status}</Tag>
+                  <Text style={{ fontSize: 12, fontWeight: 700 }}>{(apiRun.ms / 1000).toFixed(1)}s</Text>
+                  {apiRun.ok && <Text style={{ fontSize: 12 }}>{apiRun.count} row(s), hasMore: {String(apiRun.hasMore)}</Text>}
+                </Space>
+                <pre style={{ fontFamily: 'monospace', fontSize: 10.5, margin: '6px 0 0', maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{apiRun.snippet}</pre>
+              </div>
+            )}
+            <Text type="secondary" style={{ fontSize: 11 }}>This is EXACTLY what Search runs (Run above executes it live with the app's auth). Dates are unquoted; text uses SQL LIKE. Auth: Basic [{getFusionInstance().username}]. {SEARCH_PAGE_SIZE} records per request — Fetch Next appends the following page. totalResults is intentionally NOT requested (counting the full set is slow).</Text>
           </div>
         </Modal>
 
