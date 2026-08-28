@@ -72,9 +72,12 @@ const SEARCH_PAGE_SIZE = 50;
 // the full 100+ attribute row; the per-row "…" button fetches the complete
 // record on demand.
 const SEARCH_FIELDS = 'OrganizationCode,OrderType,ShipmentLine,Order,OrderLine,Item,ItemDescription,LineStatus,RequestedDate,RequestedQuantity,RequestedQuantityUOM';
+// NOTE: no totalResults=true — computing the total forces Fusion to count the
+// entire matching set of this expensive view, which is as slow as fetching
+// everything. hasMore alone drives the Fetch Next button.
 const fetchPage = async (baseUrl: string, offset: number): Promise<{ items: any[]; hasMore: boolean; totalResults?: number }> => {
   const sep = baseUrl.endsWith('?') ? '' : baseUrl.includes('?') ? '&' : '?';
-  const url = `${baseUrl}${sep}limit=${SEARCH_PAGE_SIZE}&offset=${offset}&totalResults=true`;
+  const url = `${baseUrl}${sep}limit=${SEARCH_PAGE_SIZE}&offset=${offset}`;
   const r = await fetch(url, { headers: getHeaders() });
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
   const d = await r.json();
@@ -732,7 +735,7 @@ const ManageShipmentLines: React.FC = () => {
                 <Tag color="blue">GET</Tag>{decodeURIComponent(searchUrl)}
               </div>
             </div>
-            <Text type="secondary" style={{ fontSize: 11 }}>Dates are unquoted (CreationDate&gt;2026-07-25); text uses SQL LIKE. Auth: Basic [{getFusionInstance().username}]. Search fetches {SEARCH_PAGE_SIZE} records per request (&amp;limit={SEARCH_PAGE_SIZE}&amp;offset=N&amp;totalResults=true) — the Fetch Next button appends the following page.</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>Dates are unquoted (CreationDate&gt;2026-07-25); text uses SQL LIKE. Auth: Basic [{getFusionInstance().username}]. Search fetches {SEARCH_PAGE_SIZE} records per request (&amp;limit={SEARCH_PAGE_SIZE}&amp;offset=N) — the Fetch Next button appends the following page. totalResults is intentionally NOT requested (counting the full set is slow).</Text>
           </div>
         </Modal>
 
