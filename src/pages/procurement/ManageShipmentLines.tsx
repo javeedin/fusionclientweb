@@ -477,7 +477,7 @@ const ManageShipmentLines: React.FC = () => {
   const [organizations, setOrganizations] = useState<any[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
 
-  const [filters, setFilters] = useState<Filters>({ dateOp: '>', date: dayjs().subtract(7, 'day'), lineStatus: 'Ready to release' });
+  const [filters, setFilters] = useState<Filters>({ dateOp: '>', date: dayjs().subtract(30, 'day'), lineStatus: 'Ready to release' });
 
   // Load inventory organizations on mount
   useEffect(() => {
@@ -523,10 +523,10 @@ const ManageShipmentLines: React.FC = () => {
       setNextOffset(items.length);
       setHasMore(more);
       setTotalCount(totalResults);
-      if (items.length === 0) setError('No shipment lines matched.');
+      if (items.length === 0) setError(`No shipment lines matched. Note: the Creation Date filter (${filters.dateOp || '>'} ${filters.date ? dayjs(filters.date).format('D-MMM-YYYY') : '—'}) is part of the query — clear or widen it to match older lines. The API button shows the exact URL sent.`);
     } catch (e: any) { setError(e.message); setRows([]); setHasMore(false); setTotalCount(undefined); }
     finally { setLoading(false); }
-  }, [searchUrl]);
+  }, [searchUrl, filters]);
 
   // The grid rows are slim (fields=…) — pull the complete record for the
   // detail modal only when asked.
@@ -660,7 +660,7 @@ const ManageShipmentLines: React.FC = () => {
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <Button type="primary" size="small" icon={<SearchOutlined />} loading={loading} onClick={runSearch}
                   style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}>Search</Button>
-                <Button size="small" icon={<ClearOutlined />} onClick={() => setFilters({ dateOp: '>', date: dayjs().subtract(7, 'day'), orgCode: undefined, lineStatus: 'Ready to release' })}>Reset</Button>
+                <Button size="small" icon={<ClearOutlined />} onClick={() => setFilters({ dateOp: '>', date: dayjs().subtract(30, 'day'), orgCode: undefined, lineStatus: 'Ready to release' })}>Reset</Button>
                 <Tooltip title="API Inspector — shipmentLines web service">
                   <Button size="small" icon={<ApiOutlined />} style={{ marginLeft: 'auto', borderColor: REDWOOD.info, color: REDWOOD.info }}
                     onClick={() => setApiOpen(true)}>API</Button>
