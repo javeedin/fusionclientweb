@@ -7,7 +7,6 @@ import {
   UserOutlined, LockOutlined, CloudServerOutlined,
   MailOutlined, KeyOutlined, CheckCircleOutlined, BugOutlined, CopyOutlined,
 } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getCurrentCompany, getAllCompanies, setCurrentCompany, isCompanySelectionDisabled, getDefaultCompany, getAppBranding } from '../config/company.config';
 import type { CompanyCode } from '../config/company.config';
@@ -401,7 +400,6 @@ const Login: React.FC = () => {
     companySelectionDisabled ? defaultCompanyCode : getCurrentCompany().code
   );
   const { loginWithStatus }             = useAuth();
-  const navigate                        = useNavigate();
 
   const currentCompanyConfig = getAllCompanies().find(c => c.code === selectedCompany);
   const fusionInstances = currentCompanyConfig?.fusionInstances || [];
@@ -451,7 +449,13 @@ const Login: React.FC = () => {
     setLoading(false);
 
     if (result.status === 'SUCCESS') {
-      navigate('/home');
+      // Full page reload (not SPA navigate): Fusion modules resolve their pod URL
+      // and auth headers in module-level constants, so a reload guarantees every
+      // page re-resolves to the instance just logged into (Test vs Production)
+      // instead of keeping URLs cached from a previous session. HashRouter — set
+      // the hash first, then reload the document.
+      window.location.hash = '#/home';
+      window.location.reload();
       return;
     }
 

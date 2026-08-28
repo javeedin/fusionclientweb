@@ -9,15 +9,14 @@
 export interface FusionInstance {
   key: string;
   label: string;
-  host: string;       // POD host, e.g. https://iacney-test.fa.ocs.oraclecloud.com
+  host: string;       // POD host, e.g. https://efmh-test.fa.em3.oraclecloud.com
 }
 
 // Add / edit instances here. `host` has NO trailing slash and NO /fscmRestApi path.
 // Credentials are entered at login time, not stored in configuration.
 export const FUSION_INSTANCES: FusionInstance[] = [
-  { key: 'TEST',  label: 'TEST',  host: 'https://iacney-test.fa.ocs.oraclecloud.com' },
-  { key: 'TEST1', label: 'TEST1', host: 'https://efmh-test.fa.em3.oraclecloud.com' },
-  { key: 'PROD',  label: 'PROD',  host: 'https://efmh.fa.em3.oraclecloud.com' },
+  { key: 'TEST', label: 'TEST', host: 'https://efmh-test.fa.em3.oraclecloud.com' },
+  { key: 'PROD', label: 'PROD', host: 'https://efmh.fa.em3.oraclecloud.com' },
 ];
 
 const STORAGE_KEY = 'fusionInstanceKey';

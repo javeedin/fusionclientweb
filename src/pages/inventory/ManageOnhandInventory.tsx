@@ -1,4 +1,5 @@
 import { getFusionAuthHeaders } from '../../config/api.helper';
+import { getCurrentCompany } from '../../config/company.config';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input,
@@ -28,8 +29,9 @@ const REDWOOD = {
 };
 
 // ── API ───────────────────────────────────────────────────────────────────────
-const BASE_URL = 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/11.13.18.05';
-const LATEST_URL = 'https://iacney-test.fa.ocs.oraclecloud.com/fscmRestApi/resources/latest';
+const FUSION_HOST = getCurrentCompany().fusionBaseUrl;
+const BASE_URL = `${FUSION_HOST}/fscmRestApi/resources/11.13.18.05`;
+const LATEST_URL = `${FUSION_HOST}/fscmRestApi/resources/latest`;
 const HEADERS = getFusionAuthHeaders();
 const PAGE_SIZE = 50;
 const CHILD_LIMIT = 500;

@@ -1,4 +1,4 @@
-export type CompanyCode = 'BUIMERC' | 'MITSUMI' | 'GRAYSINC';
+export type CompanyCode = 'BUIMERC' | 'GRAYSINC';
 
 export interface FusionInstance {
   name: string;
@@ -31,14 +31,6 @@ const COMPANIES: Record<CompanyCode, CompanyConfig> = {
     fusionBaseUrl: import.meta.env.REACT_APP_BUIMERC_FUSION_BASE_URL || '',
     hcmBaseUrl: import.meta.env.REACT_APP_BUIMERC_HCM_BASE_URL || '',
     fusionInstances: parseFusionInstances(import.meta.env.REACT_APP_BUIMERC_FUSION_INSTANCES || '', 'BUIMERC'),
-  },
-  MITSUMI: {
-    code: 'MITSUMI',
-    name: 'MITSUMI',
-    apexBaseUrl: import.meta.env.REACT_APP_MITSUMI_APEX_BASE_URL || '',
-    fusionBaseUrl: import.meta.env.REACT_APP_MITSUMI_FUSION_BASE_URL || '',
-    hcmBaseUrl: import.meta.env.REACT_APP_MITSUMI_HCM_BASE_URL || '',
-    fusionInstances: parseFusionInstances(import.meta.env.REACT_APP_MITSUMI_FUSION_INSTANCES || '', 'MITSUMI'),
   },
   GRAYSINC: {
     code: 'GRAYSINC',
