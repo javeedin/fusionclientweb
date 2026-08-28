@@ -400,34 +400,56 @@ const ConfirmPickModal: React.FC<{ open: boolean; payload: any | null; onClose: 
   );
 };
 
-// ── Ship Confirm — POST shippingTransactions ─────────────────────────────────
+// ── Ship Confirm ─────────────────────────────────────────────────────────────
+// Without a date: quick-action POST shippingTransactions {ShipmentName,
+// Action:"CONFIRM", Organization} — confirms with rule defaults (actual ship
+// date = today). With an Actual Ship Date: the documented external-confirm
+// route — POST shipmentTransactionRequests, ActionCode "ShipmentUpdate", the
+// shipments node carrying ActualShipDate + ShipConfirmRule.
 export const SHIP_CONFIRM_URL = `${FUSION_BASE}/shippingTransactions`;
+export const SHIP_TXN_REQ_URL = `${FUSION_BASE}/shipmentTransactionRequests`;
+const DEFAULT_SHIP_CONFIRM_RULE = '002_Ship_Confirm_Rule';
 
-// Reusable ship-confirm dialog. Body: { ShipmentName, Action:"CONFIRM", Organization }.
+// Reusable ship-confirm dialog.
 export const ShipConfirmModal: React.FC<{
   open: boolean; shipmentName?: string; organization?: string; onClose: () => void; onDone?: () => void;
 }> = ({ open, shipmentName, organization, onClose, onDone }) => {
   const [name, setName] = useState('');
   const [org, setOrg] = useState('');
+  const [actualDate, setActualDate] = useState<Dayjs | null>(null);
+  const [rule, setRule] = useState(DEFAULT_SHIP_CONFIRM_RULE);
   const [submitting, setSubmitting] = useState(false);
   const [resp, setResp] = useState<{ ok: boolean; text: string } | null>(null);
-  useEffect(() => { if (open) { setName(shipmentName ?? ''); setOrg(organization ?? ''); setResp(null); } }, [open, shipmentName, organization]);
+  useEffect(() => { if (open) { setName(shipmentName ?? ''); setOrg(organization ?? ''); setActualDate(null); setResp(null); } }, [open, shipmentName, organization]);
 
-  const payload = useMemo(() => ({ ShipmentName: name, Action: 'CONFIRM', Organization: org }), [name, org]);
+  const useDated = !!actualDate;
+  const payload = useMemo(() => useDated
+    ? {
+        ActionCode: 'ShipmentUpdate',
+        shipments: [{
+          Shipment: name,
+          ShipFromOrganizationCode: org,
+          ActualShipDate: actualDate!.format('YYYY-MM-DDTHH:mm:ssZ'),
+          ...(rule.trim() ? { ShipConfirmRule: rule.trim() } : {}),
+        }],
+      }
+    : { ShipmentName: name, Action: 'CONFIRM', Organization: org },
+  [useDated, name, org, actualDate, rule]);
+  const submitUrl = useDated ? SHIP_TXN_REQ_URL : SHIP_CONFIRM_URL;
   const body = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
 
   const submit = async () => {
     if (!name.trim() || !org.trim()) { message.warning('Shipment and Organization are required'); return; }
     setSubmitting(true); setResp(null);
     try {
-      const r = await fetch(SHIP_CONFIRM_URL, {
+      const r = await fetch(submitUrl, {
         method: 'POST',
         headers: { ...getHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const text = await r.text();
       let pretty = text; try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { /* keep raw */ }
-      if (r.ok) { setResp({ ok: true, text: pretty }); message.success('Ship confirmed in Fusion'); onDone?.(); }
+      if (r.ok) { setResp({ ok: true, text: pretty }); message.success(useDated ? 'Shipment update request submitted (processed via the shipment interface — recheck the line status shortly)' : 'Ship confirmed in Fusion'); onDone?.(); }
       else { setResp({ ok: false, text: `HTTP ${r.status} ${r.statusText}\n${pretty}` }); message.error(`Ship confirm failed (HTTP ${r.status})`); }
     } catch (e: any) { setResp({ ok: false, text: e.message }); message.error('Ship confirm failed'); }
     finally { setSubmitting(false); }
@@ -455,9 +477,26 @@ export const ShipConfirmModal: React.FC<{
           <Input value={org} placeholder="e.g. AMS" onChange={e => setOrg(e.target.value)} />
         </Col>
       </Row>
+      <Row gutter={12} style={{ marginTop: 10 }}>
+        <Col span={12}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Actual Ship Date <Text type="secondary" style={{ fontWeight: 400 }}>(optional — empty = today)</Text></div>
+          <DatePicker showTime value={actualDate} onChange={setActualDate} format="D-MMM-YYYY HH:mm" style={{ width: '100%' }} />
+        </Col>
+        {useDated && (
+          <Col span={12}>
+            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Ship Confirm Rule</div>
+            <Input value={rule} onChange={e => setRule(e.target.value)} placeholder={DEFAULT_SHIP_CONFIRM_RULE} />
+          </Col>
+        )}
+      </Row>
+      {useDated && (
+        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6 }}>
+          With a date set, the confirm goes through the shipment interface (shipmentTransactionRequests, ActionCode ShipmentUpdate) so ActualShipDate is honored — shippingTransactions cannot carry a date. The request is processed asynchronously; recheck the shipment after a moment.
+        </Text>
+      )}
       <div style={{ fontSize: 12, margin: '12px 0 6px', display: 'flex', alignItems: 'center', gap: 6 }}>
         <Tag color="green">POST</Tag>
-        <Text style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', color: REDWOOD.info }}>{SHIP_CONFIRM_URL}</Text>
+        <Text style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', color: REDWOOD.info }}>{submitUrl}</Text>
       </div>
       <div style={{ maxHeight: 220, overflow: 'auto', background: REDWOOD.neutral100, border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 6, padding: 12 }}>
         <pre style={{ margin: 0, fontSize: 11, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{body}</pre>
