@@ -273,17 +273,7 @@ export function mergeDataParameters(
   const existing: RbParameter[] = Array.isArray(reportDef.parameters) ? reportDef.parameters : [];
 
   // find a safe id range above everything already in the definition
-  let maxId = 0;
-  const scanIds = (obj: unknown): void => {
-    if (Array.isArray(obj)) { obj.forEach(scanIds); return; }
-    if (obj && typeof obj === 'object') {
-      const rec = obj as Record<string, unknown>;
-      if (typeof rec.id === 'number' && rec.id > maxId) maxId = rec.id;
-      Object.values(rec).forEach(v => { if (v && typeof v === 'object') scanIds(v); });
-    }
-  };
-  scanIds(reportDef);
-  let nextId = maxId + 1;
+  let nextId = maxIdIn(reportDef) + 1;
 
   const managedNames = new Set<string>([dataName, ...(ds.userParams ?? []).map(p => p.name)]);
   const kept = existing.filter(p => !managedNames.has(p.name));
@@ -304,6 +294,135 @@ export function mergeDataParameters(
   );
 
   return { ...reportDef, parameters: [...kept, dataParam, ...userParamDefs] };
+}
+
+// ── Auto-table generation ────────────────────────────────────────────────────
+
+// Shared: find the highest object id used anywhere in a report definition
+const maxIdIn = (reportDef: Record<string, any>): number => {
+  let maxId = 0;
+  const scan = (obj: unknown): void => {
+    if (Array.isArray(obj)) { obj.forEach(scan); return; }
+    if (obj && typeof obj === 'object') {
+      const rec = obj as Record<string, unknown>;
+      if (typeof rec.id === 'number' && rec.id > maxId) maxId = rec.id;
+      Object.values(rec).forEach(v => { if (v && typeof v === 'object') scan(v); });
+    }
+  };
+  scan(reportDef);
+  return maxId;
+};
+
+const prettyLabel = (name: string): string =>
+  name.replace(/[_.]+/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/\b\w/g, c => c.toUpperCase())
+      .trim();
+
+const tableTextCell = (id: number, width: number, content: string, opts: {
+  bold?: boolean; background?: string; align?: 'left' | 'right' | 'center';
+  pattern?: string; fontSize?: number;
+}): Record<string, unknown> => ({
+  elementType: 'table_text', id, width, content,
+  richText: false, richTextContent: null, richTextHtml: '',
+  eval: false, colspan: '', styleId: '',
+  bold: !!opts.bold, italic: false, underline: false, strikethrough: false,
+  horizontalAlignment: opts.align || 'left', verticalAlignment: 'middle',
+  textColor: '#000000', backgroundColor: opts.background || '',
+  font: 'helvetica', fontSize: opts.fontSize ?? 10, lineSpacing: 1,
+  paddingLeft: 2, paddingTop: 2, paddingRight: 2, paddingBottom: 2,
+  pattern: opts.pattern || '', link: '',
+  cs_condition: '', cs_styleId: '', cs_additionalRules: '',
+  cs_bold: false, cs_italic: false, cs_underline: false, cs_strikethrough: false,
+  cs_horizontalAlignment: 'left', cs_verticalAlignment: 'top',
+  cs_textColor: '#000000', cs_backgroundColor: '', cs_font: 'helvetica',
+  cs_fontSize: 12, cs_lineSpacing: 1,
+  cs_paddingLeft: 2, cs_paddingTop: 2, cs_paddingRight: 2, cs_paddingBottom: 2,
+  spreadsheet_type: '', spreadsheet_pattern: '', spreadsheet_textWrap: false,
+  printIf: '', growWeight: 0, borderWidth: 1, borderRadius: 0,
+});
+
+export interface AutoTableField {
+  name: string;
+  label?: string;
+  isNumber?: boolean;
+}
+
+// A4 portrait content width in ReportBro units (595pt page − 2×10 margins)
+const CONTENT_WIDTH = 575;
+
+/**
+ * Append a ready-made data table (header row + content row bound to the data
+ * parameter's fields) to the report's content band. Returns the new report
+ * definition — pass it to designer.load().
+ */
+export function insertAutoTable(
+  reportDef: Record<string, any>,
+  fields: AutoTableField[],
+  dataParamName: string,
+): Record<string, any> {
+  if (fields.length === 0) return reportDef;
+  let nextId = maxIdIn(reportDef) + 1;
+
+  const colWidth = Math.max(30, Math.floor(CONTENT_WIDTH / fields.length));
+  const fontSize = fields.length > 12 ? 7 : fields.length > 8 ? 8 : fields.length > 5 ? 9 : 10;
+
+  const headerCells = fields.map(f =>
+    tableTextCell(nextId++, colWidth, f.label || prettyLabel(f.name),
+      { bold: true, background: '#EEEEEE', fontSize, align: f.isNumber ? 'right' : 'left' }));
+
+  const contentCells = fields.map(f =>
+    tableTextCell(nextId++, colWidth, `\${${f.name}}`, {
+      fontSize,
+      align: f.isNumber ? 'right' : 'left',
+      pattern: f.isNumber ? '#,##0.00' : '',
+    }));
+
+  // place the table below anything already in the content band
+  const docElements: any[] = Array.isArray(reportDef.docElements) ? reportDef.docElements : [];
+  const bottom = docElements
+    .filter(el => el.containerId === '0_content')
+    .reduce((y, el) => Math.max(y, (el.y ?? 0) + (el.height ?? 20)), 0);
+
+  const table = {
+    elementType: 'table',
+    id: nextId++,
+    containerId: '0_content',
+    width: colWidth * fields.length,
+    x: 0,
+    y: bottom + 10,
+    label: '',
+    dataSource: `\${${dataParamName}}`,
+    columns: String(fields.length),
+    header: true,
+    contentRows: '1',
+    footer: false,
+    styleId: '',
+    border: 'grid',
+    borderColor: '#000000',
+    borderWidth: '1',
+    printIf: '',
+    removeEmptyElement: false,
+    spreadsheet_hide: false,
+    spreadsheet_column: '',
+    spreadsheet_addEmptyRow: false,
+    headerData: {
+      elementType: 'none', id: nextId++, height: 22, styleId: '',
+      backgroundColor: '', repeatHeader: true, columnData: headerCells,
+    },
+    contentDataRows: [{
+      elementType: 'none', id: nextId++, height: 20, styleId: '',
+      backgroundColor: '', alternateBackgroundColor: '#F8F8F8',
+      groupExpression: '', printIf: '', alwaysPrintOnSamePage: true,
+      pageBreak: false, repeatGroupHeader: false, columnData: contentCells,
+    }],
+    footerData: {
+      elementType: 'none', id: nextId++, height: 20, styleId: '',
+      backgroundColor: '', columnData: fields.map(() => tableTextCell(nextId++, colWidth, '', {})),
+    },
+  };
+
+  return { ...reportDef, docElements: [...docElements, table] };
 }
 
 // ── Rendering (ReportBro server protocol) ────────────────────────────────────

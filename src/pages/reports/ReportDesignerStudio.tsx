@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Layout, Typography, Button, Input, Select, Space, message, Drawer, Form,
-  InputNumber, Alert, Table, Modal, Spin, Tooltip, Tag, DatePicker,
+  InputNumber, Alert, Table, Modal, Spin, Tooltip, Tag, DatePicker, Checkbox,
 } from 'antd';
 import {
   ArrowLeftOutlined, SaveOutlined, DatabaseOutlined, PlayCircleOutlined,
@@ -24,7 +24,7 @@ import {
   getReport, saveReport, fetchDataSourceRows, mergeDataParameters, renderReport,
   extractPlaceholders, usingDemoRenderServer, REPORTBRO_SERVER_URL,
   REPORT_MODULES, DEFAULT_DATA_SOURCE, listWebServices, refreshWebServices,
-  buildDataSourceUrl,
+  buildDataSourceUrl, insertAutoTable,
 } from '../../services/reportDesigner.service';
 import type { ReportDataSource, ReportUserParam, WebServiceDef } from '../../services/reportDesigner.service';
 import { FUSION_SERVICES } from '../../data/fusionServices';
@@ -75,6 +75,7 @@ const ReportDesignerStudio: React.FC = () => {
   const [staticError, setStaticError] = useState<{ message: string; line?: number; col?: number; snippet?: string } | null>(null);
   const [endpointTesting, setEndpointTesting] = useState(false);
   const [endpointResult, setEndpointResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [tableFields, setTableFields] = useState<string[]>([]);
   const [runOpen, setRunOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState('');
@@ -140,6 +141,7 @@ const ReportDesignerStudio: React.FC = () => {
       return;
     }
     rbRef.current = rb;
+    if (import.meta.env.DEV) (window as any).__rbDesigner = rb; // debugging aid
     if (initialTemplate) {
       try { rb.load(initialTemplate); } catch (e) { console.error('Failed to load report definition', e); }
     }
@@ -232,6 +234,9 @@ const ReportDesignerStudio: React.FC = () => {
         rb.load(merged);
         rb.setModified(true);
       }
+      // preselect all scalar fields for the auto-table builder
+      const sample = (rows[0] ?? {}) as Record<string, unknown>;
+      setTableFields(Object.keys(sample).filter(k => typeof sample[k] !== 'object' || sample[k] === null));
       message.success(`Fetched ${rows.length} rows — data fields added to the designer (parameter "${dataSource.dataParameter || 'items'}")`);
     } catch (e: any) {
       message.error(e?.message || 'Fetch failed');
@@ -363,6 +368,20 @@ const ReportDesignerStudio: React.FC = () => {
     const svc = FUSION_SERVICES.find(s => s.resource === resource);
     setDataSource(ds => ({ ...ds, sourceType: 'fusion', path: resource, query: ds.query, extraQuery: ds.extraQuery }));
     if (svc) message.info(`${svc.label} — ${svc.description}`);
+  };
+
+  // Build a complete data table on the canvas from the selected fields
+  const insertTableOnCanvas = () => {
+    const rb = rbRef.current;
+    if (!rb || dsSample.length === 0 || tableFields.length === 0) return;
+    const sample = (dsSample[0] ?? {}) as Record<string, unknown>;
+    const fields = tableFields.map(name => ({ name, isNumber: typeof sample[name] === 'number' }));
+    let def = mergeDataParameters(rb.getReport(), dsSample, dataSource); // ensure data params exist
+    def = insertAutoTable(def, fields, dataSource.dataParameter || 'items');
+    rb.load(def);
+    rb.setModified(true);
+    setDsOpen(false);
+    message.success(`Table with ${fields.length} columns inserted on the canvas — bound to \${${dataSource.dataParameter || 'items'}}`);
   };
 
   const syncParamsFromQuery = () => {
@@ -693,6 +712,42 @@ const ReportDesignerStudio: React.FC = () => {
 
           {dsSample.length > 0 && (
             <>
+              <div style={{
+                marginTop: 16, padding: 12, borderRadius: 8,
+                border: `1px solid ${REDWOOD.neutral200}`, background: '#FAFAFA',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Text strong>Insert Table on Canvas</Text>
+                  <Space size="small">
+                    <a onClick={() => {
+                      const sample = (dsSample[0] ?? {}) as Record<string, unknown>;
+                      setTableFields(Object.keys(sample).filter(k => typeof sample[k] !== 'object' || sample[k] === null));
+                    }}>All</a>
+                    <a onClick={() => setTableFields([])}>None</a>
+                  </Space>
+                </div>
+                <Checkbox.Group
+                  style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}
+                  value={tableFields}
+                  onChange={vals => setTableFields(vals as string[])}
+                  options={Object.entries((dsSample[0] ?? {}) as Record<string, unknown>)
+                    .filter(([, v]) => typeof v !== 'object' || v === null)
+                    .map(([k]) => ({ label: <span style={{ fontSize: 12 }}>{k}</span>, value: k }))}
+                />
+                <Button
+                  type="primary" block icon={<PlusOutlined />} disabled={tableFields.length === 0}
+                  style={{ marginTop: 12, background: REDWOOD.success, borderColor: REDWOOD.success }}
+                  onClick={insertTableOnCanvas}
+                >
+                  Insert Table with {tableFields.length} Column{tableFields.length === 1 ? '' : 's'}
+                </Button>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+                  Adds a formatted table to the Content band — header labels, one data row bound to
+                  ${'{'}{dataSource.dataParameter || 'items'}{'}'}, numbers right-aligned with #,##0.00.
+                  Columns can be resized and styled on the canvas afterwards.
+                </Text>
+              </div>
+
               <Text strong style={{ display: 'block', margin: '16px 0 8px' }}>Sample ({dsSample.length} rows)</Text>
               <Table size="small" rowKey={(_, i) => String(i)} pagination={{ pageSize: 5 }}
                 dataSource={dsSample as object[]} columns={sampleColumns} scroll={{ x: true }} />
