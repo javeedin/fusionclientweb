@@ -14,6 +14,7 @@ import {
 import {
   ArrowLeftOutlined, SaveOutlined, DatabaseOutlined, PlayCircleOutlined,
   ThunderboltOutlined, DeleteOutlined, PlusOutlined, FileTextOutlined,
+  CopyOutlined, ApiOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -23,9 +24,11 @@ import {
   getReport, saveReport, fetchDataSourceRows, mergeDataParameters, renderReport,
   extractPlaceholders, usingDemoRenderServer, REPORTBRO_SERVER_URL,
   REPORT_MODULES, DEFAULT_DATA_SOURCE, listWebServices, refreshWebServices,
+  buildDataSourceUrl,
 } from '../../services/reportDesigner.service';
 import type { ReportDataSource, ReportUserParam, WebServiceDef } from '../../services/reportDesigner.service';
 import { FUSION_SERVICES } from '../../data/fusionServices';
+import { jsonrepair } from 'jsonrepair';
 
 const { Content } = Layout;
 const { Text } = Typography;
@@ -68,6 +71,10 @@ const ReportDesignerStudio: React.FC = () => {
   const [dsSample, setDsSample] = useState<unknown[]>([]);
   const [ordsServices, setOrdsServices] = useState<WebServiceDef[]>([]);
   const [ordsServicesLoading, setOrdsServicesLoading] = useState(false);
+  const [staticText, setStaticText] = useState('');
+  const [staticError, setStaticError] = useState<{ message: string; line?: number; col?: number; snippet?: string } | null>(null);
+  const [endpointTesting, setEndpointTesting] = useState(false);
+  const [endpointResult, setEndpointResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [runOpen, setRunOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState('');
@@ -189,6 +196,27 @@ const ReportDesignerStudio: React.FC = () => {
     return vals;
   };
 
+  // Full URL the report will call, resolved with the parameter test values
+  const resolvedUrl = ((): string => {
+    if (dataSource.sourceType === 'static' || !dataSource.path) return '';
+    try { return buildDataSourceUrl(dataSource, dsTestValues()); } catch { return ''; }
+  })();
+
+  // Plain connectivity test: call the endpoint once and report status/rows
+  const testEndpoint = async () => {
+    setEndpointTesting(true);
+    setEndpointResult(null);
+    const started = Date.now();
+    try {
+      const rows = await fetchDataSourceRows(dataSource, dsTestValues());
+      setEndpointResult({ ok: true, text: `OK — ${rows.length} rows in ${Date.now() - started} ms` });
+    } catch (e: any) {
+      setEndpointResult({ ok: false, text: e?.message || 'Request failed' });
+    } finally {
+      setEndpointTesting(false);
+    }
+  };
+
   const testFetch = async () => {
     setDsTesting(true);
     try {
@@ -209,6 +237,72 @@ const ReportDesignerStudio: React.FC = () => {
       message.error(e?.message || 'Fetch failed');
     } finally {
       setDsTesting(false);
+    }
+  };
+
+  // keep the static JSON editor text in sync once the report has loaded
+  useEffect(() => {
+    if (!loading) {
+      setStaticText(dataSource.staticData ? JSON.stringify(dataSource.staticData, null, 2) : '');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  // ── Static JSON editing: validate / auto-fix / format ──────────────────────
+  const unwrapRows = (parsed: unknown): unknown[] => {
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === 'object') {
+      const rec = parsed as Record<string, unknown>;
+      if (Array.isArray(rec.items)) return rec.items;
+      const arr = Object.values(rec).find(v => Array.isArray(v));
+      if (arr) return arr as unknown[];
+    }
+    throw new Error('JSON is valid but contains no array of rows — expected [ {...} ] or { "items": [ {...} ] }');
+  };
+
+  const locateJsonError = (text: string, err: Error) => {
+    const m = /position (\d+)/.exec(err.message);
+    if (!m) return { message: err.message };
+    const pos = Number(m[1]);
+    const before = text.slice(0, pos);
+    const line = before.split('\n').length;
+    const col = pos - before.lastIndexOf('\n');
+    const snippet = text.slice(Math.max(0, pos - 40), pos + 40).replace(/\n/g, '⏎');
+    return { message: err.message, line, col, snippet };
+  };
+
+  const applyStaticJson = (text: string): boolean => {
+    if (!text.trim()) { setStaticError(null); return false; }
+    try {
+      const rows = unwrapRows(JSON.parse(text));
+      setDataSource(ds => ({ ...ds, staticData: rows }));
+      setStaticError(null);
+      message.success(`${rows.length} static rows applied — now click "Test Fetch & Build Data Fields"`);
+      return true;
+    } catch (e: any) {
+      setStaticError(locateJsonError(text, e));
+      return false;
+    }
+  };
+
+  const fixStaticJson = () => {
+    try {
+      const repaired = jsonrepair(staticText);
+      const formatted = JSON.stringify(JSON.parse(repaired), null, 2);
+      setStaticText(formatted);
+      if (applyStaticJson(formatted)) message.success('JSON repaired');
+    } catch (e: any) {
+      message.error(`Could not auto-repair this JSON: ${e?.message || e}`);
+    }
+  };
+
+  const formatStaticJson = () => {
+    try {
+      setStaticText(JSON.stringify(JSON.parse(staticText), null, 2));
+      setStaticError(null);
+    } catch (e: any) {
+      setStaticError(locateJsonError(staticText, e));
+      message.warning('JSON has errors — use Fix JSON first');
     }
   };
 
@@ -488,32 +582,75 @@ const ReportDesignerStudio: React.FC = () => {
                     onChange={e => setDataSource(ds => ({ ...ds, dataParameter: e.target.value.trim() || 'items' }))} />
                 </Form.Item>
               </Space>
+
+              <Form.Item label="Full request URL (resolved with the parameter test values)">
+                <div style={{
+                  padding: '8px 10px', background: '#F7F7F7', borderRadius: 6,
+                  border: `1px solid ${REDWOOD.neutral200}`,
+                }}>
+                  <code style={{ fontSize: 11, wordBreak: 'break-all', display: 'block' }}>
+                    {resolvedUrl || '— enter an endpoint path to see the URL —'}
+                  </code>
+                  <Space style={{ marginTop: 8 }}>
+                    <Button size="small" icon={<CopyOutlined />} disabled={!resolvedUrl}
+                      onClick={() => { navigator.clipboard.writeText(resolvedUrl); message.success('URL copied'); }}>
+                      Copy URL
+                    </Button>
+                    <Button size="small" type="primary" ghost icon={<ApiOutlined />} disabled={!resolvedUrl}
+                      loading={endpointTesting} onClick={testEndpoint}>
+                      Test Endpoint
+                    </Button>
+                    {endpointResult && (
+                      <Tag color={endpointResult.ok ? 'green' : 'red'} style={{ maxWidth: 320, whiteSpace: 'normal' }}>
+                        {endpointResult.text}
+                      </Tag>
+                    )}
+                  </Space>
+                </div>
+              </Form.Item>
             </>
           )}
 
           {dataSource.sourceType === 'static' && (
             <Form.Item label='Static JSON rows — an array of objects, or an object wrapping one (e.g. { "items": [...] })'>
               <Input.TextArea
-                rows={6}
+                rows={10}
                 placeholder='[ { "Item": "AS54888", "Qty": 10 } ]'
-                defaultValue={dataSource.staticData ? JSON.stringify(dataSource.staticData, null, 2) : ''}
-                onBlur={e => {
-                  if (!e.target.value.trim()) return;
-                  try {
-                    let rows = JSON.parse(e.target.value);
-                    // accept {items:[...]} (or any single wrapping object) as pasted
-                    // from a REST response — unwrap the first array property
-                    if (!Array.isArray(rows) && rows && typeof rows === 'object') {
-                      rows = Array.isArray(rows.items)
-                        ? rows.items
-                        : Object.values(rows).find(v => Array.isArray(v));
-                    }
-                    if (!Array.isArray(rows)) throw new Error('not an array');
-                    setDataSource(ds => ({ ...ds, staticData: rows }));
-                    message.success(`${rows.length} static rows captured — now click "Test Fetch & Build Data Fields"`);
-                  } catch { message.error('Invalid JSON — paste an array of objects, or an object containing one'); }
-                }}
+                value={staticText}
+                onChange={e => { setStaticText(e.target.value); setStaticError(null); }}
+                onBlur={() => applyStaticJson(staticText)}
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+                status={staticError ? 'error' : undefined}
               />
+              <Space style={{ marginTop: 8 }}>
+                <Button size="small" type="primary" ghost onClick={() => applyStaticJson(staticText)}>Validate &amp; Apply</Button>
+                <Button size="small" onClick={fixStaticJson}>Fix JSON</Button>
+                <Button size="small" onClick={formatStaticJson}>Format</Button>
+                {(dataSource.staticData?.length ?? 0) > 0 && !staticError && (
+                  <Tag color="green">{dataSource.staticData!.length} rows applied</Tag>
+                )}
+              </Space>
+              {staticError && (
+                <Alert
+                  type="error"
+                  showIcon
+                  style={{ marginTop: 8 }}
+                  message={staticError.line
+                    ? `Invalid JSON at line ${staticError.line}, column ${staticError.col}`
+                    : 'Invalid JSON'}
+                  description={
+                    <>
+                      <div style={{ marginBottom: 4 }}>{staticError.message}</div>
+                      {staticError.snippet && (
+                        <code style={{ fontSize: 11, wordBreak: 'break-all' }}>…{staticError.snippet}…</code>
+                      )}
+                      <div style={{ marginTop: 6 }}>
+                        <Button size="small" type="primary" onClick={fixStaticJson}>Fix JSON automatically</Button>
+                      </div>
+                    </>
+                  }
+                />
+              )}
             </Form.Item>
           )}
 
