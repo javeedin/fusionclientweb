@@ -70,6 +70,10 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
   { key: 'ar-manage-credit-memos', label: 'Manage Credit Memos',         module: 'AR',   moduleLabel: 'Accounts Receivable',     path: '/ar/manage-credit-memos',         description: 'Search and view AR credit memos synced from Oracle Fusion', keywords: 'credit memo cm ar transaction receivable credit reason discount' },
   { key: 'ar-sync-cm-applications', label: 'Sync CM Applications',       module: 'AR',   moduleLabel: 'Accounts Receivable',     path: '/ar/sync-cm-applications',        description: 'Sync AR credit memo applications per customer from Oracle Fusion', keywords: 'credit memo application sync customer cm applied fusion' },
 
+  // ── Reports ─────────────────────────────────────────────────────────────────
+  { key: 'rpt-designer',          label: 'Report Designer',             module: 'RPT',  moduleLabel: 'Reports',                 path: '/reports/designer',               description: 'Design, save and run custom reports over Fusion and APEX data', keywords: 'report designer reportbro pdf excel layout template print' },
+  { key: 'rpt-designer-new',      label: 'New Report',                  module: 'RPT',  moduleLabel: 'Reports',                 path: '/reports/designer/new',           description: 'Create a new report layout in the designer', keywords: 'report new create design' },
+
   // ── Cash Management ─────────────────────────────────────────────────────────
   { key: 'cash',                  label: 'Cash Management',             module: 'CASH', moduleLabel: 'Cash Management',         path: '/cash',                           description: 'Cash module home' },
   { key: 'cash-bank-transfers',   label: 'Bank Transfers',              module: 'CASH', moduleLabel: 'Cash Management',         path: '/cash/bank-transfers',            description: 'Manage cash bank transfers', keywords: 'transfer wire bank' },

@@ -81,6 +81,8 @@ const LegalEntities           = lazy(() => import('./pages/procurement').then(m 
 const ItemMaster              = lazy(() => import('./pages/inventory/ItemMaster'));
 const OrderManagementModule   = lazy(() => import('./pages/orders/OrderManagementModule'));
 const ManageSalesOrders       = lazy(() => import('./pages/orders/ManageSalesOrders'));
+const ReportDesignerList      = lazy(() => import('./pages/reports/ReportDesignerList'));
+const ReportDesignerStudio    = lazy(() => import('./pages/reports/ReportDesignerStudio'));
 const SyncData                = lazy(() => import('./pages/sync/SyncData'));
 const PettyCash               = lazy(() => import('./pages/pc/PettyCash'));
 const APModule                = lazy(() => import('./pages/ap').then(m => ({ default: m.APModule })));
@@ -368,6 +370,9 @@ function App() {
               <Route path="rm/*"                element={<RMModule />} />
               <Route path="projects/*" element={<ComingSoon moduleName="Projects" />} />
               <Route path="manufacturing/*" element={<ComingSoon moduleName="Manufacturing" />} />
+              <Route path="reports/designer" element={<ReportDesignerList />} />
+              <Route path="reports/designer/new" element={<ReportDesignerStudio />} />
+              <Route path="reports/designer/:id" element={<ReportDesignerStudio />} />
               <Route path="reports/*" element={<ComingSoon moduleName="Reports & Analytics" />} />
               <Route path="admin" element={<AdminModule />} />
               <Route path="admin/users" element={<UserManagement />} />
