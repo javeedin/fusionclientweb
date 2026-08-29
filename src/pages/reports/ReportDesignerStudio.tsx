@@ -100,19 +100,42 @@ const ReportDesignerStudio: React.FC = () => {
       message.error('ReportBro designer library failed to load');
       return;
     }
-    const rb = new ReportBroCtor(containerRef.current, {
-      menuSidebar: false,
-      menuShowButtonLabels: true,
-      showPlusFeaturesInfo: false,
-      reportServerUrl: REPORTBRO_SERVER_URL,
-      saveCallback: () => { void handleSaveRef.current(); },
-    });
+    // ReportBro.destroy() removes the element it was mounted on from the DOM,
+    // so never hand it the React-managed container: under StrictMode's
+    // mount → cleanup → remount cycle the second mount would otherwise run in
+    // a detached node and every internal getElementById comes back null.
+    // Give it a throwaway child div instead.
+    const host = document.createElement('div');
+    host.style.width = '100%';
+    host.style.height = '100%';
+    // ReportBro's panels are position:absolute — they must anchor to this host,
+    // not the viewport (otherwise the canvas overlays the page toolbar).
+    host.style.position = 'relative';
+    host.style.overflow = 'hidden';
+    containerRef.current.replaceChildren(host);
+
+    let rb: any = null;
+    try {
+      rb = new ReportBroCtor(host, {
+        menuSidebar: false,
+        menuShowButtonLabels: true,
+        showPlusFeaturesInfo: false,
+        reportServerUrl: REPORTBRO_SERVER_URL,
+        saveCallback: () => { void handleSaveRef.current(); },
+      });
+    } catch (e) {
+      console.error('Failed to initialize ReportBro designer', e);
+      message.error('Failed to initialize the report designer');
+      host.remove();
+      return;
+    }
     rbRef.current = rb;
     if (initialTemplate) {
       try { rb.load(initialTemplate); } catch (e) { console.error('Failed to load report definition', e); }
     }
     return () => {
       try { rb.destroy(); } catch { /* already gone */ }
+      host.remove();
       rbRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
