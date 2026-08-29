@@ -339,7 +339,18 @@ export async function renderReport(
     if (!fileRes.ok) throw new Error(`Render service error fetching file (HTTP ${fileRes.status})`);
     return fileRes.blob();
   }
-  // some servers return the error details as plain text
+  // the ReportBro server reports validation problems as {errors:[{msg_key, object_id, field, info}]}
+  try {
+    const body = JSON.parse(text);
+    if (Array.isArray(body.errors) && body.errors.length > 0) {
+      const details = body.errors.slice(0, 5).map((e: any) =>
+        [e.msg_key, e.field && `field: ${e.field}`, e.info && `info: ${e.info}`, e.object_id && `element #${e.object_id}`]
+          .filter(Boolean).join(' · ')).join('\n');
+      throw new Error(`The render service rejected the report:\n${details}`);
+    }
+  } catch (e: any) {
+    if (e?.message?.startsWith('The render service rejected')) throw e;
+  }
   throw new Error(`Unexpected render service response: ${text.slice(0, 400)}`);
 }
 

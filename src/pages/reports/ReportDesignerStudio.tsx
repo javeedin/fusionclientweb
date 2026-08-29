@@ -492,17 +492,26 @@ const ReportDesignerStudio: React.FC = () => {
           )}
 
           {dataSource.sourceType === 'static' && (
-            <Form.Item label="Static JSON rows (array of objects)">
+            <Form.Item label='Static JSON rows — an array of objects, or an object wrapping one (e.g. { "items": [...] })'>
               <Input.TextArea
                 rows={6}
                 placeholder='[ { "Item": "AS54888", "Qty": 10 } ]'
                 defaultValue={dataSource.staticData ? JSON.stringify(dataSource.staticData, null, 2) : ''}
                 onBlur={e => {
+                  if (!e.target.value.trim()) return;
                   try {
-                    const rows = JSON.parse(e.target.value || '[]');
+                    let rows = JSON.parse(e.target.value);
+                    // accept {items:[...]} (or any single wrapping object) as pasted
+                    // from a REST response — unwrap the first array property
+                    if (!Array.isArray(rows) && rows && typeof rows === 'object') {
+                      rows = Array.isArray(rows.items)
+                        ? rows.items
+                        : Object.values(rows).find(v => Array.isArray(v));
+                    }
                     if (!Array.isArray(rows)) throw new Error('not an array');
                     setDataSource(ds => ({ ...ds, staticData: rows }));
-                  } catch { message.error('Invalid JSON array'); }
+                    message.success(`${rows.length} static rows captured — now click "Test Fetch & Build Data Fields"`);
+                  } catch { message.error('Invalid JSON — paste an array of objects, or an object containing one'); }
                 }}
               />
             </Form.Item>
