@@ -22,9 +22,10 @@ import * as ReportBroModule from 'reportbro-designer';
 import {
   getReport, saveReport, fetchDataSourceRows, mergeDataParameters, renderReport,
   extractPlaceholders, usingDemoRenderServer, REPORTBRO_SERVER_URL,
-  REPORT_MODULES, DEFAULT_DATA_SOURCE,
+  REPORT_MODULES, DEFAULT_DATA_SOURCE, listWebServices, refreshWebServices,
 } from '../../services/reportDesigner.service';
-import type { ReportDataSource, ReportUserParam } from '../../services/reportDesigner.service';
+import type { ReportDataSource, ReportUserParam, WebServiceDef } from '../../services/reportDesigner.service';
+import { FUSION_SERVICES } from '../../data/fusionServices';
 
 const { Content } = Layout;
 const { Text } = Typography;
@@ -65,6 +66,8 @@ const ReportDesignerStudio: React.FC = () => {
   const [dsOpen, setDsOpen] = useState(false);
   const [dsTesting, setDsTesting] = useState(false);
   const [dsSample, setDsSample] = useState<unknown[]>([]);
+  const [ordsServices, setOrdsServices] = useState<WebServiceDef[]>([]);
+  const [ordsServicesLoading, setOrdsServicesLoading] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState('');
@@ -209,6 +212,65 @@ const ReportDesignerStudio: React.FC = () => {
     }
   };
 
+  // ── Web service catalog pickers ────────────────────────────────────────────
+  const loadOrdsServices = useCallback(async (force = false) => {
+    if (ordsServices.length > 0 && !force) return;
+    setOrdsServicesLoading(true);
+    try {
+      setOrdsServices(await listWebServices());
+    } catch (e: any) {
+      message.warning(`Could not load the APEX web service catalog — ${e?.message || 'is rr_webservices_catalog.sql installed?'}`);
+    } finally {
+      setOrdsServicesLoading(false);
+    }
+  }, [ordsServices.length]);
+
+  useEffect(() => {
+    if (dsOpen && dataSource.sourceType === 'ords') void loadOrdsServices();
+  }, [dsOpen, dataSource.sourceType, loadOrdsServices]);
+
+  const rescanOrdsServices = async () => {
+    setOrdsServicesLoading(true);
+    try {
+      const r = await refreshWebServices();
+      message.success(`Catalog refreshed: ${r.services} endpoints, ${r.params} parameters`);
+      await loadOrdsServices(true);
+    } catch (e: any) {
+      message.error(e?.message || 'Refresh failed');
+      setOrdsServicesLoading(false);
+    }
+  };
+
+  // Selecting an ORDS service fills path, query and parameters from the catalog
+  const applyOrdsService = (wsId: number) => {
+    const ws = ordsServices.find(s => s.id === wsId);
+    if (!ws) return;
+    // :id path params become {id} placeholders; IN query params become
+    // name={name} pairs plus prompt parameters
+    const path = ws.pattern.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, '{$1}');
+    const pathParams = new Set(extractPlaceholders(path));
+    const queryParams = (ws.params ?? []).filter(p =>
+      !pathParams.has(p.name) && (p.access_method ?? 'IN') !== 'OUT' && (p.source_type ?? 'URI') === 'URI');
+    const query = queryParams.map(p => `${p.name}={${p.name}}`).join('&');
+    const userParams: ReportUserParam[] = [
+      ...Array.from(pathParams).map(n => ({ name: n, label: n, type: 'string' as const, testValue: '' })),
+      ...queryParams.map(p => ({
+        name: p.name,
+        label: p.comments || p.name,
+        type: (p.param_type === 'INT' || p.param_type === 'DOUBLE' ? 'number' : 'string') as ReportUserParam['type'],
+        testValue: '',
+      })),
+    ];
+    setDataSource(ds => ({ ...ds, sourceType: 'ords', path, query, userParams }));
+  };
+
+  // Selecting a Fusion resource from the app's catalog fills the path
+  const applyFusionService = (resource: string) => {
+    const svc = FUSION_SERVICES.find(s => s.resource === resource);
+    setDataSource(ds => ({ ...ds, sourceType: 'fusion', path: resource, query: ds.query, extraQuery: ds.extraQuery }));
+    if (svc) message.info(`${svc.label} — ${svc.description}`);
+  };
+
   const syncParamsFromQuery = () => {
     const names = extractPlaceholders(`${dataSource.query || ''} ${dataSource.extraQuery || ''}`);
     const existing = new Map((dataSource.userParams ?? []).map(p => [p.name, p]));
@@ -351,6 +413,45 @@ const ReportDesignerStudio: React.FC = () => {
               ]}
             />
           </Form.Item>
+
+          {dataSource.sourceType === 'fusion' && (
+            <Form.Item label="Browse Fusion REST services">
+              <Select
+                showSearch
+                allowClear
+                placeholder="Pick a Fusion resource from the catalog…"
+                value={FUSION_SERVICES.some(s => s.resource === dataSource.path) ? dataSource.path : undefined}
+                onChange={v => { if (v) applyFusionService(v); }}
+                optionFilterProp="label"
+                options={FUSION_SERVICES.map(s => ({
+                  value: s.resource,
+                  label: `${s.label} — ${s.resource} (${s.area})`,
+                }))}
+              />
+            </Form.Item>
+          )}
+
+          {dataSource.sourceType === 'ords' && (
+            <Form.Item label={
+              <Space>
+                Browse APEX REERP web services
+                <Button size="small" loading={ordsServicesLoading} onClick={rescanOrdsServices}>Rescan catalog</Button>
+              </Space>
+            }>
+              <Select
+                showSearch
+                allowClear
+                loading={ordsServicesLoading}
+                placeholder={ordsServices.length ? 'Pick an ORDS endpoint — fills path, query and parameters' : 'Catalog empty — run rr_webservices_catalog.sql, then Rescan'}
+                onChange={v => { if (v != null) applyOrdsService(v); }}
+                optionFilterProp="label"
+                options={ordsServices.map(s => ({
+                  value: s.id,
+                  label: `${s.pattern}${s.params.length ? `  ·  ${s.params.map(p => p.name).join(', ')}` : ''}${s.comments ? `  —  ${s.comments}` : ''}`,
+                }))}
+              />
+            </Form.Item>
+          )}
 
           {dataSource.sourceType !== 'static' && (
             <>

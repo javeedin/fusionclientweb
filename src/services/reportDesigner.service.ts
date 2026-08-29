@@ -126,6 +126,47 @@ export async function deleteReport(id: number): Promise<void> {
   await asJson(await fetch(buildApexUrl(`reports/designer/${id}`), { method: 'DELETE' }));
 }
 
+// ── ORDS web service catalog (RR_WEBSERVICES) ────────────────────────────────
+
+export interface WebServiceParam {
+  name: string;
+  bind_name?: string;
+  source_type?: string;   // URI / HEADER
+  param_type?: string;    // STRING / INT / DOUBLE
+  access_method?: string; // IN / OUT / INOUT
+  origin?: string;        // DEFINED / URITPL / BIND
+  comments?: string;
+}
+
+export interface WebServiceDef {
+  id: number;
+  module_name: string;
+  pattern: string;        // e.g. gl/fiscalperiods or reports/designer/:id
+  method: string;
+  source_type?: string;
+  comments?: string;
+  params: WebServiceParam[];
+}
+
+// List the ORDS endpoints catalogued in RR_WEBSERVICES (GET services only —
+// those are the ones a report can read data from).
+export async function listWebServices(): Promise<WebServiceDef[]> {
+  const body = await asJson(await fetch(buildApexUrl('reports/webservices') + '?method=GET'));
+  const items: any[] = body.items ?? [];
+  return items.map(row => {
+    let params: WebServiceParam[] = [];
+    try { params = typeof row.params === 'string' ? JSON.parse(row.params) : (row.params ?? []); }
+    catch { params = []; }
+    return { ...row, params } as WebServiceDef;
+  });
+}
+
+// Re-scan the ORDS dictionary (USER_ORDS_* views) into RR_WEBSERVICES.
+export async function refreshWebServices(): Promise<{ services: number; params: number }> {
+  const body = await asJson(await fetch(buildApexUrl('reports/webservices/refresh'), { method: 'POST' }));
+  return { services: body.services ?? 0, params: body.params ?? 0 };
+}
+
 // ── Data source execution ────────────────────────────────────────────────────
 
 // Replace {param} placeholders with the supplied values
@@ -141,6 +182,9 @@ export function extractPlaceholders(query?: string): string[] {
 
 export function buildDataSourceUrl(ds: ReportDataSource, paramValues: Record<string, string>): string {
   const limit = ds.limit && ds.limit > 0 ? ds.limit : 500;
+  // {param} placeholders are valid in the path too (ORDS URI templates like
+  // reports/designer/{id})
+  const path = substitute(ds.path.replace(/^\//, ''), paramValues);
   if (ds.sourceType === 'fusion') {
     const base = `${getCurrentCompany().fusionBaseUrl}/fscmRestApi/resources/11.13.18.05`;
     const parts: string[] = [];
@@ -148,14 +192,14 @@ export function buildDataSourceUrl(ds: ReportDataSource, paramValues: Record<str
     if (q) parts.push(`q=${encodeURIComponent(q)}`);
     if (ds.extraQuery) parts.push(substitute(ds.extraQuery, paramValues));
     parts.push('onlyData=true', `limit=${limit}`);
-    return `${base}/${ds.path.replace(/^\//, '')}?${parts.join('&')}`;
+    return `${base}/${path}?${parts.join('&')}`;
   }
   // ords
   const parts: string[] = [];
   if (ds.query) parts.push(substitute(ds.query, paramValues));
   if (ds.extraQuery) parts.push(substitute(ds.extraQuery, paramValues));
   const qs = parts.filter(Boolean).join('&');
-  return buildApexUrl(ds.path.replace(/^\//, '')) + (qs ? `?${qs}` : '');
+  return buildApexUrl(path) + (qs ? `?${qs}` : '');
 }
 
 // Fetch the data rows for a report. Fusion sources use the logged-in user's
