@@ -2673,6 +2673,15 @@ const RegisterDetail: React.FC<{
               </Tooltip>
             ) : !isPosted ? (
               <>
+                {txn.expenseType !== 'SUSPENSE' && txn.expenseType !== 'SUSPENSE_REFUND' && (
+                  <Tooltip title={txn.chargeAccountDesc ? 'Create accounting for this line' : 'Assign a charge account first'}>
+                    <Button type="text" size="small"
+                      icon={<CheckCircleOutlined style={{ color: (isClosed || !txn.chargeAccountDesc) ? REDWOOD.neutral300 : REDWOOD.info }} />}
+                      disabled={isClosed || !txn.chargeAccountDesc}
+                      onClick={() => openCreateAccountingModal([txn])}
+                    />
+                  </Tooltip>
+                )}
                 <Tooltip title="Edit transaction">
                   <Button type="text" size="small"
                     icon={<EditOutlined style={{ color: isLoading ? undefined : REDWOOD.info }} />}
