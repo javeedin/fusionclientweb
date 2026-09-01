@@ -2674,7 +2674,9 @@ const RegisterDetail: React.FC<{
             ) : !isPosted ? (
               <>
                 {txn.expenseType !== 'SUSPENSE' && txn.expenseType !== 'SUSPENSE_REFUND' && (
-                  <Tooltip title={txn.chargeAccountDesc ? 'Create accounting for this line' : 'Assign a charge account first'}>
+                  <Tooltip title={isClosed
+                    ? `Register status is ${register.status} — must be ACTIVE to create accounting`
+                    : txn.chargeAccountDesc ? 'Create accounting for this line' : 'Assign a charge account first'}>
                     <Button type="text" size="small"
                       icon={<CheckCircleOutlined style={{ color: (isClosed || !txn.chargeAccountDesc) ? REDWOOD.neutral300 : REDWOOD.info }} />}
                       disabled={isClosed || !txn.chargeAccountDesc}
@@ -3126,7 +3128,9 @@ const RegisterDetail: React.FC<{
               </Tooltip>
             );
           })()}
-          <Tooltip title={selectedRowKeys.length === 0 ? 'Select expense transactions to account' : undefined}>
+          <Tooltip title={isClosed
+            ? `Register status is ${register.status} — must be ACTIVE to create accounting`
+            : selectedRowKeys.length === 0 ? 'Select expense transactions to account' : undefined}>
             <Button size="small"
               icon={<CheckCircleOutlined />}
               disabled={isClosed || selectedRowKeys.length === 0}
