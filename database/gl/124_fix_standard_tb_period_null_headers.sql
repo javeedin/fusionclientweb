@@ -1,24 +1,25 @@
 -- =============================================================================
--- PATCH 124: RR_V_STANDARD_TB — include local journals (RR_GL_LINES_ALL)
+-- PATCH 124: RR_V_STANDARD_TB — do not drop journals whose header period is null
 --
--- Based on the deployed view DDL (FORCE EDITIONABLE, captured 02-Sep-2026).
--- ONLY three CTEs change — everything else is byte-identical to production:
---   Step 2 all_combos  : + UNION branch reading local RR_GL_LINES_ALL/RR_GL_HEADERS
---   Step 3 all_periods : ledger list also drawn from local RR_GL_HEADERS
---   Step 4 ptd_actual  : raw lines from BOTH sources UNION ALL'd, then
---                        aggregated ONCE (a duplicate key here would fan out
---                        the dense grid in Step 5)
+-- Base DDL : the deployed view (backed up by the user as RR_V_STANDARD_TB_02sep2026,
+--            captured 02-Sep-2026). Uses ONLY tables the deployed views already
+--            reference: RR_GL_JE_LINES_ALL, RR_GL_JE_HEADERS, RR_GL_JOURNAL_BATCHES.
 --
--- WHY:
---   V_GL_JOURNAL_LINES_SEGMENTS (patch 92) shows Fusion-synced AND locally
---   created journals; this TB view read only the Fusion-synced tables, so a
---   local journal moved the Account Analysis listing but not the TB opening.
---   Symptom: Jul-26 opening for account 1242137 was 30,378,924.56 instead of
---   Jun-26 closing 30,379,013.56 — 89.00 of local June journals.
+-- PROBLEM:
+--   Step 4 (ptd_actual) filtered  WHERE hdr.PERIOD_NAME IS NOT NULL  and
+--   bucketed activity by the HEADER period only. The Account Analysis
+--   listing view (V_GL_JOURNAL_LINES_SEGMENTS) instead shows the BATCH
+--   DEFAULT_PERIOD_NAME. A journal whose header PERIOD_NAME is null (or
+--   differs from its batch period) is therefore visible in the listing but
+--   silently excluded from — or shifted within — the TB. The cumulative
+--   opening of every later period then disagrees with the listing-derived
+--   closing (the 89.00 on account 1242137, Jun-26 → Jul-26).
 --
---   NOTE: like patch 92 there is no de-dup guard. If a local journal is later
---   also imported into Fusion and synced back, both reports count it twice
---   (consistently). The sync should remove/flag the local copy in that case.
+-- FIX (only Step 4 changes; every other line is the deployed DDL verbatim):
+--   • LEFT JOIN the batch (collapsed to one row per JE_BATCH_ID so a
+--     duplicated batch row can never double-count lines).
+--   • PERIOD_NAME := NVL(hdr.PERIOD_NAME, bat.DEFAULT_PERIOD_NAME).
+--   • Drop a line only when BOTH periods are null.
 --
 -- HOW TO RUN:
 --   APEX SQL Workshop → SQL Commands → run the CREATE OR REPLACE block,
@@ -42,7 +43,6 @@ accounts AS (
 
 -- ────────────────────────────────────────────────────────────
 -- Step 2 — All distinct account combinations ever used
--- PATCH 124: union of Fusion-synced AND local journals
 -- ────────────────────────────────────────────────────────────
 all_combos AS (
     SELECT DISTINCT
@@ -53,20 +53,10 @@ all_combos AS (
     JOIN RR_GL_JE_HEADERS    hdr
       ON hdr.JE_HEADER_ID = lin.JE_HEADER_ID
     WHERE lin.ACCOUNT_COMBINATION IS NOT NULL
-    UNION
-    SELECT DISTINCT
-        hdr.LEDGER_NAME,
-        lin.ACCOUNT_COMBINATION,
-        NVL(lin.CURRENCY_CODE, hdr.LEDGER_CURRENCY_CODE)  AS CURRENCY_CODE
-    FROM RR_GL_LINES_ALL     lin
-    JOIN RR_GL_HEADERS       hdr
-      ON hdr.JE_HEADER_ID = lin.JE_HEADER_ID
-    WHERE lin.ACCOUNT_COMBINATION IS NOT NULL
 ),
 
 -- ────────────────────────────────────────────────────────────
 -- Step 3 — All distinct periods per ledger
--- PATCH 124: ledger list drawn from both header tables
 -- ────────────────────────────────────────────────────────────
 all_periods AS (
     SELECT DISTINCT
@@ -75,10 +65,6 @@ all_periods AS (
     FROM (
         SELECT DISTINCT LEDGER_NAME
         FROM RR_GL_JE_HEADERS
-        WHERE LEDGER_NAME IS NOT NULL
-        UNION
-        SELECT DISTINCT LEDGER_NAME
-        FROM RR_GL_HEADERS
         WHERE LEDGER_NAME IS NOT NULL
     ) l
     CROSS JOIN (
@@ -92,57 +78,39 @@ all_periods AS (
 
 -- ────────────────────────────────────────────────────────────
 -- Step 4 — Actual PTD activity per (ledger, combination, period)
--- PATCH 124: raw lines from BOTH sources unioned first, then
--- aggregated once so each key yields exactly one row.
+-- PATCH 124: period taken from the header, falling back to the
+-- batch DEFAULT_PERIOD_NAME (same period the Account Analysis
+-- listing shows). Batches are collapsed to one row per
+-- JE_BATCH_ID so a duplicated batch row cannot double-count.
+-- Lines are dropped only when BOTH periods are null.
 -- ────────────────────────────────────────────────────────────
 ptd_actual AS (
     SELECT
-        LEDGER_NAME,
-        PERIOD_NAME,
-        CURRENCY_CODE,
-        ACCOUNT_COMBINATION,
-        SUM(ACCOUNTED_DR)  AS PTD_DR,
-        SUM(ACCOUNTED_CR)  AS PTD_CR,
-        SUM(ENTERED_DR)    AS PTD_ENTERED_DR,
-        SUM(ENTERED_CR)    AS PTD_ENTERED_CR
-    FROM (
-        -- Branch 1: Fusion-synced journals (unchanged behaviour)
-        SELECT
-            hdr.LEDGER_NAME,
-            hdr.PERIOD_NAME,
-            NVL(lin.CURRENCY_CODE, hdr.LEDGER_CURRENCY_CODE)  AS CURRENCY_CODE,
-            lin.ACCOUNT_COMBINATION,
-            NVL(lin.ACCOUNTED_DR, 0)  AS ACCOUNTED_DR,
-            NVL(lin.ACCOUNTED_CR, 0)  AS ACCOUNTED_CR,
-            NVL(lin.ENTERED_DR,   0)  AS ENTERED_DR,
-            NVL(lin.ENTERED_CR,   0)  AS ENTERED_CR
-        FROM RR_GL_JE_LINES_ALL  lin
-        JOIN RR_GL_JE_HEADERS    hdr
-          ON hdr.JE_HEADER_ID = lin.JE_HEADER_ID
-        WHERE hdr.PERIOD_NAME         IS NOT NULL
-          AND lin.ACCOUNT_COMBINATION IS NOT NULL
-        UNION ALL
-        -- Branch 2: local journals created by the app (patch-92 parity)
-        SELECT
-            hdr.LEDGER_NAME,
-            hdr.PERIOD_NAME,
-            NVL(lin.CURRENCY_CODE, hdr.LEDGER_CURRENCY_CODE)  AS CURRENCY_CODE,
-            lin.ACCOUNT_COMBINATION,
-            NVL(lin.ACCOUNTED_DR, 0),
-            NVL(lin.ACCOUNTED_CR, 0),
-            NVL(lin.ENTERED_DR,   0),
-            NVL(lin.ENTERED_CR,   0)
-        FROM RR_GL_LINES_ALL     lin
-        JOIN RR_GL_HEADERS       hdr
-          ON hdr.JE_HEADER_ID = lin.JE_HEADER_ID
-        WHERE hdr.PERIOD_NAME         IS NOT NULL
-          AND lin.ACCOUNT_COMBINATION IS NOT NULL
-    )
+        hdr.LEDGER_NAME,
+        NVL(hdr.PERIOD_NAME, bat.DEFAULT_PERIOD_NAME)     AS PERIOD_NAME,
+        NVL(lin.CURRENCY_CODE, hdr.LEDGER_CURRENCY_CODE)  AS CURRENCY_CODE,
+        lin.ACCOUNT_COMBINATION,
+        SUM(NVL(lin.ACCOUNTED_DR, 0))                     AS PTD_DR,
+        SUM(NVL(lin.ACCOUNTED_CR, 0))                     AS PTD_CR,
+        SUM(NVL(lin.ENTERED_DR,   0))                     AS PTD_ENTERED_DR,
+        SUM(NVL(lin.ENTERED_CR,   0))                     AS PTD_ENTERED_CR
+    FROM RR_GL_JE_LINES_ALL  lin
+    JOIN RR_GL_JE_HEADERS    hdr
+      ON hdr.JE_HEADER_ID = lin.JE_HEADER_ID
+    LEFT JOIN (
+        SELECT JE_BATCH_ID,
+               MAX(DEFAULT_PERIOD_NAME) AS DEFAULT_PERIOD_NAME
+        FROM RR_GL_JOURNAL_BATCHES
+        GROUP BY JE_BATCH_ID
+    ) bat
+      ON bat.JE_BATCH_ID = lin.BATCH_ID
+    WHERE NVL(hdr.PERIOD_NAME, bat.DEFAULT_PERIOD_NAME) IS NOT NULL
+      AND lin.ACCOUNT_COMBINATION IS NOT NULL
     GROUP BY
-        LEDGER_NAME,
-        PERIOD_NAME,
-        CURRENCY_CODE,
-        ACCOUNT_COMBINATION
+        hdr.LEDGER_NAME,
+        NVL(hdr.PERIOD_NAME, bat.DEFAULT_PERIOD_NAME),
+        NVL(lin.CURRENCY_CODE, hdr.LEDGER_CURRENCY_CODE),
+        lin.ACCOUNT_COMBINATION
 ),
 
 -- ────────────────────────────────────────────────────────────
@@ -362,8 +330,20 @@ WHERE (
 );
 
 -- =============================================================================
--- VERIFICATION (account 1242137, the case that surfaced the bug)
--- Expected after the patch:
+-- VERIFICATION 1 — which journals were being dropped/shifted (run BEFORE or
+-- AFTER; lists lines whose header period is null or differs from the batch):
+-- =============================================================================
+-- SELECT l.je_header_id, h.period_name AS header_period,
+--        b.default_period_name AS batch_period,
+--        l.accounted_dr, l.accounted_cr
+-- FROM   rr_gl_je_lines_all l
+-- JOIN   rr_gl_je_headers  h ON h.je_header_id = l.je_header_id
+-- LEFT JOIN rr_gl_journal_batches b ON b.je_batch_id = l.batch_id
+-- WHERE  REGEXP_SUBSTR(l.account_combination,'[^-]+',1,4) = '1242137'
+-- AND    (h.period_name IS NULL OR h.period_name <> NVL(b.default_period_name, h.period_name));
+
+-- =============================================================================
+-- VERIFICATION 2 — expected result after the patch (account 1242137):
 --   Jun-26 CLOSING = Jul-26 OPENING = 30,379,013.56
 --   (previously Jul-26 OPENING showed 30,378,924.56 — 89.00 short)
 -- =============================================================================
