@@ -1,5 +1,5 @@
 -- =============================================================================
--- PATCH 124: RR_V_STANDARD_TB — do not drop journals whose header period is null
+-- PATCH 125: RR_V_STANDARD_TB — do not drop journals whose header period is null
 --
 -- Base DDL : the deployed view (backed up by the user as RR_V_STANDARD_TB_02sep2026,
 --            captured 02-Sep-2026). Uses ONLY tables the deployed views already
@@ -78,7 +78,7 @@ all_periods AS (
 
 -- ────────────────────────────────────────────────────────────
 -- Step 4 — Actual PTD activity per (ledger, combination, period)
--- PATCH 124: period taken from the header, falling back to the
+-- PATCH 125: period taken from the header, falling back to the
 -- batch DEFAULT_PERIOD_NAME (same period the Account Analysis
 -- listing shows). Batches are collapsed to one row per
 -- JE_BATCH_ID so a duplicated batch row cannot double-count.
