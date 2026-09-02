@@ -145,6 +145,7 @@ function toIsoDate(s: string | null | undefined): string {
 interface ApiDebugItem {
   label:     string;
   url:       string;
+  method?:   'POST' | 'PUT';   // defaults to POST
   body:      unknown;
   response?: unknown;
   loading?:  boolean;
@@ -2350,6 +2351,16 @@ const RegisterDetail: React.FC<{
           lines: glLines,
         };
         items.push({ label: `[${row.refNo}] POST journals/create  (${row.drLines.length} DR + 1 CR)`, url: `${APEX_BASE}/journals/create`, body: glPayload });
+
+        // Step 2 — one status update per transaction in the group (Unposted → Posted)
+        for (const txn of txns) {
+          items.push({
+            label:  `[${row.refNo}] PUT transactions/${txn.transactionId}/status  (line ${txn.lineNumber} → Posted)`,
+            url:    `${APEX_BASE}/pc/transactions/${txn.transactionId}/status`,
+            method: 'PUT',
+            body:   { postingStatus: 'Posted', updatedBy: currentUser },
+          });
+        }
       }
       return items;
   };
@@ -2383,7 +2394,7 @@ const RegisterDetail: React.FC<{
     setApiDebugItems(prev => prev.map((it, i) => i === idx ? { ...it, loading: true, response: undefined, error: undefined } : it));
     try {
       const res = await fetch(item.url, {
-        method: 'POST',
+        method: item.method || 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(item.body),
       });
@@ -5892,11 +5903,11 @@ const RegisterDetail: React.FC<{
                     loading={item.loading}
                     style={{ marginLeft: 'auto', background: REDWOOD.info, borderColor: REDWOOD.info }}
                     onClick={() => testApiItem(idx)}>
-                    Test — POST live
+                    Test — {item.method || 'POST'} live
                   </Button>
                 </div>
-                <div style={{ fontSize: 11, fontFamily: 'monospace', background: REDWOOD.neutral100 || '#f5f5f5', padding: '4px 8px', borderRadius: 4, marginBottom: 6, wordBreak: 'break-all' }}>
-                  POST {item.url}
+                <div style={{ fontSize: 11, fontFamily: 'monospace', background: REDWOOD.neutral100, padding: '4px 8px', borderRadius: 4, marginBottom: 6, wordBreak: 'break-all' }}>
+                  {item.method || 'POST'} {item.url}
                 </div>
                 <pre style={{ fontSize: 10, maxHeight: 260, overflow: 'auto', background: '#1e1e1e', color: '#9cdcfe', padding: 10, borderRadius: 4, margin: 0 }}>
                   {JSON.stringify(item.body, null, 2)}
@@ -6048,7 +6059,7 @@ const RegisterDetail: React.FC<{
               {/* Header bar */}
               <div style={{ background: '#f0f4fa', padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <Space size={6}>
-                  <Tag color="blue" style={{ margin: 0, fontFamily: 'monospace', fontSize: 11 }}>POST</Tag>
+                  <Tag color={item.method === 'PUT' ? 'orange' : 'blue'} style={{ margin: 0, fontFamily: 'monospace', fontSize: 11 }}>{item.method || 'POST'}</Tag>
                   <Text style={{ fontSize: 12, fontWeight: 600 }}>{item.label}</Text>
                 </Space>
                 <Button size="small" type="primary" loading={item.loading}
