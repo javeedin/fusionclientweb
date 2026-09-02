@@ -1227,67 +1227,30 @@ const AAPanel: React.FC = () => {
   }, [accountOptions.length]);
 
   // ── Opening/closing balance ───────────────────────────────────────────────────
-  // Net balance as at a date (exclusive) via gl/accountanalysis/balanceasof.
-  // Sums the SAME view the transaction listing reads, filtered by ACCOUNTING_DATE,
-  // so in Date Range mode opening always equals the prior range's closing.
-  const fetchAsOfNet = useCallback(async (
-    asOfDate: string,
-    filters: Record<string, string | undefined>,
-  ): Promise<{ acc: number; ent: number } | null> => {
-    const p = new URLSearchParams({ ledger_name: ledger, as_of_date: asOfDate });
-    const allowed = ['account', 'company', 'lob', 'department', 'sub_account', 'analysis', 'intercompany'];
-    allowed.forEach(k => { const v = filters[k]; if (v) p.set(k, v); });
-    const url = `${API_BASE}/accountanalysis/balanceasof?${p}`;
-    setTbApiUrls(prev => [...new Set([...prev, url])]);
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const data = await res.json();
-      if (data?.success === false) return null;
-      return { acc: Number(data.netAccounted || 0), ent: Number(data.netEntered || 0) };
-    } catch { return null; }
-  }, [ledger]);
-
   const fetchBalanceRow = useCallback(async (acct: string, period: string, isOpen: boolean) => {
-    let accAmt = 0, entAmt = 0;
-    let acctDesc = '';
-    let ccy = 'AED';
-    if (dateMode === 'daterange' && dateRange[0] && dateRange[1]) {
-      // Date Range mode: balance as-of-date from the SAME source as the lines.
-      // Opening = balance before from_date; Closing = balance before to_date + 1.
-      const asOf = isOpen
-        ? dateRange[0].format('YYYY-MM-DD')
-        : dateRange[1].add(1, 'day').format('YYYY-MM-DD');
-      const net = await fetchAsOfNet(asOf, { account: acct, ...segFilters });
-      if (!net) return null;
-      accAmt = net.acc; entAmt = net.ent;
-    } else {
-      const p = new URLSearchParams({ ledger_name: ledger, period_name: period, account: acct });
-      Object.entries(segFilters).forEach(([k, v]) => { if (v) p.set(k, v); });
-      const url = `${API_BASE}/rr-trialbalance/standard?${p}`;
-      setTbApiUrls(prev => [...new Set([...prev, url])]);
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const data = await res.json();
-      const items: any[] = data.items || [];
-      if (!items.length) return null;
-      accAmt = items.reduce((s: number, i: any) => s + (isOpen ? (i.opening || 0) : (i.closing || 0)), 0);
-      entAmt = items.reduce((s: number, i: any) => s + (isOpen ? (i.entered_opening || 0) : (i.entered_closing || 0)), 0);
-      acctDesc = items[0].account_desc || '';
-      ccy = items[0].currency_code || 'AED';
-    }
+    const p = new URLSearchParams({ ledger_name: ledger, period_name: period, account: acct });
+    Object.entries(segFilters).forEach(([k, v]) => { if (v) p.set(k, v); });
+    const url = `${API_BASE}/rr-trialbalance/standard?${p}`;
+    setTbApiUrls(prev => [...new Set([...prev, url])]);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const items: any[] = data.items || [];
+    if (!items.length) return null;
+    const accAmt = items.reduce((s: number, i: any) => s + (isOpen ? (i.opening || 0) : (i.closing || 0)), 0);
+    const entAmt = items.reduce((s: number, i: any) => s + (isOpen ? (i.entered_opening || 0) : (i.entered_closing || 0)), 0);
     if (accAmt === 0 && entAmt === 0) return null;
     return {
       key: isOpen ? 'opening-balance' : 'closing-balance',
-      concatenatedSegments: acct, accountDescription: acctDesc,
+      concatenatedSegments: acct, accountDescription: items[0].account_desc || '',
       jeLineDescription: isOpen ? 'Opening Balance' : 'Closing Balance',
       defaultPeriodName: period, accountingDate: '', batchName: '',
-      userJeSourceName: '', userJeCategoryName: '', currencyCode: ccy,
+      userJeSourceName: '', userJeCategoryName: '', currencyCode: items[0].currency_code || 'AED',
       enteredDr: entAmt > 0 ? entAmt : 0, enteredCr: entAmt < 0 ? Math.abs(entAmt) : 0,
       accountedDr: accAmt > 0 ? accAmt : 0, accountedCr: accAmt < 0 ? Math.abs(accAmt) : 0,
       jeHeaderId: 0, isOpeningBalance: isOpen, isClosingBalance: !isOpen,
     } as JournalLine;
-  }, [ledger, segFilters, dateMode, dateRange, fetchAsOfNet]);
+  }, [ledger, segFilters]);
 
   // ── Search ────────────────────────────────────────────────────────────────────
   const handleSearch = useCallback(async () => {
@@ -1797,46 +1760,25 @@ const AAPanel: React.FC = () => {
         const acct = acctRow.account;
         if (accRunAbort.current) return;
 
-        // Opening balance — in Date Range mode, use the as-of-date endpoint
-        // (same view + date filter as the transaction listing, so opening
-        // always reconciles with the previous range's closing). In period
-        // mode, keep the trial balance (may return multiple combos).
-        const isDateMode = dateMode === 'daterange' && !!dateRange[0] && !!dateRange[1];
+        // Opening balance (TB for this account — may return multiple combos)
+        const tbP = new URLSearchParams({ ledger_name: ledger, period_name: fromPeriod, account: acct });
+        Object.entries(segFilters).forEach(([k, v]) => { if (v) tbP.set(k, v); });
+        const openUrl2 = `${API_BASE}/rr-trialbalance/standard?${tbP}`;
+        setAccRunBatchUrls(prev => [...prev, openUrl2]);
+
         let tbItems: any[] = [];
-        let acctOpenAcc = 0;
-        let acctOpenEnt = 0;
-        if (isDateMode) {
-          const asOfP = new URLSearchParams({ ledger_name: ledger, as_of_date: dateRange[0]!.format('YYYY-MM-DD'), account: acct });
-          ['company','lob','department','sub_account','analysis','intercompany'].forEach(k => { const v = segFilters[k]; if (v) asOfP.set(k, v); });
-          const openUrl2 = `${API_BASE}/accountanalysis/balanceasof?${asOfP}`;
-          setAccRunBatchUrls(prev => [...prev, openUrl2]);
-          try {
-            const res = await fetch(openUrl2);
-            const data = res.ok ? await res.json() : null;
-            if (data && data.success !== false) {
-              acctOpenAcc = Number(data.netAccounted || 0);
-              acctOpenEnt = Number(data.netEntered   || 0);
-            }
-            setAccRunRows(prev => prev.map(r => r.account === acct ? { ...r, openStatus: 'done', openUrl: openUrl2 } : r));
-          } catch {
-            setAccRunRows(prev => prev.map(r => r.account === acct ? { ...r, openStatus: 'error' } : r));
-          }
-        } else {
-          const tbP = new URLSearchParams({ ledger_name: ledger, period_name: fromPeriod, account: acct });
-          Object.entries(segFilters).forEach(([k, v]) => { if (v) tbP.set(k, v); });
-          const openUrl2 = `${API_BASE}/rr-trialbalance/standard?${tbP}`;
-          setAccRunBatchUrls(prev => [...prev, openUrl2]);
-          try {
-            const res = await fetch(openUrl2);
-            const data = res.ok ? await res.json() : { items: [] };
-            tbItems = data.items || [];
-            setAccRunRows(prev => prev.map(r => r.account === acct ? { ...r, openStatus: 'done', openUrl: openUrl2 } : r));
-          } catch {
-            setAccRunRows(prev => prev.map(r => r.account === acct ? { ...r, openStatus: 'error' } : r));
-          }
-          acctOpenAcc = tbItems.reduce((s: number, i: any) => s + Number(i.opening || 0), 0);
-          acctOpenEnt = tbItems.reduce((s: number, i: any) => s + Number(i.entered_opening || 0), 0);
+        try {
+          const res = await fetch(openUrl2);
+          const data = res.ok ? await res.json() : { items: [] };
+          tbItems = data.items || [];
+          setAccRunRows(prev => prev.map(r => r.account === acct ? { ...r, openStatus: 'done', openUrl: openUrl2 } : r));
+        } catch {
+          setAccRunRows(prev => prev.map(r => r.account === acct ? { ...r, openStatus: 'error' } : r));
         }
+
+        // Account-level opening row (sum of all TB items for this account — always shown even if zero)
+        const acctOpenAcc = tbItems.reduce((s: number, i: any) => s + Number(i.opening || 0), 0);
+        const acctOpenEnt = tbItems.reduce((s: number, i: any) => s + Number(i.entered_opening || 0), 0);
         const acctCcy = tbItems[0]?.currency_code || 'AED';
         const acctDesc = tbItems[0]?.account_desc || acctRow.description || '';
         const acctOpenRow: JournalLine = {
@@ -1931,25 +1873,12 @@ const AAPanel: React.FC = () => {
           }) || null;
         };
 
-        const sortedCombos = Array.from(comboMap.entries()).sort(([a], [b]) => a.localeCompare(b));
-        for (const [combo, lines] of sortedCombos) {
+        Array.from(comboMap.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .forEach(([combo, lines]) => {
             const tbItem = findTbItem(combo);
-            let coAcc = Number(tbItem?.opening || 0);
-            let coEnt = Number(tbItem?.entered_opening || 0);
-            if (isDateMode) {
-              if (sortedCombos.length === 1) {
-                // Single combination — the account-level as-of balance IS the combo opening
-                coAcc = acctOpenAcc; coEnt = acctOpenEnt;
-              } else {
-                // Multiple combinations — as-of balance per combo via its segments
-                const seg = combo.split('-');
-                const net = await fetchAsOfNet(dateRange[0]!.format('YYYY-MM-DD'), {
-                  account: acct, company: seg[0], lob: seg[1], department: seg[2],
-                  sub_account: seg[4], analysis: seg[5], intercompany: seg[6],
-                });
-                coAcc = net?.acc ?? 0; coEnt = net?.ent ?? 0;
-              }
-            }
+            const coAcc = Number(tbItem?.opening || 0);
+            const coEnt = Number(tbItem?.entered_opening || 0);
             const openRow: JournalLine | null = (coAcc !== 0 || coEnt !== 0) ? {
               key: `combo-open-${combo}`,
               concatenatedSegments: combo,
@@ -1983,7 +1912,7 @@ const AAPanel: React.FC = () => {
               ptdEntCr: lines.reduce((s, r) => s + r.enteredCr, 0),
               accountGroup: acct,
             });
-        }
+          });
 
         completed++;
         setAccRunProgress({ phase: 'transactions', completed, inFlight: selectedAccounts.length - completed, total: selectedAccounts.length });
@@ -2220,7 +2149,7 @@ const AAPanel: React.FC = () => {
 
     setAccRunProgress({ phase: 'transactions', completed: 1, inFlight: 0, total: 1 });
     setAccRunLoading(false);
-  }, [accRunRows, accRunSelected, accRunConcurrency, periods, dateMode, dateRange, ledger, segFilters, fetchAsOfNet]);
+  }, [accRunRows, accRunSelected, accRunConcurrency, periods, dateMode, dateRange, ledger, segFilters]);
 
   const rowsWithBal = useMemo(() => {
     let accRun = 0; let entRun = 0;
