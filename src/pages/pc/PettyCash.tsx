@@ -33,6 +33,7 @@ import {
   validateGlPayload,
   persistValidationLog,
   type GlJournalPayload,
+  type GlValidationError,
   type GlValidationLogEntry,
 } from '../../services/glValidation.service';
 import {
@@ -126,6 +127,7 @@ interface AcctProgressRow {
   referenceDescription?: string | null; // used as Cr line description in GL journal
   txnIds:          number[];        // all txnIds in this group
   drLines:         AcctDrLine[];    // one per transaction in the group
+  validationErrors?: GlValidationError[]; // populated when pre-flight validation fails
 }
 
 // Convert Oracle DD-MON-YYYY or any ISO-ish string to YYYY-MM-DD
@@ -2083,6 +2085,7 @@ const RegisterDetail: React.FC<{
 
     setAcctProgress(rows);
     setAcctDone(false);
+    setApiDebugItems([]);  // stale payloads from a previous selection
     setAcctModalOpen(true);
   };
 
@@ -2240,8 +2243,9 @@ const RegisterDetail: React.FC<{
           ].join('\n');
           console.error(logMsg);
           updateRow(row.txnId, {
-            status:  'error',
-            message: `Validation failed (${errorLines.length} error${errorLines.length !== 1 ? 's' : ''}) — see Errors log: ${errorLines.map(e => e.category).join(', ')}`,
+            status:           'error',
+            message:          `Validation failed (${errorLines.length} error${errorLines.length !== 1 ? 's' : ''})`,
+            validationErrors: validation.errors,
           });
           continue;
         }
@@ -2286,13 +2290,9 @@ const RegisterDetail: React.FC<{
   };
 
   // ── API Debug ─────────────────────────────────────────────
-  const openApiDebug = async () => {
-    setApiDebugLoading(true);
-    setApiDebugItems([]);
-    setApiDebugOpen(true);
-    try {
+  const buildApiDebugItems = async (): Promise<ApiDebugItem[]> => {
       const ctx = await loadLedgerAndLE();
-      if (!ctx) { setApiDebugLoading(false); return; }
+      if (!ctx) throw new Error('Could not resolve ledger for this Business Unit');
       const APEX_BASE = APEX_DB_CONFIG.baseUrl;
       const items: ApiDebugItem[] = [];
 
@@ -2351,7 +2351,26 @@ const RegisterDetail: React.FC<{
         };
         items.push({ label: `[${row.refNo}] POST journals/create  (${row.drLines.length} DR + 1 CR)`, url: `${APEX_BASE}/journals/create`, body: glPayload });
       }
-      setApiDebugItems(items);
+      return items;
+  };
+
+  const openApiDebug = async () => {
+    setApiDebugLoading(true);
+    setApiDebugItems([]);
+    setApiDebugOpen(true);
+    try {
+      setApiDebugItems(await buildApiDebugItems());
+    } catch (e: any) {
+      message.error(`Failed to build API preview: ${e?.message}`);
+    }
+    setApiDebugLoading(false);
+  };
+
+  const loadInlineApiDebug = async () => {
+    if (apiDebugItems.length > 0 || apiDebugLoading) return;
+    setApiDebugLoading(true);
+    try {
+      setApiDebugItems(await buildApiDebugItems());
     } catch (e: any) {
       message.error(`Failed to build API preview: ${e?.message}`);
     }
@@ -5835,6 +5854,11 @@ const RegisterDetail: React.FC<{
                   <div>
                     <Tag color="error" style={{ fontSize: 11 }}>Error</Tag>
                     {r.message && <div style={{ fontSize: 10, color: REDWOOD.error, marginTop: 2 }}>{r.message}</div>}
+                    {(r.validationErrors || []).map((ve, i) => (
+                      <div key={i} style={{ fontSize: 10, color: ve.severity === 'ERROR' ? REDWOOD.error : REDWOOD.warning, marginTop: 2 }}>
+                        <b>[{ve.category}]</b> {ve.message}
+                      </div>
+                    ))}
                   </div>
                 );
                 if (v === 'skipped')  return <Tag color="warning" style={{ fontSize: 11 }}>Already Posted</Tag>;
@@ -5852,6 +5876,46 @@ const RegisterDetail: React.FC<{
             style={{ marginTop: 12 }}
           />
         )}
+        <Collapse size="small" ghost style={{ marginTop: 12 }}
+          onChange={(keys) => { if ((Array.isArray(keys) ? keys : [keys]).length > 0) loadInlineApiDebug(); }}>
+          <Collapse.Panel key="api"
+            header={<Text style={{ fontSize: 12, fontWeight: 600, color: REDWOOD.info }}><ApiOutlined /> API Details — POST URL &amp; JSON body</Text>}>
+            {apiDebugLoading && <div style={{ padding: 12 }}><SyncOutlined spin /> Building request payloads…</div>}
+            {!apiDebugLoading && apiDebugItems.length === 0 && (
+              <Text type="secondary" style={{ fontSize: 12 }}>Nothing to send — all selected rows are already posted.</Text>
+            )}
+            {apiDebugItems.map((item, idx) => (
+              <div key={idx} style={{ marginBottom: 16, border: `1px solid ${REDWOOD.neutral200}`, borderRadius: 6, padding: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                  <Text style={{ fontSize: 12, fontWeight: 600 }}>{item.label}</Text>
+                  <Button size="small" type="primary" icon={<ApiOutlined />}
+                    loading={item.loading}
+                    style={{ marginLeft: 'auto', background: REDWOOD.info, borderColor: REDWOOD.info }}
+                    onClick={() => testApiItem(idx)}>
+                    Test — POST live
+                  </Button>
+                </div>
+                <div style={{ fontSize: 11, fontFamily: 'monospace', background: REDWOOD.neutral100 || '#f5f5f5', padding: '4px 8px', borderRadius: 4, marginBottom: 6, wordBreak: 'break-all' }}>
+                  POST {item.url}
+                </div>
+                <pre style={{ fontSize: 10, maxHeight: 260, overflow: 'auto', background: '#1e1e1e', color: '#9cdcfe', padding: 10, borderRadius: 4, margin: 0 }}>
+                  {JSON.stringify(item.body, null, 2)}
+                </pre>
+                {item.error && (
+                  <Alert type="error" showIcon style={{ marginTop: 6 }} message={<span style={{ fontSize: 12 }}>{item.error}</span>} />
+                )}
+                {item.response !== undefined && (
+                  <div style={{ marginTop: 6 }}>
+                    <Text style={{ fontSize: 11, fontWeight: 600, color: item.error ? REDWOOD.error : REDWOOD.success }}>Response</Text>
+                    <pre style={{ fontSize: 10, maxHeight: 200, overflow: 'auto', background: '#f6ffed', padding: 10, borderRadius: 4, margin: '4px 0 0' }}>
+                      {JSON.stringify(item.response, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            ))}
+          </Collapse.Panel>
+        </Collapse>
       </Modal>
 
       {/* ── View Accounting Modal ──────────────────────────────── */}
