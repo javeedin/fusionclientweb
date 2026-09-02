@@ -1865,8 +1865,9 @@ const ManageReceipts: React.FC = () => {
       glBatchId: null, lines: [], adjItems: [], adjLoading: true, adjApiUrls: [], steps: [],
       debugSteps: null, showDebug: false });
 
-    // Multiple credit accounts: one CR line per credit line (RR_AR_RECEIPTS_MULTIPLE_CREDITS)
-    const multiCrLines = (draft.multiCr && (draft.crLines ?? []).some(l => l.crAccount && (l.amount || 0) > 0))
+    // Multiple credit accounts: one CR line per credit line (MISC receipts only)
+    const multiCrLines = (draft.multiCr && draft.receiptType === 'MISC'
+        && (draft.crLines ?? []).some(l => l.crAccount && (l.amount || 0) > 0))
       ? (draft.crLines ?? []).filter(l => l.crAccount && (l.amount || 0) > 0)
       : null;
 
@@ -2619,15 +2620,17 @@ const ManageReceipts: React.FC = () => {
     if (!draft.customerAccountNumber && !draft.customerName) missing.push('Customer');
     if (!draft.comments)                    missing.push('Comments');
     if (!draft.drAccount)                   missing.push('Dr. Account');
-    if (!draft.multiCr && !draft.crAccount) missing.push('Cr. Account');
+    // Multiple credit accounts are valid for MISC receipts only
+    const useMultiCr = !!draft.multiCr && draft.receiptType === 'MISC';
+    if (!useMultiCr && !draft.crAccount)    missing.push('Cr. Account');
 
     if (missing.length > 0) {
       message.warning({ content: `Missing required fields: ${missing.join(' · ')}`, duration: 5 });
       return false;
     }
 
-    // ── Step 1b: Multiple credit lines validation ─────────────────────────────
-    if (draft.multiCr) {
+    // ── Step 1b: Multiple credit lines validation (MISC only) ────────────────
+    if (useMultiCr) {
       const crLines = draft.crLines ?? [];
       if (crLines.length === 0) {
         message.warning('Multiple credits selected — add at least one credit line.');
@@ -2756,10 +2759,10 @@ const ManageReceipts: React.FC = () => {
       return false;
     }
 
-    // ── Step 4b: PUT multiple credit lines (atomic replace on the server) ─────
-    if (draft.multiCr || draft.multiCrLoaded) {
+    // ── Step 4b: PUT multiple credit lines (atomic replace; MISC only) ────────
+    if (useMultiCr || draft.multiCrLoaded) {
       try {
-        const lines = draft.multiCr
+        const lines = useMultiCr
           ? (draft.crLines ?? []).map(l => ({
               crAccount:     l.crAccount,
               crAccountDesc: l.crAccountDesc || null,
@@ -2777,7 +2780,7 @@ const ManageReceipts: React.FC = () => {
           message.error(`Credit lines save failed: ${crResult?.message || `HTTP ${crRes.status}`}`);
           return false;
         }
-        updateDraft(tabKey, { multiCrLoaded: draft.multiCr });
+        updateDraft(tabKey, { multiCrLoaded: useMultiCr });
       } catch (e: any) {
         message.error(`Credit lines save error: ${e.message}`);
         return false;
@@ -3753,7 +3756,12 @@ const ManageReceipts: React.FC = () => {
                         {field('Receipt Type',
                           <Select size="small" style={{ width: '100%', fontSize: 12 }}
                             value={draft.receiptType || undefined} allowClear disabled={fieldDisabled}
-                            onChange={v => updateDraft(tabKey, { receiptType: v ?? '' })}>
+                            onChange={v => {
+                              const next: Partial<ReceiptDraft> = { receiptType: v ?? '' };
+                              // Multiple credit accounts apply to MISC receipts only
+                              if (v !== 'MISC' && draft.multiCr) next.multiCr = false;
+                              updateDraft(tabKey, next as any);
+                            }}>
                             <Option value="CASH"><Tag color="blue" style={{ fontSize: 11 }}>CASH</Tag></Option>
                             <Option value="MISC"><Tag color="purple" style={{ fontSize: 11 }}>MISC</Tag></Option>
                           </Select>
@@ -3875,6 +3883,8 @@ const ManageReceipts: React.FC = () => {
                         )}
                         {field('Cr. Account',
                           <div>
+                            {/* Multiple credit accounts — MISC receipts only */}
+                            {draft.receiptType === 'MISC' && (
                             <Radio.Group size="small" value={draft.multiCr ? 'multiple' : 'single'}
                               disabled={fieldDisabled}
                               style={{ marginBottom: 4 }}
@@ -3895,7 +3905,8 @@ const ManageReceipts: React.FC = () => {
                               <Radio.Button value="single" style={{ fontSize: 11 }}>Single</Radio.Button>
                               <Radio.Button value="multiple" style={{ fontSize: 11 }}>Multiple</Radio.Button>
                             </Radio.Group>
-                            {!draft.multiCr ? (
+                            )}
+                            {!(draft.multiCr && draft.receiptType === 'MISC') ? (
                               <>
                                 <Space.Compact style={{ width: '100%' }}>
                                   <Input size="small" readOnly
