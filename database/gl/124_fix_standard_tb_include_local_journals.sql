@@ -1,5 +1,5 @@
 -- =============================================================================
--- PATCH 101: RR_V_STANDARD_TB — include local journals (RR_GL_LINES_ALL)
+-- PATCH 124: RR_V_STANDARD_TB — include local journals (RR_GL_LINES_ALL)
 --
 -- Based on the deployed view DDL (FORCE EDITIONABLE, captured 02-Sep-2026).
 -- ONLY three CTEs change — everything else is byte-identical to production:
@@ -42,7 +42,7 @@ accounts AS (
 
 -- ────────────────────────────────────────────────────────────
 -- Step 2 — All distinct account combinations ever used
--- PATCH 101: union of Fusion-synced AND local journals
+-- PATCH 124: union of Fusion-synced AND local journals
 -- ────────────────────────────────────────────────────────────
 all_combos AS (
     SELECT DISTINCT
@@ -57,7 +57,7 @@ all_combos AS (
     SELECT DISTINCT
         hdr.LEDGER_NAME,
         lin.ACCOUNT_COMBINATION,
-        NVL(lin.CURRENCY_CODE, 'AED')                     AS CURRENCY_CODE
+        NVL(lin.CURRENCY_CODE, hdr.LEDGER_CURRENCY_CODE)  AS CURRENCY_CODE
     FROM RR_GL_LINES_ALL     lin
     JOIN RR_GL_HEADERS       hdr
       ON hdr.JE_HEADER_ID = lin.JE_HEADER_ID
@@ -66,7 +66,7 @@ all_combos AS (
 
 -- ────────────────────────────────────────────────────────────
 -- Step 3 — All distinct periods per ledger
--- PATCH 101: ledger list drawn from both header tables
+-- PATCH 124: ledger list drawn from both header tables
 -- ────────────────────────────────────────────────────────────
 all_periods AS (
     SELECT DISTINCT
@@ -92,7 +92,7 @@ all_periods AS (
 
 -- ────────────────────────────────────────────────────────────
 -- Step 4 — Actual PTD activity per (ledger, combination, period)
--- PATCH 101: raw lines from BOTH sources unioned first, then
+-- PATCH 124: raw lines from BOTH sources unioned first, then
 -- aggregated once so each key yields exactly one row.
 -- ────────────────────────────────────────────────────────────
 ptd_actual AS (
@@ -126,7 +126,7 @@ ptd_actual AS (
         SELECT
             hdr.LEDGER_NAME,
             hdr.PERIOD_NAME,
-            NVL(lin.CURRENCY_CODE, 'AED')                     AS CURRENCY_CODE,
+            NVL(lin.CURRENCY_CODE, hdr.LEDGER_CURRENCY_CODE)  AS CURRENCY_CODE,
             lin.ACCOUNT_COMBINATION,
             NVL(lin.ACCOUNTED_DR, 0),
             NVL(lin.ACCOUNTED_CR, 0),
