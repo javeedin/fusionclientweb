@@ -125,6 +125,18 @@ interface ReceiptDraft {
   crAccount:                      string;
   crAccountDesc:                  string;
   accountingStatus:               string;
+  // Multiple credit accounts (RR_AR_RECEIPTS_MULTIPLE_CREDITS)
+  multiCr?:                       boolean;
+  crLines?:                       CrLine[];
+  multiCrLoaded?:                 boolean;   // receipt had multi-credit lines when opened
+}
+
+interface CrLine {
+  key:           string;
+  crAccount:     string;
+  crAccountDesc: string;
+  amount:        number | null;
+  accountStatus?: string;
 }
 
 interface ReceiptTab {
@@ -376,7 +388,8 @@ const ManageReceipts: React.FC = () => {
   const [lastSearchUrl, setLastSearchUrl] = useState('');
   const [miscAcctVisible, setMiscAcctVisible] = useState(false);
   const [miscAcctTabKey, setMiscAcctTabKey]   = useState('');
-  const [miscAcctField, setMiscAcctField]     = useState<'drAccount' | 'crAccount'>('crAccount');
+  // 'drAccount' | 'crAccount' | `crLine:<lineKey>` (multi-credit line account)
+  const [miscAcctField, setMiscAcctField]     = useState<string>('crAccount');
   const [splitAcctPickerSplitId, setSplitAcctPickerSplitId] = useState<string | null>(null);
   // Per-tab edit mode: false = view/locked, true = editing enabled
   const [editingEnabled, setEditingEnabled]   = useState<Record<string, boolean>>({});
@@ -1173,6 +1186,26 @@ const ManageReceipts: React.FC = () => {
 
       setTabs(prev => prev.map(t => t.key === key ? { ...t, draft: fullDraft } : t));
 
+      // Load multiple-credit lines when the receipt uses them
+      if ((r.multi_cr_flag ?? 'N') === 'Y') {
+        try {
+          const crRes  = await fetch(`${APEX_AR_RECEIPTS}/${row.standardReceiptId}/credits`, { headers: { Accept: 'application/json' } });
+          const crData = await crRes.json();
+          const crLines: CrLine[] = (crData.items ?? []).map((l: any) => ({
+            key:           String(l.credit_line_id ?? Math.random()),
+            crAccount:     l.cr_account ?? '',
+            crAccountDesc: l.cr_account_desc ?? '',
+            amount:        l.amount ?? null,
+            accountStatus: l.account_status ?? 'Unposted',
+          }));
+          if (crLines.length > 0) {
+            setTabs(prev => prev.map(t => t.key === key
+              ? { ...t, draft: { ...t.draft, multiCr: true, crLines, multiCrLoaded: true } }
+              : t));
+          }
+        } catch { /* lines are optional — receipt still opens */ }
+      }
+
       // Resolve descriptions for saved DR / CR account codes
       const resolveDesc = async (code: string) => {
         if (!code) return '';
@@ -1832,13 +1865,23 @@ const ManageReceipts: React.FC = () => {
       glBatchId: null, lines: [], adjItems: [], adjLoading: true, adjApiUrls: [], steps: [],
       debugSteps: null, showDebug: false });
 
+    // Multiple credit accounts: one CR line per credit line (RR_AR_RECEIPTS_MULTIPLE_CREDITS)
+    const multiCrLines = (draft.multiCr && (draft.crLines ?? []).some(l => l.crAccount && (l.amount || 0) > 0))
+      ? (draft.crLines ?? []).filter(l => l.crAccount && (l.amount || 0) > 0)
+      : null;
+
     let lines: AcctLine[] = [];
     if (isMisc) {
       lines = [
         { lineType: 'DR', accountingClass: 'CASH', accountCombination: cashCombo, accountDesc: cashDesc || draft.drAccountDesc,
           enteredDr: amount, enteredCr: 0, description: drDesc },
-        { lineType: 'CR', accountingClass: 'MISC', accountCombination: draft.crAccount || '', accountDesc: draft.crAccountDesc || '',
-          enteredDr: 0, enteredCr: amount, description: `${draft.receiptNumber}` },
+        ...(multiCrLines
+          ? multiCrLines.map((l, i) => ({
+              lineType: 'CR' as const, accountingClass: 'MISC', accountCombination: l.crAccount.replace(/\./g, '-'),
+              accountDesc: l.crAccountDesc || '', enteredDr: 0, enteredCr: l.amount || 0,
+              description: `${draft.receiptNumber} — Cr line ${i + 1}` }))
+          : [{ lineType: 'CR' as const, accountingClass: 'MISC', accountCombination: draft.crAccount || '', accountDesc: draft.crAccountDesc || '',
+              enteredDr: 0, enteredCr: amount, description: `${draft.receiptNumber}` }]),
       ];
     } else if (savedApps.length > 0) {
       // DR: Bank — full receipt amount
@@ -1863,8 +1906,14 @@ const ManageReceipts: React.FC = () => {
       }
     } else {
       lines = [
-        { lineType: 'DR', accountingClass: 'CASH',      accountCombination: cashCombo, accountDesc: cashDesc || draft.drAccountDesc, enteredDr: amount, enteredCr: 0,      description: drDesc },
-        { lineType: 'CR', accountingClass: 'UNAPPLIED', accountCombination: crCombo,   accountDesc: crDesc,                          enteredDr: 0,      enteredCr: amount, description: `${draft.receiptNumber} — Unapplied` },
+        { lineType: 'DR', accountingClass: 'CASH', accountCombination: cashCombo, accountDesc: cashDesc || draft.drAccountDesc, enteredDr: amount, enteredCr: 0, description: drDesc },
+        ...(multiCrLines
+          ? multiCrLines.map((l, i) => ({
+              lineType: 'CR' as const, accountingClass: 'UNAPPLIED', accountCombination: l.crAccount.replace(/\./g, '-'),
+              accountDesc: l.crAccountDesc || '', enteredDr: 0, enteredCr: l.amount || 0,
+              description: `${draft.receiptNumber} — Cr line ${i + 1}` }))
+          : [{ lineType: 'CR' as const, accountingClass: 'UNAPPLIED', accountCombination: crCombo, accountDesc: crDesc,
+              enteredDr: 0, enteredCr: amount, description: `${draft.receiptNumber} — Unapplied` }]),
       ];
     }
 
@@ -2570,11 +2619,33 @@ const ManageReceipts: React.FC = () => {
     if (!draft.customerAccountNumber && !draft.customerName) missing.push('Customer');
     if (!draft.comments)                    missing.push('Comments');
     if (!draft.drAccount)                   missing.push('Dr. Account');
-    if (!draft.crAccount)                   missing.push('Cr. Account');
+    if (!draft.multiCr && !draft.crAccount) missing.push('Cr. Account');
 
     if (missing.length > 0) {
       message.warning({ content: `Missing required fields: ${missing.join(' · ')}`, duration: 5 });
       return false;
+    }
+
+    // ── Step 1b: Multiple credit lines validation ─────────────────────────────
+    if (draft.multiCr) {
+      const crLines = draft.crLines ?? [];
+      if (crLines.length === 0) {
+        message.warning('Multiple credits selected — add at least one credit line.');
+        return false;
+      }
+      const badLine = crLines.findIndex(l => !l.crAccount || !l.amount || l.amount <= 0);
+      if (badLine >= 0) {
+        message.warning(`Credit line ${badLine + 1}: account and a positive amount are required.`);
+        return false;
+      }
+      const crTotal = crLines.reduce((s, l) => s + (l.amount || 0), 0);
+      if (Math.abs(crTotal - (draft.amount ?? 0)) > 0.01) {
+        message.warning({
+          content: `Credit lines total ${fmt(crTotal)} must equal the receipt amount ${fmt(draft.amount ?? 0)}.`,
+          duration: 6,
+        });
+        return false;
+      }
     }
 
     // ── Step 2a: Split validation — any adj row must have balanced splits ─────
@@ -2683,6 +2754,34 @@ const ManageReceipts: React.FC = () => {
       setSaveProgress(p => p ? { ...p, done: true, steps: p.steps.map((s, i) => i === 1 ? { ...s, status: 'error', detail: e.message } : s) } : p);
       message.error(`Save error: ${e.message}`);
       return false;
+    }
+
+    // ── Step 4b: PUT multiple credit lines (atomic replace on the server) ─────
+    if (draft.multiCr || draft.multiCrLoaded) {
+      try {
+        const lines = draft.multiCr
+          ? (draft.crLines ?? []).map(l => ({
+              crAccount:     l.crAccount,
+              crAccountDesc: l.crAccountDesc || null,
+              amount:        l.amount,
+              accountStatus: l.accountStatus || 'Unposted',
+            }))
+          : [];  // toggled back to single — clear the lines table
+        const crRes  = await fetch(`${APEX_AR_RECEIPTS}/${newReceiptId}/credits`, {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body:    JSON.stringify({ updatedBy: currentUser, lines }),
+        });
+        const crResult = await crRes.json().catch(() => ({}));
+        if (!crRes.ok || crResult?.success === false) {
+          message.error(`Credit lines save failed: ${crResult?.message || `HTTP ${crRes.status}`}`);
+          return false;
+        }
+        updateDraft(tabKey, { multiCrLoaded: draft.multiCr });
+      } catch (e: any) {
+        message.error(`Credit lines save error: ${e.message}`);
+        return false;
+      }
     }
 
     // ── Step 5: POST Receipt Applications ─────────────────────────────────────
@@ -3577,7 +3676,7 @@ const ManageReceipts: React.FC = () => {
                     onClick={() => {
                       const m: string[] = [];
                       if (!draft.drAccount) m.push('Dr. Account');
-                      if (!draft.crAccount) m.push('Cr. Account');
+                      if (!draft.multiCr && !draft.crAccount) m.push('Cr. Account');
                       if (m.length > 0) { message.warning(`Missing required fields: ${m.join(' · ')}`); return; }
                       openDebugModal(tabKey, draft);
                     }}>
@@ -3776,25 +3875,96 @@ const ManageReceipts: React.FC = () => {
                         )}
                         {field('Cr. Account',
                           <div>
-                            <Space.Compact style={{ width: '100%' }}>
-                              <Input size="small" readOnly
-                                value={draft.crAccount}
-                                placeholder="Select GL combination…"
-                                style={{ fontSize: 11, fontFamily: draft.crAccount ? 'monospace' : undefined, background: '#fff', cursor: 'pointer', letterSpacing: draft.crAccount ? '0.02em' : undefined }}
-                                onClick={() => { if (!fieldDisabled) { setMiscAcctTabKey(tabKey); setMiscAcctField('crAccount'); setMiscAcctVisible(true); } }}
-                              />
-                              {draft.crAccount
-                                ? <Button size="small" icon={<CloseOutlined />} disabled={fieldDisabled}
-                                    onClick={() => updateDraft(tabKey, { crAccount: '', crAccountDesc: '' })} />
-                                : <Button size="small" icon={<SearchOutlined />} disabled={fieldDisabled}
-                                    onClick={() => { setMiscAcctTabKey(tabKey); setMiscAcctField('crAccount'); setMiscAcctVisible(true); }} />
-                              }
-                            </Space.Compact>
-                            {draft.crAccountDesc && (
-                              <Text style={{ fontSize: 10, color: REDWOOD.info, display: 'block', marginTop: 2 }}>
-                                {draft.crAccountDesc.split(' · ').filter((s: string) => s && s !== 'Default').slice(1).join(' · ') || draft.crAccountDesc}
-                              </Text>
-                            )}
+                            <Radio.Group size="small" value={draft.multiCr ? 'multiple' : 'single'}
+                              disabled={fieldDisabled}
+                              style={{ marginBottom: 4 }}
+                              onChange={(e) => {
+                                const multi = e.target.value === 'multiple';
+                                if (multi && (draft.crLines ?? []).length === 0) {
+                                  // seed first line from the single Cr Account if present
+                                  const seed: CrLine = {
+                                    key: `crl-${Date.now()}`,
+                                    crAccount: draft.crAccount || '', crAccountDesc: draft.crAccountDesc || '',
+                                    amount: draft.amount ?? null,
+                                  };
+                                  updateDraft(tabKey, { multiCr: true, crLines: [seed] } as any);
+                                } else {
+                                  updateDraft(tabKey, { multiCr: multi } as any);
+                                }
+                              }}>
+                              <Radio.Button value="single" style={{ fontSize: 11 }}>Single</Radio.Button>
+                              <Radio.Button value="multiple" style={{ fontSize: 11 }}>Multiple</Radio.Button>
+                            </Radio.Group>
+                            {!draft.multiCr ? (
+                              <>
+                                <Space.Compact style={{ width: '100%' }}>
+                                  <Input size="small" readOnly
+                                    value={draft.crAccount}
+                                    placeholder="Select GL combination…"
+                                    style={{ fontSize: 11, fontFamily: draft.crAccount ? 'monospace' : undefined, background: '#fff', cursor: 'pointer', letterSpacing: draft.crAccount ? '0.02em' : undefined }}
+                                    onClick={() => { if (!fieldDisabled) { setMiscAcctTabKey(tabKey); setMiscAcctField('crAccount'); setMiscAcctVisible(true); } }}
+                                  />
+                                  {draft.crAccount
+                                    ? <Button size="small" icon={<CloseOutlined />} disabled={fieldDisabled}
+                                        onClick={() => updateDraft(tabKey, { crAccount: '', crAccountDesc: '' })} />
+                                    : <Button size="small" icon={<SearchOutlined />} disabled={fieldDisabled}
+                                        onClick={() => { setMiscAcctTabKey(tabKey); setMiscAcctField('crAccount'); setMiscAcctVisible(true); }} />
+                                  }
+                                </Space.Compact>
+                                {draft.crAccountDesc && (
+                                  <Text style={{ fontSize: 10, color: REDWOOD.info, display: 'block', marginTop: 2 }}>
+                                    {draft.crAccountDesc.split(' · ').filter((s: string) => s && s !== 'Default').slice(1).join(' · ') || draft.crAccountDesc}
+                                  </Text>
+                                )}
+                              </>
+                            ) : (() => {
+                              const crLines  = draft.crLines ?? [];
+                              const crTotal  = crLines.reduce((s, l) => s + (l.amount || 0), 0);
+                              const diff     = Math.round((crTotal - (draft.amount ?? 0)) * 100) / 100;
+                              const balanced = Math.abs(diff) <= 0.01;
+                              const setLines = (lines: CrLine[]) => updateDraft(tabKey, { crLines: lines } as any);
+                              return (
+                                <div style={{ border: '1px solid #e5e5e5', borderRadius: 6, padding: 6 }}>
+                                  {crLines.map((l, i) => (
+                                    <div key={l.key} style={{ marginBottom: 6 }}>
+                                      <Space.Compact style={{ width: '100%' }}>
+                                        <Input size="small" readOnly
+                                          value={l.crAccount}
+                                          placeholder={`Line ${i + 1} — select account…`}
+                                          style={{ fontSize: 11, fontFamily: l.crAccount ? 'monospace' : undefined, background: '#fff', cursor: 'pointer' }}
+                                          onClick={() => { if (!fieldDisabled) { setMiscAcctTabKey(tabKey); setMiscAcctField(`crLine:${l.key}`); setMiscAcctVisible(true); } }}
+                                        />
+                                        <InputNumber size="small" min={0.01} precision={2}
+                                          value={l.amount ?? undefined}
+                                          placeholder="Amount"
+                                          disabled={fieldDisabled}
+                                          style={{ width: 110, fontSize: 11 }}
+                                          onChange={(v) => setLines(crLines.map(x => x.key === l.key ? { ...x, amount: v ?? null } : x))}
+                                        />
+                                        <Button size="small" danger icon={<DeleteOutlined />}
+                                          disabled={fieldDisabled || crLines.length === 1}
+                                          onClick={() => setLines(crLines.filter(x => x.key !== l.key))}
+                                        />
+                                      </Space.Compact>
+                                      {l.crAccountDesc && (
+                                        <Text style={{ fontSize: 10, color: REDWOOD.info, display: 'block', marginTop: 1 }}>
+                                          {l.crAccountDesc.split(' · ').filter((s: string) => s && s !== 'Default').slice(1).join(' · ') || l.crAccountDesc}
+                                        </Text>
+                                      )}
+                                    </div>
+                                  ))}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <Button size="small" type="dashed" icon={<PlusOutlined />} disabled={fieldDisabled}
+                                      onClick={() => setLines([...crLines, { key: `crl-${Date.now()}`, crAccount: '', crAccountDesc: '', amount: null }])}>
+                                      Add Line
+                                    </Button>
+                                    <Text style={{ fontSize: 11, marginLeft: 'auto', fontWeight: 600, color: balanced ? '#2e7d32' : '#C74634' }}>
+                                      Total {fmt(crTotal)}{balanced ? ' ✓' : ` (${diff > 0 ? '+' : ''}${fmt(diff)} vs receipt)`}
+                                    </Text>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                         {field('Receipt Number', inp('receiptNumber', 'Auto-generated if blank'), true)}
@@ -5697,8 +5867,16 @@ const ManageReceipts: React.FC = () => {
             onSelect={(code, segments) => {
               const desc = Object.values(segments ?? {})
                 .map((s: any) => s.description).filter(Boolean).join(' · ');
-              const descField = miscAcctField === 'drAccount' ? 'drAccountDesc' : 'crAccountDesc';
-              updateDraft(miscAcctTabKey, { [miscAcctField]: code, [descField]: desc } as any);
+              if (miscAcctField.startsWith('crLine:')) {
+                const lineKey = miscAcctField.slice('crLine:'.length);
+                const lineTab = tabs.find(t => t.key === miscAcctTabKey);
+                const nextLines = (lineTab?.draft.crLines ?? []).map(l =>
+                  l.key === lineKey ? { ...l, crAccount: code, crAccountDesc: desc } : l);
+                updateDraft(miscAcctTabKey, { crLines: nextLines } as any);
+              } else {
+                const descField = miscAcctField === 'drAccount' ? 'drAccountDesc' : 'crAccountDesc';
+                updateDraft(miscAcctTabKey, { [miscAcctField]: code, [descField]: desc } as any);
+              }
               setMiscAcctVisible(false);
             }}
             onCancel={() => setMiscAcctVisible(false)}
