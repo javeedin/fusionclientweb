@@ -21,6 +21,7 @@ import {
   BookOutlined,
   WarningOutlined,
   RobotOutlined,
+  BulbOutlined,
 } from '@ant-design/icons';
 import { Outlet, useNavigate, Link } from 'react-router-dom';
 import { ShowAndTellPanel } from '../features/showAndTell';
@@ -37,7 +38,6 @@ import GlobalMenuSearch from '../components/GlobalMenuSearch';
 import NotificationPanel from '../components/NotificationPanel';
 import ApprovalToastWatcher from '../components/ApprovalToastWatcher';
 import AIAssistant from '../components/ai/AIAssistant';
-import Autopilot from '../components/Autopilot';
 import CompanySelector from '../components/CompanySelector';
 import DebugCredentialsPanel from '../components/DebugCredentialsPanel';
 import type { MenuProps } from 'antd';
@@ -123,7 +123,6 @@ const MainLayout: React.FC = () => {
   const [showProfile, setShowProfile] = useState(false);
   const [showAndTellOpen, setShowAndTellOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [autopilotOpen, setAutopilotOpen] = useState(false);
   const { unreadCount } = useNotifications();
 
   // Listen for PWA install prompt
@@ -362,22 +361,20 @@ const MainLayout: React.FC = () => {
           </Tooltip>
           <SupportTicketButton />
           <DebugCredentialsPanel />
-          <Tooltip title="Autopilot Assistant">
+          <Tooltip title="AI Assistant — chat with live ERP data, reports, MCP tools">
             <Button
               type="text"
-              icon={<RobotOutlined style={{ fontSize: 18 }} />}
-              onClick={() => setAutopilotOpen(o => !o)}
-              style={{
-                color: '#1677ff',
-                background: autopilotOpen ? 'rgba(22,119,255,0.12)' : 'transparent',
-                border: 'none',
-                width: 36,
-                height: 36,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 8,
-              }}
+              icon={<RobotOutlined style={{ fontSize: 18, color: '#fff' }} />}
+              onClick={() => window.dispatchEvent(new Event('reerp-ai:toggle'))}
+              style={{ color: '#fff', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}
+            />
+          </Tooltip>
+          <Tooltip title="Teach AI — save the search this page just ran as an assistant recipe">
+            <Button
+              type="text"
+              icon={<BulbOutlined style={{ fontSize: 18, color: '#fff' }} />}
+              onClick={() => window.dispatchEvent(new Event('reerp-ai:teach'))}
+              style={{ color: '#fff', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}
             />
           </Tooltip>
           {fusionUser && (
@@ -501,7 +498,6 @@ const MainLayout: React.FC = () => {
       <GlValidationErrorsDrawer />
       <NotificationPanel open={notifOpen} onClose={() => setNotifOpen(false)} />
       <ApprovalToastWatcher onOpenPanel={() => setNotifOpen(true)} />
-      <Autopilot externalOpen={autopilotOpen} onExternalClose={() => setAutopilotOpen(false)} />
     </Layout>
   );
 };

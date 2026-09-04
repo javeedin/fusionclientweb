@@ -909,25 +909,20 @@ const AIAssistant: React.FC = () => {
     });
   }, []);
 
-  const onFab = useCallback(() => {
-    if (panels.length === 0) addPanel(lsGet(LS_CUR));
-    else setPanels([]);
+  // toggled from the top toolbar's AI Assistant icon
+  useEffect(() => {
+    const toggle = () => {
+      if (panels.length === 0) addPanel(lsGet(LS_CUR));
+      else setPanels([]);
+    };
+    window.addEventListener('reerp-ai:toggle', toggle);
+    return () => window.removeEventListener('reerp-ai:toggle', toggle);
   }, [panels.length, addPanel]);
 
   return (
     <>
       <style>{`
-        .ai-fab{position:fixed;right:24px;bottom:24px;z-index:1005;width:56px;height:56px;border-radius:50%;
-          background:linear-gradient(135deg,#C74634,#8B2F22);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;
-          box-shadow:0 6px 20px rgba(199,70,52,.45);transition:transform .15s ease, box-shadow .15s ease;color:#fff;font-size:24px}
-        .ai-fab:hover{transform:scale(1.08);box-shadow:0 8px 26px rgba(199,70,52,.55)}
-        .ai-fab-badge{position:absolute;top:-2px;right:-2px;background:#fff;color:#C74634;border:1px solid #C74634;
-          border-radius:10px;font-size:11px;font-weight:700;min-width:18px;height:18px;line-height:16px;padding:0 3px}
-        .ai-teach-fab{position:fixed;right:88px;bottom:30px;z-index:1004;width:44px;height:44px;border-radius:50%;
-          background:linear-gradient(135deg,#7B5EA7,#5A4482);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;
-          box-shadow:0 4px 14px rgba(123,94,167,.45);transition:transform .15s ease;color:#fff;font-size:19px}
-        .ai-teach-fab:hover{transform:scale(1.08)}
-        .ai-panel{position:fixed;bottom:92px;width:${PANEL_W}px;max-width:calc(100vw - 32px);
+        .ai-panel{position:fixed;bottom:24px;width:${PANEL_W}px;max-width:calc(100vw - 32px);
           height:min(640px,calc(100vh - 130px));background:#fff;border-radius:16px;display:flex;flex-direction:column;overflow:hidden;
           box-shadow:0 12px 48px rgba(0,0,0,.22);border:1px solid #E8E8E8;animation:aiIn .18s ease}
         .ai-panel.ai-full{inset:12px;right:12px;bottom:12px;width:auto;height:auto;max-width:none}
@@ -1041,13 +1036,6 @@ const AIAssistant: React.FC = () => {
       ))}
 
       <GlobalTeachAI userName={userName} />
-
-      <button className="ai-fab" onClick={onFab}
-        title={panels.length ? 'Close AI Assistant windows' : 'AI Assistant'}
-        aria-label="Open AI Assistant">
-        {panels.length ? <CloseOutlined /> : <CommentOutlined />}
-        {panels.length > 1 && <span className="ai-fab-badge">{panels.length}</span>}
-      </button>
     </>
   );
 };

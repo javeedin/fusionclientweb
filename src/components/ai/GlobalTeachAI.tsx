@@ -1,6 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Select, Tooltip, Typography, message } from 'antd';
-import { BulbOutlined } from '@ant-design/icons';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Select, Typography, message } from 'antd';
 import { getFilteredMenuItems } from '../../data/menuItems';
 import { getCapturedCalls, type CapturedCall } from './apiCapture';
 import { TeachAIModal } from './TeachAIButton';
@@ -51,16 +50,16 @@ function recipeFromCall(c: CapturedCall, user: string): TrainingRecipe {
 
 /**
  * Global "Teach AI" — works on every page with no per-page wiring: a fetch
- * interceptor records the APEX calls the current page makes, and this
- * floating bulb lets the user pick the search they just ran and teach it
- * to the AI Assistant as a recipe.
+ * interceptor records the APEX calls the current page makes, and the top
+ * toolbar's Teach AI icon (via the reerp-ai:teach event) lets the user pick
+ * the search they just ran and teach it to the AI Assistant as a recipe.
  */
 const GlobalTeachAI: React.FC<{ userName: string }> = ({ userName }) => {
   const [open, setOpen] = useState(false);
   const [calls, setCalls] = useState<CapturedCall[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
 
-  const start = () => {
+  const start = useCallback(() => {
     const captured = getCapturedCalls();
     if (!captured.length) {
       message.info('No API calls captured yet on this page — run a search first, then press Teach AI.');
@@ -72,7 +71,13 @@ const GlobalTeachAI: React.FC<{ userName: string }> = ({ userName }) => {
     setCalls(captured);
     setSelectedIdx(idx);
     setOpen(true);
-  };
+  }, []);
+
+  // triggered from the top toolbar's Teach AI icon
+  useEffect(() => {
+    window.addEventListener('reerp-ai:teach', start);
+    return () => window.removeEventListener('reerp-ai:teach', start);
+  }, [start]);
 
   const initial = useMemo(
     () => (calls[selectedIdx] ? recipeFromCall(calls[selectedIdx], userName) : null),
@@ -97,16 +102,7 @@ const GlobalTeachAI: React.FC<{ userName: string }> = ({ userName }) => {
     </div>
   );
 
-  return (
-    <>
-      <Tooltip title="Teach AI — save the search this page just ran as an assistant recipe" placement="left">
-        <button className="ai-teach-fab" onClick={start} aria-label="Teach AI">
-          <BulbOutlined />
-        </button>
-      </Tooltip>
-      <TeachAIModal open={open} initial={initial} onClose={() => setOpen(false)} header={picker} />
-    </>
-  );
+  return <TeachAIModal open={open} initial={initial} onClose={() => setOpen(false)} header={picker} />;
 };
 
 export default GlobalTeachAI;
