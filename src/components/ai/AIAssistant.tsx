@@ -368,6 +368,50 @@ const AssistantPanel: React.FC<PanelProps> = ({
       className={`ai-panel${fullscreen ? ' ai-full' : ''}`}
       style={fullscreen ? { zIndex: 1200 } : { right, zIndex: 1001 + (total - index) }}
     >
+      {/* single title bar spanning all sections; close button at top-left */}
+      <div className="ai-head">
+        <Tooltip title="Close">
+          <Button size="small" type="text" icon={<CloseOutlined />} onClick={onClose} />
+        </Tooltip>
+        <ThunderboltOutlined style={{ fontSize: 18 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>
+            Re-ERP AI Assistant{total > 1 ? ` · ${index + 1}` : ''}
+          </div>
+          <div style={{ fontSize: 11, opacity: .85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {cur?.title && cur.title !== 'New chat' ? cur.title : 'Live data · all modules · Excel & Word exports'}
+          </div>
+        </div>
+        <Tooltip title="Open another assistant window">
+          <Button size="small" type="text" icon={<PlusSquareOutlined />} onClick={onNewWindow} disabled={total >= MAX_PANELS} />
+        </Tooltip>
+        {!fullscreen && (
+          <Dropdown menu={historyMenu} trigger={['click']} placement="bottomRight">
+            <Tooltip title="Chat history"><Button size="small" type="text" icon={<HistoryOutlined />} /></Tooltip>
+          </Dropdown>
+        )}
+        <Tooltip title="New chat">
+          <Button size="small" type="text" icon={<PlusOutlined />} onClick={() => {
+            const id = store.createConv();
+            setCurId(id); if (index === 0) lsSet(LS_CUR, id);
+          }} />
+        </Tooltip>
+        <Tooltip title="Settings">
+          <Button size="small" type="text" icon={<SettingOutlined />} onClick={() => { setDraftKey(apiKey); setShowSettings(s => !s); }} />
+        </Tooltip>
+        <Tooltip title="Delete this chat">
+          <Button size="small" type="text" icon={<DeleteOutlined />} onClick={() => {
+            if (cur) store.deleteConv(cur.id);
+            setCurId(''); if (index === 0) lsSet(LS_CUR, '');
+          }} />
+        </Tooltip>
+        <Tooltip title={fullscreen ? 'Exit full screen' : 'Full screen (history + chat + preview)'}>
+          <Button size="small" type="text" icon={fullscreen ? <CompressOutlined /> : <ExpandOutlined />}
+            onClick={() => setFullscreen(f => !f)} />
+        </Tooltip>
+      </div>
+
+      <div className="ai-body">
       {fullscreen && (
         <div className="ai-sidebar">
           <div className="ai-side-head">
@@ -406,44 +450,6 @@ const AssistantPanel: React.FC<PanelProps> = ({
       )}
 
       <div className="ai-main">
-      <div className="ai-head">
-        <ThunderboltOutlined style={{ fontSize: 18 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>
-            Re-ERP AI Assistant{total > 1 ? ` · ${index + 1}` : ''}
-          </div>
-          <div style={{ fontSize: 11, opacity: .85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {cur?.title && cur.title !== 'New chat' ? cur.title : 'Live data · all modules · Excel & Word exports'}
-          </div>
-        </div>
-        <Tooltip title="Open another assistant window">
-          <Button size="small" type="text" icon={<PlusSquareOutlined />} onClick={onNewWindow} disabled={total >= MAX_PANELS} />
-        </Tooltip>
-        <Dropdown menu={historyMenu} trigger={['click']} placement="bottomRight">
-          <Tooltip title="Chat history"><Button size="small" type="text" icon={<HistoryOutlined />} /></Tooltip>
-        </Dropdown>
-        <Tooltip title="New chat">
-          <Button size="small" type="text" icon={<PlusOutlined />} onClick={() => {
-            const id = store.createConv();
-            setCurId(id); if (index === 0) lsSet(LS_CUR, id);
-          }} />
-        </Tooltip>
-        <Tooltip title="Settings">
-          <Button size="small" type="text" icon={<SettingOutlined />} onClick={() => { setDraftKey(apiKey); setShowSettings(s => !s); }} />
-        </Tooltip>
-        <Tooltip title="Delete this chat">
-          <Button size="small" type="text" icon={<DeleteOutlined />} onClick={() => {
-            if (cur) store.deleteConv(cur.id);
-            setCurId(''); if (index === 0) lsSet(LS_CUR, '');
-          }} />
-        </Tooltip>
-        <Tooltip title={fullscreen ? 'Exit full screen' : 'Full screen (history + chat + preview)'}>
-          <Button size="small" type="text" icon={fullscreen ? <CompressOutlined /> : <ExpandOutlined />}
-            onClick={() => setFullscreen(f => !f)} />
-        </Tooltip>
-        <Button size="small" type="text" icon={<CloseOutlined />} onClick={onClose} />
-      </div>
-
       <div className="ai-msgs" ref={msgsRef}>
         {!msgs.length && !busy && (
           <div style={{ textAlign: 'center', paddingTop: 24 }}>
@@ -562,6 +568,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
       {fullscreen && (
         <PreviewPanel files={convFiles} selected={preview} onSelect={setPreview} />
       )}
+      </div>
     </div>
   );
 };
@@ -654,13 +661,14 @@ const AIAssistant: React.FC = () => {
         .ai-fab-badge{position:absolute;top:-2px;right:-2px;background:#fff;color:#C74634;border:1px solid #C74634;
           border-radius:10px;font-size:11px;font-weight:700;min-width:18px;height:18px;line-height:16px;padding:0 3px}
         .ai-panel{position:fixed;bottom:92px;width:${PANEL_W}px;max-width:calc(100vw - 32px);
-          height:min(640px,calc(100vh - 130px));background:#fff;border-radius:16px;display:flex;flex-direction:row;overflow:hidden;
+          height:min(640px,calc(100vh - 130px));background:#fff;border-radius:16px;display:flex;flex-direction:column;overflow:hidden;
           box-shadow:0 12px 48px rgba(0,0,0,.22);border:1px solid #E8E8E8;animation:aiIn .18s ease}
         .ai-panel.ai-full{inset:12px;right:12px;bottom:12px;width:auto;height:auto;max-width:none}
+        .ai-body{flex:1;min-height:0;display:flex;flex-direction:row}
         .ai-main{flex:1;min-width:0;display:flex;flex-direction:column}
         .ai-sidebar{width:250px;flex-shrink:0;border-right:1px solid #EFEAE8;background:#F7F4F3;display:flex;flex-direction:column}
-        .ai-side-head{padding:14px;font-weight:700;color:#3A3632;display:flex;align-items:center;justify-content:space-between;
-          border-bottom:1px solid #EFEAE8}
+        .ai-side-head{padding:8px 12px;font-weight:600;font-size:12px;color:#6B6B6B;display:flex;align-items:center;justify-content:space-between}
+        .ai-side-head .ant-btn{color:#6B6B6B}
         .ai-side-list{flex:1;overflow-y:auto;padding:8px}
         .ai-side-empty{color:#9a908c;font-size:12px;text-align:center;padding-top:20px}
         .ai-side-item{position:relative;padding:9px 28px 9px 12px;border-radius:10px;cursor:pointer;margin-bottom:4px}
@@ -672,7 +680,7 @@ const AIAssistant: React.FC = () => {
         .ai-side-item:hover .ai-side-del{display:inline-block}
         .ai-side-del:hover{color:#C74634}
         .ai-preview{width:44%;min-width:340px;flex-shrink:0;border-left:1px solid #EFEAE8;background:#FBFAF9;display:flex;flex-direction:column}
-        .ai-preview-head{padding:10px 14px;border-bottom:1px solid #EFEAE8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff}
+        .ai-preview-head{padding:6px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#F7F4F3;color:#6B6B6B;font-size:12px}
         .ai-preview-tabs{display:flex;gap:6px;flex:1;overflow-x:auto;min-width:0}
         .ai-ptab{display:inline-flex;align-items:center;gap:5px;border:1px solid #EBE2DF;background:#fff;border-radius:8px;
           padding:3px 10px;font-size:11.5px;cursor:pointer;color:#5b4a45;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
@@ -692,7 +700,7 @@ const AIAssistant: React.FC = () => {
         .ai-xltable tr:nth-child(even) td{background:#FBF4F2}
         .ai-xltable tr.totals td{font-weight:700;background:#F3E6E3;border-top:2px double #C74634}
         @keyframes aiIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-        .ai-head{background:linear-gradient(135deg,#C74634,#9E3527);color:#fff;padding:12px 14px;display:flex;align-items:center;gap:6px}
+        .ai-head{background:linear-gradient(135deg,#0572CE,#054E92);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:6px;flex-shrink:0}
         .ai-head .anticon{color:#fff}
         .ai-msgs{flex:1;overflow-y:auto;padding:14px;background:#FAF9F8}
         .ai-row{display:flex;margin-bottom:10px}
