@@ -1062,6 +1062,8 @@ const AAPanel: React.FC = () => {
   const [rows, setRows]                       = useState<JournalLine[]>([]);
   const [hasSearched, setHasSearched]         = useState(false);
   const [showEntered, setShowEntered]         = useState(false);
+  // Pin Acc Dr / Acc Cr / Acc Balance to the right edge (user-toggleable)
+  const [freezeAmounts, setFreezeAmounts]     = useState(true);
   const [showAnalytics, setShowAnalytics]     = useState(false);
   const [gridSearch, setGridSearch]           = useState('');
   const [functionalCcy, setFunctionalCcy]     = useState('AED');
@@ -2286,13 +2288,13 @@ const AAPanel: React.FC = () => {
         render: (v: string, r: JournalLine) => isTot(r) ? null : <Tag style={{ fontSize: 9 }}>{v}</Tag> },
       ...entCols,
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Dr ({functionalCcy})</span>,
-        dataIndex: 'accountedDr', key: 'accDr', width: 150, align: 'right', fixed: 'right',
+        dataIndex: 'accountedDr', key: 'accDr', width: 150, align: 'right', fixed: freezeAmounts ? ('right' as const) : undefined,
         render: (v: number, r: JournalLine) => <DrCell v={v} bold={isTot(r)} /> },
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Cr ({functionalCcy})</span>,
-        dataIndex: 'accountedCr', key: 'accCr', width: 150, align: 'right', fixed: 'right',
+        dataIndex: 'accountedCr', key: 'accCr', width: 150, align: 'right', fixed: freezeAmounts ? ('right' as const) : undefined,
         render: (v: number, r: JournalLine) => <CrCell v={v} bold={isTot(r)} /> },
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Balance ({functionalCcy})</span>,
-        key: 'accBal', width: 160, align: 'right', fixed: 'right',
+        key: 'accBal', width: 160, align: 'right', fixed: freezeAmounts ? ('right' as const) : undefined,
         render: (_: any, record: JournalLine) => {
           if (isTot(record)) return <FmtBal v={record._accBal ?? 0} size={10} bold />;
           return <FmtBal v={(record as any)._accRun ?? 0} size={10} bold={isSpecial(record)} />;
@@ -2306,7 +2308,7 @@ const AAPanel: React.FC = () => {
             </Tooltip>
           ) },
     ];
-  }, [showEntered, functionalCcy, openDrill]);
+  }, [showEntered, functionalCcy, openDrill, freezeAmounts]);
 
   // ── Group-by columns ──────────────────────────────────────────────────────────
   const groupLabel = GROUP_BY_OPTIONS.find(o => o.value === groupBy)?.label || groupBy;
@@ -2399,13 +2401,13 @@ const AAPanel: React.FC = () => {
         render: (v: string, r: JournalLine) => isSpec(r) ? null : <Tag style={{ fontSize: 9 }}>{v}</Tag> },
       ...entCols,
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Dr ({functionalCcy})</span>,
-        dataIndex: 'accountedDr', key: 'bAccDr', width: 140, align: 'right', fixed: 'right' as const,
+        dataIndex: 'accountedDr', key: 'bAccDr', width: 140, align: 'right', fixed: freezeAmounts ? ('right' as const) : undefined,
         render: (v: number, r: JournalLine) => v ? <DrCell v={v} bold={!!r.isTotals} /> : null },
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Cr ({functionalCcy})</span>,
-        dataIndex: 'accountedCr', key: 'bAccCr', width: 140, align: 'right', fixed: 'right' as const,
+        dataIndex: 'accountedCr', key: 'bAccCr', width: 140, align: 'right', fixed: freezeAmounts ? ('right' as const) : undefined,
         render: (v: number, r: JournalLine) => v ? <CrCell v={v} bold={!!r.isTotals} /> : null },
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Balance ({functionalCcy})</span>,
-        key: 'bAccBal', width: 150, align: 'right', fixed: 'right' as const,
+        key: 'bAccBal', width: 150, align: 'right', fixed: freezeAmounts ? ('right' as const) : undefined,
         render: (_: any, r: any) => {
           if (r.isOpeningBalance || r.isClosingBalance)
             return <FmtBal v={r.accountedDr - r.accountedCr} size={10} bold />;
@@ -2421,7 +2423,7 @@ const AAPanel: React.FC = () => {
             </Tooltip>
           ) },
     ];
-  }, [showEntered, functionalCcy, openDrill]);
+  }, [showEntered, functionalCcy, openDrill, freezeAmounts]);
 
   // ── Export ────────────────────────────────────────────────────────────────────
   const exportExcel = async () => {
@@ -3373,6 +3375,16 @@ const AAPanel: React.FC = () => {
                 style={{ background: showEntered ? '#52c41a' : undefined }} />
               <Text style={{ fontSize: 12, color: showEntered ? '#52c41a' : REDWOOD.neutral600, fontWeight: showEntered ? 600 : undefined }}>
                 Show Entered
+              </Text>
+            </Space>
+            <Divider type="vertical" />
+            <Space size={6}>
+              <Tooltip title="Keep the Acc Dr / Cr / Balance columns pinned to the right edge while scrolling">
+                <Switch size="small" checked={freezeAmounts} onChange={setFreezeAmounts}
+                  style={{ background: freezeAmounts ? REDWOOD.info : undefined }} />
+              </Tooltip>
+              <Text style={{ fontSize: 12, color: freezeAmounts ? REDWOOD.info : REDWOOD.neutral600, fontWeight: freezeAmounts ? 600 : undefined }}>
+                Freeze Amounts
               </Text>
             </Space>
             {accRunBreaks.length === 0 && (
