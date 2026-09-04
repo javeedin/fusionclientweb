@@ -14,6 +14,7 @@ import {
   ASSISTANT_TOOLS, buildSystemPrompt, downloadDeliveredFile, runAssistantTool, wordPreviewSrcDoc,
   type ApiCallLog, type DeliveredFile, type ExcelSpec, type PendingWrite,
 } from './assistantTools';
+import { buildRecipesPrompt, fetchTrainingRecipes } from './aiTraining';
 
 const handleFileDownload = async (f: DeliveredFile) => {
   const ok = await downloadDeliveredFile(f);
@@ -353,6 +354,13 @@ const AssistantPanel: React.FC<PanelProps> = ({
       })),
     ];
     let system = buildSystemPrompt(getCurrentCompany().code, userName);
+    // learned recipes (taught from pages or in chat) — cached 60s, so a
+    // recipe taught a moment ago applies to the very next message
+    try {
+      const recipes = await fetchTrainingRecipes();
+      const recipesPrompt = buildRecipesPrompt(recipes);
+      if (recipesPrompt) system += `\n\n${recipesPrompt}`;
+    } catch { /* training store unavailable — continue without it */ }
     if (mcpTools.length) {
       system += `\n\nMCP TOOLS\nTools named mcp_* come from local MCP servers (${mcpSummary}). ` +
         'Prefer an MCP tool when one matches the request exactly (they encapsulate the right endpoints and math); ' +

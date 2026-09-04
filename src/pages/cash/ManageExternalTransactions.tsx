@@ -24,6 +24,8 @@ import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import AccountSelector, { validateAccountCode } from '../../components/AccountSelector';
+import TeachAIButton from '../../components/ai/TeachAIButton';
+import type { TrainingRecipe } from '../../components/ai/aiTraining';
 import { useAuth } from '../../context/AuthContext';
 import {
   buildPcBankTxnSlaPayload, fetchLedgerByBusinessUnit, derivePeriodName, createAccounting,
@@ -3382,6 +3384,39 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
     } finally { setLoading(false); }
   }, [searchForm]);
 
+  // ── Teach AI: capture the last search as a training recipe ────────────────
+  const buildTeachRecipe = useCallback((): TrainingRecipe | null => {
+    if (!lastApiUrl) return null;
+    const labels: Record<string, string> = {
+      transaction_number: 'Transaction #', bank_account: 'Bank Account', business_unit: 'Business Unit',
+      currency_code: 'Currency', transaction_type: 'Transaction Type', source: 'Source / Origin',
+      status: 'Status', reference: 'Reference text',
+      date_from: 'Transaction date from (YYYY-MM-DD)', date_to: 'Transaction date to (YYYY-MM-DD)',
+      amount_from: 'Min amount', amount_to: 'Max amount',
+      creation_date_from: 'Created from (YYYY-MM-DD)', creation_date_to: 'Created to (YYYY-MM-DD)',
+      row_limit: 'Row limit',
+    };
+    try {
+      const [base, qs] = lastApiUrl.split('?');
+      const example: Record<string, string> = {};
+      new URLSearchParams(qs || '').forEach((v, k) => { if (v) example[k] = v; });
+      const idx = base.indexOf('/cash/');
+      return {
+        recipeName: 'Search External Transactions',
+        description: 'Search / find / list external cash transactions (bank transactions) by date range, bank account, business unit, status, type, reference or amount.',
+        module: 'CASH',
+        method: 'GET',
+        urlTemplate: idx >= 0 ? base.slice(idx) : '/cash/externaltransactions',
+        params: Object.entries(labels).map(([name, label]) => ({
+          name, label, required: name === 'date_from' || name === 'date_to',
+        })),
+        example,
+        appPath: '/cash/external-transactions',
+        createdBy: currentUser,
+      };
+    } catch { return null; }
+  }, [lastApiUrl, currentUser]);
+
   const handleBUChange = (bu: string) => {
     setSelectedBU(bu || '');
     setDerivedLE(bu ? (buLeMap[bu] || '') : '');
@@ -4833,6 +4868,7 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
             <Space size={8} onClick={e => e.stopPropagation()}>
               <Button size="small" onClick={e => { e.stopPropagation(); handleReset(); }} icon={<ReloadOutlined />}>Reset</Button>
               <Button size="small" icon={<ApiOutlined />} onClick={e => { e.stopPropagation(); setShowApiModal(true); }} style={{ color: REDWOOD.neutral600 }}>API</Button>
+              <TeachAIButton buildRecipe={buildTeachRecipe} />
               <Button size="small" type="primary" icon={<SearchOutlined />} loading={loading} onClick={e => { e.stopPropagation(); handleSearch(); }}
                 style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}>
                 Search
