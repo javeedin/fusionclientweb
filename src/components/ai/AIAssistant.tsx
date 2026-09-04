@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, Input, Select, Tooltip, Typography, message as antMessage } from 'antd';
 import {
-  CloseOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined,
+  ApiOutlined, CloseOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined,
   PlusOutlined, PlusSquareOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import Anthropic from '@anthropic-ai/sdk';
@@ -9,7 +9,7 @@ import { APEX_DB_CONFIG } from '../../config/api.config';
 import { getCurrentCompany } from '../../config/company.config';
 import { useAuth } from '../../context/AuthContext';
 import {
-  ASSISTANT_TOOLS, buildSystemPrompt, runAssistantTool, type DeliveredFile,
+  ASSISTANT_TOOLS, buildSystemPrompt, runAssistantTool, type ApiCallLog, type DeliveredFile,
 } from './assistantTools';
 
 const { Text } = Typography;
@@ -30,7 +30,7 @@ const MODEL_OPTIONS = [
   { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (fastest)' },
 ];
 
-interface ChatMsg { role: 'user' | 'assistant'; text: string; files?: DeliveredFile[] }
+interface ChatMsg { role: 'user' | 'assistant'; text: string; files?: DeliveredFile[]; apiCalls?: ApiCallLog[] }
 interface Conversation { id: string; title: string; msgs: ChatMsg[]; updatedAt: number }
 
 const lsGet = (k: string): string => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
@@ -82,6 +82,22 @@ function mdToHtml(src: string): string {
   return t.replace(/ (\d+) /g, (_m, i) => codeBlocks[Number(i)]);
 }
 
+// ── API call inspector list ─────────────────────────────────────────────────
+const ApiCallList: React.FC<{ calls: ApiCallLog[] }> = ({ calls }) => (
+  <div className="ai-apilog">
+    {calls.map((c, i) => (
+      <div key={i} className="ai-apirow">
+        <span className={`ai-apimethod ${c.method === 'GET' ? 'get' : 'local'}`}>{c.method}</span>
+        <span className="ai-apiurl" title={c.url}>{c.url}</span>
+        <span className={`ai-apistatus ${c.status === 200 || c.status === 'OK' ? 'ok' : 'err'}`}>
+          {String(c.status)}{c.rows !== undefined ? ` · ${c.rows} rows` : ''} · {c.ms} ms
+        </span>
+        {c.error && <span className="ai-apierr">{c.error}</span>}
+      </div>
+    ))}
+  </div>
+);
+
 // ── Shared store hooks (conversations shared across all open panels) ────────
 interface ConvStore {
   convs: Conversation[];
@@ -116,6 +132,8 @@ const AssistantPanel: React.FC<PanelProps> = ({
   const [status, setStatus] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [draftKey, setDraftKey] = useState('');
+  const [liveCalls, setLiveCalls] = useState<ApiCallLog[]>([]);
+  const [apiOpen, setApiOpen] = useState<Record<number, boolean>>({});
   const msgsRef = useRef<HTMLDivElement>(null);
 
   const cur = store.convs.find(c => c.id === curId) ?? null;
@@ -143,17 +161,21 @@ const AssistantPanel: React.FC<PanelProps> = ({
     const localHist: ChatMsg[] = [...(store.convs.find(c => c.id === convId)?.msgs ?? []), { role: 'user', text }];
     store.pushMsg(convId, { role: 'user', text });
     setBusy(true);
+    setLiveCalls([]);
 
     const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
     const apiMsgs: Anthropic.MessageParam[] = localHist.map(m => ({ role: m.role, content: m.text || '…' }));
     const delivered: DeliveredFile[] = [];
+    const calls: ApiCallLog[] = [];
+    const onLog = (c: ApiCallLog) => { calls.push(c); setLiveCalls(calls.slice()); };
     const system = buildSystemPrompt(getCurrentCompany().code, userName);
+    const finish = (m: ChatMsg) => store.pushMsg(convId, { ...m, apiCalls: calls.slice() });
 
     try {
       let rounds = 0;
       for (;;) {
         if (++rounds > MAX_TOOL_ROUNDS) {
-          store.pushMsg(convId, { role: 'assistant', text: '⚠️ Stopped after too many tool calls — please narrow the request.' });
+          finish({ role: 'assistant', text: '⚠️ Stopped after too many tool calls — please narrow the request.' });
           break;
         }
         const resp = await client.messages.create({
@@ -170,7 +192,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
             if (blk.type === 'tool_use') {
               setStatus(`Running ${blk.name.replace(/_/g, ' ')}…`);
               const out = await runAssistantTool(
-                blk.name, blk.input as Record<string, unknown>, APEX, f => delivered.push(f),
+                blk.name, blk.input as Record<string, unknown>, APEX, f => delivered.push(f), onLog,
               );
               results.push({ type: 'tool_result', tool_use_id: blk.id, content: out });
             }
@@ -179,13 +201,13 @@ const AssistantPanel: React.FC<PanelProps> = ({
           continue;
         }
         if (resp.stop_reason === 'refusal') {
-          store.pushMsg(convId, { role: 'assistant', text: '⚠️ The model declined this request.' });
+          finish({ role: 'assistant', text: '⚠️ The model declined this request.' });
           break;
         }
         const txt = resp.content
           .filter((b): b is Anthropic.TextBlock => b.type === 'text')
           .map(b => b.text).join('\n').trim();
-        store.pushMsg(convId, { role: 'assistant', text: txt || '(no text response)', files: delivered.slice() });
+        finish({ role: 'assistant', text: txt || '(no text response)', files: delivered.slice() });
         break;
       }
     } catch (e) {
@@ -194,10 +216,11 @@ const AssistantPanel: React.FC<PanelProps> = ({
         : e instanceof Anthropic.RateLimitError
           ? 'Rate limited by Anthropic — try again in a moment.'
           : e instanceof Error ? e.message : String(e);
-      store.pushMsg(convId, { role: 'assistant', text: `⚠️ ${msg}` });
+      finish({ role: 'assistant', text: `⚠️ ${msg}` });
     } finally {
       setBusy(false);
       setStatus('');
+      setLiveCalls([]);
     }
   }, [input, busy, apiKey, resolveKey, curId, store, model, userName, index]);
 
@@ -291,17 +314,32 @@ const AssistantPanel: React.FC<PanelProps> = ({
                     : <span key={f.name} className="ai-file"><DownloadOutlined /> {f.name}</span>)}
                 </div>
               )}
+              {!!m.apiCalls?.length && (
+                <div>
+                  <button
+                    className={`ai-apibtn${apiOpen[i] ? ' open' : ''}`}
+                    onClick={() => setApiOpen(p => ({ ...p, [i]: !p[i] }))}
+                    title="Show the API calls behind this answer"
+                  >
+                    <ApiOutlined /> {m.apiCalls.length} API call{m.apiCalls.length > 1 ? 's' : ''}
+                  </button>
+                  {apiOpen[i] && <ApiCallList calls={m.apiCalls} />}
+                </div>
+              )}
             </div>
           </div>
         ))}
         {busy && (
           <div className="ai-row bot">
-            <div className="ai-bubble ai-typing"><span /><span /><span /></div>
+            <div className="ai-bubble" style={{ minWidth: liveCalls.length ? '86%' : undefined }}>
+              <div className="ai-typing"><span /><span /><span /></div>
+              {!!liveCalls.length && <ApiCallList calls={liveCalls} />}
+            </div>
           </div>
         )}
       </div>
 
-      {status && <div className="ai-status">{status}</div>}
+      {status && <div className="ai-status"><ApiOutlined style={{ marginRight: 6 }} />{status}</div>}
 
       {showSettings && (
         <div className="ai-settings">
@@ -474,6 +512,21 @@ const AIAssistant: React.FC = () => {
           padding:8px 12px;margin-top:8px;cursor:pointer;font-size:12.5px;color:#5b4a45}
         .ai-sug:hover{border-color:#C74634;color:#C74634}
         .ai-settings{padding:14px;border-top:1px solid #EFEAE8;background:#FCFAF9}
+        .ai-apibtn{display:inline-flex;align-items:center;gap:5px;background:transparent;border:1px solid #E4D2CD;color:#9E3527;
+          border-radius:8px;padding:2px 8px;margin-top:8px;font-size:11px;cursor:pointer}
+        .ai-apibtn:hover,.ai-apibtn.open{background:#F6EEEC;border-color:#C74634}
+        .ai-apilog{margin-top:6px;background:#2b2b2b;border-radius:8px;padding:6px 8px;max-height:180px;overflow-y:auto}
+        .ai-apirow{font-family:Consolas,Menlo,monospace;font-size:10.5px;line-height:1.7;color:#d8d8d8;
+          display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;border-bottom:1px solid #3a3a3a;padding:2px 0}
+        .ai-apirow:last-child{border-bottom:none}
+        .ai-apimethod{font-weight:700;border-radius:4px;padding:0 5px;font-size:10px}
+        .ai-apimethod.get{background:#1D7B4D;color:#fff}
+        .ai-apimethod.local{background:#0572CE;color:#fff}
+        .ai-apiurl{word-break:break-all;color:#f0e6e2;flex:1;min-width:120px}
+        .ai-apistatus{white-space:nowrap}
+        .ai-apistatus.ok{color:#6fdc9c}
+        .ai-apistatus.err{color:#ff8a7a}
+        .ai-apierr{color:#ff8a7a;width:100%;font-size:10px}
       `}</style>
 
       {panels.map((p, i) => (

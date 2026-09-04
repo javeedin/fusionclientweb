@@ -267,22 +267,57 @@ function buildWordDoc(spec: { title?: string; html?: string }): Blob {
 const MAX_ROWS = 200;
 const MAX_CHARS = 60000;
 
-async function erpApiGet(apexBase: string, path: string, params?: Record<string, string>) {
+// One entry per tool call, shown in the chat's API inspector
+export interface ApiCallLog {
+  tool: string;
+  method: string;      // GET for webservices, LOCAL for file builders
+  url: string;         // path+query (webservices) or filename (files)
+  status: number | 'ERR' | 'OK';
+  rows?: number;
+  ms: number;
+  error?: string;
+}
+
+async function erpApiGet(
+  apexBase: string,
+  path: string,
+  params: Record<string, string> | undefined,
+  onLog: (log: ApiCallLog) => void,
+) {
+  const t0 = performance.now();
+  const done = (log: Omit<ApiCallLog, 'tool' | 'method' | 'ms'>) =>
+    onLog({ tool: 'erp_api_get', method: 'GET', ms: Math.round(performance.now() - t0), ...log });
+
   if (!path || !path.startsWith('/') || path.includes('..')) {
+    done({ url: String(path || ''), status: 'ERR', error: 'invalid path' });
     return { error: 'Invalid path — must start with "/" and contain no "..".' };
   }
   const qs = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
   const url = apexBase.replace(/\/+$/, '') + path + qs;
-  const res = await fetch(url, { cache: 'no-store', headers: { Accept: 'application/json' } });
-  const text = await res.text();
-  if (!res.ok) return { error: `HTTP ${res.status}`, url: path + qs, body: text.slice(0, 1500) };
-  let data: unknown;
-  try { data = JSON.parse(text); } catch { return { error: 'Non-JSON response', body: text.slice(0, 1500) }; }
-  const obj = data as { items?: unknown[] } & Record<string, unknown>;
-  if (Array.isArray(obj?.items) && obj.items.length > MAX_ROWS) {
-    return { ...obj, items: obj.items.slice(0, MAX_ROWS), truncated: true, totalReturned: obj.items.length };
+  try {
+    const res = await fetch(url, { cache: 'no-store', headers: { Accept: 'application/json' } });
+    const text = await res.text();
+    if (!res.ok) {
+      done({ url: path + qs, status: res.status, error: text.slice(0, 120) });
+      return { error: `HTTP ${res.status}`, url: path + qs, body: text.slice(0, 1500) };
+    }
+    let data: unknown;
+    try { data = JSON.parse(text); } catch {
+      done({ url: path + qs, status: res.status, error: 'non-JSON response' });
+      return { error: 'Non-JSON response', body: text.slice(0, 1500) };
+    }
+    const obj = data as { items?: unknown[] } & Record<string, unknown>;
+    const rows = Array.isArray(obj?.items) ? obj.items.length : undefined;
+    done({ url: path + qs, status: res.status, rows });
+    if (Array.isArray(obj?.items) && obj.items.length > MAX_ROWS) {
+      return { ...obj, items: obj.items.slice(0, MAX_ROWS), truncated: true, totalReturned: obj.items.length };
+    }
+    return data;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    done({ url: path + qs, status: 'ERR', error: msg });
+    return { error: msg };
   }
-  return data;
 }
 
 // ── Tool executor ───────────────────────────────────────────────────────────
@@ -293,12 +328,14 @@ export async function runAssistantTool(
   input: Record<string, unknown>,
   apexBase: string,
   deliver: (file: DeliveredFile) => void,
+  onLog: (log: ApiCallLog) => void = () => {},
 ): Promise<string> {
+  const t0 = performance.now();
   try {
     let result: unknown;
     switch (name) {
       case 'erp_api_get':
-        result = await erpApiGet(apexBase, String(input.path || ''), input.params as Record<string, string> | undefined);
+        result = await erpApiGet(apexBase, String(input.path || ''), input.params as Record<string, string> | undefined, onLog);
         break;
       case 'create_excel_report': {
         const spec = input as unknown as ExcelSpec;
@@ -306,6 +343,8 @@ export async function runAssistantTool(
         const fname = (spec.filename || 'report.xlsx').replace(/[^\w .()-]/g, '_');
         saveAs(blob, fname);
         deliver({ name: fname, url: URL.createObjectURL(blob) });
+        const rows = (spec.sheets || []).reduce((n, s) => n + (s.rows?.length || 0), 0);
+        onLog({ tool: name, method: 'LOCAL', url: fname, status: 'OK', rows, ms: Math.round(performance.now() - t0) });
         result = { status: 'created and downloaded', filename: fname };
         break;
       }
@@ -315,6 +354,7 @@ export async function runAssistantTool(
         const fname = (spec.filename || 'document.doc').replace(/[^\w .()-]/g, '_');
         saveAs(blob, fname);
         deliver({ name: fname, url: URL.createObjectURL(blob) });
+        onLog({ tool: name, method: 'LOCAL', url: fname, status: 'OK', ms: Math.round(performance.now() - t0) });
         result = { status: 'created and downloaded', filename: fname };
         break;
       }
@@ -324,7 +364,9 @@ export async function runAssistantTool(
     const s = JSON.stringify(result);
     return s.length > MAX_CHARS ? s.slice(0, MAX_CHARS) + '…(truncated)' : s;
   } catch (e) {
-    return JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
+    const msg = e instanceof Error ? e.message : String(e);
+    onLog({ tool: name, method: 'ERR', url: '', status: 'ERR', error: msg, ms: Math.round(performance.now() - t0) });
+    return JSON.stringify({ error: msg });
   }
 }
 
