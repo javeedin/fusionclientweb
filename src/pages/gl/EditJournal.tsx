@@ -294,11 +294,17 @@ const EditJournal: React.FC = () => {
   };
 
   const editPeriodInfo = periodOptions.find(p => p.period_name_id === editPeriod);
+  // FAIL CLOSED: the date must provably belong to the selected period.
+  // With calendar info: range check. Without it: the date's Mon-YY label must
+  // equal the period name. Never silently allow a date outside the period.
   const dateInPeriod = (d: dayjs.Dayjs | null): boolean => {
-    if (!d || !editPeriodInfo) return true;
-    const s = dayjs(String(editPeriodInfo.start_date).slice(0, 10));
-    const e = dayjs(String(editPeriodInfo.end_date).slice(0, 10));
-    return !d.isBefore(s, 'day') && !d.isAfter(e, 'day');
+    if (!d) return true;   // emptiness is handled by the required-field check
+    if (editPeriodInfo) {
+      const s = dayjs(String(editPeriodInfo.start_date).slice(0, 10));
+      const e = dayjs(String(editPeriodInfo.end_date).slice(0, 10));
+      return !d.isBefore(s, 'day') && !d.isAfter(e, 'day');
+    }
+    return !!editPeriod && d.format('MMM-YY') === editPeriod;
   };
 
   const onEditPeriodChange = (p: string) => {

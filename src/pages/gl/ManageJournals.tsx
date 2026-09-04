@@ -1919,11 +1919,18 @@ const ManageJournals: React.FC = () => {
     const postedEditActive = postedPeriodEdit?.tabKey === tabKey;
     const postedPeriodsList = postedPeriods.length ? postedPeriods : periods;
     const postedInfo = postedPeriodsList.find(p => p.period_name_id === postedPeriodEdit?.period);
+    // FAIL CLOSED: the date must provably belong to the selected period.
+    // With calendar info: range check. Without it: the date's Mon-YY label
+    // must equal the period name. Never silently allow a mismatch.
     const postedDateOk = (d: dayjs.Dayjs | null): boolean => {
-      if (!d || !postedInfo) return true;
-      const s = dayjs(String(postedInfo.start_date).slice(0, 10));
-      const e = dayjs(String(postedInfo.end_date).slice(0, 10));
-      return !d.isBefore(s, 'day') && !d.isAfter(e, 'day');
+      if (!d) return true;   // emptiness is handled by the required-field check
+      if (postedInfo) {
+        const s = dayjs(String(postedInfo.start_date).slice(0, 10));
+        const e = dayjs(String(postedInfo.end_date).slice(0, 10));
+        return !d.isBefore(s, 'day') && !d.isAfter(e, 'day');
+      }
+      const p = postedPeriodEdit?.period;
+      return !!p && d.format('MMM-YY') === p;
     };
     const startPostedPeriodEdit = async () => {
       const d = dayjs(String(journal.effectiveDate || '').slice(0, 10));
