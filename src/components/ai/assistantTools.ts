@@ -112,6 +112,28 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'erp_api_write',
+    description:
+      'Run a writing REST call (POST/PUT/DELETE/PATCH) against the Re-ERP Oracle APEX REST API — creates or changes real data. ' +
+      'EVERY call shows the user an on-screen approval card (method, path, JSON body) and only runs if they approve. ' +
+      'Fetch and validate first, write once, and verify with a GET afterwards where practical.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        method: { type: 'string', enum: ['POST', 'PUT', 'DELETE', 'PATCH'] },
+        path: { type: 'string', description: 'Endpoint path starting with /, without the base URL' },
+        body: { type: 'object', description: 'JSON request body (omit for DELETE unless the endpoint needs one)' },
+        params: {
+          type: 'object',
+          description: 'Optional query parameters as key/value strings',
+          additionalProperties: { type: 'string' },
+        },
+        summary: { type: 'string', description: 'One short sentence for the approval card: what this write does' },
+      },
+      required: ['method', 'path'],
+    },
+  },
+  {
     name: 'navigate_to_page',
     description:
       'Navigate the ERP app to one of its pages (opens it for the user right away). ' +
@@ -375,6 +397,53 @@ export function resolveAppPath(raw: string): { ok: true; path: string } | { ok: 
   return { ok: true, path };
 }
 
+// ── ERP API write (POST/PUT/DELETE/PATCH — user-approved) ───────────────────
+export interface PendingWrite {
+  method: string;
+  path: string;
+  body?: unknown;
+  summary?: string;
+}
+
+async function erpApiWrite(
+  apexBase: string,
+  method: string,
+  path: string,
+  params: Record<string, string> | undefined,
+  body: unknown,
+  onLog: (log: ApiCallLog) => void,
+) {
+  const t0 = performance.now();
+  const done = (log: Omit<ApiCallLog, 'tool' | 'method' | 'ms'>) =>
+    onLog({ tool: 'erp_api_write', method, ms: Math.round(performance.now() - t0), ...log });
+
+  if (!path || !path.startsWith('/') || path.includes('..')) {
+    done({ url: String(path || ''), status: 'ERR', error: 'invalid path' });
+    return { error: 'Invalid path — must start with "/" and contain no "..".' };
+  }
+  const qs = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
+  const url = apexBase.replace(/\/+$/, '') + path + qs;
+  try {
+    const res = await fetch(url, {
+      method,
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    done({ url: path + qs, status: res.status, error: res.ok ? undefined : text.slice(0, 120) });
+    let data: unknown;
+    try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 1500) }; }
+    return res.ok
+      ? { status: res.status, response: data }
+      : { error: `HTTP ${res.status}`, response: data };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    done({ url: path + qs, status: 'ERR', error: msg });
+    return { error: msg };
+  }
+}
+
 // ── Tool executor ───────────────────────────────────────────────────────────
 export interface DeliveredFile {
   name: string;
@@ -393,6 +462,7 @@ export async function runAssistantTool(
   deliver: (file: DeliveredFile) => void,
   onLog: (log: ApiCallLog) => void = () => {},
   navigate?: (path: string) => void,
+  confirmWrite?: (w: PendingWrite) => Promise<boolean>,
 ): Promise<string> {
   const t0 = performance.now();
   try {
@@ -401,6 +471,24 @@ export async function runAssistantTool(
       case 'erp_api_get':
         result = await erpApiGet(apexBase, String(input.path || ''), input.params as Record<string, string> | undefined, onLog);
         break;
+      case 'erp_api_write': {
+        const method = String(input.method || 'POST').toUpperCase();
+        const path = String(input.path || '');
+        if (!confirmWrite) {
+          result = { error: 'Write access is not available in this context' };
+          break;
+        }
+        const approved = await confirmWrite({
+          method, path, body: input.body, summary: input.summary as string | undefined,
+        });
+        if (!approved) {
+          onLog({ tool: name, method, url: path, status: 'ERR', error: 'declined by user', ms: Math.round(performance.now() - t0) });
+          result = { cancelled: true, message: 'The user declined this write. Do not retry it — ask what to change instead.' };
+          break;
+        }
+        result = await erpApiWrite(apexBase, method, path, input.params as Record<string, string> | undefined, input.body, onLog);
+        break;
+      }
       case 'navigate_to_page': {
         const resolved = resolveAppPath(String(input.path || ''));
         const ms = () => Math.round(performance.now() - t0);
@@ -463,6 +551,15 @@ export function buildSystemPrompt(companyCode: string, userName: string): string
     `- Keep chat answers concise. Use markdown tables for small result sets (≤15 rows); offer an Excel download for bigger ones.\n` +
     `- When the user asks to open / go to / show a screen, call navigate_to_page with a path from APP PAGES (query params allowed where pages support them, e.g. /fa/assets?assetNumber=100009). Confirm briefly what you opened.\n` +
     `- Amounts: format with thousand separators, 2 decimals. GL periods are Mon-YY (e.g. Jun-26). Ledger currency is AED unless data says otherwise.\n\n` +
+    `WRITE ACCESS (via erp_api_write — every call requires the user's on-screen approval)\n` +
+    `- You can create/update data with POST/PUT/DELETE. Known write endpoints:\n` +
+    `  - POST /gl/journals/create — create a GL journal batch (batch + journals + lines payload, same as the app's Create Accounting)\n` +
+    `  - PUT /gl/journals/batches/{jeBatchId}/period — change a batch's period + accounting date (body: periodName, accountingDate YYYY-MM-DD, updatedBy; they must be in the same GL period)\n` +
+    `  - PUT /pc/transactions/{id}/status — set a petty cash transaction's account status (e.g. Posted)\n` +
+    `  - PUT /ar/receipts/{id}/credits — replace a MISC receipt's multiple credit lines (lines total must equal the receipt amount)\n` +
+    `  - Many collection endpoints also accept POST to create records (AR invoices/receipts, AP invoices, journals). When unsure of a payload shape, GET a similar existing record first and mirror its fields, or ask the user — never guess field names blindly.\n` +
+    `- Before any write: fetch what you need, validate (period open, totals balance, no duplicates), then propose ONE write at a time with a clear summary. After success, verify with a GET when practical and report the created/updated ids.\n` +
+    `- Never invent account combinations, amounts or ids — derive them from fetched data or the user's words. If the user declines a write, do not retry it unchanged.\n\n` +
     `AVAILABLE ENDPOINTS (via erp_api_get)\n${ENDPOINT_CATALOG}\n\n` +
     `APP PAGES (via navigate_to_page)\n${buildPageCatalog()}`
   );

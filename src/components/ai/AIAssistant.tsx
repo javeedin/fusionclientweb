@@ -12,7 +12,7 @@ import { getCurrentCompany } from '../../config/company.config';
 import { useAuth } from '../../context/AuthContext';
 import {
   ASSISTANT_TOOLS, buildSystemPrompt, downloadDeliveredFile, runAssistantTool, wordPreviewSrcDoc,
-  type ApiCallLog, type DeliveredFile, type ExcelSpec,
+  type ApiCallLog, type DeliveredFile, type ExcelSpec, type PendingWrite,
 } from './assistantTools';
 
 const handleFileDownload = async (f: DeliveredFile) => {
@@ -140,7 +140,12 @@ const ApiCallList: React.FC<{ calls: ApiCallLog[] }> = ({ calls }) => (
   <div className="ai-apilog">
     {calls.map((c, i) => (
       <div key={i} className="ai-apirow">
-        <span className={`ai-apimethod ${c.method === 'GET' ? 'get' : c.method === 'MCP' ? 'mcp' : c.method === 'NAV' ? 'nav' : 'local'}`}>{c.method}</span>
+        <span className={`ai-apimethod ${
+          c.method === 'GET' ? 'get'
+            : c.method === 'MCP' ? 'mcp'
+              : c.method === 'NAV' ? 'nav'
+                : ['POST', 'PUT', 'DELETE', 'PATCH'].includes(c.method) ? 'write'
+                  : 'local'}`}>{c.method}</span>
         <span className="ai-apiurl" title={c.url}>{c.url}</span>
         <span className={`ai-apistatus ${c.status === 200 || c.status === 'OK' ? 'ok' : 'err'}`}>
           {String(c.status)}{c.rows !== undefined ? ` · ${c.rows} rows` : ''} · {c.ms} ms
@@ -293,8 +298,14 @@ const AssistantPanel: React.FC<PanelProps> = ({
   const [apiOpen, setApiOpen] = useState<Record<number, boolean>>({});
   const [fullscreen, setFullscreen] = useState(false);
   const [preview, setPreview] = useState<DeliveredFile | null>(null);
+  const [pendingWrite, setPendingWrite] = useState<(PendingWrite & { resolve: (ok: boolean) => void }) | null>(null);
   const msgsRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+
+  const answerWrite = (ok: boolean) => {
+    pendingWrite?.resolve(ok);
+    setPendingWrite(null);
+  };
 
   const cur = store.convs.find(c => c.id === curId) ?? null;
   const msgs = useMemo(() => cur?.msgs ?? [], [cur]);
@@ -395,6 +406,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
                 : await runAssistantTool(
                     blk.name, blk.input as Record<string, unknown>, APEX, f => delivered.push(f), onLog,
                     p => { navigate(p); setFullscreen(false); },
+                    w => new Promise<boolean>(resolve => setPendingWrite({ ...w, resolve })),
                   );
               results.push({ type: 'tool_result', tool_use_id: blk.id, content: out });
             }
@@ -613,6 +625,26 @@ const AssistantPanel: React.FC<PanelProps> = ({
       </div>
 
       {status && <div className="ai-status"><ApiOutlined style={{ marginRight: 6 }} />{status}</div>}
+
+      {pendingWrite && (
+        <div className="ai-writecard">
+          <div className="ai-writehead">⚠ Approve this change to the database?</div>
+          {pendingWrite.summary && <div style={{ fontSize: 12.5, marginBottom: 6 }}>{pendingWrite.summary}</div>}
+          <div style={{ marginBottom: 6 }}>
+            <span className="ai-apimethod write" style={{ marginRight: 6 }}>{pendingWrite.method}</span>
+            <code style={{ fontSize: 12 }}>{pendingWrite.path}</code>
+          </div>
+          {pendingWrite.body !== undefined && (
+            <pre className="ai-pre" style={{ maxHeight: 150, overflow: 'auto', marginTop: 0 }}>
+              {JSON.stringify(pendingWrite.body, null, 2).slice(0, 6000)}
+            </pre>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <Button size="small" onClick={() => answerWrite(false)}>Cancel</Button>
+            <Button size="small" type="primary" danger onClick={() => answerWrite(true)}>Approve &amp; Run</Button>
+          </div>
+        </div>
+      )}
 
       {showSettings && (
         <div className="ai-settings">
@@ -869,6 +901,9 @@ const AIAssistant: React.FC = () => {
         .ai-apimethod.local{background:#0572CE;color:#fff}
         .ai-apimethod.mcp{background:#7B5EA7;color:#fff}
         .ai-apimethod.nav{background:#D4A800;color:#fff}
+        .ai-apimethod.write{background:#C74634;color:#fff}
+        .ai-writecard{margin:0 12px 8px;padding:10px 12px;border:1px solid #E7B8AF;border-radius:10px;background:#FBF1EF}
+        .ai-writehead{font-weight:700;font-size:13px;color:#9E3527;margin-bottom:6px}
         .ai-apiurl{word-break:break-all;color:#f0e6e2;flex:1;min-width:120px}
         .ai-apistatus{white-space:nowrap}
         .ai-apistatus.ok{color:#6fdc9c}
