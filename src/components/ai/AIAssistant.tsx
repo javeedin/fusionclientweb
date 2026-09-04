@@ -6,6 +6,7 @@ import {
   PlusOutlined, PlusSquareOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import Anthropic from '@anthropic-ai/sdk';
+import { useNavigate } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { getCurrentCompany } from '../../config/company.config';
 import { useAuth } from '../../context/AuthContext';
@@ -111,7 +112,7 @@ const ApiCallList: React.FC<{ calls: ApiCallLog[] }> = ({ calls }) => (
   <div className="ai-apilog">
     {calls.map((c, i) => (
       <div key={i} className="ai-apirow">
-        <span className={`ai-apimethod ${c.method === 'GET' ? 'get' : c.method === 'MCP' ? 'mcp' : 'local'}`}>{c.method}</span>
+        <span className={`ai-apimethod ${c.method === 'GET' ? 'get' : c.method === 'MCP' ? 'mcp' : c.method === 'NAV' ? 'nav' : 'local'}`}>{c.method}</span>
         <span className="ai-apiurl" title={c.url}>{c.url}</span>
         <span className={`ai-apistatus ${c.status === 200 || c.status === 'OK' ? 'ok' : 'err'}`}>
           {String(c.status)}{c.rows !== undefined ? ` · ${c.rows} rows` : ''} · {c.ms} ms
@@ -265,6 +266,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
   const [fullscreen, setFullscreen] = useState(false);
   const [preview, setPreview] = useState<DeliveredFile | null>(null);
   const msgsRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
   const cur = store.convs.find(c => c.id === curId) ?? null;
   const msgs = useMemo(() => cur?.msgs ?? [], [cur]);
@@ -364,6 +366,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
                 ? await runMcpTool(blk.name, blk.input as Record<string, unknown>)
                 : await runAssistantTool(
                     blk.name, blk.input as Record<string, unknown>, APEX, f => delivered.push(f), onLog,
+                    p => { navigate(p); setFullscreen(false); },
                   );
               results.push({ type: 'tool_result', tool_use_id: blk.id, content: out });
             }
@@ -394,7 +397,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
       setStatus('');
       setLiveCalls([]);
     }
-  }, [input, busy, apiKey, resolveKey, curId, store, model, userName, index, mcpTools, mcpSummary]);
+  }, [input, busy, apiKey, resolveKey, curId, store, model, userName, index, mcpTools, mcpSummary, navigate]);
 
   const historyMenu = useMemo(() => ({
     items: store.convs.length
@@ -416,7 +419,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
     'What is the AP invoice status summary?',
     'Show open GL periods',
     'Top 10 suppliers by outstanding balance — export to Excel',
-    'Trial balance for Jun-26, download as Excel',
+    'Open the Manage Journals page',
   ];
 
   // stack panels right → left
@@ -837,6 +840,7 @@ const AIAssistant: React.FC = () => {
         .ai-apimethod.get{background:#1D7B4D;color:#fff}
         .ai-apimethod.local{background:#0572CE;color:#fff}
         .ai-apimethod.mcp{background:#7B5EA7;color:#fff}
+        .ai-apimethod.nav{background:#D4A800;color:#fff}
         .ai-apiurl{word-break:break-all;color:#f0e6e2;flex:1;min-width:120px}
         .ai-apistatus{white-space:nowrap}
         .ai-apistatus.ok{color:#6fdc9c}

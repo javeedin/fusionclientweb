@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+import { getFilteredMenuItems } from '../../data/menuItems';
 
 // ── Endpoint catalog (goes into the system prompt) ──────────────────────────
 // Read-only GET services the assistant may call through the erp_api_get tool.
@@ -108,6 +109,20 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ['filename', 'sheets'],
+    },
+  },
+  {
+    name: 'navigate_to_page',
+    description:
+      'Navigate the ERP app to one of its pages (opens it for the user right away). ' +
+      'Use a path from the APP PAGES catalog in the system prompt; query parameters may be appended when a page supports them ' +
+      '(e.g. "/fa/assets?assetNumber=100009"). Use when the user asks to open, go to, or show a page or screen.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'App route starting with /, from the APP PAGES catalog (query string allowed)' },
+      },
+      required: ['path'],
     },
   },
   {
@@ -329,6 +344,20 @@ async function erpApiGet(
   }
 }
 
+// ── App navigation ──────────────────────────────────────────────────────────
+// Only routes from the menu catalog (plus an optional query string) are allowed.
+export function resolveAppPath(raw: string): { ok: true; path: string } | { ok: false; error: string } {
+  const path = String(raw || '').trim();
+  if (!path.startsWith('/')) return { ok: false, error: 'Path must start with "/"' };
+  const base = path.split('?')[0].replace(/\/+$/, '') || '/';
+  const known = getFilteredMenuItems().some(m => {
+    const mp = m.path.replace(/\/+$/, '');
+    return base === mp || base.startsWith(mp + '/');
+  });
+  if (!known) return { ok: false, error: `Unknown page "${base}" — use a path from the APP PAGES catalog` };
+  return { ok: true, path };
+}
+
 // ── Tool executor ───────────────────────────────────────────────────────────
 export interface DeliveredFile {
   name: string;
@@ -346,6 +375,7 @@ export async function runAssistantTool(
   apexBase: string,
   deliver: (file: DeliveredFile) => void,
   onLog: (log: ApiCallLog) => void = () => {},
+  navigate?: (path: string) => void,
 ): Promise<string> {
   const t0 = performance.now();
   try {
@@ -354,6 +384,22 @@ export async function runAssistantTool(
       case 'erp_api_get':
         result = await erpApiGet(apexBase, String(input.path || ''), input.params as Record<string, string> | undefined, onLog);
         break;
+      case 'navigate_to_page': {
+        const resolved = resolveAppPath(String(input.path || ''));
+        const ms = () => Math.round(performance.now() - t0);
+        if (!resolved.ok) {
+          onLog({ tool: name, method: 'NAV', url: String(input.path || ''), status: 'ERR', error: resolved.error, ms: ms() });
+          result = { error: resolved.error };
+        } else if (!navigate) {
+          onLog({ tool: name, method: 'NAV', url: resolved.path, status: 'ERR', error: 'navigation unavailable', ms: ms() });
+          result = { error: 'Navigation is not available in this context' };
+        } else {
+          navigate(resolved.path);
+          onLog({ tool: name, method: 'NAV', url: resolved.path, status: 'OK', ms: ms() });
+          result = { status: 'navigated', path: resolved.path, note: 'The page is now open for the user.' };
+        }
+        break;
+      }
       case 'create_excel_report': {
         const spec = input as unknown as ExcelSpec;
         const blob = await buildExcel(spec);
@@ -398,7 +444,21 @@ export function buildSystemPrompt(companyCode: string, userName: string): string
     `- Chain calls when needed (e.g. look up a supplier number first, then fetch its invoices).\n` +
     `- If an endpoint errors or returns nothing, say so briefly, and try a sensible alternative endpoint or filter once before giving up.\n` +
     `- Keep chat answers concise. Use markdown tables for small result sets (≤15 rows); offer an Excel download for bigger ones.\n` +
+    `- When the user asks to open / go to / show a screen, call navigate_to_page with a path from APP PAGES (query params allowed where pages support them, e.g. /fa/assets?assetNumber=100009). Confirm briefly what you opened.\n` +
     `- Amounts: format with thousand separators, 2 decimals. GL periods are Mon-YY (e.g. Jun-26). Ledger currency is AED unless data says otherwise.\n\n` +
-    `AVAILABLE ENDPOINTS (via erp_api_get)\n${ENDPOINT_CATALOG}`
+    `AVAILABLE ENDPOINTS (via erp_api_get)\n${ENDPOINT_CATALOG}\n\n` +
+    `APP PAGES (via navigate_to_page)\n${buildPageCatalog()}`
   );
+}
+
+// Compact "path — label" catalog grouped by module, for the system prompt
+function buildPageCatalog(): string {
+  const byModule = new Map<string, string[]>();
+  for (const m of getFilteredMenuItems()) {
+    if (!byModule.has(m.moduleLabel)) byModule.set(m.moduleLabel, []);
+    byModule.get(m.moduleLabel)!.push(`${m.path} — ${m.label}`);
+  }
+  return Array.from(byModule.entries())
+    .map(([label, pages]) => `${label.toUpperCase()}\n${pages.map(p => `- ${p}`).join('\n')}`)
+    .join('\n');
 }
