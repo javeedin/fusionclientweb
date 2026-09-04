@@ -795,7 +795,7 @@ const AIAssistant: React.FC = () => {
         .ai-xltable tr:nth-child(even) td{background:#FBF4F2}
         .ai-xltable tr.totals td{font-weight:700;background:#F3E6E3;border-top:2px double #C74634}
         @keyframes aiIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-        .ai-head{background:linear-gradient(135deg,#0572CE,#054E92);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:6px;flex-shrink:0}
+        .ai-head{background:linear-gradient(135deg,#C74634,#9E3527);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:6px;flex-shrink:0}
         .ai-head .anticon{color:#fff}
         .ai-msgs{flex:1;overflow-y:auto;padding:14px;background:#FAF9F8}
         .ai-row{display:flex;margin-bottom:10px}
