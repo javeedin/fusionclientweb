@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Dropdown, Input, Select, Tooltip, Typography, message as antMessage } from 'antd';
+import { Button, Dropdown, Input, Modal, Popconfirm, Select, Tag, Tooltip, Typography, message as antMessage } from 'antd';
 import {
-  ApiOutlined, CloseOutlined, CommentOutlined, CompressOutlined, DeleteOutlined, DownloadOutlined,
+  ApiOutlined, BulbOutlined, CloseOutlined, CommentOutlined, CompressOutlined, DeleteOutlined, DownloadOutlined,
   ExpandOutlined, EyeOutlined, FileExcelOutlined, FileWordOutlined, HistoryOutlined,
-  PlusOutlined, PlusSquareOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
+  PlusOutlined, PlusSquareOutlined, ReloadOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import Anthropic from '@anthropic-ai/sdk';
 import { useNavigate } from 'react-router-dom';
@@ -14,7 +14,10 @@ import {
   ASSISTANT_TOOLS, buildSystemPrompt, downloadDeliveredFile, runAssistantTool, wordPreviewSrcDoc,
   type ApiCallLog, type DeliveredFile, type ExcelSpec, type PendingWrite,
 } from './assistantTools';
-import { buildRecipesPrompt, fetchTrainingRecipes } from './aiTraining';
+import {
+  buildRecipesPrompt, deleteTrainingRecipe, fetchAllTrainingRecipes, fetchTrainingRecipes,
+  updateTrainingRecipe, type TrainingRecipe,
+} from './aiTraining';
 
 const handleFileDownload = async (f: DeliveredFile) => {
   const ok = await downloadDeliveredFile(f);
@@ -300,8 +303,15 @@ const AssistantPanel: React.FC<PanelProps> = ({
   const [fullscreen, setFullscreen] = useState(false);
   const [preview, setPreview] = useState<DeliveredFile | null>(null);
   const [pendingWrite, setPendingWrite] = useState<(PendingWrite & { resolve: (ok: boolean) => void }) | null>(null);
+  const [teachings, setTeachings] = useState<TrainingRecipe[]>([]);
+  const [teachOpen, setTeachOpen] = useState<TrainingRecipe | null>(null);
   const msgsRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+
+  const loadTeachings = useCallback(async () => {
+    setTeachings(await fetchAllTrainingRecipes());
+  }, []);
+  useEffect(() => { if (fullscreen) loadTeachings(); }, [fullscreen, loadTeachings]);
 
   const answerWrite = (ok: boolean) => {
     pendingWrite?.resolve(ok);
@@ -562,6 +572,34 @@ const AssistantPanel: React.FC<PanelProps> = ({
               </div>
             ))}
           </div>
+
+          {/* ── Teachings (learned recipes) ── */}
+          <div className="ai-side-head" style={{ borderTop: '1px solid #EFEAE8' }}>
+            <span><BulbOutlined style={{ color: '#7B5EA7' }} /> Teachings ({teachings.length})</span>
+            <Tooltip title="Refresh teachings">
+              <Button size="small" type="text" icon={<ReloadOutlined />} onClick={loadTeachings} />
+            </Tooltip>
+          </div>
+          <div className="ai-side-list" style={{ flex: '0 0 auto', maxHeight: '34%' }}>
+            {!teachings.length && (
+              <div className="ai-side-empty">
+                Nothing taught yet — use the Teach AI button on a page, or tell the assistant “learn this: …”
+              </div>
+            )}
+            {teachings.map(t => (
+              <div
+                key={t.recipeId}
+                className="ai-side-item"
+                style={t.enabled === 'N' ? { opacity: .45 } : undefined}
+                onClick={() => setTeachOpen(t)}
+              >
+                <div className="ai-side-title"><BulbOutlined style={{ fontSize: 11, color: '#7B5EA7', marginRight: 4 }} />{t.recipeName}</div>
+                <div className="ai-side-sub">
+                  {t.module || '—'} · {t.method}{t.enabled === 'N' ? ' · disabled' : ''}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -708,6 +746,60 @@ const AssistantPanel: React.FC<PanelProps> = ({
         <PreviewPanel files={convFiles} selected={preview} onSelect={setPreview} />
       )}
       </div>
+
+      {/* ── Teaching detail dialog ── */}
+      <Modal
+        open={!!teachOpen}
+        onCancel={() => setTeachOpen(null)}
+        title={<span><BulbOutlined style={{ color: '#7B5EA7' }} /> {teachOpen?.recipeName}</span>}
+        width={560}
+        footer={teachOpen && [
+          <Button key="use" type="primary" onClick={() => {
+            setInput(`Use the "${teachOpen.recipeName}" recipe: `);
+            setTeachOpen(null);
+          }}>Use in chat</Button>,
+          <Button key="toggle" onClick={async () => {
+            const next = teachOpen.enabled === 'N' ? 'Y' : 'N';
+            const r = await updateTrainingRecipe(teachOpen.recipeId!, { enabled: next });
+            if (r.ok) { antMessage.success(next === 'Y' ? 'Recipe enabled' : 'Recipe disabled'); setTeachOpen(null); loadTeachings(); }
+            else antMessage.error(r.message);
+          }}>{teachOpen.enabled === 'N' ? 'Enable' : 'Disable'}</Button>,
+          <Popconfirm key="del" title="Delete this teaching permanently?" onConfirm={async () => {
+            const r = await deleteTrainingRecipe(teachOpen.recipeId!);
+            if (r.ok) { antMessage.success('Recipe deleted'); setTeachOpen(null); loadTeachings(); }
+            else antMessage.error(r.message);
+          }}>
+            <Button danger>Delete</Button>
+          </Popconfirm>,
+        ]}
+      >
+        {teachOpen && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
+            {teachOpen.description && <div>{teachOpen.description}</div>}
+            <div>
+              <Tag color="green">{teachOpen.method}</Tag>
+              <Text code style={{ fontSize: 12 }}>{teachOpen.urlTemplate}</Text>
+            </div>
+            {!!teachOpen.params?.length && (
+              <div style={{ background: '#FAFAFA', border: '1px solid #EEE', borderRadius: 8, padding: '6px 10px', fontSize: 12, maxHeight: 150, overflowY: 'auto' }}>
+                {teachOpen.params.map(p => (
+                  <div key={p.name}>
+                    <Text code>{p.name}</Text>{p.required ? ' *' : ''} — {p.label || p.name}
+                  </div>
+                ))}
+              </div>
+            )}
+            {teachOpen.example && Object.keys(teachOpen.example).length > 0 && (
+              <Text type="secondary" style={{ fontSize: 11, wordBreak: 'break-all' }}>
+                Example: ?{new URLSearchParams(teachOpen.example).toString()}
+              </Text>
+            )}
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              Taught by {teachOpen.createdBy || '—'}{teachOpen.appPath ? ` · page ${teachOpen.appPath}` : ''}
+            </Text>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

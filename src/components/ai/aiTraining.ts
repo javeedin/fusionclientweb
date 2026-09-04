@@ -43,18 +43,8 @@ export async function fetchTrainingRecipes(force = false): Promise<TrainingRecip
     const res = await fetch(`${APEX}/ai/training`, { cache: 'no-store', headers: { Accept: 'application/json' } });
     if (!res.ok) return cache?.recipes ?? [];
     const data = await res.json();
-    const recipes: TrainingRecipe[] = (data.items || []).map((r: Record<string, unknown>) => ({
-      recipeId: r.recipeId as number,
-      recipeName: String(r.recipeName || ''),
-      description: r.description as string | undefined,
-      module: r.module as string | undefined,
-      method: String(r.method || 'GET'),
-      urlTemplate: String(r.urlTemplate || ''),
-      params: parseJson<RecipeParam[]>(r.paramsJson, []),
-      example: parseJson<Record<string, string>>(r.exampleJson, {}),
-      appPath: r.appPath as string | undefined,
-      enabled: r.enabled as string | undefined,
-    })).filter((r: TrainingRecipe) => r.recipeName && r.urlTemplate);
+    const recipes: TrainingRecipe[] = (data.items || []).map(mapRecipe)
+      .filter((r: TrainingRecipe) => r.recipeName && r.urlTemplate);
     cache = { at: Date.now(), recipes };
     return recipes;
   } catch {
@@ -63,6 +53,61 @@ export async function fetchTrainingRecipes(force = false): Promise<TrainingRecip
 }
 
 export const TRAINING_ENDPOINT = `${APEX}/ai/training`;
+
+const mapRecipe = (r: Record<string, unknown>): TrainingRecipe => ({
+  recipeId: r.recipeId as number,
+  recipeName: String(r.recipeName || ''),
+  description: r.description as string | undefined,
+  module: r.module as string | undefined,
+  method: String(r.method || 'GET'),
+  urlTemplate: String(r.urlTemplate || ''),
+  params: parseJson<RecipeParam[]>(r.paramsJson, []),
+  example: parseJson<Record<string, string>>(r.exampleJson, {}),
+  appPath: r.appPath as string | undefined,
+  enabled: r.enabled as string | undefined,
+  createdBy: r.createdBy as string | undefined,
+});
+
+// Full list including disabled — for the Teachings management UI (no cache)
+export async function fetchAllTrainingRecipes(): Promise<TrainingRecipe[]> {
+  try {
+    const res = await fetch(`${TRAINING_ENDPOINT}?all=Y`, { cache: 'no-store', headers: { Accept: 'application/json' } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.items || []).map(mapRecipe).filter((r: TrainingRecipe) => r.recipeName && r.urlTemplate);
+  } catch {
+    return [];
+  }
+}
+
+export async function updateTrainingRecipe(
+  recipeId: number,
+  fields: Partial<Pick<TrainingRecipe, 'recipeName' | 'description' | 'module' | 'method' | 'urlTemplate' | 'appPath' | 'enabled'>>,
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const res = await fetch(`${TRAINING_ENDPOINT}/${recipeId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ ...fields, updatedBy: 'APP' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.success !== false) { cache = null; return { ok: true, message: data.message || 'Updated' }; }
+    return { ok: false, message: data.message || `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function deleteTrainingRecipe(recipeId: number): Promise<{ ok: boolean; message: string }> {
+  try {
+    const res = await fetch(`${TRAINING_ENDPOINT}/${recipeId}`, { method: 'DELETE', headers: { Accept: 'application/json' } });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.success !== false) { cache = null; return { ok: true, message: data.message || 'Deleted' }; }
+    return { ok: false, message: data.message || `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 // The exact JSON body the POST sends — also shown in the Teach AI dialog's
 // API details section so failures can be debugged / replayed in APEX.
