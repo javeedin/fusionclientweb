@@ -1,0 +1,43 @@
+# LibreChat configuration — Anthropic Claude + Oracle GL MCP server
+# Docs: https://www.librechat.ai/docs/configuration/librechat_yaml
+version: 1.2.1
+cache: true
+
+interface:
+  customWelcome: 'Oracle ERP Assistant — Claude with live GL tools (MCP)'
+  # keep the UI lean
+  privacyPolicy:
+    externalUrl: ''
+    openNewTab: true
+
+# Only expose the Anthropic endpoint (uses ANTHROPIC_API_KEY from .env)
+endpoints:
+  anthropic:
+    titleConvo: true
+    titleModel: claude-3-5-haiku-20241022
+    models:
+      default:
+        - claude-sonnet-4-5
+        - claude-opus-4-5
+        - claude-3-5-haiku-20241022
+      fetch: true
+    modelDisplayLabel: 'Claude (Oracle ERP)'
+
+# ── MCP servers ─────────────────────────────────────────────────────────────
+# gl-mcp-server.cjs runs in stdio mode (--stdio) inside the LibreChat
+# container; ../electron is mounted at /app/mcp by docker-compose.yml.
+mcpServers:
+  oracle-gl:
+    type: stdio
+    command: node
+    args:
+      - /app/mcp/gl-mcp-server.cjs
+      - --stdio
+    env:
+      ORACLE_BASE_URL: '${ORACLE_BASE_URL}'
+      ORACLE_USERNAME: '${ORACLE_USERNAME}'
+      ORACLE_PASSWORD: '${ORACLE_PASSWORD}'
+      SKIP_AUTH: '${SKIP_AUTH}'
+    timeout: 120000
+    initTimeout: 30000
+    chatMenu: true

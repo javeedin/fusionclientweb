@@ -8,7 +8,7 @@ import {
   ThunderboltOutlined, WalletOutlined, AuditOutlined, FundOutlined,
   ShopOutlined, HomeOutlined, SettingOutlined, ArrowUpOutlined, ArrowDownOutlined,
   EditOutlined, SwapOutlined, CalculatorOutlined, BarChartOutlined, TeamOutlined,
-  CreditCardOutlined, ReconciliationOutlined,
+  CreditCardOutlined, ReconciliationOutlined, RobotOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -49,6 +49,7 @@ const MODULES = [
   { id: 'supp', label: 'Support',             icon: <SafetyCertificateOutlined />, path: '/support', color: REDWOOD.neutral600, desc: 'Tickets · Issues' },
   { id: 'admin',label: 'Administration',      icon: <SettingOutlined />,     path: '/admin',         color: REDWOOD.neutral800, desc: 'Users · Settings · AI' },
   { id: 'sync', label: 'Oracle Sync',         icon: <SyncOutlined />,        path: '/sync',          color: REDWOOD.primary,   desc: 'Sync GL · AP · AR · Assets' },
+  { id: 'librechat', label: 'LibreChat',      icon: <RobotOutlined />,       path: '/librechat',     color: REDWOOD.purple,    desc: 'Claude Chat · GL MCP Tools' },
 ];
 
 const QUICK_ACTIONS = [

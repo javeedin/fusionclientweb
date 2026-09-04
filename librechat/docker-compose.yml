@@ -1,0 +1,38 @@
+# LibreChat + Oracle GL MCP server
+# See README.md in this folder for setup. Requires a .env file (copy .env.example).
+services:
+  api:
+    image: ghcr.io/danny-avila/librechat:latest
+    container_name: librechat-api
+    ports:
+      - '${PORT:-3080}:3080'
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - MONGO_URI=mongodb://mongodb:27017/LibreChat
+      - CONFIG_PATH=/app/librechat.yaml
+    volumes:
+      # LibreChat config (endpoints + MCP servers)
+      - ./librechat.yaml:/app/librechat.yaml:ro
+      # Oracle MCP servers — gl-mcp-server.cjs needs its siblings
+      # (mcp-call-logger.cjs, ords-token.cjs), so mount the whole folder
+      - ../electron:/app/mcp:ro
+      - librechat_images:/app/client/public/images
+      - librechat_logs:/app/api/logs
+
+  mongodb:
+    image: mongo:7
+    container_name: librechat-mongodb
+    restart: unless-stopped
+    command: mongod --noauth
+    volumes:
+      - librechat_mongo:/data/db
+
+volumes:
+  librechat_mongo:
+  librechat_images:
+  librechat_logs:
