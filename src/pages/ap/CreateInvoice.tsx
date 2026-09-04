@@ -1261,6 +1261,17 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
     return result;
   }, [form, lines, headerValues]);
 
+  // ── Journal period/date source of truth ──────────────────────────────────
+  // Header Accounting Date first, Invoice Date as fallback. Returns null when
+  // neither is usable — callers must ABORT with an error instead of silently
+  // booking to today's period (the cause of Aug-period journals on Jul invoices).
+  const resolveAcctPeriod = useCallback((): { acctDate: string; periodName: string } | null => {
+    const raw = form.getFieldValue('accountingDate') || form.getFieldValue('invoiceDate');
+    const dj  = raw ? dayjs(raw) : null;
+    if (!dj || !dj.isValid()) return null;
+    return { acctDate: dj.format('YYYY-MM-DD'), periodName: dj.format('MMM-YY') };
+  }, [form]);
+
   // ── SLA: Create Accounting ───────────────────────────────────────────────
   const handleCreateAccounting = useCallback(async () => {
     const invoiceId = savedInvoiceId || initialData?.invoiceId;
@@ -1268,14 +1279,12 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
     if (slaStatus === 'POSTED') { message.warning('Accounting is already posted and locked.'); return; }
 
     const invoiceNumber = form.getFieldValue('invoiceNumber');
-    const invoiceDate   = form.getFieldValue('invoiceDate');
     const currency      = headerValues.invoiceCurrency || form.getFieldValue('invoiceCurrency') || 'AED';
     const bu            = form.getFieldValue('businessUnit') || '';
-    const acctDate      = invoiceDate ? dayjs(invoiceDate).format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD');
-    // Oracle GL period format is Mon-YY (e.g. Mar-26), NOT Mar-2026
-    const d             = invoiceDate ? dayjs(invoiceDate).toDate() : new Date();
-    const months        = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const periodName    = `${months[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
+    // Period/date from Accounting Date (fallback Invoice Date) — never today
+    const resolved = resolveAcctPeriod();
+    if (!resolved) { message.error('Accounting/Invoice date is missing — save the invoice with a date before creating accounting.'); return; }
+    const { acctDate, periodName } = resolved;
 
     const slaLines_ = buildSlaLines();
     if (slaLines_.length === 0) { message.warning('No invoice lines with amounts to account.'); return; }
@@ -1336,10 +1345,12 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
         let created = 0;
         await Promise.all(pending.map(async (record) => {
           try {
-            const acctDate_   = record.applicationAccountingDate ? dayjs(record.applicationAccountingDate).format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD');
-            const d_          = record.applicationAccountingDate ? dayjs(record.applicationAccountingDate).toDate() : new Date();
-            const months_     = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-            const periodName_ = `${months_[d_.getMonth()]}-${String(d_.getFullYear()).slice(-2)}`;
+            // Application accounting date first; invoice accounting date as
+            // fallback — never today's date.
+            const dj_ = dayjs(record.applicationAccountingDate || acctDate);
+            if (!dj_.isValid()) return;
+            const acctDate_   = dj_.format('YYYY-MM-DD');
+            const periodName_ = dj_.format('MMM-YY');
             const slaPayload_ = {
               header: { moduleName: 'AP', sourceTable: 'RR_AP_APPLIED_PREPAYMENTS', sourceId: record.applicationId,
                 sourceNumber: record.prepaymentNumber, sourceType: 'APPLIED', eventTypeCode: 'PREPAYMENT_APPLIED',
@@ -1416,14 +1427,12 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
           let created = 0;
           await Promise.all(pending.map(async (record) => {
             try {
-              const acctDate_  = record.applicationAccountingDate
-                ? dayjs(record.applicationAccountingDate).format('YYYY-MM-DD')
-                : dayjs().format('YYYY-MM-DD');
-              const d_         = record.applicationAccountingDate
-                ? dayjs(record.applicationAccountingDate).toDate()
-                : new Date();
-              const months_    = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-              const periodName_ = `${months_[d_.getMonth()]}-${String(d_.getFullYear()).slice(-2)}`;
+              // Application accounting date first; invoice accounting date as
+              // fallback — never today's date.
+              const djApp_ = dayjs(record.applicationAccountingDate || resolveAcctPeriod()?.acctDate);
+              if (!djApp_.isValid()) return;
+              const acctDate_   = djApp_.format('YYYY-MM-DD');
+              const periodName_ = djApp_.format('MMM-YY');
 
               const slaPayload = {
                 header: {
@@ -1567,15 +1576,18 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
 
     setSlaPosting(true);
     try {
-      const invoiceDate    = form.getFieldValue('invoiceDate');
       const currency       = headerValues.invoiceCurrency || form.getFieldValue('invoiceCurrency') || 'AED';
       const invoiceNumber  = form.getFieldValue('invoiceNumber');
       const bu             = form.getFieldValue('businessUnit') || '';
       const conversionRate = Number(headerValues.conversionRate || form.getFieldValue('conversionRate') || 1);
-      const acctDate       = invoiceDate ? dayjs(invoiceDate).format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD');
-      const d              = invoiceDate ? dayjs(invoiceDate).toDate() : new Date();
-      const months         = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const periodName     = `${months[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
+      // Period/date from Accounting Date (fallback Invoice Date) — never today
+      const resolved = resolveAcctPeriod();
+      if (!resolved) {
+        message.error('Accounting/Invoice date is missing — cannot post to GL.');
+        setSlaPosting(false);
+        return;
+      }
+      const { acctDate, periodName } = resolved;
 
       // Validate period format: must be Mon-YY (e.g. Apr-26)
       if (!/^[A-Z][a-z]{2}-\d{2}$/.test(periodName)) {
@@ -1819,12 +1831,12 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
           if (!appSlaInfo?.headerId) return;
           try {
             const currency   = record.currency;
-            const acctDate   = record.applicationAccountingDate
-              ? dayjs(record.applicationAccountingDate).format('YYYY-MM-DD')
-              : dayjs().format('YYYY-MM-DD');
-            const d          = record.applicationAccountingDate ? dayjs(record.applicationAccountingDate).toDate() : new Date();
-            const months_    = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-            const periodName_ = `${months_[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
+            // Application accounting date first; invoice accounting date as
+            // fallback — never today's date.
+            const djApp = dayjs(record.applicationAccountingDate || resolveAcctPeriod()?.acctDate);
+            if (!djApp.isValid()) return;
+            const acctDate    = djApp.format('YYYY-MM-DD');
+            const periodName_ = djApp.format('MMM-YY');
             if (!/^[A-Z][a-z]{2}-\d{2}$/.test(periodName_)) return; // skip invalid period
 
             const fullData_    = await getAccounting('RR_AP_APPLIED_PREPAYMENTS', record.applicationId);
@@ -2111,12 +2123,16 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
     try {
       const bu         = form.getFieldValue('businessUnit') || '';
       const currency   = record.currency;
-      const acctDate   = record.applicationAccountingDate
-        ? dayjs(record.applicationAccountingDate).format('YYYY-MM-DD')
-        : dayjs().format('YYYY-MM-DD');
-      const d          = record.applicationAccountingDate ? dayjs(record.applicationAccountingDate).toDate() : new Date();
-      const months     = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const periodName = `${months[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
+      // Application accounting date first; invoice accounting date as
+      // fallback — never today's date.
+      const djApp = dayjs(record.applicationAccountingDate || resolveAcctPeriod()?.acctDate);
+      if (!djApp.isValid()) {
+        message.error('No accounting date available for this prepayment application.');
+        setAppSlaLoadingId(null);
+        return;
+      }
+      const acctDate   = djApp.format('YYYY-MM-DD');
+      const periodName = djApp.format('MMM-YY');
 
       // Validate period format: must be Mon-YY (e.g. Apr-26)
       if (!/^[A-Z][a-z]{2}-\d{2}$/.test(periodName)) {
@@ -3065,10 +3081,12 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
             if (fetchedLines.length > 0) {
               const invoiceNumber = form.getFieldValue('invoiceNumber');
               const currency      = headerValues.invoiceCurrency || form.getFieldValue('invoiceCurrency') || 'AED';
-              const months        = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-              const d             = new Date();
-              const periodName    = `${months[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
-              const acctDate      = dayjs().format('YYYY-MM-DD');
+              // Period/date from Accounting Date (fallback Invoice Date).
+              // Previously hardcoded to TODAY — the cause of current-month
+              // periods on journals for invoices dated in earlier months.
+              const resolved = resolveAcctPeriod();
+              if (!resolved) throw new Error('Accounting/Invoice date is missing — cannot post to GL.');
+              const { acctDate, periodName } = resolved;
               const legalEntity   = fetchedLines.find((l: any) => l.legalEntity)?.legalEntity || '';
 
               const glLines: GlPostingLine[] = fetchedLines.map((l: any) => ({

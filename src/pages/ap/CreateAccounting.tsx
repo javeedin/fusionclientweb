@@ -511,9 +511,12 @@ const CreateAccounting: React.FC = () => {
 
           if (mode === 'FINAL' && result.headerId) {
             // Post to GL then stamp SLA
+            // Guard: dayjs(undefined) silently returns TODAY — a missing
+            // invoice date must fail loudly, not book to the current period.
+            if (!inv.invoiceDate) throw new Error(`Invoice ${inv.invoiceNumber}: invoice date is missing — cannot derive GL period.`);
             const invoiceDateD = dayjs(inv.invoiceDate);
-            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-            const periodName = `${months[invoiceDateD.month()]}-${String(invoiceDateD.year()).slice(-2)}`;
+            if (!invoiceDateD.isValid()) throw new Error(`Invoice ${inv.invoiceNumber}: invalid invoice date "${inv.invoiceDate}".`);
+            const periodName = invoiceDateD.format('MMM-YY');
             const currency   = inv.currency;
             const totalDr    = invoiceLines.reduce((s, l) => s + l.amount, 0);
             const glPayload  = {
@@ -609,9 +612,11 @@ const CreateAccounting: React.FC = () => {
           }
 
           if (mode === 'FINAL' && lastHeaderId) {
+            // Guard: dayjs(undefined) silently returns TODAY
+            if (!pmt.paymentDate) throw new Error(`Payment ${pmt.paymentNumber}: payment date is missing — cannot derive GL period.`);
             const pmtDateD   = dayjs(pmt.paymentDate);
-            const months     = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-            const periodName = `${months[pmtDateD.month()]}-${String(pmtDateD.year()).slice(-2)}`;
+            if (!pmtDateD.isValid()) throw new Error(`Payment ${pmt.paymentNumber}: invalid payment date "${pmt.paymentDate}".`);
+            const periodName = pmtDateD.format('MMM-YY');
             const totalAmt   = pmt.paymentAmount;
             const glPayload  = {
               batch: {
@@ -716,10 +721,12 @@ const CreateAccounting: React.FC = () => {
         const firstSeg       = liabilityDist.split('-')[0] || '02';
         const prepaymentDist = `${firstSeg}-00-00-1223108-0000-000-00-000-000`;
 
-        const acctDateD  = row.accountingDate ? dayjs(row.accountingDate) : dayjs();
+        // Guard: never fall back to today's date for the GL period
+        if (!row.accountingDate) throw new Error(`Prepayment application ${row.applicationId ?? ''}: accounting date is missing — cannot derive GL period.`);
+        const acctDateD  = dayjs(row.accountingDate);
+        if (!acctDateD.isValid()) throw new Error(`Prepayment application ${row.applicationId ?? ''}: invalid accounting date "${row.accountingDate}".`);
         const acctDate   = acctDateD.format('YYYY-MM-DD');
-        const months     = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        const periodName = `${months[acctDateD.month()]}-${String(acctDateD.year()).slice(-2)}`;
+        const periodName = acctDateD.format('MMM-YY');
 
         const slaPayload = {
           header: {
