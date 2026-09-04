@@ -344,6 +344,23 @@ async function erpApiGet(
   }
 }
 
+// Re-download a delivered file: use the live blob URL when the session still
+// has it, otherwise rebuild the file from its stored spec (works after the
+// app is reopened, since specs are persisted with the chat history).
+export async function downloadDeliveredFile(f: DeliveredFile): Promise<boolean> {
+  try {
+    if (f.url) { saveAs(f.url, f.name); return true; }
+    if (f.excel) { saveAs(await buildExcel(f.excel), f.name); return true; }
+    if (f.kind === 'word' && f.wordHtml !== undefined) {
+      saveAs(buildWordDoc({ title: f.wordTitle, html: f.wordHtml }), f.name);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 // ── App navigation ──────────────────────────────────────────────────────────
 // Only routes from the menu catalog (plus an optional query string) are allowed.
 export function resolveAppPath(raw: string): { ok: true; path: string } | { ok: false; error: string } {

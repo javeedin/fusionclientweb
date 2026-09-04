@@ -11,9 +11,14 @@ import { APEX_DB_CONFIG } from '../../config/api.config';
 import { getCurrentCompany } from '../../config/company.config';
 import { useAuth } from '../../context/AuthContext';
 import {
-  ASSISTANT_TOOLS, buildSystemPrompt, runAssistantTool, wordPreviewSrcDoc,
+  ASSISTANT_TOOLS, buildSystemPrompt, downloadDeliveredFile, runAssistantTool, wordPreviewSrcDoc,
   type ApiCallLog, type DeliveredFile, type ExcelSpec,
 } from './assistantTools';
+
+const handleFileDownload = async (f: DeliveredFile) => {
+  const ok = await downloadDeliveredFile(f);
+  if (!ok) antMessage.warning('File data is no longer stored — ask the assistant to re-generate it.');
+};
 
 const { Text } = Typography;
 
@@ -64,12 +69,35 @@ const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } ca
 const loadConvs = (): Conversation[] => {
   try { return JSON.parse(localStorage.getItem(LS_CONVS) || '[]'); } catch { return []; }
 };
-const saveConvs = (convs: Conversation[]) =>
-  lsSet(LS_CONVS, JSON.stringify(convs.slice(0, 20).map(c => ({
-    ...c,
-    // blob URLs and preview payloads die on reload — keep only names for history
-    msgs: c.msgs.map(m => ({ ...m, files: (m.files || []).map(f => ({ name: f.name, url: '', kind: f.kind })) })),
-  }))));
+// Persist file specs (capped) so downloads/previews still work after the app
+// is reopened — blob URLs die on reload, but the spec can rebuild the file.
+const persistFile = (f: DeliveredFile): DeliveredFile => ({
+  name: f.name,
+  url: '',
+  kind: f.kind,
+  excel: f.excel
+    ? { ...f.excel, sheets: (f.excel.sheets || []).map(s => ({ ...s, rows: (s.rows || []).slice(0, 2000) })) }
+    : undefined,
+  wordHtml: f.wordHtml?.slice(0, 400000),
+  wordTitle: f.wordTitle,
+});
+
+const saveConvs = (convs: Conversation[]) => {
+  const trimmed = convs.slice(0, 20);
+  try {
+    localStorage.setItem(LS_CONVS, JSON.stringify(trimmed.map(c => ({
+      ...c,
+      msgs: c.msgs.map(m => ({ ...m, files: (m.files || []).map(persistFile) })),
+    }))));
+    return;
+  } catch { /* quota exceeded — retry without file payloads */ }
+  try {
+    localStorage.setItem(LS_CONVS, JSON.stringify(trimmed.map(c => ({
+      ...c,
+      msgs: c.msgs.map(m => ({ ...m, files: (m.files || []).map(f => ({ name: f.name, url: '', kind: f.kind })) })),
+    }))));
+  } catch { /* give up silently */ }
+};
 
 const newConvId = () => `c${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
@@ -197,10 +225,10 @@ const PreviewPanel: React.FC<{
           </button>
         ))}
       </div>
-      {selected?.url && (
-        <a className="ai-file" style={{ margin: 0 }} href={selected.url} download={selected.name}>
+      {selected && (selected.url || selected.excel || selected.wordHtml !== undefined) && (
+        <span className="ai-file" style={{ margin: 0, cursor: 'pointer' }} onClick={() => handleFileDownload(selected)}>
           <DownloadOutlined /> Download
-        </a>
+        </span>
       )}
     </div>
     <div className="ai-preview-body">
@@ -544,9 +572,9 @@ const AssistantPanel: React.FC<PanelProps> = ({
                   {m.files.map(f => (
                     <span key={f.name} className="ai-file">
                       {f.kind === 'word' ? <FileWordOutlined /> : <FileExcelOutlined />}
-                      {f.url
-                        ? <a href={f.url} download={f.name} style={{ color: 'inherit' }}>{f.name}</a>
-                        : <span>{f.name}</span>}
+                      <Tooltip title="Download">
+                        <span style={{ cursor: 'pointer' }} onClick={() => handleFileDownload(f)}>{f.name}</span>
+                      </Tooltip>
                       {(f.excel || f.wordHtml) && (
                         <Tooltip title="Preview">
                           <EyeOutlined
