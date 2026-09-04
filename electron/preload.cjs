@@ -83,6 +83,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onGlMcpStatus: (callback)         => ipcRenderer.on('gl-mcp-status', callback),
   removeGlMcpStatusListener: ()     => ipcRenderer.removeAllListeners('gl-mcp-status'),
 
+  // LibreChat — local Docker deployment managed by the app
+  libreChatStatus:     ()     => ipcRenderer.invoke('librechat:status'),
+  libreChatStart:      (opts) => ipcRenderer.invoke('librechat:start', opts),
+  libreChatStop:       ()     => ipcRenderer.invoke('librechat:stop'),
+  libreChatOpenWindow: ()     => ipcRenderer.invoke('librechat:open-window'),
+  libreChatGetLogs:    ()     => ipcRenderer.invoke('librechat:get-logs'),
+
   // Native Oracle Fusion (IDCS) login — opens the real sign-in window
   fusionLogin: (url) => ipcRenderer.invoke('fusion-login', { url }),
 

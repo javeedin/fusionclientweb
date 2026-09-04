@@ -1190,6 +1190,34 @@ ipcMain.handle('clear-fusion-credentials', () => {
   }
 });
 
+// ── LibreChat IPC Handlers (start/stop local LibreChat via Docker) ─────────
+const libreChat = require('./librechat-manager.cjs');
+
+ipcMain.handle('librechat:status', async () => {
+  try { return { success: true, ...(await libreChat.getStatus()) }; }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle('librechat:start', async (_event, opts) => {
+  try { return await libreChat.start(opts || {}); }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle('librechat:stop', async () => {
+  try { return await libreChat.stop(); }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle('librechat:open-window', async () => {
+  try { return libreChat.openWindow(); }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle('librechat:get-logs', async () => {
+  try { return { success: true, logs: libreChat.getLogs() }; }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
 // ── GL MCP Server IPC Handlers ─────────────────────────────────────────────
 const GL_CREDS_FILE = path.join(app.getPath('userData'), 'gl-api-creds.json');
 
