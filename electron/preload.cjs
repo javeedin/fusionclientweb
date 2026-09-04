@@ -83,6 +83,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onGlMcpStatus: (callback)         => ipcRenderer.on('gl-mcp-status', callback),
   removeGlMcpStatusListener: ()     => ipcRenderer.removeAllListeners('gl-mcp-status'),
 
+  // MCP bridge — in-app AI Assistant access to the local MCP servers
+  mcpBridgeListTools: ()                      => ipcRenderer.invoke('mcp-bridge:list-tools'),
+  mcpBridgeCallTool:  (server, tool, args)    => ipcRenderer.invoke('mcp-bridge:call-tool', { server, tool, args }),
+
   // LibreChat — local Docker deployment managed by the app
   libreChatStatus:     ()     => ipcRenderer.invoke('librechat:status'),
   libreChatStart:      (opts) => ipcRenderer.invoke('librechat:start', opts),

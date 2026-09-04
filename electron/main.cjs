@@ -1218,6 +1218,19 @@ ipcMain.handle('librechat:get-logs', async () => {
   catch (e) { return { success: false, error: e.message }; }
 });
 
+// ── MCP bridge for the in-app AI Assistant ─────────────────────────────────
+const mcpBridge = require('./mcp-bridge.cjs');
+
+ipcMain.handle('mcp-bridge:list-tools', async () => {
+  try { return { success: true, ...(await mcpBridge.listTools()) }; }
+  catch (e) { return { success: false, error: e.message, servers: [] }; }
+});
+
+ipcMain.handle('mcp-bridge:call-tool', async (_event, { server, tool, args } = {}) => {
+  try { return { success: true, ...(await mcpBridge.callTool(server, tool, args)) }; }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
 // ── GL MCP Server IPC Handlers ─────────────────────────────────────────────
 const GL_CREDS_FILE = path.join(app.getPath('userData'), 'gl-api-creds.json');
 

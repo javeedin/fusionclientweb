@@ -33,6 +33,28 @@ const MODEL_OPTIONS = [
 ];
 
 interface ChatMsg { role: 'user' | 'assistant'; text: string; files?: DeliveredFile[]; apiCalls?: ApiCallLog[] }
+
+// A tool exposed by one of the local MCP servers (via the Electron bridge)
+interface McpTool {
+  server: string;
+  serverLabel: string;
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+interface McpBridgeApi {
+  mcpBridgeListTools?: () => Promise<{
+    success: boolean;
+    servers?: { name: string; label: string; error?: string; tools: { name: string; description?: string; inputSchema?: Record<string, unknown> }[] }[];
+  }>;
+  mcpBridgeCallTool?: (server: string, tool: string, args: Record<string, unknown>) =>
+    Promise<{ success: boolean; text?: string; isError?: boolean; error?: string }>;
+}
+const getElectronAPI = (): McpBridgeApi | undefined =>
+  (window as unknown as { electronAPI?: McpBridgeApi }).electronAPI;
+
+const mcpToolId = (t: McpTool) => `mcp_${t.server}_${t.name}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 128);
 interface Conversation { id: string; title: string; msgs: ChatMsg[]; updatedAt: number }
 
 const lsGet = (k: string): string => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
@@ -89,7 +111,7 @@ const ApiCallList: React.FC<{ calls: ApiCallLog[] }> = ({ calls }) => (
   <div className="ai-apilog">
     {calls.map((c, i) => (
       <div key={i} className="ai-apirow">
-        <span className={`ai-apimethod ${c.method === 'GET' ? 'get' : 'local'}`}>{c.method}</span>
+        <span className={`ai-apimethod ${c.method === 'GET' ? 'get' : c.method === 'MCP' ? 'mcp' : 'local'}`}>{c.method}</span>
         <span className="ai-apiurl" title={c.url}>{c.url}</span>
         <span className={`ai-apistatus ${c.status === 200 || c.status === 'OK' ? 'ok' : 'err'}`}>
           {String(c.status)}{c.rows !== undefined ? ` · ${c.rows} rows` : ''} · {c.ms} ms
@@ -222,13 +244,15 @@ interface PanelProps {
   setModel: (m: string) => void;
   resolveKey: () => Promise<string>;
   userName: string;
+  mcpTools: McpTool[];
+  mcpSummary: string;
   onClose: () => void;
   onNewWindow: () => void;
 }
 
 const AssistantPanel: React.FC<PanelProps> = ({
   index, total, store, initialConvId, apiKey, setApiKey, model, setModel,
-  resolveKey, userName, onClose, onNewWindow,
+  resolveKey, userName, mcpTools, mcpSummary, onClose, onNewWindow,
 }) => {
   const [curId, setCurId] = useState(initialConvId);
   const [input, setInput] = useState('');
@@ -274,8 +298,47 @@ const AssistantPanel: React.FC<PanelProps> = ({
     const delivered: DeliveredFile[] = [];
     const calls: ApiCallLog[] = [];
     const onLog = (c: ApiCallLog) => { calls.push(c); setLiveCalls(calls.slice()); };
-    const system = buildSystemPrompt(getCurrentCompany().code, userName);
+
+    // merge the local MCP servers' tools with the built-in ones
+    const mcpMap = new Map<string, McpTool>(mcpTools.map(t => [mcpToolId(t), t]));
+    const tools: Anthropic.Tool[] = [
+      ...ASSISTANT_TOOLS,
+      ...mcpTools.map(t => ({
+        name: mcpToolId(t),
+        description: `[${t.serverLabel} MCP] ${t.description || t.name}`.slice(0, 1024),
+        input_schema: (t.inputSchema && (t.inputSchema as { type?: string }).type === 'object'
+          ? t.inputSchema
+          : { type: 'object', properties: {} }) as Anthropic.Tool.InputSchema,
+      })),
+    ];
+    let system = buildSystemPrompt(getCurrentCompany().code, userName);
+    if (mcpTools.length) {
+      system += `\n\nMCP TOOLS\nTools named mcp_* come from local MCP servers (${mcpSummary}). ` +
+        'Prefer an MCP tool when one matches the request exactly (they encapsulate the right endpoints and math); ' +
+        'otherwise use erp_api_get. Their results are text/JSON — treat them as real data.';
+    }
     const finish = (m: ChatMsg) => store.pushMsg(convId, { ...m, apiCalls: calls.slice() });
+
+    const runMcpTool = async (id: string, input: Record<string, unknown>): Promise<string> => {
+      const t = mcpMap.get(id)!;
+      const t0 = performance.now();
+      try {
+        const api = getElectronAPI();
+        const r = await api?.mcpBridgeCallTool?.(t.server, t.name, input);
+        const ms = Math.round(performance.now() - t0);
+        if (!r?.success) {
+          onLog({ tool: id, method: 'MCP', url: `${t.serverLabel} · ${t.name}`, status: 'ERR', ms, error: r?.error || 'bridge unavailable' });
+          return JSON.stringify({ error: r?.error || 'MCP bridge unavailable' });
+        }
+        onLog({ tool: id, method: 'MCP', url: `${t.serverLabel} · ${t.name}`, status: r.isError ? 'ERR' : 'OK', ms, error: r.isError ? (r.text || '').slice(0, 120) : undefined });
+        const out = r.text || '(empty result)';
+        return out.length > 60000 ? out.slice(0, 60000) + '…(truncated)' : out;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        onLog({ tool: id, method: 'MCP', url: `${t.serverLabel} · ${t.name}`, status: 'ERR', ms: Math.round(performance.now() - t0), error: msg });
+        return JSON.stringify({ error: msg });
+      }
+    };
 
     try {
       let rounds = 0;
@@ -288,7 +351,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
           model,
           max_tokens: 8000,
           system,
-          tools: ASSISTANT_TOOLS,
+          tools,
           messages: apiMsgs,
         });
         if (resp.stop_reason === 'tool_use') {
@@ -297,9 +360,11 @@ const AssistantPanel: React.FC<PanelProps> = ({
           for (const blk of resp.content) {
             if (blk.type === 'tool_use') {
               setStatus(`Running ${blk.name.replace(/_/g, ' ')}…`);
-              const out = await runAssistantTool(
-                blk.name, blk.input as Record<string, unknown>, APEX, f => delivered.push(f), onLog,
-              );
+              const out = mcpMap.has(blk.name)
+                ? await runMcpTool(blk.name, blk.input as Record<string, unknown>)
+                : await runAssistantTool(
+                    blk.name, blk.input as Record<string, unknown>, APEX, f => delivered.push(f), onLog,
+                  );
               results.push({ type: 'tool_result', tool_use_id: blk.id, content: out });
             }
           }
@@ -329,7 +394,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
       setStatus('');
       setLiveCalls([]);
     }
-  }, [input, busy, apiKey, resolveKey, curId, store, model, userName, index]);
+  }, [input, busy, apiKey, resolveKey, curId, store, model, userName, index, mcpTools, mcpSummary]);
 
   const historyMenu = useMemo(() => ({
     items: store.convs.length
@@ -544,6 +609,9 @@ const AssistantPanel: React.FC<PanelProps> = ({
           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6 }}>
             The key is stored only in this browser and sent directly to Anthropic. It is never saved on the ERP server by this chat.
           </Text>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+            <ApiOutlined /> MCP servers: {mcpSummary || (getElectronAPI()?.mcpBridgeListTools ? 'connecting… (open a chat and retry)' : 'not available in browser mode — built-in tools only')}
+          </Text>
         </div>
       )}
 
@@ -583,9 +651,36 @@ const AIAssistant: React.FC = () => {
   const [model, setModel] = useState(() => lsGet(LS_MODEL) || DEFAULT_MODEL);
   const [convs, setConvs] = useState<Conversation[]>(loadConvs);
   const [panels, setPanels] = useState<{ pid: number; convId: string }[]>([]);
+  const [mcpTools, setMcpTools] = useState<McpTool[]>([]);
+  const [mcpSummary, setMcpSummary] = useState('');
   const nextPid = useRef(1);
+  const mcpLoaded = useRef(false);
 
   useEffect(() => { saveConvs(convs); }, [convs]);
+
+  // connect the local MCP servers (Electron only) the first time a window opens
+  useEffect(() => {
+    if (!panels.length || mcpLoaded.current) return;
+    const api = getElectronAPI();
+    if (!api?.mcpBridgeListTools) return;
+    mcpLoaded.current = true;
+    api.mcpBridgeListTools().then(res => {
+      if (!res?.success || !res.servers) return;
+      const tools: McpTool[] = res.servers.flatMap(s =>
+        (s.tools || []).map(t => ({
+          server: s.name, serverLabel: s.label, name: t.name,
+          description: t.description, inputSchema: t.inputSchema,
+        })));
+      setMcpTools(tools);
+      const summary = res.servers
+        .filter(s => s.tools.length)
+        .map(s => `${s.label} (${s.tools.length})`)
+        .join(', ');
+      setMcpSummary(summary);
+      const failed = res.servers.filter(s => s.error);
+      if (failed.length) console.warn('[AI Assistant] MCP servers unavailable:', failed.map(s => `${s.name}: ${s.error}`).join('; '));
+    }).catch(() => { /* MCP unavailable — assistant still works with built-in tools */ });
+  }, [panels.length]);
 
   // functional updates so parallel panels never clobber each other
   const pushMsg = useCallback((convId: string, m: ChatMsg) => {
@@ -741,6 +836,7 @@ const AIAssistant: React.FC = () => {
         .ai-apimethod{font-weight:700;border-radius:4px;padding:0 5px;font-size:10px}
         .ai-apimethod.get{background:#1D7B4D;color:#fff}
         .ai-apimethod.local{background:#0572CE;color:#fff}
+        .ai-apimethod.mcp{background:#7B5EA7;color:#fff}
         .ai-apiurl{word-break:break-all;color:#f0e6e2;flex:1;min-width:120px}
         .ai-apistatus{white-space:nowrap}
         .ai-apistatus.ok{color:#6fdc9c}
@@ -761,6 +857,8 @@ const AIAssistant: React.FC = () => {
           setModel={setModel}
           resolveKey={resolveKey}
           userName={userName}
+          mcpTools={mcpTools}
+          mcpSummary={mcpSummary}
           onClose={() => setPanels(prev => prev.filter(x => x.pid !== p.pid))}
           onNewWindow={() => addPanel()}
         />
