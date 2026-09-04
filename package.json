@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
+    "@anthropic-ai/sdk": "^0.123.0",
     "@fluentui/react": "^8.125.7",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@types/react-resizable": "^3.0.8",

@@ -36,6 +36,7 @@ import GlValidationErrorsDrawer from '../components/GlValidationErrorsDrawer';
 import GlobalMenuSearch from '../components/GlobalMenuSearch';
 import NotificationPanel from '../components/NotificationPanel';
 import ApprovalToastWatcher from '../components/ApprovalToastWatcher';
+import AIAssistant from '../components/ai/AIAssistant';
 import Autopilot from '../components/Autopilot';
 import CompanySelector from '../components/CompanySelector';
 import DebugCredentialsPanel from '../components/DebugCredentialsPanel';
@@ -409,6 +410,9 @@ const MainLayout: React.FC = () => {
       <Content>
         <Outlet />
       </Content>
+
+      {/* Floating AI Assistant (all pages) */}
+      <AIAssistant />
 
       {/* iOS Install Instructions Modal */}
       <Modal
