@@ -28,6 +28,15 @@ const { Option } = Select;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const API_BASE           = buildApexUrl('gl');
+
+// Display an accounting date without corrupting it: ISO timestamps
+// (2026-06-01T00:00:00) are cut to the date part, but DD-MON-YYYY strings
+// (01-JUN-2026, 11 chars) are shown whole — slice(0,10) was chopping the
+// last digit of the year.
+const fmtAcctDate = (v?: string): string => {
+  const s = v || '';
+  return s.length > 10 && s.charAt(4) === '-' ? s.slice(0, 10) : s;
+};
 const APEX_BASE          = buildApexUrl('');
 const COMPANY_LOV_URL    = `${APEX_BASE}/valuesets/getvalues/BUIMERC_FIN_GLB_COA_CO`;
 const ACCOUNTS_LOV_URL   = `${APEX_BASE}/glaccountslist`;
@@ -2259,14 +2268,14 @@ const AAPanel: React.FC = () => {
             </Tooltip>
           );
         } },
-      { title: 'Description', dataIndex: 'jeLineDescription', key: 'lineDesc', width: 200, ellipsis: true,
+      { title: 'Description', dataIndex: 'jeLineDescription', key: 'lineDesc', width: 180, ellipsis: true,
         render: (t: string, r: JournalLine) => isTot(r) ? null : (
           <Tooltip title={t}><span style={{ fontSize: 10, fontWeight: isSpecial(r) ? 600 : undefined }}>{t || '—'}</span></Tooltip>
         ) },
       { title: 'Period', dataIndex: 'defaultPeriodName', key: 'period', width: 80,
         render: (v: string, r: JournalLine) => isTot(r) ? null : <span style={{ fontSize: 10 }}>{v}</span> },
-      { title: 'Acctg Date', dataIndex: 'accountingDate', key: 'acctgDate', width: 100,
-        render: (v: string, r: JournalLine) => isTot(r) ? null : <span style={{ fontSize: 10 }}>{(v || '').slice(0, 10)}</span> },
+      { title: 'Acctg Date', dataIndex: 'accountingDate', key: 'acctgDate', width: 110,
+        render: (v: string, r: JournalLine) => isTot(r) ? null : <span style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{fmtAcctDate(v)}</span> },
       { title: 'Batch', dataIndex: 'batchName', key: 'batch', width: 160, ellipsis: true,
         render: (v: string, r: JournalLine) => isTot(r) ? null : <span style={{ fontSize: 10 }}>{v}</span> },
       { title: 'Source', dataIndex: 'userJeSourceName', key: 'source', width: 110,
@@ -2277,13 +2286,13 @@ const AAPanel: React.FC = () => {
         render: (v: string, r: JournalLine) => isTot(r) ? null : <Tag style={{ fontSize: 9 }}>{v}</Tag> },
       ...entCols,
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Dr ({functionalCcy})</span>,
-        dataIndex: 'accountedDr', key: 'accDr', width: 150, align: 'right',
+        dataIndex: 'accountedDr', key: 'accDr', width: 150, align: 'right', fixed: 'right',
         render: (v: number, r: JournalLine) => <DrCell v={v} bold={isTot(r)} /> },
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Cr ({functionalCcy})</span>,
-        dataIndex: 'accountedCr', key: 'accCr', width: 150, align: 'right',
+        dataIndex: 'accountedCr', key: 'accCr', width: 150, align: 'right', fixed: 'right',
         render: (v: number, r: JournalLine) => <CrCell v={v} bold={isTot(r)} /> },
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Balance ({functionalCcy})</span>,
-        key: 'accBal', width: 160, align: 'right',
+        key: 'accBal', width: 160, align: 'right', fixed: 'right',
         render: (_: any, record: JournalLine) => {
           if (isTot(record)) return <FmtBal v={record._accBal ?? 0} size={10} bold />;
           return <FmtBal v={(record as any)._accRun ?? 0} size={10} bold={isSpecial(record)} />;
@@ -2369,7 +2378,7 @@ const AAPanel: React.FC = () => {
             </Tooltip>
           );
         } },
-      { title: 'Description', dataIndex: 'jeLineDescription', key: 'bDesc', ellipsis: true, width: 200,
+      { title: 'Description', dataIndex: 'jeLineDescription', key: 'bDesc', ellipsis: true, width: 180,
         render: (v: string, r: JournalLine) => {
           if (r.isOpeningBalance) return <Text strong style={{ fontSize: 10, color: REDWOOD.warning }}>Opening Balance</Text>;
           if (r.isClosingBalance) return <Text strong style={{ fontSize: 10, color: REDWOOD.success }}>Closing Balance</Text>;
@@ -2378,8 +2387,8 @@ const AAPanel: React.FC = () => {
         } },
       { title: 'Period', dataIndex: 'defaultPeriodName', key: 'bPeriod', width: 80,
         render: (v: string, r: JournalLine) => isSpec(r) ? null : <span style={{ fontSize: 10 }}>{v}</span> },
-      { title: 'Acctg Date', dataIndex: 'accountingDate', key: 'bDate', width: 100,
-        render: (v: string, r: JournalLine) => isSpec(r) ? null : <span style={{ fontSize: 10 }}>{(v || '').slice(0, 10)}</span> },
+      { title: 'Acctg Date', dataIndex: 'accountingDate', key: 'bDate', width: 110,
+        render: (v: string, r: JournalLine) => isSpec(r) ? null : <span style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{fmtAcctDate(v)}</span> },
       { title: 'Batch', dataIndex: 'batchName', key: 'bBatch', ellipsis: true, width: 160,
         render: (v: string, r: JournalLine) => isSpec(r) ? null : <span style={{ fontSize: 10 }}>{v}</span> },
       { title: 'Source', dataIndex: 'userJeSourceName', key: 'bSrc', width: 110,
@@ -2390,13 +2399,13 @@ const AAPanel: React.FC = () => {
         render: (v: string, r: JournalLine) => isSpec(r) ? null : <Tag style={{ fontSize: 9 }}>{v}</Tag> },
       ...entCols,
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Dr ({functionalCcy})</span>,
-        dataIndex: 'accountedDr', key: 'bAccDr', width: 140, align: 'right',
+        dataIndex: 'accountedDr', key: 'bAccDr', width: 140, align: 'right', fixed: 'right' as const,
         render: (v: number, r: JournalLine) => v ? <DrCell v={v} bold={!!r.isTotals} /> : null },
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Cr ({functionalCcy})</span>,
-        dataIndex: 'accountedCr', key: 'bAccCr', width: 140, align: 'right',
+        dataIndex: 'accountedCr', key: 'bAccCr', width: 140, align: 'right', fixed: 'right' as const,
         render: (v: number, r: JournalLine) => v ? <CrCell v={v} bold={!!r.isTotals} /> : null },
       { title: <span style={{ color: REDWOOD.info, fontWeight: 600 }}>Acc Balance ({functionalCcy})</span>,
-        key: 'bAccBal', width: 150, align: 'right',
+        key: 'bAccBal', width: 150, align: 'right', fixed: 'right' as const,
         render: (_: any, r: any) => {
           if (r.isOpeningBalance || r.isClosingBalance)
             return <FmtBal v={r.accountedDr - r.accountedCr} size={10} bold />;
