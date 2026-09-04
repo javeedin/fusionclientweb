@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Button, Input, Modal, Select, Tooltip, Typography, message } from 'antd';
-import { BulbOutlined } from '@ant-design/icons';
-import { saveTrainingRecipe, type TrainingRecipe } from './aiTraining';
+import { Button, Collapse, Input, Modal, Select, Tooltip, Typography, message } from 'antd';
+import { ApiOutlined, BulbOutlined, CopyOutlined } from '@ant-design/icons';
+import { TRAINING_ENDPOINT, buildTrainingPostBody, saveTrainingRecipe, type TrainingRecipe } from './aiTraining';
 
 const { Text } = Typography;
 
@@ -107,6 +107,35 @@ const TeachAIButton: React.FC<{
                 Example captured: ?{exampleQs}
               </Text>
             )}
+            <Collapse
+              ghost
+              size="small"
+              items={[{
+                key: 'api',
+                label: <span style={{ fontSize: 12 }}><ApiOutlined /> API Details (what Save sends)</span>,
+                children: (
+                  <div style={{ fontSize: 12 }}>
+                    <div style={{ marginBottom: 6, wordBreak: 'break-all' }}>
+                      <Text strong>POST</Text> <Text code>{TRAINING_ENDPOINT}</Text>
+                      <Tooltip title="Copy URL">
+                        <Button size="small" type="text" icon={<CopyOutlined />}
+                          onClick={() => { navigator.clipboard.writeText(TRAINING_ENDPOINT); message.success('URL copied'); }} />
+                      </Tooltip>
+                    </div>
+                    <pre style={{ background: '#2b2b2b', color: '#d4d4d4', padding: 10, borderRadius: 8, maxHeight: 220, overflow: 'auto', fontSize: 11, margin: 0 }}>
+                      {JSON.stringify(buildTrainingPostBody(recipe), null, 2)}
+                    </pre>
+                    <Button size="small" icon={<CopyOutlined />} style={{ marginTop: 6 }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(JSON.stringify(buildTrainingPostBody(recipe), null, 2));
+                        message.success('JSON body copied');
+                      }}>
+                      Copy JSON body
+                    </Button>
+                  </div>
+                ),
+              }]}
+            />
           </div>
         )}
       </Modal>

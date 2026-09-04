@@ -127,12 +127,9 @@ BEGIN
     l_apppath := APEX_JSON.GET_VARCHAR2(p_path => ''appPath'');
     l_by      := NVL(APEX_JSON.GET_VARCHAR2(p_path => ''createdBy''), ''REERP'');
 
-    -- params/example arrive as JSON — re-serialize the subtrees verbatim
-    BEGIN l_params  := APEX_JSON.STRINGIFY(APEX_JSON.GET_VALUE(p_path => ''params''));  EXCEPTION WHEN OTHERS THEN l_params  := NULL; END;
-    BEGIN l_example := APEX_JSON.STRINGIFY(APEX_JSON.GET_VALUE(p_path => ''example'')); EXCEPTION WHEN OTHERS THEN l_example := NULL; END;
-    -- fallback: accept pre-stringified fields too
-    IF l_params  IS NULL THEN l_params  := APEX_JSON.GET_VARCHAR2(p_path => ''paramsJson'');  END IF;
-    IF l_example IS NULL THEN l_example := APEX_JSON.GET_VARCHAR2(p_path => ''exampleJson''); END IF;
+    -- params/example are sent as pre-stringified JSON strings
+    BEGIN l_params  := APEX_JSON.GET_CLOB(p_path => ''paramsJson'');  EXCEPTION WHEN OTHERS THEN l_params  := APEX_JSON.GET_VARCHAR2(p_path => ''paramsJson'');  END;
+    BEGIN l_example := APEX_JSON.GET_CLOB(p_path => ''exampleJson''); EXCEPTION WHEN OTHERS THEN l_example := APEX_JSON.GET_VARCHAR2(p_path => ''exampleJson''); END;
 
     IF l_name IS NULL OR l_url IS NULL THEN
         :status_code := 400;
@@ -213,8 +210,8 @@ BEGIN
         RETURN;
     END IF;
 
-    BEGIN l_params  := APEX_JSON.STRINGIFY(APEX_JSON.GET_VALUE(p_path => ''params''));  EXCEPTION WHEN OTHERS THEN l_params  := NULL; END;
-    BEGIN l_example := APEX_JSON.STRINGIFY(APEX_JSON.GET_VALUE(p_path => ''example'')); EXCEPTION WHEN OTHERS THEN l_example := NULL; END;
+    BEGIN l_params  := APEX_JSON.GET_CLOB(p_path => ''paramsJson'');  EXCEPTION WHEN OTHERS THEN l_params  := APEX_JSON.GET_VARCHAR2(p_path => ''paramsJson'');  END;
+    BEGIN l_example := APEX_JSON.GET_CLOB(p_path => ''exampleJson''); EXCEPTION WHEN OTHERS THEN l_example := APEX_JSON.GET_VARCHAR2(p_path => ''exampleJson''); END;
 
     UPDATE rr_ai_training
     SET    recipe_name  = NVL(APEX_JSON.GET_VARCHAR2(p_path => ''recipeName''), recipe_name),

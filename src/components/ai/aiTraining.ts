@@ -62,29 +62,39 @@ export async function fetchTrainingRecipes(force = false): Promise<TrainingRecip
   }
 }
 
+export const TRAINING_ENDPOINT = `${APEX}/ai/training`;
+
+// The exact JSON body the POST sends — also shown in the Teach AI dialog's
+// API details section so failures can be debugged / replayed in APEX.
+export function buildTrainingPostBody(recipe: TrainingRecipe): Record<string, unknown> {
+  return {
+    recipeName: recipe.recipeName,
+    description: recipe.description,
+    module: recipe.module,
+    method: recipe.method || 'GET',
+    urlTemplate: recipe.urlTemplate,
+    paramsJson: JSON.stringify(recipe.params || []),
+    exampleJson: JSON.stringify(recipe.example || {}),
+    appPath: recipe.appPath,
+    createdBy: recipe.createdBy || 'APP',
+  };
+}
+
 export async function saveTrainingRecipe(recipe: TrainingRecipe): Promise<{ ok: boolean; message: string }> {
   try {
-    const res = await fetch(`${APEX}/ai/training`, {
+    const res = await fetch(TRAINING_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        recipeName: recipe.recipeName,
-        description: recipe.description,
-        module: recipe.module,
-        method: recipe.method || 'GET',
-        urlTemplate: recipe.urlTemplate,
-        paramsJson: JSON.stringify(recipe.params || []),
-        exampleJson: JSON.stringify(recipe.example || {}),
-        appPath: recipe.appPath,
-        createdBy: recipe.createdBy || 'APP',
-      }),
+      body: JSON.stringify(buildTrainingPostBody(recipe)),
     });
-    const data = await res.json().catch(() => ({}));
+    const text = await res.text();
+    let data: { success?: boolean; message?: string } = {};
+    try { data = JSON.parse(text); } catch { /* non-JSON error page */ }
     if (res.ok && data.success !== false) {
       cache = null; // taught → assistant picks it up on the next message
       return { ok: true, message: data.message || 'Recipe saved' };
     }
-    return { ok: false, message: data.message || `HTTP ${res.status}` };
+    return { ok: false, message: data.message || `HTTP ${res.status}: ${text.slice(0, 300)}` };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : String(e) };
   }
