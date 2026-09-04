@@ -1,4 +1,5 @@
 import { APEX_DB_CONFIG } from '../../config/api.config';
+import { ordsTokenEnabled } from '../../services/ordsToken.service';
 
 // ── AI Assistant training recipes (RR_AI_TRAINING via /ai/training) ─────────
 // A recipe teaches the assistant one action: a webservice call with its
@@ -68,14 +69,32 @@ const mapRecipe = (r: Record<string, unknown>): TrainingRecipe => ({
   createdBy: r.createdBy as string | undefined,
 });
 
+// Diagnostics for the last Teachings GET — shown by the API icon in the sidebar
+export interface TrainingDebug {
+  url: string;
+  status: number | string;
+  ok: boolean;
+  body: string;
+  count: number;
+  tokenEnabled: boolean;
+  at: number;
+}
+let lastDebug: TrainingDebug | null = null;
+export const getTrainingDebug = (): TrainingDebug | null => lastDebug;
+
 // Full list including disabled — for the Teachings management UI (no cache)
 export async function fetchAllTrainingRecipes(): Promise<TrainingRecipe[]> {
+  const url = `${TRAINING_ENDPOINT}?all=Y`;
   try {
-    const res = await fetch(`${TRAINING_ENDPOINT}?all=Y`, { cache: 'no-store', headers: { Accept: 'application/json' } });
+    const res = await fetch(url, { cache: 'no-store', headers: { Accept: 'application/json' } });
+    const text = await res.text();
+    let items: Record<string, unknown>[] = [];
+    try { items = JSON.parse(text).items || []; } catch { /* non-JSON (error page) */ }
+    lastDebug = { url, status: res.status, ok: res.ok, body: text.slice(0, 1500), count: items.length, tokenEnabled: ordsTokenEnabled(), at: Date.now() };
     if (!res.ok) return [];
-    const data = await res.json();
-    return (data.items || []).map(mapRecipe).filter((r: TrainingRecipe) => r.recipeName && r.urlTemplate);
-  } catch {
+    return items.map(mapRecipe).filter((r: TrainingRecipe) => r.recipeName && r.urlTemplate);
+  } catch (e) {
+    lastDebug = { url, status: 'NETWORK', ok: false, body: e instanceof Error ? e.message : String(e), count: 0, tokenEnabled: ordsTokenEnabled(), at: Date.now() };
     return [];
   }
 }

@@ -16,7 +16,7 @@ import {
 } from './assistantTools';
 import {
   buildRecipesPrompt, deleteTrainingRecipe, fetchAllTrainingRecipes, fetchTrainingRecipes,
-  updateTrainingRecipe, type TrainingRecipe,
+  getTrainingDebug, updateTrainingRecipe, type TrainingDebug, type TrainingRecipe,
 } from './aiTraining';
 import { installApiCapture } from './apiCapture';
 import GlobalTeachAI from './GlobalTeachAI';
@@ -310,11 +310,14 @@ const AssistantPanel: React.FC<PanelProps> = ({
   const [pendingWrite, setPendingWrite] = useState<(PendingWrite & { resolve: (ok: boolean) => void }) | null>(null);
   const [teachings, setTeachings] = useState<TrainingRecipe[]>([]);
   const [teachOpen, setTeachOpen] = useState<TrainingRecipe | null>(null);
+  const [teachDebug, setTeachDebug] = useState<TrainingDebug | null>(null);
+  const [teachDebugOpen, setTeachDebugOpen] = useState(false);
   const msgsRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
   const loadTeachings = useCallback(async () => {
     setTeachings(await fetchAllTrainingRecipes());
+    setTeachDebug(getTrainingDebug());
   }, []);
   useEffect(() => { if (fullscreen) loadTeachings(); }, [fullscreen, loadTeachings]);
 
@@ -581,9 +584,16 @@ const AssistantPanel: React.FC<PanelProps> = ({
           {/* ── Teachings (learned recipes) ── */}
           <div className="ai-side-head" style={{ borderTop: '1px solid #EFEAE8' }}>
             <span><BulbOutlined style={{ color: '#7B5EA7' }} /> Teachings ({teachings.length})</span>
-            <Tooltip title="Refresh teachings">
-              <Button size="small" type="text" icon={<ReloadOutlined />} onClick={loadTeachings} />
-            </Tooltip>
+            <span>
+              <Tooltip title="Show the GET call behind this list">
+                <Button size="small" type="text"
+                  icon={<ApiOutlined style={{ color: teachDebug && !teachDebug.ok ? '#C74634' : undefined }} />}
+                  onClick={() => setTeachDebugOpen(true)} />
+              </Tooltip>
+              <Tooltip title="Refresh teachings">
+                <Button size="small" type="text" icon={<ReloadOutlined />} onClick={loadTeachings} />
+              </Tooltip>
+            </span>
           </div>
           <div className="ai-side-list" style={{ flex: '0 0 auto', maxHeight: '34%' }}>
             {!teachings.length && (
@@ -751,6 +761,47 @@ const AssistantPanel: React.FC<PanelProps> = ({
         <PreviewPanel files={convFiles} selected={preview} onSelect={setPreview} />
       )}
       </div>
+
+      {/* ── Teachings API debug dialog ── */}
+      <Modal
+        open={teachDebugOpen}
+        onCancel={() => setTeachDebugOpen(false)}
+        title={<span><ApiOutlined /> Teachings — GET call details</span>}
+        width={620}
+        footer={[
+          <Button key="retry" type="primary" onClick={loadTeachings}>Run again</Button>,
+          <Button key="close" onClick={() => setTeachDebugOpen(false)}>Close</Button>,
+        ]}
+      >
+        {!teachDebug && <Text type="secondary">No call made yet — open full screen or press Refresh in the Teachings header.</Text>}
+        {teachDebug && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12.5 }}>
+            <div style={{ wordBreak: 'break-all' }}>
+              <Tag color="green">GET</Tag>
+              <Text code style={{ fontSize: 12 }}>{teachDebug.url}</Text>
+            </div>
+            <div>
+              Status: <Tag color={teachDebug.ok ? 'green' : 'red'}>{String(teachDebug.status)}</Tag>
+              Rows: <Tag>{teachDebug.count}</Tag>
+              Auth: <Tag color={teachDebug.tokenEnabled ? 'green' : 'orange'}>
+                {teachDebug.tokenEnabled ? 'Bearer token attached (ORDS interceptor ON)' : 'No token (ORDS interceptor OFF)'}
+              </Tag>
+            </div>
+            <div>
+              <Text strong style={{ fontSize: 12 }}>Response ({new Date(teachDebug.at).toLocaleTimeString()})</Text>
+              <pre style={{ background: '#2b2b2b', color: '#d4d4d4', padding: 10, borderRadius: 8, maxHeight: 260, overflow: 'auto', fontSize: 11, margin: '4px 0 0' }}>
+                {teachDebug.body || '(empty body)'}
+              </pre>
+            </div>
+            {!teachDebug.ok && (
+              <Text type="secondary" style={{ fontSize: 11.5 }}>
+                404 usually means the ai/training template is not created yet (run database/ai/ai_training_recipes.sql);
+                401/403 means the reerp module rejected the token; NETWORK means the server was unreachable.
+              </Text>
+            )}
+          </div>
+        )}
+      </Modal>
 
       {/* ── Teaching detail dialog ── */}
       <Modal
