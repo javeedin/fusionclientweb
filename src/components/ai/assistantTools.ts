@@ -128,13 +128,13 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
 ];
 
 // ── Excel builder (Redwood-styled) ──────────────────────────────────────────
-interface ExcelSheetSpec {
+export interface ExcelSheetSpec {
   name: string;
   columns: string[];
   rows: (string | number | null)[][];
   totalsRow?: (string | number | null)[];
 }
-interface ExcelSpec {
+export interface ExcelSpec {
   filename?: string;
   title?: string;
   subtitle?: string;
@@ -245,15 +245,24 @@ async function buildExcel(spec: ExcelSpec): Promise<Blob> {
 const escapeHtml = (t: string) =>
   t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+const WORD_CSS =
+  'body{font-family:Calibri,Segoe UI,Arial,sans-serif;color:#3A3632;font-size:11pt;line-height:1.45}' +
+  'h1{color:#C74634;border-bottom:2px solid #C74634;padding-bottom:4px;font-size:17pt}' +
+  'h2{color:#8B4513;margin-top:16px;font-size:13pt}h3{color:#6B6B6B;font-size:11.5pt}' +
+  'table{border-collapse:collapse;width:100%;margin:10px 0}' +
+  'th{background:#C74634;color:#fff;padding:7px 8px;border:1px solid #d8b5ae;text-align:left;font-size:10pt}' +
+  'td{padding:6px 8px;border:1px solid #e0d5d2;font-size:10pt}tr:nth-child(even) td{background:#FBF1EF}' +
+  '.muted{color:#8B8580;font-size:9pt}';
+
+// srcDoc for the in-app preview iframe — same styling as the downloaded .doc
+export function wordPreviewSrcDoc(title: string | undefined, html: string | undefined): string {
+  return '<!doctype html><html><head><meta charset="utf-8"><style>' + WORD_CSS +
+    'body{padding:18px 22px;background:#fff}</style></head><body>' +
+    (title ? '<h1>' + escapeHtml(title) + '</h1>' : '') + (html || '') + '</body></html>';
+}
+
 function buildWordDoc(spec: { title?: string; html?: string }): Blob {
-  const css =
-    'body{font-family:Calibri,Segoe UI,Arial,sans-serif;color:#3A3632;font-size:11pt;line-height:1.45}' +
-    'h1{color:#C74634;border-bottom:2px solid #C74634;padding-bottom:4px;font-size:17pt}' +
-    'h2{color:#8B4513;margin-top:16px;font-size:13pt}h3{color:#6B6B6B;font-size:11.5pt}' +
-    'table{border-collapse:collapse;width:100%;margin:10px 0}' +
-    'th{background:#C74634;color:#fff;padding:7px 8px;border:1px solid #d8b5ae;text-align:left;font-size:10pt}' +
-    'td{padding:6px 8px;border:1px solid #e0d5d2;font-size:10pt}tr:nth-child(even) td{background:#FBF1EF}' +
-    '.muted{color:#8B8580;font-size:9pt}';
+  const css = WORD_CSS;
   const doc =
     '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" ' +
     'xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>' + css + '</style></head><body>' +
@@ -321,7 +330,15 @@ async function erpApiGet(
 }
 
 // ── Tool executor ───────────────────────────────────────────────────────────
-export interface DeliveredFile { name: string; url: string }
+export interface DeliveredFile {
+  name: string;
+  url: string;
+  kind?: 'excel' | 'word';
+  // in-memory preview data (stripped when history is persisted)
+  excel?: ExcelSpec;
+  wordHtml?: string;
+  wordTitle?: string;
+}
 
 export async function runAssistantTool(
   name: string,
@@ -342,7 +359,7 @@ export async function runAssistantTool(
         const blob = await buildExcel(spec);
         const fname = (spec.filename || 'report.xlsx').replace(/[^\w .()-]/g, '_');
         saveAs(blob, fname);
-        deliver({ name: fname, url: URL.createObjectURL(blob) });
+        deliver({ name: fname, url: URL.createObjectURL(blob), kind: 'excel', excel: spec });
         const rows = (spec.sheets || []).reduce((n, s) => n + (s.rows?.length || 0), 0);
         onLog({ tool: name, method: 'LOCAL', url: fname, status: 'OK', rows, ms: Math.round(performance.now() - t0) });
         result = { status: 'created and downloaded', filename: fname };
@@ -353,7 +370,7 @@ export async function runAssistantTool(
         const blob = buildWordDoc(spec);
         const fname = (spec.filename || 'document.doc').replace(/[^\w .()-]/g, '_');
         saveAs(blob, fname);
-        deliver({ name: fname, url: URL.createObjectURL(blob) });
+        deliver({ name: fname, url: URL.createObjectURL(blob), kind: 'word', wordHtml: spec.html, wordTitle: spec.title });
         onLog({ tool: name, method: 'LOCAL', url: fname, status: 'OK', ms: Math.round(performance.now() - t0) });
         result = { status: 'created and downloaded', filename: fname };
         break;

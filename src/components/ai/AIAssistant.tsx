@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, Input, Select, Tooltip, Typography, message as antMessage } from 'antd';
 import {
-  ApiOutlined, CloseOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined,
+  ApiOutlined, CloseOutlined, CommentOutlined, CompressOutlined, DeleteOutlined, DownloadOutlined,
+  ExpandOutlined, EyeOutlined, FileExcelOutlined, FileWordOutlined, HistoryOutlined,
   PlusOutlined, PlusSquareOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import Anthropic from '@anthropic-ai/sdk';
@@ -9,7 +10,8 @@ import { APEX_DB_CONFIG } from '../../config/api.config';
 import { getCurrentCompany } from '../../config/company.config';
 import { useAuth } from '../../context/AuthContext';
 import {
-  ASSISTANT_TOOLS, buildSystemPrompt, runAssistantTool, type ApiCallLog, type DeliveredFile,
+  ASSISTANT_TOOLS, buildSystemPrompt, runAssistantTool, wordPreviewSrcDoc,
+  type ApiCallLog, type DeliveredFile, type ExcelSpec,
 } from './assistantTools';
 
 const { Text } = Typography;
@@ -42,8 +44,8 @@ const loadConvs = (): Conversation[] => {
 const saveConvs = (convs: Conversation[]) =>
   lsSet(LS_CONVS, JSON.stringify(convs.slice(0, 20).map(c => ({
     ...c,
-    // blob URLs die on reload — keep only names for history
-    msgs: c.msgs.map(m => ({ ...m, files: (m.files || []).map(f => ({ name: f.name, url: '' })) })),
+    // blob URLs and preview payloads die on reload — keep only names for history
+    msgs: c.msgs.map(m => ({ ...m, files: (m.files || []).map(f => ({ name: f.name, url: '', kind: f.kind })) })),
   }))));
 
 const newConvId = () => `c${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -98,6 +100,108 @@ const ApiCallList: React.FC<{ calls: ApiCallLog[] }> = ({ calls }) => (
   </div>
 );
 
+// ── File previews (right pane in full screen — like the desktop artifacts panel)
+const ExcelPreviewView: React.FC<{ spec: ExcelSpec }> = ({ spec }) => {
+  const [sheetIdx, setSheetIdx] = useState(0);
+  const sheet = spec.sheets?.[Math.min(sheetIdx, (spec.sheets?.length || 1) - 1)];
+  if (!sheet) return null;
+  const rows = (sheet.rows || []).slice(0, 500);
+  return (
+    <div style={{ padding: 14, overflow: 'auto', height: '100%' }}>
+      {spec.title && <div style={{ fontWeight: 700, fontSize: 16, color: '#3A3632' }}>{spec.title}</div>}
+      {spec.subtitle && <div style={{ fontSize: 11, fontStyle: 'italic', color: '#8B8580', marginBottom: 6 }}>{spec.subtitle}</div>}
+      {(spec.sheets?.length || 0) > 1 && (
+        <div style={{ margin: '8px 0' }}>
+          {spec.sheets.map((s, i) => (
+            <button key={i} className={`ai-sheettab${i === sheetIdx ? ' on' : ''}`} onClick={() => setSheetIdx(i)}>{s.name}</button>
+          ))}
+        </div>
+      )}
+      <table className="ai-xltable">
+        <thead>
+          <tr>{sheet.columns.map((c, i) => <th key={i}>{c}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((row, ri) => (
+            <tr key={ri}>
+              {sheet.columns.map((_c, ci) => {
+                const v = row?.[ci];
+                return (
+                  <td key={ci} className={typeof v === 'number' ? 'num' : ''}>
+                    {typeof v === 'number'
+                      ? v.toLocaleString(undefined, Number.isInteger(v) && Math.abs(v) < 1000 ? {} : { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : v ?? ''}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+          {sheet.totalsRow && (
+            <tr className="totals">
+              {sheet.columns.map((_c, ci) => {
+                const v = sheet.totalsRow?.[ci];
+                return (
+                  <td key={ci} className={typeof v === 'number' ? 'num' : ''}>
+                    {typeof v === 'number' ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : v ?? ''}
+                  </td>
+                );
+              })}
+            </tr>
+          )}
+        </tbody>
+      </table>
+      {(sheet.rows || []).length > 500 && (
+        <div style={{ fontSize: 11, color: '#8B8580', marginTop: 6 }}>
+          Showing first 500 of {(sheet.rows || []).length} rows — full data is in the downloaded file.
+        </div>
+      )}
+    </div>
+  );
+};
+
+const PreviewPanel: React.FC<{
+  files: DeliveredFile[];
+  selected: DeliveredFile | null;
+  onSelect: (f: DeliveredFile) => void;
+}> = ({ files, selected, onSelect }) => (
+  <div className="ai-preview">
+    <div className="ai-preview-head">
+      <span style={{ fontWeight: 600, fontSize: 13 }}><EyeOutlined /> Preview</span>
+      <div className="ai-preview-tabs">
+        {files.map((f, i) => (
+          <button key={`${f.name}${i}`} className={`ai-ptab${selected === f ? ' on' : ''}`} onClick={() => onSelect(f)} title={f.name}>
+            {f.kind === 'word' ? <FileWordOutlined /> : <FileExcelOutlined />} {f.name}
+          </button>
+        ))}
+      </div>
+      {selected?.url && (
+        <a className="ai-file" style={{ margin: 0 }} href={selected.url} download={selected.name}>
+          <DownloadOutlined /> Download
+        </a>
+      )}
+    </div>
+    <div className="ai-preview-body">
+      {!selected && (
+        <div className="ai-preview-empty">
+          <FileExcelOutlined style={{ fontSize: 40, color: '#D9CDC9' }} />
+          <div>Generated Excel / Word files preview here.</div>
+          <div style={{ fontSize: 11 }}>Ask for a report — e.g. “Trial balance for Jun-26, download as Excel”.</div>
+        </div>
+      )}
+      {selected?.excel && <ExcelPreviewView spec={selected.excel} />}
+      {selected && !selected.excel && selected.kind === 'word' && (
+        selected.wordHtml !== undefined
+          ? <iframe title={selected.name} sandbox="" srcDoc={wordPreviewSrcDoc(selected.wordTitle, selected.wordHtml)}
+              style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />
+          : <div className="ai-preview-empty">Preview no longer available for this older file — re-generate it to preview.</div>
+      )}
+      {selected && !selected.excel && selected.kind !== 'word' && (
+        <div className="ai-preview-empty">Preview no longer available for this older file — re-generate it to preview.</div>
+      )}
+    </div>
+  </div>
+);
+
 // ── Shared store hooks (conversations shared across all open panels) ────────
 interface ConvStore {
   convs: Conversation[];
@@ -134,6 +238,8 @@ const AssistantPanel: React.FC<PanelProps> = ({
   const [draftKey, setDraftKey] = useState('');
   const [liveCalls, setLiveCalls] = useState<ApiCallLog[]>([]);
   const [apiOpen, setApiOpen] = useState<Record<number, boolean>>({});
+  const [fullscreen, setFullscreen] = useState(false);
+  const [preview, setPreview] = useState<DeliveredFile | null>(null);
   const msgsRef = useRef<HTMLDivElement>(null);
 
   const cur = store.convs.find(c => c.id === curId) ?? null;
@@ -208,6 +314,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
           .filter((b): b is Anthropic.TextBlock => b.type === 'text')
           .map(b => b.text).join('\n').trim();
         finish({ role: 'assistant', text: txt || '(no text response)', files: delivered.slice() });
+        if (delivered.length) setPreview(delivered[delivered.length - 1]);
         break;
       }
     } catch (e) {
@@ -250,8 +357,55 @@ const AssistantPanel: React.FC<PanelProps> = ({
   // stack panels right → left
   const right = 24 + index * (PANEL_W + 16);
 
+  // files of this conversation that can be previewed
+  const convFiles = useMemo(
+    () => msgs.flatMap(m => m.files || []).filter(f => f.kind || f.excel || f.wordHtml),
+    [msgs],
+  );
+
   return (
-    <div className="ai-panel" style={{ right, zIndex: 1001 + (total - index) }}>
+    <div
+      className={`ai-panel${fullscreen ? ' ai-full' : ''}`}
+      style={fullscreen ? { zIndex: 1200 } : { right, zIndex: 1001 + (total - index) }}
+    >
+      {fullscreen && (
+        <div className="ai-sidebar">
+          <div className="ai-side-head">
+            <span>Chats</span>
+            <Tooltip title="New chat">
+              <Button size="small" type="text" icon={<PlusOutlined />} onClick={() => {
+                const id = store.createConv();
+                setCurId(id); if (index === 0) lsSet(LS_CUR, id);
+              }} />
+            </Tooltip>
+          </div>
+          <div className="ai-side-list">
+            {!store.convs.length && <div className="ai-side-empty">No chats yet</div>}
+            {store.convs.map(c => (
+              <div
+                key={c.id}
+                className={`ai-side-item${c.id === curId ? ' on' : ''}`}
+                onClick={() => { setCurId(c.id); if (index === 0) lsSet(LS_CUR, c.id); }}
+              >
+                <div className="ai-side-title">{c.title || 'New chat'}</div>
+                <div className="ai-side-sub">
+                  {new Date(c.updatedAt).toLocaleDateString()} · {c.msgs.length} msg{c.msgs.length === 1 ? '' : 's'}
+                </div>
+                <DeleteOutlined
+                  className="ai-side-del"
+                  onClick={e => {
+                    e.stopPropagation();
+                    store.deleteConv(c.id);
+                    if (c.id === curId) { setCurId(''); if (index === 0) lsSet(LS_CUR, ''); }
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="ai-main">
       <div className="ai-head">
         <ThunderboltOutlined style={{ fontSize: 18 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -283,6 +437,10 @@ const AssistantPanel: React.FC<PanelProps> = ({
             setCurId(''); if (index === 0) lsSet(LS_CUR, '');
           }} />
         </Tooltip>
+        <Tooltip title={fullscreen ? 'Exit full screen' : 'Full screen (history + chat + preview)'}>
+          <Button size="small" type="text" icon={fullscreen ? <CompressOutlined /> : <ExpandOutlined />}
+            onClick={() => setFullscreen(f => !f)} />
+        </Tooltip>
         <Button size="small" type="text" icon={<CloseOutlined />} onClick={onClose} />
       </div>
 
@@ -309,9 +467,22 @@ const AssistantPanel: React.FC<PanelProps> = ({
                 : <div dangerouslySetInnerHTML={{ __html: mdToHtml(m.text) }} />}
               {!!m.files?.length && (
                 <div>
-                  {m.files.map(f => f.url
-                    ? <a key={f.name} className="ai-file" href={f.url} download={f.name}><DownloadOutlined /> {f.name}</a>
-                    : <span key={f.name} className="ai-file"><DownloadOutlined /> {f.name}</span>)}
+                  {m.files.map(f => (
+                    <span key={f.name} className="ai-file">
+                      {f.kind === 'word' ? <FileWordOutlined /> : <FileExcelOutlined />}
+                      {f.url
+                        ? <a href={f.url} download={f.name} style={{ color: 'inherit' }}>{f.name}</a>
+                        : <span>{f.name}</span>}
+                      {(f.excel || f.wordHtml) && (
+                        <Tooltip title="Preview">
+                          <EyeOutlined
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => { setPreview(f); setFullscreen(true); }}
+                          />
+                        </Tooltip>
+                      )}
+                    </span>
+                  ))}
                 </div>
               )}
               {!!m.apiCalls?.length && (
@@ -386,6 +557,11 @@ const AssistantPanel: React.FC<PanelProps> = ({
         <Button type="primary" shape="circle" icon={<SendOutlined />} onClick={() => send()} loading={busy}
           style={{ background: '#C74634', borderColor: '#C74634' }} />
       </div>
+      </div>
+
+      {fullscreen && (
+        <PreviewPanel files={convFiles} selected={preview} onSelect={setPreview} />
+      )}
     </div>
   );
 };
@@ -478,8 +654,43 @@ const AIAssistant: React.FC = () => {
         .ai-fab-badge{position:absolute;top:-2px;right:-2px;background:#fff;color:#C74634;border:1px solid #C74634;
           border-radius:10px;font-size:11px;font-weight:700;min-width:18px;height:18px;line-height:16px;padding:0 3px}
         .ai-panel{position:fixed;bottom:92px;width:${PANEL_W}px;max-width:calc(100vw - 32px);
-          height:min(640px,calc(100vh - 130px));background:#fff;border-radius:16px;display:flex;flex-direction:column;overflow:hidden;
+          height:min(640px,calc(100vh - 130px));background:#fff;border-radius:16px;display:flex;flex-direction:row;overflow:hidden;
           box-shadow:0 12px 48px rgba(0,0,0,.22);border:1px solid #E8E8E8;animation:aiIn .18s ease}
+        .ai-panel.ai-full{inset:12px;right:12px;bottom:12px;width:auto;height:auto;max-width:none}
+        .ai-main{flex:1;min-width:0;display:flex;flex-direction:column}
+        .ai-sidebar{width:250px;flex-shrink:0;border-right:1px solid #EFEAE8;background:#F7F4F3;display:flex;flex-direction:column}
+        .ai-side-head{padding:14px;font-weight:700;color:#3A3632;display:flex;align-items:center;justify-content:space-between;
+          border-bottom:1px solid #EFEAE8}
+        .ai-side-list{flex:1;overflow-y:auto;padding:8px}
+        .ai-side-empty{color:#9a908c;font-size:12px;text-align:center;padding-top:20px}
+        .ai-side-item{position:relative;padding:9px 28px 9px 12px;border-radius:10px;cursor:pointer;margin-bottom:4px}
+        .ai-side-item:hover{background:#EFE7E4}
+        .ai-side-item.on{background:#fff;border:1px solid #E4D2CD;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+        .ai-side-title{font-size:12.5px;font-weight:600;color:#3A3632;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .ai-side-sub{font-size:10.5px;color:#9a908c;margin-top:1px}
+        .ai-side-del{position:absolute;right:8px;top:50%;transform:translateY(-50%);color:#b9aca7;display:none;font-size:12px}
+        .ai-side-item:hover .ai-side-del{display:inline-block}
+        .ai-side-del:hover{color:#C74634}
+        .ai-preview{width:44%;min-width:340px;flex-shrink:0;border-left:1px solid #EFEAE8;background:#FBFAF9;display:flex;flex-direction:column}
+        .ai-preview-head{padding:10px 14px;border-bottom:1px solid #EFEAE8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff}
+        .ai-preview-tabs{display:flex;gap:6px;flex:1;overflow-x:auto;min-width:0}
+        .ai-ptab{display:inline-flex;align-items:center;gap:5px;border:1px solid #EBE2DF;background:#fff;border-radius:8px;
+          padding:3px 10px;font-size:11.5px;cursor:pointer;color:#5b4a45;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+        .ai-ptab.on{border-color:#C74634;color:#C74634;background:#FBF1EF}
+        .ai-preview-body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+        .ai-preview-body>*{flex:1;min-height:0}
+        .ai-preview-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+          color:#8B8580;font-size:13px;text-align:center;padding:20px}
+        .ai-sheettab{border:1px solid #EBE2DF;background:#fff;border-radius:6px 6px 0 0;padding:3px 12px;font-size:11.5px;
+          cursor:pointer;color:#5b4a45;margin-right:4px}
+        .ai-sheettab.on{background:#C74634;color:#fff;border-color:#C74634}
+        .ai-xltable{border-collapse:collapse;font-size:12px;background:#fff;min-width:100%}
+        .ai-xltable th{background:#C74634;color:#fff;padding:6px 10px;border:1px solid #d8a69d;text-align:center;
+          position:sticky;top:0;white-space:nowrap}
+        .ai-xltable td{padding:5px 10px;border:1px solid #E8DEDB;white-space:nowrap}
+        .ai-xltable td.num{text-align:right;font-variant-numeric:tabular-nums}
+        .ai-xltable tr:nth-child(even) td{background:#FBF4F2}
+        .ai-xltable tr.totals td{font-weight:700;background:#F3E6E3;border-top:2px double #C74634}
         @keyframes aiIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
         .ai-head{background:linear-gradient(135deg,#C74634,#9E3527);color:#fff;padding:12px 14px;display:flex;align-items:center;gap:6px}
         .ai-head .anticon{color:#fff}
