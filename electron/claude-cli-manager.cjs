@@ -506,4 +506,4 @@ function openExternal(ctx) {
 
 app.on('will-quit', () => { try { if (proc) proc.kill(); } catch { /* ignore */ } });
 
-module.exports = { getStatus, start, input, resize, stop, openExternal, provisionWorkspace, buildCleanEnv };
+module.exports = { getStatus, start, input, resize, stop, openExternal, provisionWorkspace, buildCleanEnv, workspaceDir };

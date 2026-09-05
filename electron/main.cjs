@@ -1259,6 +1259,63 @@ ipcMain.handle('claude-chat:open-workspace', async () => {
   } catch (e) { return { success: false, error: e.message }; }
 });
 
+// endpoint catalog + workspace files for the Claude Chat side/preview panes
+ipcMain.handle('claude-chat:catalog', async () => {
+  try {
+    const ws = claudeCli.provisionWorkspace();
+    const p = path.join(ws, 'erp-api-catalog.md');
+    return { success: true, markdown: fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '' };
+  } catch (e) { return { success: false, error: e.message, markdown: '' }; }
+});
+
+const CHAT_FILE_EXTS = ['.xlsx', '.xls', '.csv', '.md', '.txt', '.json'];
+const CHAT_FILE_SKIP = new Set(['.mcp.json', 'CLAUDE.md', 'erp-api-catalog.md', 'launch-claude.cmd', 'launch-claude.command']);
+
+ipcMain.handle('claude-chat:list-files', async () => {
+  try {
+    const ws = claudeCli.workspaceDir();
+    const files = [];
+    const scan = (dir, rel) => {
+      if (!fs.existsSync(dir)) return;
+      for (const name of fs.readdirSync(dir)) {
+        if (name.startsWith('.') || ['tools', 'mcp', 'node_modules'].includes(name)) continue;
+        const full = path.join(dir, name);
+        const st = fs.statSync(full);
+        if (st.isDirectory()) { if (!rel) scan(full, name); continue; }
+        if (CHAT_FILE_SKIP.has(name)) continue;
+        if (!CHAT_FILE_EXTS.includes(path.extname(name).toLowerCase())) continue;
+        files.push({ name, relPath: rel ? `${rel}/${name}` : name, size: st.size, mtime: st.mtimeMs });
+      }
+    };
+    scan(ws, '');
+    files.sort((a, b) => b.mtime - a.mtime);
+    return { success: true, files: files.slice(0, 50) };
+  } catch (e) { return { success: false, error: e.message, files: [] }; }
+});
+
+const chatSafePath = (relPath) => {
+  const ws = claudeCli.workspaceDir();
+  const full = path.resolve(ws, String(relPath || ''));
+  if (!full.startsWith(path.resolve(ws))) throw new Error('Path outside workspace');
+  return full;
+};
+
+ipcMain.handle('claude-chat:read-file', async (_event, { relPath } = {}) => {
+  try {
+    const full = chatSafePath(relPath);
+    const buf = fs.readFileSync(full);
+    if (buf.length > 15 * 1024 * 1024) return { success: false, error: 'File too large to preview' };
+    return { success: true, base64: buf.toString('base64'), name: path.basename(full) };
+  } catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle('claude-chat:open-file', async (_event, { relPath } = {}) => {
+  try {
+    await require('electron').shell.openPath(chatSafePath(relPath));
+    return { success: true };
+  } catch (e) { return { success: false, error: e.message }; }
+});
+
 // ── MCP bridge for the in-app AI Assistant ─────────────────────────────────
 const mcpBridge = require('./mcp-bridge.cjs');
 
