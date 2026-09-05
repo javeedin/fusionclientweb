@@ -72,6 +72,7 @@ const taskMenuItems: MenuItemType[] = [
   { key: 'reverse-journal', icon: <ReconciliationOutlined />, label: 'Reverse Journal', description: 'Reverse posted journals', color: REDWOOD.warning },
   { key: 'delete-journals', icon: <DeleteOutlined />, label: 'Delete Journals', description: 'Delete SLA & GL journals (test cleanup)', color: REDWOOD.primary, path: '/gl/delete-journals' },
   { key: 'accounting-periods', icon: <CalendarOutlined />, label: 'Manage Accounting Periods', description: 'View and manage accounting periods', color: REDWOOD.success, path: '/gl/accounting-periods' },
+  { key: 'business-units', icon: <SolutionOutlined />, label: 'Manage Business Units', description: 'Business units, legal entities and ledgers', color: REDWOOD.info, path: '/gl/business-units' },
   { key: 'revaluation', icon: <DollarOutlined />, label: 'Run Revaluation', description: 'Foreign currency revaluation', color: REDWOOD.primary },
   { key: 'journal-reconciliation', icon: <ReconciliationOutlined />, label: 'Fusion Journal Reconciliation', description: 'Reconcile batch ↔ header ↔ line totals', color: REDWOOD.primaryDark, path: '/gl/journal-reconciliation' },
 ];

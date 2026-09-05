@@ -39,6 +39,7 @@ const ManageValues            = lazy(() => import('./pages/gl/ManageValues'));
 const COASegments             = lazy(() => import('./pages/gl/COASegments'));
 const AccountCombinations     = lazy(() => import('./pages/gl/AccountCombinations'));
 const AccountingPeriods       = lazy(() => import('./pages/gl/AccountingPeriods'));
+const ManageBusinessUnits     = lazy(() => import('./pages/gl/ManageBusinessUnits'));
 const TrialBalance            = lazy(() => import('./pages/gl/TrialBalance'));
 const GenerateTrialBalance    = lazy(() => import('./pages/gl/GenerateTrialBalance'));
 const IncomeStatementTemplates= lazy(() => import('./pages/gl/IncomeStatementTemplates'));
@@ -253,6 +254,7 @@ function App() {
               <Route path="gl/create-journal" element={<CreateJournal />} />
               <Route path="gl/account-combinations" element={<AccountCombinations />} />
               <Route path="gl/accounting-periods" element={<AccountingPeriods />} />
+              <Route path="gl/business-units" element={<ManageBusinessUnits />} />
               <Route path="gl/trial-balance" element={<TrialBalance />} />
               <Route path="gl/generate-trial-balance" element={<GenerateTrialBalance />} />
               <Route path="gl/income-statement-templates" element={<IncomeStatementTemplates />} />
