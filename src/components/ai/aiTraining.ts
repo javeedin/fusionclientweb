@@ -55,19 +55,26 @@ export async function fetchTrainingRecipes(force = false): Promise<TrainingRecip
 
 export const TRAINING_ENDPOINT = `${APEX}/ai/training`;
 
-const mapRecipe = (r: Record<string, unknown>): TrainingRecipe => ({
-  recipeId: r.recipeId as number,
-  recipeName: String(r.recipeName || ''),
-  description: r.description as string | undefined,
-  module: r.module as string | undefined,
-  method: String(r.method || 'GET'),
-  urlTemplate: String(r.urlTemplate || ''),
-  params: parseJson<RecipeParam[]>(r.paramsJson, []),
-  example: parseJson<Record<string, string>>(r.exampleJson, {}),
-  appPath: r.appPath as string | undefined,
-  enabled: r.enabled as string | undefined,
-  createdBy: r.createdBy as string | undefined,
-});
+const mapRecipe = (raw: Record<string, unknown>): TrainingRecipe => {
+  // key casing varies by deployed handler version (recipeName / recipe_name /
+  // recipename) — compare with case and underscores stripped
+  const norm: Record<string, unknown> = {};
+  Object.keys(raw).forEach(k => { norm[k.toLowerCase().replace(/_/g, '')] = raw[k]; });
+  const g = (k: string) => norm[k];
+  return {
+    recipeId: Number(g('recipeid')) || undefined,
+    recipeName: String(g('recipename') || ''),
+    description: g('description') as string | undefined,
+    module: g('module') as string | undefined,
+    method: String(g('method') || 'GET'),
+    urlTemplate: String(g('urltemplate') || ''),
+    params: parseJson<RecipeParam[]>(g('paramsjson'), []),
+    example: parseJson<Record<string, string>>(g('examplejson'), {}),
+    appPath: g('apppath') as string | undefined,
+    enabled: g('enabled') as string | undefined,
+    createdBy: g('createdby') as string | undefined,
+  };
+};
 
 // Diagnostics for the last Teachings GET — shown by the API icon in the sidebar
 export interface TrainingDebug {

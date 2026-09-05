@@ -139,20 +139,24 @@ const parseJsonSafe = <T,>(s: unknown, fallback: T): T => {
   if (typeof s !== 'string' || !s.trim()) return fallback;
   try { return JSON.parse(s) as T; } catch { return fallback; }
 };
-const mapRecipeRow = (r: Record<string, unknown>): TrainingRecipe => {
-  const pick = (...keys: string[]) => keys.map(k => r[k]).find(v => v !== undefined && v !== null);
+const mapRecipeRow = (raw: Record<string, unknown>): TrainingRecipe => {
+  // key casing varies by handler version (recipeName / recipe_name /
+  // recipename) — compare with case and underscores stripped
+  const norm: Record<string, unknown> = {};
+  Object.keys(raw).forEach(k => { norm[k.toLowerCase().replace(/_/g, '')] = raw[k]; });
+  const g = (k: string) => norm[k];
   return {
-    recipeId: Number(pick('recipeId', 'recipe_id')) || undefined,
-    recipeName: String(pick('recipeName', 'recipe_name') || ''),
-    description: pick('description') as string | undefined,
-    module: pick('module') as string | undefined,
-    method: String(pick('method') || 'GET'),
-    urlTemplate: String(pick('urlTemplate', 'url_template') || ''),
-    params: parseJsonSafe<RecipeParam[]>(pick('paramsJson', 'params_json'), []),
-    example: parseJsonSafe<Record<string, string>>(pick('exampleJson', 'example_json'), {}),
-    appPath: pick('appPath', 'app_path') as string | undefined,
-    enabled: pick('enabled') as string | undefined,
-    createdBy: pick('createdBy', 'created_by') as string | undefined,
+    recipeId: Number(g('recipeid')) || undefined,
+    recipeName: String(g('recipename') || ''),
+    description: g('description') as string | undefined,
+    module: g('module') as string | undefined,
+    method: String(g('method') || 'GET'),
+    urlTemplate: String(g('urltemplate') || ''),
+    params: parseJsonSafe<RecipeParam[]>(g('paramsjson'), []),
+    example: parseJsonSafe<Record<string, string>>(g('examplejson'), {}),
+    appPath: g('apppath') as string | undefined,
+    enabled: g('enabled') as string | undefined,
+    createdBy: g('createdby') as string | undefined,
   };
 };
 
