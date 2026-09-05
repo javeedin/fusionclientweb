@@ -154,6 +154,13 @@ function start(sender, { cols = 120, rows = 30 } = {}) {
   const cleanEnv = { ...process.env, TERM: 'xterm-256color' };
   delete cleanEnv.ANTHROPIC_API_KEY;
   delete cleanEnv.ANTHROPIC_AUTH_TOKEN;
+  // when the app is launched from VS Code's terminal, inherited VSCODE_* vars
+  // make the CLI think it runs inside VS Code and show the extension flow
+  delete cleanEnv.TERM_PROGRAM;
+  delete cleanEnv.TERM_PROGRAM_VERSION;
+  for (const k of Object.keys(cleanEnv)) {
+    if (k.startsWith('VSCODE_')) delete cleanEnv[k];
+  }
   const shellFile = process.platform === 'win32' ? 'claude.cmd' : 'claude';
   try {
     proc = pty.spawn(shellFile, [], {
