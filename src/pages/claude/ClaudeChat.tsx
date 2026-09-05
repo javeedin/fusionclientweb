@@ -255,9 +255,29 @@ const ClaudeChat: React.FC = () => {
 
   const newChat = () => { setCurId(''); setLastError(''); setParamTarget(null); };
 
-  // the search panel: works for ANY endpoint — placeholders (if any) plus
+  // A training recipe that targets this endpoint (its URL template's path
+  // matches) — its declared params give the search panel real labeled fields.
+  const recipeForEndpoint = (p: string): TrainingRecipe | undefined => {
+    const pathOf = (t: string) => {
+      let s = String(t || '').trim();
+      try { if (/^https?:/i.test(s)) s = new URL(s).pathname; } catch { /* keep as-is */ }
+      return s.split('?')[0].replace(/\/+$/, '');
+    };
+    const target = pathOf(p);
+    if (!target) return undefined;
+    const matches = recipes.filter(r => {
+      const rp = pathOf(r.urlTemplate);
+      return rp === target || rp.endsWith(target);
+    });
+    return matches.find(r => (r.method || 'GET').toUpperCase() === 'GET') || matches[0];
+  };
+
+  // the search panel: works for ANY endpoint — a matching training recipe's
+  // declared parameters when one exists, else placeholders (if any) plus
   // user-added query parameters
   const openEndpointForm = (p: string) => {
+    const r = recipeForEndpoint(p);
+    if (r) { pickRecipe(r); return; }
     setParamTarget({ title: `GET ${p}`, method: 'GET', path: p, params: getEpParams(p).map(n => ({ name: n })) });
     setParamVals({});
     setParamQuery('');
@@ -295,13 +315,20 @@ const ClaudeChat: React.FC = () => {
     for (const p of paramTarget.params) {
       const v = (paramVals[p.name] || '').trim();
       const phRe = () => new RegExp(`\\{${p.name}\\}|:${p.name}(?![A-Za-z0-9_])`, 'g');
-      const isPlaceholder = phRe().test(path);
+      const inPath = phRe().test(path.split('?')[0]);
       if (v) {
-        if (isPlaceholder) path = path.replace(phRe(), encodeURIComponent(v));
+        if (phRe().test(path)) path = path.replace(phRe(), encodeURIComponent(v));
         else extraPairs.push([p.name, v]);
-      } else if (isPlaceholder || p.required) {
+      } else if (inPath || p.required) {
+        // blank query-only placeholders are simply omitted below
         missing.push(p.name);
       }
+    }
+    // drop query pairs whose placeholder was left blank (optional filters)
+    const qIdx = path.indexOf('?');
+    if (qIdx >= 0) {
+      const kept = path.slice(qIdx + 1).split('&').filter(kv => kv && !/\{[A-Za-z0-9_]+\}/.test(kv));
+      path = kept.length ? `${path.slice(0, qIdx)}?${kept.join('&')}` : path.slice(0, qIdx);
     }
     extraRows.forEach(({ k, v }) => {
       if (k.trim() && v.trim()) extraPairs.push([k.trim(), v.trim()]);
