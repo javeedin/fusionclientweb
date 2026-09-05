@@ -91,6 +91,19 @@ function send(sender, { text, sessionId, ctx } = {}) {
             });
           }
         }
+      } else if (evt.type === 'user' && evt.message && Array.isArray(evt.message.content)) {
+        // tool results echo back as user-role messages; tabular ones (SQL /
+        // API JSON) feed the app's preview history
+        for (const blk of evt.message.content) {
+          if (blk.type === 'tool_result') {
+            let text = '';
+            if (typeof blk.content === 'string') text = blk.content;
+            else if (Array.isArray(blk.content)) {
+              text = blk.content.map((c) => (c && c.type === 'text' ? c.text : '')).join('\n');
+            }
+            if (text) emit({ kind: 'toolresult', text: String(text).slice(0, 2000000) });
+          }
+        }
       } else if (evt.type === 'result') {
         emit({
           kind: 'result',

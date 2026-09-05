@@ -202,6 +202,17 @@ function normPath(t: string): string {
 // ── xlsx preview data ───────────────────────────────────────────────────────
 interface SheetPreview { name: string; rows: (string | number)[][] }
 
+// One entry in the preview history: a direct run, a SQL query, or a result
+// set the AI produced during a chat turn
+interface PreviewEntry {
+  id: string;
+  kind: 'direct' | 'sql' | 'ai';
+  title: string;
+  rows: Record<string, unknown>[];
+  raw: string | null;
+  at: number;
+}
+
 // ── memoized heavy sections ─────────────────────────────────────────────────
 // Typing in the chat box re-renders the page every keystroke; these keep the
 // expensive parts (markdown bubbles, the direct-result grid, the 283-row
@@ -312,12 +323,27 @@ const ClaudeChat: React.FC = () => {
   const [luBU, setLuBU] = useState<string[]>([]); // list-of-values for the search panel
   const [luLedger, setLuLedger] = useState<string[]>([]);
   const [luCompany, setLuCompany] = useState<string[]>([]);
-  const [directResult, setDirectResult] = useState<{ title: string; rows: Record<string, unknown>[]; raw: string | null } | null>(null);
+  const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
+  const [previewSheets, setPreviewSheets] = useState<SheetPreview[] | null>(null);
+  const [previewText, setPreviewText] = useState<string | null>(null);
+  const [prevHist, setPrevHist] = useState<PreviewEntry[]>([]); // newest first, capped
+  const [prevId, setPrevId] = useState('');
+  const directResult = useMemo(() => prevHist.find(e => e.id === prevId) ?? null, [prevHist, prevId]);
   const [directLoading, setDirectLoading] = useState(false);
   const [directSearch, setDirectSearch] = useState('');
   const [previewFull, setPreviewFull] = useState(false);
-  const directResultRef = useRef<{ title: string; rows: Record<string, unknown>[]; raw: string | null } | null>(null);
-  useEffect(() => { directResultRef.current = directResult; }, [directResult]);
+  const directResultRef = useRef<PreviewEntry | null>(null);
+  useEffect(() => { directResultRef.current = directResult; setDirectSearch(''); }, [directResult]);
+  const lastToolDetailRef = useRef(''); // titles AI-produced preview entries
+
+  const pushPreview = useCallback((kind: PreviewEntry['kind'], title: string, rows: Record<string, unknown>[], raw: string | null) => {
+    const id = `p${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setPrevHist(prev => [{ id, kind, title, rows, raw, at: Date.now() }, ...prev].slice(0, 15));
+    setPrevId(id);
+    setPreviewFile(null);
+    setPreviewSheets(null);
+    setPreviewText(null);
+  }, []);
   const [dbOpen, setDbOpen] = useState(false); // SQL DB browser in the preview panel
   const [dbTables, setDbTables] = useState<{ name: string; rows: number; columns: string[] }[]>([]);
   const [dbSql, setDbSql] = useState('');
@@ -328,9 +354,6 @@ const ClaudeChat: React.FC = () => {
   const [sqlLoadMode, setSqlLoadMode] = useState<'replace' | 'append'>('replace');
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
-  const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
-  const [previewSheets, setPreviewSheets] = useState<SheetPreview[] | null>(null);
-  const [previewText, setPreviewText] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const curIdRef = useRef(curId);
   useEffect(() => { curIdRef.current = curId; }, [curId]);
@@ -431,6 +454,7 @@ const ClaudeChat: React.FC = () => {
         });
       } else if (evt.kind === 'tool') {
         const entry: ToolRef = { name: evt.name || 'tool', detail: evt.detail };
+        lastToolDetailRef.current = evt.detail || evt.name || '';
         setLiveTool(evt.detail ? `${evt.name}: ${evt.detail.slice(0, 70)}` : (evt.name || 'tool'));
         mutateConv(id, c => {
           const msgsN = [...c.msgs];
@@ -440,6 +464,15 @@ const ClaudeChat: React.FC = () => {
           } else msgsN.push({ role: 'assistant', text: '', tools: [entry] });
           return { ...c, msgs: msgsN, updatedAt: Date.now() };
         });
+      } else if (evt.kind === 'toolresult' && evt.text) {
+        // tabular tool output (query-db / call-api JSON) → preview history
+        const t = evt.text.replace(/^HTTP \d+\s*\n/, '');
+        const tryParse = (s: string) => { try { return JSON.parse(s); } catch { return undefined; } };
+        const j = tryParse(t) ?? tryParse(t.replace(/:(\s*-?\d+)\.(?=\s*[,}\]])/g, ':$1'));
+        const rows = j && Array.isArray(j.rows) ? j.rows : j && Array.isArray(j.items) ? j.items : Array.isArray(j) ? j : null;
+        if (rows && rows.length && rows[0] && typeof rows[0] === 'object') {
+          pushPreview('ai', `AI: ${(lastToolDetailRef.current || 'result').slice(0, 90)}`, rows as Record<string, unknown>[], null);
+        }
       } else if (evt.kind === 'result') {
         if (evt.sessionId) mutateConv(id, c => ({ ...c, sessionId: evt.sessionId! }));
         if (evt.isError && evt.resultText) setLastError(evt.resultText);
@@ -452,7 +485,7 @@ const ClaudeChat: React.FC = () => {
       }
     });
     return () => api.removeClaudeChatListeners();
-  }, [api, mutateConv, refreshFiles]);
+  }, [api, mutateConv, refreshFiles, pushPreview]);
 
   const send = useCallback(async (textArg?: string) => {
     const text = (textArg ?? input).trim();
@@ -660,11 +693,7 @@ const ClaudeChat: React.FC = () => {
       else if (j && Array.isArray(j.items)) rows = j.items;
       else if (Array.isArray(j)) rows = j;
       else raw = JSON.stringify(j, null, 2);
-      setPreviewFile(null);
-      setPreviewSheets(null);
-      setPreviewText(null);
-      setDirectSearch('');
-      setDirectResult({ title: req.path, rows, raw });
+      pushPreview('direct', req.path, rows, raw);
     } finally {
       setDirectLoading(false);
     }
@@ -724,17 +753,14 @@ const ClaudeChat: React.FC = () => {
     try {
       const r = await api?.claudeChatQueryDb?.({ sql: s, ctx: buildCompanyCtx() });
       if (!r?.success) { setDbErr(r?.error || 'Query failed'); return; }
-      setPreviewFile(null);
-      setPreviewSheets(null);
-      setPreviewText(null);
-      setDirectSearch('');
-      setDirectResult({
-        title: title || `SQL: ${s.slice(0, 90)}`,
-        rows: r.rows || [],
-        raw: (r.rows || []).length ? null : JSON.stringify(r, null, 2),
-      });
+      pushPreview(
+        'sql',
+        title || `SQL: ${s.slice(0, 90)}`,
+        r.rows || [],
+        (r.rows || []).length ? null : JSON.stringify(r, null, 2),
+      );
     } finally { setDbBusy(false); }
-  }, [api]);
+  }, [api, pushPreview]);
 
   // "→ SQL" opens a small dialog: editable table name + Replace/Append
   const openSqlLoad = () => {
@@ -874,7 +900,7 @@ const ClaudeChat: React.FC = () => {
     setPreviewFile(f);
     setPreviewSheets(null);
     setPreviewText(null);
-    setDirectResult(null);
+    setPrevId('');
     const r = await api.claudeChatReadFile(f.relPath);
     if (!r?.success || !r.base64) { setPreviewText(`Could not read file: ${r?.error || 'unknown'}`); return; }
     const bin = Uint8Array.from(atob(r.base64), ch => ch.charCodeAt(0));
@@ -1016,6 +1042,16 @@ const ClaudeChat: React.FC = () => {
         .cc-preview{width:38%;min-width:320px;flex-shrink:0;display:flex;flex-direction:column;min-height:0}
         .cc-preview.full{position:fixed;inset:12px;z-index:1000;width:auto;min-width:0;max-width:none;
           box-shadow:0 12px 48px rgba(0,0,0,.28);border-radius:12px;background:#fff}
+        .cc-ptabs{display:flex;gap:4px;overflow-x:auto;padding:4px 6px;border-bottom:1px solid #F3EFED;flex-shrink:0}
+        .cc-ptab{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:7px;border:1px solid #EBE2DF;
+          font-size:11px;color:#5b4a45;cursor:pointer;white-space:nowrap;background:#fff;flex-shrink:0}
+        .cc-ptab.on{background:#FBF1EF;border-color:#EAD2CC;font-weight:600}
+        .cc-ptab-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+        .cc-ptab-dot.direct{background:#1D7B4D}
+        .cc-ptab-dot.sql{background:#2F54EB}
+        .cc-ptab-dot.ai{background:#722ED1}
+        .cc-ptab-x{font-size:9px;color:#b9aca7;margin-left:2px}
+        .cc-ptab-x:hover{color:#C74634}
         .cc-file{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;cursor:pointer;font-size:12px}
         .cc-file:hover{background:#F7F2F0}
         .cc-file.on{background:#FBF1EF;border:1px solid #EAD2CC}
@@ -1384,6 +1420,23 @@ const ClaudeChat: React.FC = () => {
               )}
               <Tooltip title="Refresh files"><Button size="small" type="text" icon={<ReloadOutlined />} onClick={refreshFiles} /></Tooltip>
             </div>
+            {prevHist.length > 0 && (
+              <div className="cc-ptabs">
+                {prevHist.map(e => (
+                  <Tooltip key={e.id} title={`${e.title} · ${e.rows.length} rows · ${new Date(e.at).toLocaleTimeString()}`}>
+                    <span className={`cc-ptab${e.id === prevId ? ' on' : ''}`} onClick={() => setPrevId(e.id)}>
+                      <span className={`cc-ptab-dot ${e.kind}`} />
+                      {e.title.replace(/^(SQL|AI):\s*/, '').slice(0, 26)}
+                      <CloseOutlined className="cc-ptab-x" onClick={ev => {
+                        ev.stopPropagation();
+                        setPrevHist(prev => prev.filter(x => x.id !== e.id));
+                        if (e.id === prevId) setPrevId('');
+                      }} />
+                    </span>
+                  </Tooltip>
+                ))}
+              </div>
+            )}
             {dbOpen && (
               <div style={{ maxHeight: 220, overflowY: 'auto', padding: 6, borderBottom: '1px solid #F3EFED', background: '#FBFAF9' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
@@ -1433,9 +1486,12 @@ const ClaudeChat: React.FC = () => {
               {directResult && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <Tag color="green" style={{ margin: 0 }}>Direct</Tag>
+                    <Tag color={directResult.kind === 'direct' ? 'green' : directResult.kind === 'sql' ? 'geekblue' : 'purple'} style={{ margin: 0 }}>
+                      {directResult.kind === 'direct' ? 'Direct' : directResult.kind === 'sql' ? 'SQL' : 'AI'}
+                    </Tag>
                     <code style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{directResult.title}</code>
-                    <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setDirectResult(null)} />
+                    <Text type="secondary" style={{ fontSize: 10.5, flexShrink: 0 }}>{new Date(directResult.at).toLocaleTimeString()}</Text>
+                    <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setPrevId('')} />
                   </div>
                   {directResult.rows.length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -1453,7 +1509,7 @@ const ClaudeChat: React.FC = () => {
                       </Text>
                       <Button size="small" icon={<FileExcelOutlined style={{ color: '#1D7B4D' }} />} onClick={exportDirectExcel}>Excel</Button>
                       <Button size="small" icon={<FileTextOutlined />} onClick={exportDirectPdf}>PDF</Button>
-                      {!directResult.title.startsWith('SQL:') && (
+                      {directResult.kind !== 'sql' && (
                         <Tooltip title="Load these rows into the local SQL database (erp-data.db) for analysis and joins">
                           <Button size="small" icon={<DatabaseOutlined />} loading={dbBusy} onClick={openSqlLoad}>→ SQL</Button>
                         </Tooltip>
