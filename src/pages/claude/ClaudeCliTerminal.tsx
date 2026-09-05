@@ -75,6 +75,16 @@ const ClaudeCliTerminal: React.FC = () => {
 
     term.onData(data => getApi()?.claudeCliInput(data));
 
+    // reliable clipboard paste (Ctrl+V / Ctrl+Shift+V) — important for the
+    // /login OAuth code, which must be pasted in full
+    term.attachCustomKeyEventHandler(e => {
+      if (e.type === 'keydown' && e.ctrlKey && (e.key === 'v' || e.key === 'V')) {
+        navigator.clipboard.readText().then(t => { if (t) getApi()?.claudeCliInput(t); }).catch(() => { /* ignore */ });
+        return false;
+      }
+      return true;
+    });
+
     const ro = new ResizeObserver(() => {
       try {
         fit.fit();

@@ -149,13 +149,18 @@ function start(sender, { cols = 120, rows = 30 } = {}) {
   }
   if (proc) return { success: true, alreadyRunning: true };
   const ws = provisionWorkspace();
+  // strip API credentials so the CLI always uses the subscription login
+  // (an inherited ANTHROPIC_API_KEY would silently switch it to API billing)
+  const cleanEnv = { ...process.env, TERM: 'xterm-256color' };
+  delete cleanEnv.ANTHROPIC_API_KEY;
+  delete cleanEnv.ANTHROPIC_AUTH_TOKEN;
   const shellFile = process.platform === 'win32' ? 'claude.cmd' : 'claude';
   try {
     proc = pty.spawn(shellFile, [], {
       name: 'xterm-256color',
       cwd: ws,
       cols, rows,
-      env: { ...process.env, TERM: 'xterm-256color' },
+      env: cleanEnv,
       useConpty: false, // winpty is more reliable across Windows versions
     });
   } catch (e) {
@@ -165,7 +170,7 @@ function start(sender, { cols = 120, rows = 30 } = {}) {
       const args = process.platform === 'win32' ? ['/c', 'claude'] : ['-lc', 'claude'];
       proc = pty.spawn(sh, args, {
         name: 'xterm-256color', cwd: ws, cols, rows,
-        env: { ...process.env, TERM: 'xterm-256color' },
+        env: cleanEnv,
         useConpty: false,
       });
     } catch (e2) {
