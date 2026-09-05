@@ -117,7 +117,11 @@ function readGlCreds() {
   }
 }
 
-function provisionWorkspace() {
+const toOrigin = (u) => { try { return new URL(u).origin; } catch { return u || ''; } };
+
+// ctx comes from the renderer (the page that starts Claude) and carries the
+// LOGIN COMPANY's endpoints: { company, apexBaseUrl, fusionBaseUrl }
+function provisionWorkspace(ctx = {}) {
   const ws = workspaceDir();
   const mcpDir = path.join(ws, 'mcp');
   fs.mkdirSync(mcpDir, { recursive: true });
@@ -134,13 +138,14 @@ function provisionWorkspace() {
   const desktop = readClaudeDesktopEnv();
   const env = {
     ...desktop,
-    // ORDS (GL server)
-    ORACLE_BASE_URL: creds.oracleBaseUrl || desktop.ORACLE_BASE_URL || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com',
+    // ORDS (GL server) — the login company's APEX origin wins
+    ORACLE_BASE_URL: toOrigin(ctx.apexBaseUrl) || creds.oracleBaseUrl || desktop.ORACLE_BASE_URL || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com',
     ORACLE_USERNAME: creds.username || desktop.ORACLE_USERNAME || '',
     ORACLE_PASSWORD: creds.password || desktop.ORACLE_PASSWORD || '',
     SKIP_AUTH: creds.skipAuth === false ? 'false' : (desktop.SKIP_AUTH || 'true'),
-    // Oracle Fusion (AR / balances / inventory / registry servers)
-    FUSION_BASE_URL: desktop.FUSION_BASE_URL || process.env.FUSION_BASE_URL || 'https://iaaobn-test.fa.ocs.oraclecloud.com',
+    // Oracle Fusion (AR / balances / inventory / registry servers) — the
+    // login company's pod (incl. the instance picked in the app) wins
+    FUSION_BASE_URL: toOrigin(ctx.fusionBaseUrl) || desktop.FUSION_BASE_URL || process.env.FUSION_BASE_URL || 'https://iaaobn-test.fa.ocs.oraclecloud.com',
     ...(desktop.FUSION_USERNAME
       ? {}
       : fusion.username ? { FUSION_USERNAME: fusion.username, FUSION_PASSWORD: fusion.password } : {}),
@@ -266,8 +271,8 @@ const BORDER = { top: B, left: B, bottom: B, right: B };
 
   fs.writeFileSync(path.join(ws, 'CLAUDE.md'), `# Re-ERP Workspace
 
-You are running inside Re-ERP, an Oracle Fusion companion ERP (company BUIMERC,
-ledger currency AED, GL periods in Mon-YY format like Jun-26).
+You are running inside Re-ERP, an Oracle Fusion companion ERP (company
+${ctx.company || 'BUIMERC'}, ledger currency AED, GL periods in Mon-YY format like Jun-26).
 
 MCP servers (approve them when asked) give you LIVE ERP data:
 - oracle-gl: GL account analysis, balances, trial balance health, journals, period status
@@ -329,7 +334,7 @@ function getStatus() {
   return { installed, version, running: !!proc, workspace: workspaceDir(), ptyReady, ptyError };
 }
 
-function start(sender, { cols = 120, rows = 30 } = {}) {
+function start(sender, { cols = 120, rows = 30, ctx } = {}) {
   if (!loadPty()) {
     return {
       success: false,
@@ -337,7 +342,7 @@ function start(sender, { cols = 120, rows = 30 } = {}) {
     };
   }
   if (proc) return { success: true, alreadyRunning: true };
-  const ws = provisionWorkspace();
+  const ws = provisionWorkspace(ctx);
   const cleanEnv = buildCleanEnv();
   const shellFile = process.platform === 'win32' ? 'claude.cmd' : 'claude';
   try {
@@ -395,9 +400,9 @@ function stop() {
 // Fallback with no native code: open the OS terminal in the provisioned
 // workspace and run claude there — same .mcp.json / CLAUDE.md, so the ERP
 // tools work identically. Used when node-pty is unavailable, or on demand.
-function openExternal() {
+function openExternal(ctx) {
   try {
-    const ws = provisionWorkspace();
+    const ws = provisionWorkspace(ctx);
     if (process.platform === 'win32') {
       const launcher = path.join(ws, 'launch-claude.cmd');
       fs.writeFileSync(launcher, '@echo off\r\ncd /d "%~dp0"\r\nclaude\r\n', 'utf8');

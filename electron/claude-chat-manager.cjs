@@ -24,11 +24,11 @@ let proc = null; // one in-flight turn at a time
 
 function log(...args) { console.log('[Claude Chat]', ...args); }
 
-function send(sender, { text, sessionId } = {}) {
+function send(sender, { text, sessionId, ctx } = {}) {
   if (!text || !String(text).trim()) return { success: false, error: 'Empty message' };
   if (proc) return { success: false, error: 'A message is already being processed — cancel it first' };
 
-  const ws = cli.provisionWorkspace();
+  const ws = cli.provisionWorkspace(ctx);
   const env = cli.buildCleanEnv();
   const file = process.platform === 'win32' ? 'claude.cmd' : 'claude';
   const args = [

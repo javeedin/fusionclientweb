@@ -1235,8 +1235,8 @@ ipcMain.handle('claude-cli:stop', async () => {
   try { return claudeCli.stop(); }
   catch (e) { return { success: false, error: e.message }; }
 });
-ipcMain.handle('claude-cli:open-external', async () => {
-  try { return claudeCli.openExternal(); }
+ipcMain.handle('claude-cli:open-external', async (_event, opts) => {
+  try { return claudeCli.openExternal((opts || {}).ctx); }
   catch (e) { return { success: false, error: e.message }; }
 });
 

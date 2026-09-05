@@ -87,7 +87,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeCliStatus: ()            => ipcRenderer.invoke('claude-cli:status'),
   claudeCliStart:  (opts)        => ipcRenderer.invoke('claude-cli:start', opts),
   claudeCliStop:   ()            => ipcRenderer.invoke('claude-cli:stop'),
-  claudeCliOpenExternal: ()      => ipcRenderer.invoke('claude-cli:open-external'),
+  claudeCliOpenExternal: (opts)  => ipcRenderer.invoke('claude-cli:open-external', opts),
 
   // Claude Chat — chat bubbles over the headless CLI (subscription-billed)
   claudeChatSend:   (opts)       => ipcRenderer.invoke('claude-chat:send', opts),

@@ -6,8 +6,21 @@ import {
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { getCurrentCompany } from '../../config/company.config';
+import { getFusionInstanceUrl } from '../../config/api.helper';
 
 const { Text, Paragraph } = Typography;
+
+// endpoints of the company the user is logged into
+const toOrigin = (u: string) => { try { return new URL(u).origin; } catch { return u || ''; } };
+const buildCompanyCtx = () => {
+  const c = getCurrentCompany();
+  return {
+    company: c.code,
+    apexBaseUrl: c.apexBaseUrl,
+    fusionBaseUrl: toOrigin(getFusionInstanceUrl() || c.fusionBaseUrl || ''),
+  };
+};
 
 interface CliStatus {
   installed?: boolean; version?: string; running?: boolean; workspace?: string;
@@ -16,9 +29,9 @@ interface CliStatus {
 
 interface ClaudeCliApi {
   claudeCliStatus: () => Promise<CliStatus & { success: boolean; error?: string }>;
-  claudeCliStart: (opts: { cols: number; rows: number }) => Promise<{ success: boolean; error?: string; alreadyRunning?: boolean }>;
+  claudeCliStart: (opts: { cols: number; rows: number; ctx?: Record<string, string> }) => Promise<{ success: boolean; error?: string; alreadyRunning?: boolean }>;
   claudeCliStop: () => Promise<{ success: boolean }>;
-  claudeCliOpenExternal?: () => Promise<{ success: boolean; error?: string; workspace?: string }>;
+  claudeCliOpenExternal?: (opts?: { ctx?: Record<string, string> }) => Promise<{ success: boolean; error?: string; workspace?: string }>;
   claudeCliInput: (data: string) => void;
   claudeCliResize: (cols: number, rows: number) => void;
   onClaudeCliData: (cb: (e: unknown, data: string) => void) => void;
@@ -126,7 +139,7 @@ const ClaudeCliTerminal: React.FC = () => {
     setStarting(true);
     try {
       fitRef.current?.fit();
-      const r = await api.claudeCliStart({ cols: termRef.current.cols, rows: termRef.current.rows });
+      const r = await api.claudeCliStart({ cols: termRef.current.cols, rows: termRef.current.rows, ctx: buildCompanyCtx() });
       if (!r.success) { message.error(r.error || 'Could not start claude'); return; }
       if (!r.alreadyRunning) termRef.current.clear();
       setRunning(true);
@@ -144,7 +157,7 @@ const ClaudeCliTerminal: React.FC = () => {
   };
 
   const openExternal = async () => {
-    const r = await api?.claudeCliOpenExternal?.();
+    const r = await api?.claudeCliOpenExternal?.({ ctx: buildCompanyCtx() });
     if (r?.success) message.success('Claude opened in a system terminal window (same ERP MCP setup)');
     else message.error(r?.error || 'Could not open the system terminal');
   };
