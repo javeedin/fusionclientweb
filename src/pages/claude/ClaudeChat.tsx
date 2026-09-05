@@ -762,11 +762,14 @@ const ClaudeChat: React.FC = () => {
       } catch { return []; }
     };
     const uniq = (a: string[]) => [...new Set(a.filter(Boolean))].sort();
-    const [bus, lgs, cos] = await Promise.all([
-      get('gl/businessunits'), get('gl/rr-trialbalance/ledgers'), get('gl/rr-trialbalance/companies'),
+    // ledgers come from two endpoints (gl/getledgername is the one Trial
+    // Balance itself uses; rr-trialbalance/ledgers may not be deployed) —
+    // merge whatever answers
+    const [bus, lgs1, lgs2, cos] = await Promise.all([
+      get('gl/businessunits'), get('gl/rr-trialbalance/ledgers'), get('gl/getledgername'), get('gl/rr-trialbalance/companies'),
     ]);
     setLuBU(uniq(bus.map(it => lovValue(it, ['businessunitname', 'buname', 'name']))));
-    setLuLedger(uniq(lgs.map(it => lovValue(it, ['ledgername', 'ledger', 'name']))));
+    setLuLedger(uniq([...lgs1, ...lgs2].map(it => lovValue(it, ['ledgername', 'ledger', 'name']))));
     setLuCompany(uniq(cos.map(it => lovValue(it, ['company', 'companycode', 'companyname', 'segment1', 'name']))));
   }, [api]);
 
@@ -1186,6 +1189,18 @@ const ClaudeChat: React.FC = () => {
     });
     await openPdf(doc, `direct-export-${dayjs().format('YYYYMMDD-HHmmss')}.pdf`);
   };
+
+  // a search panel opening with an empty BU/ledger/company list retries the
+  // LOV fetch once (page may have opened offline or before login settled)
+  useEffect(() => {
+    if (!paramTarget) return;
+    const needs = paramTarget.params.some(p =>
+      (isBuParam(p.name) && !luBU.length)
+      || (isLedgerParam(p.name) && !luLedger.length)
+      || (isCompanyParam(p.name) && !luCompany.length));
+    if (needs) loadLovs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch once per panel open, not on list changes
+  }, [paramTarget, loadLovs]);
 
   // chartable? (evaluated on the filtered rows so the chart follows the search)
   const chartSpec = useMemo(() => (directResult && directRows.length ? chartSpecFor(directRows) : null), [directResult, directRows]);

@@ -1425,7 +1425,7 @@ ipcMain.handle('claude-chat:apiget', async (_event, opts = {}) => {
   }
 });
 
-const CHAT_LOV_PATHS = ['gl/businessunits', 'gl/rr-trialbalance/ledgers', 'gl/rr-trialbalance/companies'];
+const CHAT_LOV_PATHS = ['gl/businessunits', 'gl/rr-trialbalance/ledgers', 'gl/getledgername', 'gl/rr-trialbalance/companies'];
 ipcMain.handle('claude-chat:lov', async (_event, opts = {}) => {
   const base = String((opts && opts.apexBaseUrl) || '').replace(/\/+$/, '');
   const p = String((opts && opts.path) || '').replace(/^\/+/, '');
