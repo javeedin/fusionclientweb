@@ -46,6 +46,28 @@ function sourceDir(file) {
   return isDev ? path.join(__dirname, file) : path.join(app.getAppPath(), 'electron', file);
 }
 
+// Oracle Fusion credentials saved by the app's Fusion settings screen
+// (same file save-fusion-credentials writes)
+function readFusionCreds() {
+  try {
+    const file = path.join(app.getPath('userData'), 'fusion-creds.json');
+    if (!fs.existsSync(file)) return {};
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    let password = '';
+    if (data.password) {
+      if (data.encrypted && safeStorage.isEncryptionAvailable()) {
+        password = safeStorage.decryptString(Buffer.from(data.password, 'base64'));
+      } else {
+        password = Buffer.from(data.password, 'base64').toString();
+      }
+    }
+    return { username: data.username || '', password };
+  } catch (e) {
+    log('could not read fusion credentials:', e.message);
+    return {};
+  }
+}
+
 // Same credential file the GL MCP settings screen writes
 function readGlCreds() {
   try {
@@ -82,11 +104,21 @@ function provisionWorkspace() {
   }
 
   const creds = readGlCreds();
+  const fusion = readFusionCreds();
   const env = {
+    // ORDS (GL server)
     ORACLE_BASE_URL: creds.oracleBaseUrl || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com',
     ORACLE_USERNAME: creds.username || '',
     ORACLE_PASSWORD: creds.password || '',
     SKIP_AUTH: creds.skipAuth === false ? 'false' : 'true',
+    // Oracle Fusion (AR / balances / inventory / registry servers) — taken
+    // from the credentials the app stores, same as Claude Desktop setup
+    FUSION_BASE_URL: process.env.FUSION_BASE_URL || 'https://iaaobn-test.fa.ocs.oraclecloud.com',
+    ...(fusion.username ? { FUSION_USERNAME: fusion.username, FUSION_PASSWORD: fusion.password } : {}),
+    // ORDS OAuth2 token passthrough (registry server)
+    ...(process.env.ORDS_USE_TOKEN ? { ORDS_USE_TOKEN: process.env.ORDS_USE_TOKEN } : {}),
+    ...(process.env.ORDS_CLIENT_ID ? { ORDS_CLIENT_ID: process.env.ORDS_CLIENT_ID } : {}),
+    ...(process.env.ORDS_CLIENT_SECRET ? { ORDS_CLIENT_SECRET: process.env.ORDS_CLIENT_SECRET } : {}),
   };
   const server = (script) => ({
     command: 'node',
