@@ -5,9 +5,10 @@ import dayjs from 'dayjs';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-  ApiOutlined, CloseOutlined, CodeOutlined, DeleteOutlined, ExportOutlined, EyeOutlined, FileExcelOutlined,
-  FileTextOutlined, FilterOutlined, FolderOpenOutlined, FullscreenExitOutlined, FullscreenOutlined,
-  MinusCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, SendOutlined, StopOutlined, ThunderboltOutlined,
+  ApiOutlined, CloseOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined, ExportOutlined, EyeOutlined,
+  FileExcelOutlined, FileTextOutlined, FilterOutlined, FolderOpenOutlined, FullscreenExitOutlined,
+  FullscreenOutlined, MinusCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, SendOutlined,
+  StopOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
@@ -51,6 +52,11 @@ interface ChatApi {
   claudeChatLov?: (opts: { apexBaseUrl: string; path: string }) => Promise<{ success: boolean; items?: Record<string, unknown>[]; error?: string }>;
   claudeChatApiGet?: (opts: { apexBaseUrl: string; path: string }) => Promise<{ success: boolean; status?: number; text?: string; error?: string; url?: string }>;
   claudeChatSaveDirect?: (opts: { json: string }) => Promise<{ success: boolean; error?: string }>;
+  claudeChatLoadDb?: (opts: { json: string; table: string; ctx: Record<string, string> }) => Promise<{ success: boolean; message?: string; error?: string }>;
+  claudeChatQueryDb?: (opts: { sql?: string; tables?: boolean; ctx: Record<string, string> }) => Promise<{
+    success: boolean; rowCount?: number; rows?: Record<string, unknown>[];
+    tables?: { name: string; rows: number; columns: string[] }[]; error?: string;
+  }>;
   claudeChatListFiles?: () => Promise<{ success: boolean; files: WsFile[] }>;
   claudeChatReadFile?: (relPath: string) => Promise<{ success: boolean; base64?: string; name?: string; error?: string }>;
   claudeChatOpenFile?: (relPath: string) => Promise<{ success: boolean }>;
@@ -296,6 +302,11 @@ const ClaudeChat: React.FC = () => {
   const [previewFull, setPreviewFull] = useState(false);
   const directResultRef = useRef<{ title: string; rows: Record<string, unknown>[]; raw: string | null } | null>(null);
   useEffect(() => { directResultRef.current = directResult; }, [directResult]);
+  const [dbOpen, setDbOpen] = useState(false); // SQL DB browser in the preview panel
+  const [dbTables, setDbTables] = useState<{ name: string; rows: number; columns: string[] }[]>([]);
+  const [dbSql, setDbSql] = useState('');
+  const [dbErr, setDbErr] = useState('');
+  const [dbBusy, setDbBusy] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
   const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
@@ -455,7 +466,8 @@ const ClaudeChat: React.FC = () => {
           json: JSON.stringify({ source: `GET ${d.title}`, rowCount: d.rows.length, items: d.rows }),
         });
         if (r0?.success) {
-          outbound += `\n\n(Context: I just ran GET ${d.title} directly in the app — the full result, ${d.rows.length} rows, is saved in the workspace file direct-result.json. Read that file to answer/analyze instead of re-querying the API.)`;
+          const src = d.title.startsWith('SQL:') ? d.title : `GET ${d.title}`;
+          outbound += `\n\n(Context: the data currently shown in the app came from ${src} — the full result, ${d.rows.length} rows, is saved in the workspace file direct-result.json. Read that file (or query erp-data.db if the table exists) to answer/analyze instead of re-querying the API.)`;
         }
       } catch { /* send without context */ }
     }
@@ -673,6 +685,53 @@ const ClaudeChat: React.FC = () => {
     () => directRows.map((row, i) => ({ ...row, __rk: i })),
     [directRows],
   );
+
+  // ── local SQL database (erp-data.db in the workspace) ─────────────────────
+  const loadDbTables = useCallback(async () => {
+    setDbErr('');
+    try {
+      const r = await api?.claudeChatQueryDb?.({ tables: true, ctx: buildCompanyCtx() });
+      if (r?.success) setDbTables(r.tables || []);
+      else { setDbTables([]); setDbErr(r?.error || 'Could not read the database'); }
+    } catch (e) { setDbErr(e instanceof Error ? e.message : String(e)); }
+  }, [api]);
+
+  const runSql = useCallback(async (sql: string, title?: string) => {
+    const s = sql.trim();
+    if (!s) return;
+    setDbBusy(true);
+    setDbErr('');
+    try {
+      const r = await api?.claudeChatQueryDb?.({ sql: s, ctx: buildCompanyCtx() });
+      if (!r?.success) { setDbErr(r?.error || 'Query failed'); return; }
+      setPreviewFile(null);
+      setPreviewSheets(null);
+      setPreviewText(null);
+      setDirectSearch('');
+      setDirectResult({
+        title: title || `SQL: ${s.slice(0, 90)}`,
+        rows: r.rows || [],
+        raw: (r.rows || []).length ? null : JSON.stringify(r, null, 2),
+      });
+    } finally { setDbBusy(false); }
+  }, [api]);
+
+  const loadDirectToSql = async () => {
+    const d = directResultRef.current;
+    if (!d || !d.rows.length || !api?.claudeChatLoadDb) return;
+    const table = d.title.split('?')[0].split('/').filter(Boolean).join('_').replace(/[^A-Za-z0-9_]/g, '_').toLowerCase() || 'data';
+    setDbBusy(true);
+    try {
+      const r = await api.claudeChatLoadDb({ json: JSON.stringify({ items: d.rows }), table, ctx: buildCompanyCtx() });
+      if (r?.success) {
+        antMessage.success(r.message || `Loaded into table ${table}`);
+        setDbOpen(true);
+        loadDbTables();
+      } else {
+        antMessage.error(r?.error || 'Load failed');
+      }
+    } finally { setDbBusy(false); }
+  };
 
   const directCell = (k: string, v: unknown): string | number => {
     if (v === null || v === undefined) return '';
@@ -1272,6 +1331,11 @@ const ClaudeChat: React.FC = () => {
             <div className="cc-panel-head">
               <EyeOutlined /> Preview
               <span style={{ flex: 1 }} />
+              <Tooltip title="Browse the local SQL database (erp-data.db)">
+                <Button size="small" type={dbOpen ? 'primary' : 'text'} icon={<DatabaseOutlined />}
+                  style={dbOpen ? { background: '#1D7B4D', borderColor: '#1D7B4D' } : undefined}
+                  onClick={() => { setDbOpen(o => !o); if (!dbOpen) loadDbTables(); }} />
+              </Tooltip>
               <Tooltip title={previewFull ? 'Exit full screen' : 'Expand to full screen'}>
                 <Button size="small" type="text"
                   icon={previewFull ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
@@ -1284,6 +1348,41 @@ const ClaudeChat: React.FC = () => {
               )}
               <Tooltip title="Refresh files"><Button size="small" type="text" icon={<ReloadOutlined />} onClick={refreshFiles} /></Tooltip>
             </div>
+            {dbOpen && (
+              <div style={{ maxHeight: 220, overflowY: 'auto', padding: 6, borderBottom: '1px solid #F3EFED', background: '#FBFAF9' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <Text strong style={{ fontSize: 12 }}><DatabaseOutlined /> erp-data.db — {dbTables.length} table{dbTables.length === 1 ? '' : 's'}</Text>
+                  <span style={{ flex: 1 }} />
+                  <Tooltip title="Refresh tables"><Button size="small" type="text" icon={<ReloadOutlined />} onClick={loadDbTables} /></Tooltip>
+                </div>
+                {!!dbErr && <Text type="danger" style={{ fontSize: 11, display: 'block', wordBreak: 'break-all', marginBottom: 4 }}>⚠ {dbErr}</Text>}
+                {dbTables.map(t => (
+                  <Tooltip key={t.name} title={`Click to view SELECT * FROM ${t.name} LIMIT 500`} placement="left" mouseEnterDelay={0.5}>
+                    <button className="cc-recipe" onClick={() => runSql(`SELECT * FROM "${t.name}" LIMIT 500`, `SQL: ${t.name}`)}>
+                      <span className="cc-recipe-name">{t.name}
+                        <Text type="secondary" style={{ fontWeight: 400, fontSize: 11, marginLeft: 8 }}>{t.rows.toLocaleString()} rows</Text>
+                      </span>
+                      <span className="cc-recipe-params">{t.columns.join(', ')}</span>
+                    </button>
+                  </Tooltip>
+                ))}
+                {!dbTables.length && !dbErr && (
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', padding: 4 }}>
+                    No tables yet — run a direct search and press "→ SQL" on the result, or ask Claude to load a pull.
+                  </Text>
+                )}
+                <Input.Search
+                  size="small"
+                  style={{ marginTop: 6 }}
+                  placeholder={'Run SQL, e.g. SELECT COUNT(*) FROM …'}
+                  enterButton="Run"
+                  loading={dbBusy}
+                  value={dbSql}
+                  onChange={e => setDbSql(e.target.value)}
+                  onSearch={s => runSql(s)}
+                />
+              </div>
+            )}
             <div hidden={!!directResult} style={{ maxHeight: 130, overflowY: 'auto', padding: 6, borderBottom: '1px solid #F3EFED' }}>
               {!files.length && <Text type="secondary" style={{ fontSize: 12, padding: 6, display: 'block' }}>Generated files appear here</Text>}
               {files.map(f => (
@@ -1318,6 +1417,11 @@ const ClaudeChat: React.FC = () => {
                       </Text>
                       <Button size="small" icon={<FileExcelOutlined style={{ color: '#1D7B4D' }} />} onClick={exportDirectExcel}>Excel</Button>
                       <Button size="small" icon={<FileTextOutlined />} onClick={exportDirectPdf}>PDF</Button>
+                      {!directResult.title.startsWith('SQL:') && (
+                        <Tooltip title="Load these rows into the local SQL database (erp-data.db) for analysis and joins">
+                          <Button size="small" icon={<DatabaseOutlined />} loading={dbBusy} onClick={loadDirectToSql}>→ SQL</Button>
+                        </Tooltip>
+                      )}
                     </div>
                   )}
                   {directResult.rows.length > 0 ? (

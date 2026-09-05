@@ -1354,6 +1354,41 @@ ipcMain.handle('claude-chat:recipes', async (_event, opts = {}) => {
   }
 });
 
+// Local SQL analysis — the app runs the same workspace scripts Claude uses
+// (system node has node:sqlite built in; Electron's bundled Node may not).
+const execFileP = require('util').promisify(require('child_process').execFile);
+
+ipcMain.handle('claude-chat:load-db', async (_event, opts = {}) => {
+  const table = String((opts && opts.table) || '').replace(/[^A-Za-z0-9_]/g, '_');
+  if (!table) return { success: false, error: 'No table name' };
+  if (!opts.json) return { success: false, error: 'No data' };
+  const ws = claudeCli.provisionWorkspace(opts.ctx || {});
+  const tmp = path.join(ws, '.tmp-load.json');
+  try {
+    fs.writeFileSync(tmp, String(opts.json), 'utf8');
+    const { stdout } = await execFileP('node', ['tools/load-db.cjs', '.tmp-load.json', table],
+      { cwd: ws, maxBuffer: 4 * 1024 * 1024, windowsHide: true, timeout: 60000 });
+    return { success: true, message: String(stdout).trim() };
+  } catch (e) {
+    return { success: false, error: ((e.stderr && String(e.stderr).trim()) || e.message).slice(0, 500) };
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* already gone */ }
+  }
+});
+
+ipcMain.handle('claude-chat:query-db', async (_event, opts = {}) => {
+  const arg = opts && opts.tables ? '--tables' : String((opts && opts.sql) || '').trim();
+  if (!arg) return { success: false, error: 'No SQL given' };
+  const ws = claudeCli.provisionWorkspace(opts.ctx || {});
+  try {
+    const { stdout } = await execFileP('node', ['tools/query-db.cjs', arg],
+      { cwd: ws, maxBuffer: 8 * 1024 * 1024, windowsHide: true, timeout: 60000 });
+    return { success: true, ...JSON.parse(String(stdout).trim() || '{}') };
+  } catch (e) {
+    return { success: false, error: ((e.stderr && String(e.stderr).trim()) || e.message).slice(0, 500) };
+  }
+});
+
 // Save the latest direct-query result into the workspace so a follow-up chat
 // question can hand the data to Claude for analysis (it reads the file).
 ipcMain.handle('claude-chat:save-direct', async (_event, opts = {}) => {

@@ -98,6 +98,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeChatLov: (opts)          => ipcRenderer.invoke('claude-chat:lov', opts),
   claudeChatApiGet: (opts)       => ipcRenderer.invoke('claude-chat:apiget', opts),
   claudeChatSaveDirect: (opts)   => ipcRenderer.invoke('claude-chat:save-direct', opts),
+  claudeChatLoadDb: (opts)       => ipcRenderer.invoke('claude-chat:load-db', opts),
+  claudeChatQueryDb: (opts)      => ipcRenderer.invoke('claude-chat:query-db', opts),
   claudeChatListFiles: ()        => ipcRenderer.invoke('claude-chat:list-files'),
   claudeChatReadFile: (relPath)  => ipcRenderer.invoke('claude-chat:read-file', { relPath }),
   claudeChatOpenFile: (relPath)  => ipcRenderer.invoke('claude-chat:open-file', { relPath }),

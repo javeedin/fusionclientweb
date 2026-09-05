@@ -19,6 +19,8 @@ const ALLOWED_TOOLS = [
   'Read(./**)', 'Write(./**)', 'Edit(./**)',
   'Bash(node tools/make-excel.cjs:*)',
   'Bash(node tools/call-api.cjs:*)',
+  'Bash(node tools/load-db.cjs:*)',
+  'Bash(node tools/query-db.cjs:*)',
 ].join(',');
 
 let proc = null; // one in-flight turn at a time
