@@ -312,7 +312,7 @@ async function exportChatAnswerExcel(md: string) {
   else antMessage.warning('Excel export needs the desktop app');
 }
 
-function exportChatAnswerPdf(md: string) {
+async function exportChatAnswerPdf(md: string) {
   const segs = splitMdSegments(md);
   const wide = segs.some(s => s.kind === 'table' && s.rows[0].length > 6);
   const doc = new jsPDF({ orientation: wide ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
@@ -343,7 +343,18 @@ function exportChatAnswerPdf(md: string) {
       if (y > pageH - 60) { doc.addPage(); y = 32; }
     }
   }
-  doc.save(`report-${chatFileStamp()}.pdf`);
+  await openPdf(doc, `report-${chatFileStamp()}.pdf`);
+}
+
+// open the generated PDF in the system viewer right away (temp file + OS
+// default app); plain download only when the desktop IPC is unavailable
+async function openPdf(doc: jsPDF, filename: string) {
+  const eAPI = eFileApi();
+  if (eAPI.openExcel) {
+    const r = await eAPI.openExcel(doc.output('arraybuffer'), filename) as { success?: boolean } | undefined;
+    if (r && r.success !== false) return;
+  }
+  doc.save(filename);
 }
 
 // full answer as plain text: narrative + tables tab-separated, in order
@@ -1009,7 +1020,7 @@ const ClaudeChat: React.FC = () => {
     else antMessage.warning('Excel export needs the desktop app');
   };
 
-  const exportDirectPdf = () => {
+  const exportDirectPdf = async () => {
     if (!directResult || !directRows.length) return;
     const keys = Object.keys(directResult.rows[0]);
     const doc = new jsPDF({ orientation: keys.length > 6 ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
@@ -1023,7 +1034,7 @@ const ClaudeChat: React.FC = () => {
       headStyles: { fillColor: [199, 70, 52], textColor: 255 },
       alternateRowStyles: { fillColor: [251, 244, 242] },
     });
-    doc.save(`direct-export-${dayjs().format('YYYYMMDD-HHmmss')}.pdf`);
+    await openPdf(doc, `direct-export-${dayjs().format('YYYYMMDD-HHmmss')}.pdf`);
   };
 
   // ── "/" popup: training recipes + endpoints, like the CLI's slash menu ────
