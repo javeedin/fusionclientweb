@@ -1366,7 +1366,9 @@ ipcMain.handle('claude-chat:load-db', async (_event, opts = {}) => {
   const tmp = path.join(ws, '.tmp-load.json');
   try {
     fs.writeFileSync(tmp, String(opts.json), 'utf8');
-    const { stdout } = await execFileP('node', ['tools/load-db.cjs', '.tmp-load.json', table],
+    const loadArgs = ['tools/load-db.cjs', '.tmp-load.json', table];
+    if (opts.mode === 'append') loadArgs.push('--append');
+    const { stdout } = await execFileP('node', loadArgs,
       { cwd: ws, maxBuffer: 4 * 1024 * 1024, windowsHide: true, timeout: 60000 });
     return { success: true, message: String(stdout).trim() };
   } catch (e) {

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, DatePicker, Input, Select, Table, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
+import { Alert, Button, Card, DatePicker, Input, Modal, Radio, Select, Table, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { jsPDF } from 'jspdf';
@@ -52,7 +52,7 @@ interface ChatApi {
   claudeChatLov?: (opts: { apexBaseUrl: string; path: string }) => Promise<{ success: boolean; items?: Record<string, unknown>[]; error?: string }>;
   claudeChatApiGet?: (opts: { apexBaseUrl: string; path: string }) => Promise<{ success: boolean; status?: number; text?: string; error?: string; url?: string }>;
   claudeChatSaveDirect?: (opts: { json: string }) => Promise<{ success: boolean; error?: string }>;
-  claudeChatLoadDb?: (opts: { json: string; table: string; ctx: Record<string, string> }) => Promise<{ success: boolean; message?: string; error?: string }>;
+  claudeChatLoadDb?: (opts: { json: string; table: string; mode?: 'replace' | 'append'; ctx: Record<string, string> }) => Promise<{ success: boolean; message?: string; error?: string }>;
   claudeChatQueryDb?: (opts: { sql?: string; tables?: boolean; ctx: Record<string, string> }) => Promise<{
     success: boolean; rowCount?: number; rows?: Record<string, unknown>[];
     tables?: { name: string; rows: number; columns: string[] }[]; error?: string;
@@ -307,6 +307,9 @@ const ClaudeChat: React.FC = () => {
   const [dbSql, setDbSql] = useState('');
   const [dbErr, setDbErr] = useState('');
   const [dbBusy, setDbBusy] = useState(false);
+  const [sqlLoadOpen, setSqlLoadOpen] = useState(false); // "→ SQL" dialog
+  const [sqlLoadTable, setSqlLoadTable] = useState('');
+  const [sqlLoadMode, setSqlLoadMode] = useState<'replace' | 'append'>('replace');
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
   const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
@@ -716,15 +719,28 @@ const ClaudeChat: React.FC = () => {
     } finally { setDbBusy(false); }
   }, [api]);
 
-  const loadDirectToSql = async () => {
+  // "→ SQL" opens a small dialog: editable table name + Replace/Append
+  const openSqlLoad = () => {
     const d = directResultRef.current;
-    if (!d || !d.rows.length || !api?.claudeChatLoadDb) return;
-    const table = d.title.split('?')[0].split('/').filter(Boolean).join('_').replace(/[^A-Za-z0-9_]/g, '_').toLowerCase() || 'data';
+    if (!d || !d.rows.length) return;
+    const derived = d.title.split('?')[0].split('/').filter(Boolean).join('_').replace(/[^A-Za-z0-9_]/g, '_').toLowerCase() || 'data';
+    setSqlLoadTable(derived);
+    setSqlLoadMode('replace');
+    setSqlLoadOpen(true);
+  };
+
+  const doSqlLoad = async () => {
+    const d = directResultRef.current;
+    const table = sqlLoadTable.trim().replace(/[^A-Za-z0-9_]/g, '_');
+    if (!d || !d.rows.length || !table || !api?.claudeChatLoadDb) return;
     setDbBusy(true);
     try {
-      const r = await api.claudeChatLoadDb({ json: JSON.stringify({ items: d.rows }), table, ctx: buildCompanyCtx() });
+      const r = await api.claudeChatLoadDb({
+        json: JSON.stringify({ items: d.rows }), table, mode: sqlLoadMode, ctx: buildCompanyCtx(),
+      });
       if (r?.success) {
         antMessage.success(r.message || `Loaded into table ${table}`);
+        setSqlLoadOpen(false);
         setDbOpen(true);
         loadDbTables();
       } else {
@@ -1419,7 +1435,7 @@ const ClaudeChat: React.FC = () => {
                       <Button size="small" icon={<FileTextOutlined />} onClick={exportDirectPdf}>PDF</Button>
                       {!directResult.title.startsWith('SQL:') && (
                         <Tooltip title="Load these rows into the local SQL database (erp-data.db) for analysis and joins">
-                          <Button size="small" icon={<DatabaseOutlined />} loading={dbBusy} onClick={loadDirectToSql}>→ SQL</Button>
+                          <Button size="small" icon={<DatabaseOutlined />} loading={dbBusy} onClick={openSqlLoad}>→ SQL</Button>
                         </Tooltip>
                       )}
                     </div>
@@ -1472,6 +1488,45 @@ const ClaudeChat: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <Modal
+        title={<span><DatabaseOutlined /> Load into SQL database</span>}
+        open={sqlLoadOpen}
+        onCancel={() => setSqlLoadOpen(false)}
+        onOk={doSqlLoad}
+        okText={sqlLoadMode === 'append' ? 'Append rows' : 'Load (replace)'}
+        okButtonProps={{ loading: dbBusy, disabled: !sqlLoadTable.trim() }}
+        width={460}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 6 }}>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12 }}>Table name</Text>
+            <Input
+              value={sqlLoadTable}
+              onChange={e => setSqlLoadTable(e.target.value)}
+              onPressEnter={doSqlLoad}
+              placeholder="e.g. extl_june"
+            />
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              Change it (e.g. <Text code>extl_june</Text>) to keep several pulls side by side for comparison.
+            </Text>
+          </div>
+          <Radio.Group value={sqlLoadMode} onChange={e => setSqlLoadMode(e.target.value)}>
+            <Radio value="replace">
+              Replace — table becomes exactly these {directResultRef.current?.rows.length ?? 0} rows (safe default)
+            </Radio>
+            <Radio value="append">
+              Append — add to the existing table
+            </Radio>
+          </Radio.Group>
+          {sqlLoadMode === 'append' && (
+            <Alert type="warning" showIcon style={{ padding: '4px 10px' }}
+              message={<span style={{ fontSize: 12 }}>
+                Append only pulls that do not overlap (e.g. a different month) — overlapping rows are double-counted in every total.
+              </span>} />
+          )}
+        </div>
+      </Modal>
     </div>
   );
 };
