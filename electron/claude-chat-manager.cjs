@@ -18,6 +18,7 @@ const ALLOWED_TOOLS = [
   'mcp__oracle-inventory', 'mcp__oracle-registry',
   'Read(./**)', 'Write(./**)', 'Edit(./**)',
   'Bash(node tools/make-excel.cjs:*)',
+  'Bash(node tools/call-api.cjs:*)',
 ].join(',');
 
 let proc = null; // one in-flight turn at a time
