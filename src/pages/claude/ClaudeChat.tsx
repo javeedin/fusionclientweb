@@ -131,24 +131,30 @@ interface ParamTarget { title: string; method: string; path: string; params: Rec
 // One row of the "/" popup — a training recipe or a catalog endpoint
 interface SlashItem { kind: 'recipe' | 'endpoint'; label: string; sub?: string; params?: string; recipe?: TrainingRecipe; trained?: boolean }
 
-// Map a raw /ai/training row (camelCase keys, JSON strings for params/example)
+// Map a raw /ai/training row. Handler versions differ in key casing
+// (camelCase aliases vs. plain snake_case columns) — accept both, and
+// params/example may arrive as JSON strings or already-parsed values.
 const parseJsonSafe = <T,>(s: unknown, fallback: T): T => {
+  if (Array.isArray(s) || (s !== null && typeof s === 'object')) return s as T;
   if (typeof s !== 'string' || !s.trim()) return fallback;
   try { return JSON.parse(s) as T; } catch { return fallback; }
 };
-const mapRecipeRow = (r: Record<string, unknown>): TrainingRecipe => ({
-  recipeId: r.recipeId as number,
-  recipeName: String(r.recipeName || ''),
-  description: r.description as string | undefined,
-  module: r.module as string | undefined,
-  method: String(r.method || 'GET'),
-  urlTemplate: String(r.urlTemplate || ''),
-  params: parseJsonSafe<RecipeParam[]>(r.paramsJson, []),
-  example: parseJsonSafe<Record<string, string>>(r.exampleJson, {}),
-  appPath: r.appPath as string | undefined,
-  enabled: r.enabled as string | undefined,
-  createdBy: r.createdBy as string | undefined,
-});
+const mapRecipeRow = (r: Record<string, unknown>): TrainingRecipe => {
+  const pick = (...keys: string[]) => keys.map(k => r[k]).find(v => v !== undefined && v !== null);
+  return {
+    recipeId: Number(pick('recipeId', 'recipe_id')) || undefined,
+    recipeName: String(pick('recipeName', 'recipe_name') || ''),
+    description: pick('description') as string | undefined,
+    module: pick('module') as string | undefined,
+    method: String(pick('method') || 'GET'),
+    urlTemplate: String(pick('urlTemplate', 'url_template') || ''),
+    params: parseJsonSafe<RecipeParam[]>(pick('paramsJson', 'params_json'), []),
+    example: parseJsonSafe<Record<string, string>>(pick('exampleJson', 'example_json'), {}),
+    appPath: pick('appPath', 'app_path') as string | undefined,
+    enabled: pick('enabled') as string | undefined,
+    createdBy: pick('createdBy', 'created_by') as string | undefined,
+  };
+};
 
 // Normalize a path/template for comparison: strip origin, query, trailing "/"
 function normPath(t: string): string {
@@ -206,7 +212,11 @@ const ClaudeChat: React.FC = () => {
       const r = await api?.claudeChatRecipes?.({ apexBaseUrl: buildCompanyCtx().apexBaseUrl });
       if (r?.success && Array.isArray(r.items)) {
         list = r.items.map(mapRecipeRow).filter(x => x.recipeName && x.urlTemplate && x.enabled !== 'N');
-        if (!list.length) err = `${r.url || '/ai/training'} → OK but 0 enabled recipes`;
+        if (!list.length) {
+          err = r.items.length
+            ? `${r.url || '/ai/training'} → OK, ${r.items.length} rows but keys not recognized: ${Object.keys(r.items[0] || {}).slice(0, 10).join(', ')}`
+            : `${r.url || '/ai/training'} → OK but 0 recipes returned`;
+        }
       } else if (r) {
         err = `${r.url || '/ai/training'} → ${r.error || 'failed'}`;
       }
