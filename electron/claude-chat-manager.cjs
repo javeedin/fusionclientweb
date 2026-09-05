@@ -10,10 +10,14 @@
 const { spawn } = require('child_process');
 const cli = require('./claude-cli-manager.cjs');
 
-// MCP servers the chat may use without interactive approval (read/query tools)
+// Pre-approved tools for the non-interactive chat: the ERP MCP servers,
+// file reads/writes INSIDE the workspace only, and exactly one shell
+// command — the workspace's Excel builder script.
 const ALLOWED_TOOLS = [
   'mcp__oracle-gl', 'mcp__oracle-ar', 'mcp__oracle-ar-balances',
   'mcp__oracle-inventory', 'mcp__oracle-registry',
+  'Read(./**)', 'Write(./**)', 'Edit(./**)',
+  'Bash(node tools/make-excel.cjs:*)',
 ].join(',');
 
 let proc = null; // one in-flight turn at a time

@@ -1251,6 +1251,13 @@ ipcMain.handle('claude-chat:cancel', async () => {
   try { return claudeChat.cancel(); }
   catch (e) { return { success: false, error: e.message }; }
 });
+ipcMain.handle('claude-chat:open-workspace', async () => {
+  try {
+    const ws = claudeCli.provisionWorkspace();
+    await require('electron').shell.openPath(ws);
+    return { success: true, workspace: ws };
+  } catch (e) { return { success: false, error: e.message }; }
+});
 
 // ── MCP bridge for the in-app AI Assistant ─────────────────────────────────
 const mcpBridge = require('./mcp-bridge.cjs');
