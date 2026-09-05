@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, DatePicker, Input, Select, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
+import { Alert, Button, Card, DatePicker, Input, Select, Table, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import type { FilterDropdownProps } from 'antd/es/table/interface';
 import dayjs from 'dayjs';
 import {
   ApiOutlined, CloseOutlined, CodeOutlined, DeleteOutlined, ExportOutlined, EyeOutlined, FileExcelOutlined,
-  FileTextOutlined, FilterOutlined, FolderOpenOutlined, MinusCircleOutlined, PlusOutlined, ReloadOutlined,
-  SearchOutlined, SendOutlined, StopOutlined, ThunderboltOutlined,
+  FileTextOutlined, FilterOutlined, FolderOpenOutlined, FullscreenExitOutlined, FullscreenOutlined,
+  MinusCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, SendOutlined, StopOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
@@ -212,6 +214,7 @@ const ClaudeChat: React.FC = () => {
   const [luCompany, setLuCompany] = useState<string[]>([]);
   const [directResult, setDirectResult] = useState<{ title: string; rows: Record<string, unknown>[]; raw: string | null } | null>(null);
   const [directLoading, setDirectLoading] = useState(false);
+  const [previewFull, setPreviewFull] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
   const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
@@ -514,12 +517,14 @@ const ClaudeChat: React.FC = () => {
       }
       let rows: Record<string, unknown>[] = [];
       let raw: string | null = null;
-      try {
-        const j = JSON.parse(r.text);
-        if (Array.isArray(j.items)) rows = j.items;
-        else if (Array.isArray(j)) rows = j;
-        else raw = JSON.stringify(j, null, 2);
-      } catch { raw = r.text; }
+      const tryParse = (s: string) => { try { return JSON.parse(s); } catch { return undefined; } };
+      // Oracle can emit numbers with a trailing dot ("amount":-3706.) — invalid
+      // JSON; strip the dot in value position and parse again
+      const j = tryParse(r.text) ?? tryParse(r.text.replace(/:(\s*-?\d+)\.(?=\s*[,}\]])/g, ':$1'));
+      if (j === undefined) raw = r.text;
+      else if (j && Array.isArray(j.items)) rows = j.items;
+      else if (Array.isArray(j)) rows = j;
+      else raw = JSON.stringify(j, null, 2);
       setPreviewFile(null);
       setPreviewSheets(null);
       setPreviewText(null);
@@ -528,6 +533,45 @@ const ClaudeChat: React.FC = () => {
       setDirectLoading(false);
     }
   };
+
+  // grid columns for direct results: every column sortable + searchable
+  const directColumns = useMemo<ColumnsType<Record<string, unknown>>>(() => {
+    if (!directResult?.rows.length) return [];
+    return Object.keys(directResult.rows[0]).map(k => ({
+      title: k,
+      dataIndex: k,
+      key: k,
+      ellipsis: true,
+      sorter: (a: Record<string, unknown>, b: Record<string, unknown>) => {
+        const av = a[k], bv = b[k];
+        if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+        return String(av ?? '').localeCompare(String(bv ?? ''));
+      },
+      filterDropdown: ({ setSelectedKeys, selectedKeys, confirm, clearFilters }: FilterDropdownProps) => (
+        <div style={{ padding: 8 }}>
+          <Input
+            size="small"
+            placeholder={`Search ${k}`}
+            value={(selectedKeys[0] as string) || ''}
+            onChange={e => setSelectedKeys(e.target.value ? [e.target.value] : [])}
+            onPressEnter={() => confirm()}
+            style={{ width: 190, display: 'block', marginBottom: 6 }}
+          />
+          <Button size="small" type="primary" onClick={() => confirm()} style={{ marginRight: 6 }}>Filter</Button>
+          <Button size="small" onClick={() => { clearFilters?.(); confirm(); }}>Clear</Button>
+        </div>
+      ),
+      filterIcon: (filtered: boolean) => <SearchOutlined style={{ color: filtered ? '#C74634' : undefined }} />,
+      onFilter: (value: unknown, record: Record<string, unknown>) =>
+        String(record[k] ?? '').toLowerCase().includes(String(value).toLowerCase()),
+      render: (v: unknown) =>
+        v === null || v === undefined
+          ? ''
+          : typeof v === 'number'
+            ? <span style={{ display: 'block', textAlign: 'right' }}>{v.toLocaleString()}</span>
+            : typeof v === 'object' ? JSON.stringify(v) : String(v),
+    }));
+  }, [directResult]);
 
   // ── "/" popup: training recipes + endpoints, like the CLI's slash menu ────
   const slashOpen = !busy && input.startsWith('/');
@@ -731,6 +775,8 @@ const ClaudeChat: React.FC = () => {
           padding:8px 12px;margin:4px 8px 4px 0;cursor:pointer;font-size:12.5px;color:#5b4a45}
         .cc-sug:hover{border-color:#C74634;color:#C74634}
         .cc-preview{width:38%;min-width:320px;flex-shrink:0;display:flex;flex-direction:column;min-height:0}
+        .cc-preview.full{position:fixed;inset:12px;z-index:1000;width:auto;min-width:0;max-width:none;
+          box-shadow:0 12px 48px rgba(0,0,0,.28);border-radius:12px;background:#fff}
         .cc-file{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;cursor:pointer;font-size:12px}
         .cc-file:hover{background:#F7F2F0}
         .cc-file.on{background:#FBF1EF;border:1px solid #EAD2CC}
@@ -1089,11 +1135,16 @@ const ClaudeChat: React.FC = () => {
         </div>
 
         {/* ── Section 3: preview ── */}
-        <div className="cc-preview">
+        <div className={`cc-preview${previewFull ? ' full' : ''}`}>
           <div className="cc-panel" style={{ flex: 1 }}>
             <div className="cc-panel-head">
               <EyeOutlined /> Preview
               <span style={{ flex: 1 }} />
+              <Tooltip title={previewFull ? 'Exit full screen' : 'Expand to full screen'}>
+                <Button size="small" type="text"
+                  icon={previewFull ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                  onClick={() => setPreviewFull(f => !f)} />
+              </Tooltip>
               {previewFile && (
                 <Tooltip title="Open in Excel / default app">
                   <Button size="small" type="text" icon={<ExportOutlined />} onClick={() => api.claudeChatOpenFile?.(previewFile.relPath)} />
@@ -1121,29 +1172,14 @@ const ClaudeChat: React.FC = () => {
                     <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setDirectResult(null)} />
                   </div>
                   {directResult.rows.length > 0 ? (
-                    <div style={{ overflow: 'auto' }}>
-                      <table className="cc-xl">
-                        <tbody>
-                          <tr>{Object.keys(directResult.rows[0]).map(k => <td key={k}>{k}</td>)}</tr>
-                          {directResult.rows.slice(0, 1000).map((row, ri) => (
-                            <tr key={ri}>
-                              {Object.keys(directResult.rows[0]).map(k => {
-                                const v = row[k];
-                                const isNum = typeof v === 'number';
-                                return (
-                                  <td key={k} style={isNum ? { textAlign: 'right' } : undefined}>
-                                    {v === null || v === undefined ? '' : isNum ? (v as number).toLocaleString() : typeof v === 'object' ? JSON.stringify(v) : String(v)}
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {directResult.rows.length > 1000 && (
-                        <Text type="secondary" style={{ fontSize: 11 }}>Showing first 1,000 of {directResult.rows.length} rows</Text>
-                      )}
-                    </div>
+                    <Table
+                      size="small"
+                      dataSource={directResult.rows.map((row, i) => ({ ...row, __rk: i }))}
+                      rowKey="__rk"
+                      columns={directColumns}
+                      pagination={{ pageSize: 100, size: 'small', showSizeChanger: false, showTotal: t => `${t} rows` }}
+                      scroll={{ x: 'max-content' }}
+                    />
                   ) : directResult.raw ? (
                     <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>{directResult.raw.slice(0, 100000)}</pre>
                   ) : (
