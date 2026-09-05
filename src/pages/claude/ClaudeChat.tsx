@@ -274,20 +274,17 @@ const ClaudeChat: React.FC = () => {
     }
   };
 
-  // training recipe pick: declared params + any placeholders still in the URL template
+  // training recipe pick: always opens the search panel first (declared params
+  // + any placeholders still in the URL template; extras can be added by hand),
+  // so the user reviews/fills parameters before anything runs
   const pickRecipe = (r: TrainingRecipe) => {
     const method = (r.method || 'GET').toUpperCase();
     const params: RecipeParam[] = [...(r.params || [])];
     getEpParams(r.urlTemplate).forEach(n => { if (!params.some(p => p.name === n)) params.push({ name: n }); });
-    if (params.length) {
-      setParamTarget({ title: `${r.recipeName} — ${method} ${r.urlTemplate}`, method, path: r.urlTemplate, params });
-      setParamVals({});
-      setParamQuery('');
-      setExtraRows([]);
-    } else {
-      setParamTarget(null);
-      send(`Run ${method} ${r.urlTemplate} — training recipe "${r.recipeName}"${method === 'GET' ? '' : '. Show me the full request and wait for my confirmation before executing.'}`);
-    }
+    setParamTarget({ title: `${r.recipeName} — ${method} ${r.urlTemplate}`, method, path: r.urlTemplate, params });
+    setParamVals({});
+    setParamQuery('');
+    setExtraRows([]);
   };
 
   const runParamEp = () => {
@@ -352,10 +349,12 @@ const ClaudeChat: React.FC = () => {
     document.getElementById(`cc-slash-${slashIdx}`)?.scrollIntoView({ block: 'nearest' });
   }, [slashIdx]);
 
+  // "/" selection always opens the search panel before running — no need to
+  // ask for it in the chat; just press Run if there is nothing to fill in
   const pickSlash = (it: SlashItem) => {
     setInput('');
     if (it.kind === 'recipe' && it.recipe) pickRecipe(it.recipe);
-    else clickEndpoint(it.label);
+    else openEndpointForm(it.label);
   };
 
   const cancel = async () => {
