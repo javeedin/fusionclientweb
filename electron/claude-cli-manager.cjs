@@ -229,10 +229,16 @@ Object.assign(process.env, ENV);
 const APEX_BASE = ${JSON.stringify(apexFullBase.replace(/\/+$/, ''))};
 
 (async () => {
-  const [method, apiPath, bodyFile, confirmFlag] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  const outIdx = args.indexOf('--out');
+  const outFile = outIdx >= 0 ? args[outIdx + 1] : null;
+  if (outIdx >= 0) args.splice(outIdx, 2);
+  const confirm = args.includes('--confirm');
+  if (confirm) args.splice(args.indexOf('--confirm'), 1);
+  const [method, apiPath, bodyFile] = args;
   const m = String(method || 'GET').toUpperCase();
   if (!apiPath || !apiPath.startsWith('/')) { console.error('path must start with /'); process.exit(1); }
-  if (m !== 'GET' && ![bodyFile, confirmFlag].includes('--confirm')) {
+  if (m !== 'GET' && !confirm) {
     console.error('REFUSED: ' + m + ' needs the --confirm flag — only use it after the user explicitly confirmed this exact write in chat.');
     process.exit(1);
   }
@@ -241,11 +247,21 @@ const APEX_BASE = ${JSON.stringify(apexFullBase.replace(/\/+$/, ''))};
     const tok = require('../mcp/ords-token.cjs');
     if (tok.getOrdsAuthHeader) headers = { ...headers, ...(await tok.getOrdsAuthHeader()) };
   } catch (e) { /* token module optional — SKIP_AUTH setups work without it */ }
-  const body = (m !== 'GET' && bodyFile && bodyFile !== '--confirm') ? fs.readFileSync(bodyFile, 'utf8') : undefined;
+  const body = (m !== 'GET' && bodyFile) ? fs.readFileSync(bodyFile, 'utf8') : undefined;
   const res = await fetch(APEX_BASE + apiPath, { method: m, headers, body });
   const text = await res.text();
   console.log('HTTP ' + res.status);
-  console.log(text.length > 60000 ? text.slice(0, 60000) + '...(truncated)' : text);
+  if (outFile) {
+    fs.writeFileSync(outFile, text, 'utf8');
+    let count = '';
+    try { const j = JSON.parse(text); if (Array.isArray(j.items)) count = j.items.length + ' items, '; } catch (e) { /* not JSON */ }
+    console.log('saved full response to ' + outFile + ' (' + count + text.length + ' chars)');
+    console.log('preview: ' + text.slice(0, 1500));
+  } else {
+    console.log(text.length > 60000
+      ? text.slice(0, 60000) + '...(truncated — rerun with --out <file.json> to save the FULL response to a file, then process the file with node)'
+      : text);
+  }
   if (!res.ok) process.exit(2);
 })().catch(e => { console.error(e.message); process.exit(1); });
 `, 'utf8');
@@ -390,6 +406,13 @@ endpoint not listed above.
 When the user asks you to run an API / REST call / endpoint, RUN IT
 immediately with call-api.cjs (GET needs no further permission) and show the
 result — do not ask first. Unknown response shape? Just run it and look.
+LARGE RESULTS: the console output is capped at 60000 chars. NEVER work
+around that by slicing the query into date ranges — that multiplies calls
+and is slow. Fetch ONCE with --out to save the full response to a file,
+then compute from the file:
+  node tools/call-api.cjs GET "/cash/externaltransactions?row_limit=5000" --out extl.json
+  node -e "const j=require('./extl.json');console.log(j.items.length, j.items.reduce((s,r)=>s+(+r.amount||0),0))"
+Use the file for sums, grouping, Excel specs — do not print it all into chat.
 You cannot render forms or panels in the chat. If the user asks for a search
 panel / form to enter parameters, tell them: hover over the endpoint in the
 Endpoints list on the left and click the funnel (filter) icon — that opens
