@@ -100,6 +100,16 @@ const ClaudeCliTerminal: React.FC = () => {
     };
   }, []);
 
+  // keep the terminal focused whenever it is running — clicking buttons or
+  // dialogs steals focus and then typing goes nowhere
+  useEffect(() => {
+    if (!running) return;
+    termRef.current?.focus();
+    const onWinFocus = () => termRef.current?.focus();
+    window.addEventListener('focus', onWinFocus);
+    return () => window.removeEventListener('focus', onWinFocus);
+  }, [running]);
+
   // pty → terminal
   useEffect(() => {
     if (!api) return;
@@ -221,6 +231,7 @@ const ClaudeCliTerminal: React.FC = () => {
       <div
         ref={termHostRef}
         style={{ flex: 1, minHeight: 0, background: '#1e1e1e', borderRadius: 10, padding: 8, overflow: 'hidden' }}
+        onMouseDown={() => setTimeout(() => termRef.current?.focus(), 0)}
         onClick={() => termRef.current?.focus()}
       />
     </div>
