@@ -88,6 +88,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeCliStart:  (opts)        => ipcRenderer.invoke('claude-cli:start', opts),
   claudeCliStop:   ()            => ipcRenderer.invoke('claude-cli:stop'),
   claudeCliOpenExternal: ()      => ipcRenderer.invoke('claude-cli:open-external'),
+
+  // Claude Chat — chat bubbles over the headless CLI (subscription-billed)
+  claudeChatSend:   (opts)       => ipcRenderer.invoke('claude-chat:send', opts),
+  claudeChatCancel: ()           => ipcRenderer.invoke('claude-chat:cancel'),
+  onClaudeChatEvent: (cb)        => ipcRenderer.on('claude-chat:event', cb),
+  removeClaudeChatListeners: ()  => ipcRenderer.removeAllListeners('claude-chat:event'),
   claudeCliInput:  (data)        => ipcRenderer.send('claude-cli:input', data),
   claudeCliResize: (cols, rows)  => ipcRenderer.send('claude-cli:resize', { cols, rows }),
   onClaudeCliData: (cb)          => ipcRenderer.on('claude-cli:data', cb),

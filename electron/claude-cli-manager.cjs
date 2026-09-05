@@ -127,6 +127,22 @@ Rules:
   return ws;
 }
 
+// Environment for any claude process: strip API credentials so the CLI always
+// uses the subscription login (an inherited ANTHROPIC_API_KEY would silently
+// switch it to API billing), and strip VS Code vars that make it misdetect an
+// IDE when the app was launched from VS Code's terminal.
+function buildCleanEnv() {
+  const env = { ...process.env, TERM: 'xterm-256color' };
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  delete env.TERM_PROGRAM;
+  delete env.TERM_PROGRAM_VERSION;
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('VSCODE_')) delete env[k];
+  }
+  return env;
+}
+
 // ── Public API (wired to IPC in main.cjs) ───────────────────────────────────
 
 function getStatus() {
@@ -149,18 +165,7 @@ function start(sender, { cols = 120, rows = 30 } = {}) {
   }
   if (proc) return { success: true, alreadyRunning: true };
   const ws = provisionWorkspace();
-  // strip API credentials so the CLI always uses the subscription login
-  // (an inherited ANTHROPIC_API_KEY would silently switch it to API billing)
-  const cleanEnv = { ...process.env, TERM: 'xterm-256color' };
-  delete cleanEnv.ANTHROPIC_API_KEY;
-  delete cleanEnv.ANTHROPIC_AUTH_TOKEN;
-  // when the app is launched from VS Code's terminal, inherited VSCODE_* vars
-  // make the CLI think it runs inside VS Code and show the extension flow
-  delete cleanEnv.TERM_PROGRAM;
-  delete cleanEnv.TERM_PROGRAM_VERSION;
-  for (const k of Object.keys(cleanEnv)) {
-    if (k.startsWith('VSCODE_')) delete cleanEnv[k];
-  }
+  const cleanEnv = buildCleanEnv();
   const shellFile = process.platform === 'win32' ? 'claude.cmd' : 'claude';
   try {
     proc = pty.spawn(shellFile, [], {
@@ -241,4 +246,4 @@ function openExternal() {
 
 app.on('will-quit', () => { try { if (proc) proc.kill(); } catch { /* ignore */ } });
 
-module.exports = { getStatus, start, input, resize, stop, openExternal };
+module.exports = { getStatus, start, input, resize, stop, openExternal, provisionWorkspace, buildCleanEnv };

@@ -1240,6 +1240,18 @@ ipcMain.handle('claude-cli:open-external', async () => {
   catch (e) { return { success: false, error: e.message }; }
 });
 
+// ── Claude Chat (headless CLI behind a chat UI) ────────────────────────────
+const claudeChat = require('./claude-chat-manager.cjs');
+
+ipcMain.handle('claude-chat:send', async (event, opts) => {
+  try { return claudeChat.send(event.sender, opts || {}); }
+  catch (e) { return { success: false, error: e.message }; }
+});
+ipcMain.handle('claude-chat:cancel', async () => {
+  try { return claudeChat.cancel(); }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
 // ── MCP bridge for the in-app AI Assistant ─────────────────────────────────
 const mcpBridge = require('./mcp-bridge.cjs');
 

@@ -51,6 +51,7 @@ const MODULES = [
   { id: 'sync', label: 'Oracle Sync',         icon: <SyncOutlined />,        path: '/sync',          color: REDWOOD.primary,   desc: 'Sync GL · AP · AR · Assets' },
   { id: 'librechat', label: 'LibreChat',      icon: <RobotOutlined />,       path: '/librechat',     color: REDWOOD.purple,    desc: 'Claude Chat · GL MCP Tools' },
   { id: 'claude-cli', label: 'Claude Code CLI', icon: <ThunderboltOutlined />, path: '/claude-cli',   color: REDWOOD.primary,   desc: 'Subscription Claude · ERP MCP Tools' },
+  { id: 'claude-chat', label: 'Claude Chat',    icon: <RobotOutlined />,       path: '/claude-chat',  color: REDWOOD.teal,      desc: 'Subscription Claude · Chat UI · ERP Data' },
 ];
 
 const QUICK_ACTIONS = [
