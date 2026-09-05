@@ -1354,6 +1354,19 @@ ipcMain.handle('claude-chat:recipes', async (_event, opts = {}) => {
   }
 });
 
+// Save the latest direct-query result into the workspace so a follow-up chat
+// question can hand the data to Claude for analysis (it reads the file).
+ipcMain.handle('claude-chat:save-direct', async (_event, opts = {}) => {
+  try {
+    const ws = claudeCli.workspaceDir();
+    fs.mkdirSync(ws, { recursive: true });
+    fs.writeFileSync(path.join(ws, 'direct-result.json'), String((opts && opts.json) || ''), 'utf8');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 // Lists of values for the search panel (business units, ledgers, companies) —
 // same authenticated main-process fetch, restricted to these read-only paths.
 // Direct data query for the search panel — GET only, no AI round-trip.

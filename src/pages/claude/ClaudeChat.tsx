@@ -50,6 +50,7 @@ interface ChatApi {
   claudeChatRecipes?: (opts: { apexBaseUrl: string }) => Promise<{ success: boolean; items?: Record<string, unknown>[]; error?: string; url?: string }>;
   claudeChatLov?: (opts: { apexBaseUrl: string; path: string }) => Promise<{ success: boolean; items?: Record<string, unknown>[]; error?: string }>;
   claudeChatApiGet?: (opts: { apexBaseUrl: string; path: string }) => Promise<{ success: boolean; status?: number; text?: string; error?: string; url?: string }>;
+  claudeChatSaveDirect?: (opts: { json: string }) => Promise<{ success: boolean; error?: string }>;
   claudeChatListFiles?: () => Promise<{ success: boolean; files: WsFile[] }>;
   claudeChatReadFile?: (relPath: string) => Promise<{ success: boolean; base64?: string; name?: string; error?: string }>;
   claudeChatOpenFile?: (relPath: string) => Promise<{ success: boolean }>;
@@ -192,6 +193,82 @@ function normPath(t: string): string {
 // ── xlsx preview data ───────────────────────────────────────────────────────
 interface SheetPreview { name: string; rows: (string | number)[][] }
 
+// ── memoized heavy sections ─────────────────────────────────────────────────
+// Typing in the chat box re-renders the page every keystroke; these keep the
+// expensive parts (markdown bubbles, the direct-result grid, the 283-row
+// endpoint list) from re-rendering unless their own data changed.
+
+const MsgBubble = React.memo(function MsgBubble({ m }: { m: ChatMsg }) {
+  return (
+    <div className={`cc-row ${m.role === 'user' ? 'me' : 'bot'}`}>
+      <div className="cc-bubble">
+        {!!m.tools?.length && (
+          <div style={{ marginBottom: m.text ? 6 : 0 }}>
+            {m.tools.map((t, j) => <span key={j} className="cc-toolchip"><ApiOutlined />{t.replace(/^mcp__/, '')}</span>)}
+          </div>
+        )}
+        {m.role === 'user'
+          ? m.text.split('\n').map((l, j) => <div key={j}>{l}</div>)
+          : m.text
+            ? <div dangerouslySetInnerHTML={{ __html: mdToHtml(m.text) }} />
+            : <Text type="secondary" style={{ fontSize: 12 }}>working…</Text>}
+      </div>
+    </div>
+  );
+});
+
+const DirectGrid = React.memo(function DirectGrid({ data, columns }: {
+  data: Record<string, unknown>[]; columns: ColumnsType<Record<string, unknown>>;
+}) {
+  return (
+    <Table
+      size="small"
+      dataSource={data}
+      rowKey="__rk"
+      columns={columns}
+      pagination={{ pageSize: 100, size: 'small', showSizeChanger: false, showTotal: t => `${t} rows` }}
+      scroll={{ x: 'max-content' }}
+    />
+  );
+});
+
+const EndpointsList = React.memo(function EndpointsList({ groups, trained, onRun, onForm }: {
+  groups: EndpointGroup[]; trained: Set<string>; onRun: (p: string) => void; onForm: (p: string) => void;
+}) {
+  return (
+    <>
+      {groups.map(g => (
+        <div key={g.group}>
+          <div className="cc-epgroup">{g.group}</div>
+          {g.paths.map(p => {
+            const hasParams = getEpParams(p).length > 0;
+            const isTrained = trained.has(p);
+            return (
+              <div key={p} className="cc-ep-row">
+                <Tooltip placement="right" mouseEnterDelay={0.6}
+                  title={isTrained
+                    ? `Trained ✓ — click to open the search panel with this recipe's parameters`
+                    : hasParams
+                      ? `Has parameters — click to fill them in and run GET ${p}`
+                      : `Click to ask Claude to run GET ${p}`}>
+                  <button className={`cc-ep${hasParams ? ' cc-ep-param' : ''}`} onClick={() => onRun(p)}>
+                    {p}
+                    {isTrained && <span className="cc-ep-tick">✓</span>}
+                    {!isTrained && hasParams && <span className="cc-ep-badge">⋯</span>}
+                  </button>
+                </Tooltip>
+                <Tooltip title="Open the search panel to enter parameters" placement="right">
+                  <button className="cc-ep-gear" onClick={() => onForm(p)}><FilterOutlined /></button>
+                </Tooltip>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </>
+  );
+});
+
 const ClaudeChat: React.FC = () => {
   const api = getApi();
   const init = useRef(loadState());
@@ -217,6 +294,8 @@ const ClaudeChat: React.FC = () => {
   const [directLoading, setDirectLoading] = useState(false);
   const [directSearch, setDirectSearch] = useState('');
   const [previewFull, setPreviewFull] = useState(false);
+  const directResultRef = useRef<{ title: string; rows: Record<string, unknown>[]; raw: string | null } | null>(null);
+  useEffect(() => { directResultRef.current = directResult; }, [directResult]);
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
   const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
@@ -366,7 +445,21 @@ const ClaudeChat: React.FC = () => {
       updatedAt: Date.now(),
     }));
     setBusy(true);
-    const r = await api.claudeChatSend({ text, sessionId, ctx: buildCompanyCtx() });
+    // a direct-query result on screen becomes context for the question:
+    // its rows are saved to a workspace file that Claude reads for analysis
+    let outbound = text;
+    const d = directResultRef.current;
+    if (d && d.rows.length && api.claudeChatSaveDirect) {
+      try {
+        const r0 = await api.claudeChatSaveDirect({
+          json: JSON.stringify({ source: `GET ${d.title}`, rowCount: d.rows.length, items: d.rows }),
+        });
+        if (r0?.success) {
+          outbound += `\n\n(Context: I just ran GET ${d.title} directly in the app — the full result, ${d.rows.length} rows, is saved in the workspace file direct-result.json. Read that file to answer/analyze instead of re-querying the API.)`;
+        }
+      } catch { /* send without context */ }
+    }
+    const r = await api.claudeChatSend({ text: outbound, sessionId, ctx: buildCompanyCtx() });
     if (!r.success) {
       setBusy(false);
       antMessage.error(r.error || 'Could not send');
@@ -420,6 +513,12 @@ const ClaudeChat: React.FC = () => {
     setExtraRows([]);
   };
 
+  // stable wrappers so the memoized endpoint list never re-renders on typing
+  const clickEndpointRef = useRef<(p: string) => void>(() => { /* set below */ });
+  const openFormRef = useRef<(p: string) => void>(() => { /* set below */ });
+  const stableClickEndpoint = useCallback((p: string) => clickEndpointRef.current(p), []);
+  const stableOpenForm = useCallback((p: string) => openFormRef.current(p), []);
+
   // endpoint click: trained or parameterized paths open the fill-in form,
   // plain ones go straight to the input
   const clickEndpoint = (p: string) => {
@@ -430,6 +529,8 @@ const ClaudeChat: React.FC = () => {
       setInput(`Run GET ${p}`);
     }
   };
+  clickEndpointRef.current = clickEndpoint;
+  openFormRef.current = openEndpointForm;
 
   // training recipe pick: always opens the search panel first (declared params
   // + any placeholders still in the URL template; extras can be added by hand),
@@ -567,6 +668,11 @@ const ClaudeChat: React.FC = () => {
             : typeof v === 'object' ? JSON.stringify(v) : String(v),
     }));
   }, [directResult]);
+
+  const directData = useMemo(
+    () => directRows.map((row, i) => ({ ...row, __rk: i })),
+    [directRows],
+  );
 
   const directCell = (k: string, v: unknown): string | number => {
     if (v === null || v === undefined) return '';
@@ -886,34 +992,7 @@ const ClaudeChat: React.FC = () => {
                 value={epSearch} onChange={e => setEpSearch(e.target.value)} />
             </div>
             <div className="cc-panel-body">
-              {filteredCatalog.map(g => (
-                <div key={g.group}>
-                  <div className="cc-epgroup">{g.group}</div>
-                  {g.paths.map(p => {
-                    const hasParams = getEpParams(p).length > 0;
-                    const trained = trainedSet.has(p);
-                    return (
-                      <div key={p} className="cc-ep-row">
-                        <Tooltip placement="right" mouseEnterDelay={0.6}
-                          title={trained
-                            ? `Trained ✓ — click to open the search panel with this recipe's parameters`
-                            : hasParams
-                              ? `Has parameters — click to fill them in and run GET ${p}`
-                              : `Click to ask Claude to run GET ${p}`}>
-                          <button className={`cc-ep${hasParams ? ' cc-ep-param' : ''}`} onClick={() => clickEndpoint(p)}>
-                            {p}
-                            {trained && <span className="cc-ep-tick">✓</span>}
-                            {!trained && hasParams && <span className="cc-ep-badge">⋯</span>}
-                          </button>
-                        </Tooltip>
-                        <Tooltip title="Open the search panel to enter parameters" placement="right">
-                          <button className="cc-ep-gear" onClick={() => openEndpointForm(p)}><FilterOutlined /></button>
-                        </Tooltip>
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
+              <EndpointsList groups={filteredCatalog} trained={trainedSet} onRun={stableClickEndpoint} onForm={stableOpenForm} />
               {!filteredCatalog.length && <Text type="secondary" style={{ fontSize: 12, padding: 8, display: 'block' }}>
                 {catalog.length ? 'No matches' : 'Catalog loads after the first workspace start'}
               </Text>}
@@ -973,22 +1052,7 @@ const ClaudeChat: React.FC = () => {
                 </div>
               </div>
             )}
-            {msgs.map((m, i) => (
-              <div key={i} className={`cc-row ${m.role === 'user' ? 'me' : 'bot'}`}>
-                <div className="cc-bubble">
-                  {!!m.tools?.length && (
-                    <div style={{ marginBottom: m.text ? 6 : 0 }}>
-                      {m.tools.map((t, j) => <span key={j} className="cc-toolchip"><ApiOutlined />{t.replace(/^mcp__/, '')}</span>)}
-                    </div>
-                  )}
-                  {m.role === 'user'
-                    ? m.text.split('\n').map((l, j) => <div key={j}>{l}</div>)
-                    : m.text
-                      ? <div dangerouslySetInnerHTML={{ __html: mdToHtml(m.text) }} />
-                      : <Text type="secondary" style={{ fontSize: 12 }}>working…</Text>}
-                </div>
-              </div>
-            ))}
+            {msgs.map((m, i) => <MsgBubble key={i} m={m} />)}
             {busy && (
               <div className="cc-row bot">
                 <div className="cc-bubble">
@@ -1257,14 +1321,7 @@ const ClaudeChat: React.FC = () => {
                     </div>
                   )}
                   {directResult.rows.length > 0 ? (
-                    <Table
-                      size="small"
-                      dataSource={directRows.map((row, i) => ({ ...row, __rk: i }))}
-                      rowKey="__rk"
-                      columns={directColumns}
-                      pagination={{ pageSize: 100, size: 'small', showSizeChanger: false, showTotal: t => `${t} rows` }}
-                      scroll={{ x: 'max-content' }}
-                    />
+                    <DirectGrid data={directData} columns={directColumns} />
                   ) : directResult.raw ? (
                     <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>{directResult.raw.slice(0, 100000)}</pre>
                   ) : (
