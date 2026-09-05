@@ -10,19 +10,11 @@
 const { spawn } = require('child_process');
 const cli = require('./claude-cli-manager.cjs');
 
-// Pre-approved tools for the non-interactive chat: the ERP MCP servers,
-// file reads/writes INSIDE the workspace only, and exactly one shell
-// command — the workspace's Excel builder script.
-const ALLOWED_TOOLS = [
-  'mcp__oracle-gl', 'mcp__oracle-ar', 'mcp__oracle-ar-balances',
-  'mcp__oracle-inventory', 'mcp__oracle-registry',
-  'Read(./**)', 'Write(./**)', 'Edit(./**)',
-  'Bash(node tools/make-excel.cjs:*)',
-  'Bash(node tools/call-api.cjs:*)',
-  'Bash(node tools/load-db.cjs:*)',
-  'Bash(node tools/query-db.cjs:*)',
-  'Bash(node -e:*)',
-].join(',');
+// Tool permissions are NOT passed via --allowedTools: with shell:true on
+// Windows the list gets split at spaces and dash-leading fragments (e.g.
+// from "Bash(node -e:*)") crash the CLI as unknown options. The allowlist
+// lives in the workspace's .claude/settings.local.json, written by
+// provisionWorkspace() — the mechanism the permission layer reads reliably.
 
 let proc = null; // one in-flight turn at a time
 
@@ -40,7 +32,6 @@ function send(sender, { text, sessionId, ctx } = {}) {
     '--input-format', 'stream-json',
     '--output-format', 'stream-json',
     '--verbose',
-    '--allowedTools', ALLOWED_TOOLS,
     ...(sessionId ? ['--resume', String(sessionId)] : []),
   ];
 
