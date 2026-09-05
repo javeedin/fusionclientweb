@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
 import { getCurrentCompany } from '../../config/company.config';
 import { getFusionInstanceUrl } from '../../config/api.helper';
-import { fetchTrainingRecipes } from '../../components/ai/aiTraining';
+import { fetchAllTrainingRecipes, getTrainingDebug } from '../../components/ai/aiTraining';
 import type { RecipeParam, TrainingRecipe } from '../../components/ai/aiTraining';
 
 const { Text } = Typography;
@@ -150,6 +150,7 @@ const ClaudeChat: React.FC = () => {
   const [paramQuery, setParamQuery] = useState('');
   const [extraRows, setExtraRows] = useState<{ k: string; v: string }[]>([]); // user-added query/body parameters
   const [recipes, setRecipes] = useState<TrainingRecipe[]>([]);
+  const [recipeErr, setRecipeErr] = useState(''); // why /ai/training returned nothing
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
   const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
@@ -167,11 +168,25 @@ const ClaudeChat: React.FC = () => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [msgs, busy, liveTool]);
 
+  // load recipes with diagnostics: the debug record says exactly what
+  // /ai/training answered, so an empty list is never a silent mystery
+  const loadRecipes = useCallback(async (): Promise<TrainingRecipe[]> => {
+    const list = (await fetchAllTrainingRecipes()).filter(r => r.enabled !== 'N');
+    setRecipes(list);
+    const dbg = getTrainingDebug();
+    if (!list.length) {
+      setRecipeErr(dbg ? `${dbg.url} → ${dbg.status}${dbg.ok ? ' (0 recipes returned)' : ` · ${dbg.body.slice(0, 200)}`}` : 'no response recorded');
+    } else {
+      setRecipeErr('');
+    }
+    return list;
+  }, []);
+
   useEffect(() => {
     api?.claudeCliStatus?.().then(s => setCliOk(!!s?.installed)).catch(() => setCliOk(null));
     api?.claudeChatCatalog?.().then(r => { if (r?.success) setCatalog(parseCatalog(r.markdown)); }).catch(() => { /* ignore */ });
-    fetchTrainingRecipes().then(setRecipes).catch(() => { /* ignore */ });
-  }, [api]);
+    loadRecipes().catch(e => setRecipeErr(e instanceof Error ? e.message : String(e)));
+  }, [api, loadRecipes]);
 
   const refreshFiles = useCallback(async () => {
     const r = await api?.claudeChatListFiles?.();
@@ -281,9 +296,7 @@ const ClaudeChat: React.FC = () => {
     let r = recipeForEndpoint(p, recipes);
     if (!r) {
       try {
-        const fresh = await fetchTrainingRecipes(true);
-        if (fresh.length) setRecipes(fresh);
-        r = recipeForEndpoint(p, fresh);
+        r = recipeForEndpoint(p, await loadRecipes());
       } catch { /* offline — generic form below */ }
     }
     if (r) { pickRecipe(r); return; }
@@ -600,6 +613,24 @@ const ClaudeChat: React.FC = () => {
             <div style={{ padding: '6px 8px 0' }}>
               <Input size="small" prefix={<SearchOutlined />} placeholder="Filter endpoints" allowClear
                 value={epSearch} onChange={e => setEpSearch(e.target.value)} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 2px 0' }}>
+                {recipeErr ? (
+                  <Tooltip title={<span style={{ fontSize: 11, wordBreak: 'break-all' }}>{recipeErr}</span>}>
+                    <Text type="danger" style={{ fontSize: 10.5, flex: 1, cursor: 'help' }}>
+                      ⚠ training recipes not loaded
+                    </Text>
+                  </Tooltip>
+                ) : (
+                  <Text type="secondary" style={{ fontSize: 10.5, flex: 1 }}>
+                    {recipes.length} training recipe{recipes.length === 1 ? '' : 's'} loaded
+                  </Text>
+                )}
+                <Tooltip title="Reload training recipes">
+                  <Button size="small" type="text" style={{ height: 18, width: 18, minWidth: 18 }}
+                    icon={<ReloadOutlined style={{ fontSize: 10 }} />}
+                    onClick={() => loadRecipes().catch(e => setRecipeErr(String(e)))} />
+                </Tooltip>
+              </div>
             </div>
             <div className="cc-panel-body">
               {filteredCatalog.map(g => (
