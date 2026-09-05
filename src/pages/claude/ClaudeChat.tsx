@@ -1,14 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, DatePicker, Dropdown, Input, Modal, Radio, Select, Table, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
+import {
+  Alert, Button, Card, DatePicker, Dropdown, Input, Modal, Radio, Segmented, Select, Table, Tabs, Tag,
+  TimePicker, Tooltip, Typography, message as antMessage,
+} from 'antd';
+import {
+  Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer,
+  Tooltip as ChartTooltip, XAxis, YAxis,
+} from 'recharts';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-  ApiOutlined, CloseOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined, ExportOutlined, EyeOutlined,
-  FileExcelOutlined, FilePdfOutlined, FileTextOutlined, FilterOutlined, FolderOpenOutlined,
-  FullscreenExitOutlined, FullscreenOutlined, MailOutlined, MinusCircleOutlined, PlusOutlined,
-  ReloadOutlined, SearchOutlined, SendOutlined, ShareAltOutlined, SnippetsOutlined, StopOutlined,
+  ApiOutlined, BarChartOutlined, CaretRightOutlined, ClockCircleOutlined, CloseOutlined, CodeOutlined,
+  DatabaseOutlined, DeleteOutlined, ExportOutlined, EyeOutlined, FileExcelOutlined, FilePdfOutlined,
+  FileTextOutlined, FilterOutlined, FolderOpenOutlined, FullscreenExitOutlined, FullscreenOutlined,
+  MailOutlined, MinusCircleOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, SearchOutlined,
+  SendOutlined, ShareAltOutlined, SnippetsOutlined, StopOutlined, SwapOutlined, TableOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
@@ -61,6 +69,12 @@ interface ChatApi {
     success: boolean; rowCount?: number; rows?: Record<string, unknown>[];
     tables?: { name: string; rows: number; columns: string[] }[]; error?: string;
   }>;
+  claudeReportsList?: () => Promise<{ success: boolean; schedules: ReportSchedule[]; error?: string }>;
+  claudeReportsSave?: (s: Partial<ReportSchedule> & { ctx?: Record<string, string> }) => Promise<{ success: boolean; schedule?: ReportSchedule; error?: string }>;
+  claudeReportsDelete?: (id: string) => Promise<{ success: boolean; error?: string }>;
+  claudeReportsRunNow?: (id: string) => Promise<{ success: boolean; error?: string }>;
+  onClaudeReportDone?: (cb: (e: unknown, p: { id: string; name: string; status: string }) => void) => void;
+  removeClaudeReportDoneListener?: () => void;
   claudeChatListFiles?: () => Promise<{ success: boolean; files: WsFile[] }>;
   claudeChatReadFile?: (relPath: string) => Promise<{ success: boolean; base64?: string; name?: string; error?: string }>;
   claudeChatOpenFile?: (relPath: string) => Promise<{ success: boolean }>;
@@ -203,15 +217,94 @@ function normPath(t: string): string {
 // ── xlsx preview data ───────────────────────────────────────────────────────
 interface SheetPreview { name: string; rows: (string | number)[][] }
 
-// One entry in the preview history: a direct run, a SQL query, or a result
-// set the AI produced during a chat turn
+// One entry in the preview history: a direct run, a SQL query, a result set
+// the AI produced during a chat turn, or a comparison of two entries
 interface PreviewEntry {
   id: string;
-  kind: 'direct' | 'sql' | 'ai';
+  kind: 'direct' | 'sql' | 'ai' | 'diff';
   title: string;
   rows: Record<string, unknown>[];
   raw: string | null;
   at: number;
+}
+
+// ── chart view for tabular results ──────────────────────────────────────────
+// Categorical slots 1-3 of the validated reference palette (fixed order,
+// capped at three series so every pair stays CVD-distinguishable).
+const VIZ_COLORS = ['#2a78d6', '#eb6834', '#1baf7a'];
+const isIdColName = (k: string) => /(id|number)$/i.test(k);
+
+interface ChartSpec { label: string; series: string[]; timeline: boolean; rows: Record<string, unknown>[]; capped: boolean }
+
+// a result is chartable when it has one text label column and 1-3 numeric
+// measure columns; period/date labels get a line, categories get bars
+function chartSpecFor(rows: Record<string, unknown>[]): ChartSpec | null {
+  if (rows.length < 2) return null;
+  const keys = Object.keys(rows[0]);
+  const numeric = keys.filter(k => !isIdColName(k) && rows.filter(r => typeof r[k] === 'number').length >= rows.length / 2);
+  const label = keys.find(k => !numeric.includes(k) && rows.some(r => typeof r[k] === 'string' && String(r[k]).trim() !== ''));
+  if (!label) return null;
+  const series = numeric.slice(0, 3);
+  if (!series.length) return null;
+  const timeline = rows.slice(0, 12).every(r => /^\d{4}[-/]\d{2}|^[A-Za-z]{3}[- ]?\d{2,4}$/.test(String(r[label] ?? '')));
+  const capped = !timeline && rows.length > 40;
+  return { label, series, timeline, rows: capped ? rows.slice(0, 40) : rows.slice(0, 500), capped };
+}
+
+const vizNum = (v: unknown) => (typeof v === 'number' ? v.toLocaleString() : String(v ?? ''));
+const vizCompact = (v: number) => Intl.NumberFormat('en', { notation: 'compact' }).format(v);
+
+const DirectChart = React.memo(function DirectChart({ spec }: { spec: ChartSpec }) {
+  const axisTick = { fontSize: 11, fill: '#52514e' };
+  const tooltipStyle = { fontSize: 12, borderRadius: 8, border: '1px solid #EDE8E6' };
+  return (
+    <div>
+      <div style={{ width: '100%', height: 330 }}>
+        <ResponsiveContainer>
+          {spec.timeline ? (
+            <LineChart data={spec.rows} margin={{ top: 10, right: 18, left: 4, bottom: 4 }}>
+              <CartesianGrid stroke="#EFEAE8" vertical={false} />
+              <XAxis dataKey={spec.label} tick={axisTick} tickLine={false} axisLine={{ stroke: '#E0D5D2' }} interval="preserveStartEnd" />
+              <YAxis tick={axisTick} tickLine={false} axisLine={false} tickFormatter={vizCompact} width={62} />
+              <ChartTooltip formatter={(val: unknown) => vizNum(val)} contentStyle={tooltipStyle} />
+              {spec.series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {spec.series.map((s, i) => (
+                <Line key={s} type="monotone" dataKey={s} stroke={VIZ_COLORS[i]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+              ))}
+            </LineChart>
+          ) : (
+            <BarChart data={spec.rows} margin={{ top: 10, right: 18, left: 4, bottom: 4 }}>
+              <CartesianGrid stroke="#EFEAE8" vertical={false} />
+              <XAxis dataKey={spec.label} tick={axisTick} tickLine={false} axisLine={{ stroke: '#E0D5D2' }}
+                angle={-30} textAnchor="end" height={80} interval={0} />
+              <YAxis tick={axisTick} tickLine={false} axisLine={false} tickFormatter={vizCompact} width={62} />
+              <ChartTooltip formatter={(val: unknown) => vizNum(val)} contentStyle={tooltipStyle} />
+              {spec.series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {spec.series.map((s, i) => (
+                <Bar key={s} dataKey={s} fill={VIZ_COLORS[i]} maxBarSize={26} radius={[4, 4, 0, 0]} />
+              ))}
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+      {spec.capped && (
+        <Text type="secondary" style={{ fontSize: 11 }}>Chart shows the first 40 rows — filter or aggregate for the rest.</Text>
+      )}
+    </div>
+  );
+});
+
+// ── saved report templates (localStorage) ───────────────────────────────────
+interface ReportTpl { id: string; name: string; prompt: string; createdAt: number }
+const RPT_LS = 'reerp.claudechat.reports';
+const loadReports = (): ReportTpl[] => {
+  try { const r = JSON.parse(localStorage.getItem(RPT_LS) || ''); return Array.isArray(r) ? r : []; }
+  catch { return []; }
+};
+
+interface ReportSchedule {
+  id: string; name: string; prompt: string; freq: 'daily' | 'weekly'; time: string; day?: number;
+  enabled?: boolean; nextRun?: number | null; lastRun?: number; lastStatus?: string;
 }
 
 // ── chat answer export & share ──────────────────────────────────────────────
@@ -396,8 +489,11 @@ async function shareChatAnswer(key: string, md: string) {
 // expensive parts (markdown bubbles, the direct-result grid, the 283-row
 // endpoint list) from re-rendering unless their own data changed.
 
-const MsgBubble = React.memo(function MsgBubble({ m }: { m: ChatMsg }) {
+const MsgBubble = React.memo(function MsgBubble({ m, prompt, onSaveReport }: {
+  m: ChatMsg; prompt?: string; onSaveReport?: (p: string) => void;
+}) {
   const tables = m.role === 'assistant' && m.text ? extractMdTables(m.text) : [];
+  const canSave = m.role === 'assistant' && !!m.text && !!prompt && !!onSaveReport;
   return (
     <div className={`cc-row ${m.role === 'user' ? 'me' : 'bot'}`}>
       <div className="cc-bubble">
@@ -424,26 +520,35 @@ const MsgBubble = React.memo(function MsgBubble({ m }: { m: ChatMsg }) {
           : m.text
             ? <div dangerouslySetInnerHTML={{ __html: mdToHtml(m.text) }} />
             : <Text type="secondary" style={{ fontSize: 12 }}>working…</Text>}
-        {tables.length > 0 && (
+        {(tables.length > 0 || canSave) && (
           <div className="cc-tblactions">
-            <Button size="small" icon={<FileExcelOutlined style={{ color: '#1D7B4D' }} />}
-              onClick={() => exportChatAnswerExcel(m.text)}>Excel</Button>
-            <Button size="small" icon={<FilePdfOutlined style={{ color: '#C74634' }} />}
-              onClick={() => exportChatAnswerPdf(m.text)}>PDF</Button>
-            <Dropdown
-              trigger={['click']}
-              menu={{
-                items: [
-                  { key: 'copy', icon: <SnippetsOutlined />, label: 'Copy for Excel / email (tab-separated)' },
-                  { key: 'markdown', icon: <FileTextOutlined />, label: 'Copy as Markdown' },
-                  { key: 'email', icon: <MailOutlined />, label: 'Email…' },
-                  { key: 'folder', icon: <FolderOpenOutlined />, label: 'Save Excel to folder…' },
-                ],
-                onClick: ({ key }) => { shareChatAnswer(key, m.text); },
-              }}
-            >
-              <Button size="small" icon={<ShareAltOutlined />}>Share</Button>
-            </Dropdown>
+            {tables.length > 0 && (
+              <>
+                <Button size="small" icon={<FileExcelOutlined style={{ color: '#1D7B4D' }} />}
+                  onClick={() => exportChatAnswerExcel(m.text)}>Excel</Button>
+                <Button size="small" icon={<FilePdfOutlined style={{ color: '#C74634' }} />}
+                  onClick={() => exportChatAnswerPdf(m.text)}>PDF</Button>
+                <Dropdown
+                  trigger={['click']}
+                  menu={{
+                    items: [
+                      { key: 'copy', icon: <SnippetsOutlined />, label: 'Copy for Excel / email (tab-separated)' },
+                      { key: 'markdown', icon: <FileTextOutlined />, label: 'Copy as Markdown' },
+                      { key: 'email', icon: <MailOutlined />, label: 'Email…' },
+                      { key: 'folder', icon: <FolderOpenOutlined />, label: 'Save Excel to folder…' },
+                    ],
+                    onClick: ({ key }) => { shareChatAnswer(key, m.text); },
+                  }}
+                >
+                  <Button size="small" icon={<ShareAltOutlined />}>Share</Button>
+                </Dropdown>
+              </>
+            )}
+            {canSave && (
+              <Tooltip title="Save the question that produced this answer as a rerunnable report template">
+                <Button size="small" icon={<SaveOutlined />} onClick={() => onSaveReport!(prompt!)}>Save report</Button>
+              </Tooltip>
+            )}
           </div>
         )}
       </div>
@@ -534,7 +639,7 @@ const ClaudeChat: React.FC = () => {
   const [directSearch, setDirectSearch] = useState('');
   const [previewFull, setPreviewFull] = useState(false);
   const directResultRef = useRef<PreviewEntry | null>(null);
-  useEffect(() => { directResultRef.current = directResult; setDirectSearch(''); }, [directResult]);
+  useEffect(() => { directResultRef.current = directResult; setDirectSearch(''); setDirectView('table'); }, [directResult]);
   const lastToolDetailRef = useRef(''); // titles AI-produced preview entries
 
   const pushPreview = useCallback((kind: PreviewEntry['kind'], title: string, rows: Record<string, unknown>[], raw: string | null) => {
@@ -553,6 +658,20 @@ const ClaudeChat: React.FC = () => {
   const [sqlLoadOpen, setSqlLoadOpen] = useState(false); // "→ SQL" dialog
   const [sqlLoadTable, setSqlLoadTable] = useState('');
   const [sqlLoadMode, setSqlLoadMode] = useState<'replace' | 'append'>('replace');
+  const [directView, setDirectView] = useState<'table' | 'chart'>('table');
+  const [reports, setReports] = useState<ReportTpl[]>(loadReports); // saved report templates
+  const [saveRptOpen, setSaveRptOpen] = useState(false);
+  const [saveRptName, setSaveRptName] = useState('');
+  const [saveRptPrompt, setSaveRptPrompt] = useState('');
+  const [schedules, setSchedules] = useState<ReportSchedule[]>([]);
+  const [schedOpen, setSchedOpen] = useState(false);
+  const [schedReport, setSchedReport] = useState<ReportTpl | null>(null);
+  const [schedFreq, setSchedFreq] = useState<'daily' | 'weekly'>('daily');
+  const [schedTime, setSchedTime] = useState(() => dayjs('08:00', 'HH:mm'));
+  const [schedDay, setSchedDay] = useState(1);
+  useEffect(() => {
+    try { localStorage.setItem(RPT_LS, JSON.stringify(reports.slice(0, 30))); } catch { /* ignore */ }
+  }, [reports]);
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
   const [filesOpen, setFilesOpen] = useState(false); // workspace files list, hidden by default
@@ -1037,6 +1156,109 @@ const ClaudeChat: React.FC = () => {
     await openPdf(doc, `direct-export-${dayjs().format('YYYYMMDD-HHmmss')}.pdf`);
   };
 
+  // chartable? (evaluated on the filtered rows so the chart follows the search)
+  const chartSpec = useMemo(() => (directResult && directRows.length ? chartSpecFor(directRows) : null), [directResult, directRows]);
+
+  // ── compare two preview entries (join on first common column) ─────────────
+  const compareWith = (other: PreviewEntry) => {
+    const cur = directResultRef.current;
+    if (!cur || !cur.rows.length || !other.rows.length) { antMessage.warning('Both results need rows to compare'); return; }
+    const keysA = Object.keys(cur.rows[0]);
+    const keysB = Object.keys(other.rows[0]);
+    const key = keysA.find(k => keysB.includes(k));
+    if (!key) { antMessage.warning('No common column to join the two results on'); return; }
+    const nums = keysA.filter(k => k !== key && keysB.includes(k)
+      && (typeof cur.rows[0][k] === 'number' || typeof other.rows[0][k] === 'number'));
+    const mapB = new Map(other.rows.map(r => [String(r[key]), r]));
+    const seen = new Set<string>();
+    const out: Record<string, unknown>[] = [];
+    for (const r of cur.rows) {
+      const kv = String(r[key]);
+      seen.add(kv);
+      const rb = mapB.get(kv);
+      const row: Record<string, unknown> = { [key]: kv, status: rb ? 'both' : 'only in A' };
+      for (const k of nums) {
+        const va = typeof r[k] === 'number' ? (r[k] as number) : null;
+        const vb = rb && typeof rb[k] === 'number' ? (rb[k] as number) : null;
+        row[`${k} (A)`] = va;
+        row[`${k} (B)`] = vb;
+        row[`${k} Δ`] = va !== null && vb !== null ? +(vb - va).toFixed(2) : null;
+      }
+      out.push(row);
+    }
+    for (const r of other.rows) {
+      const kv = String(r[key]);
+      if (seen.has(kv)) continue;
+      const row: Record<string, unknown> = { [key]: kv, status: 'only in B' };
+      for (const k of nums) { row[`${k} (A)`] = null; row[`${k} (B)`] = typeof r[k] === 'number' ? r[k] : null; row[`${k} Δ`] = null; }
+      out.push(row);
+    }
+    pushPreview('diff', `Δ on "${key}" — A: ${cur.title.slice(0, 34)} vs B: ${other.title.slice(0, 34)}`, out, null);
+  };
+
+  // ── saved report templates + schedules ────────────────────────────────────
+  const openSaveReport = useCallback((prompt: string) => {
+    setSaveRptPrompt(prompt);
+    setSaveRptName(prompt.replace(/\s+/g, ' ').slice(0, 48));
+    setSaveRptOpen(true);
+  }, []);
+  const saveReportRef = useRef(openSaveReport);
+  useEffect(() => { saveReportRef.current = openSaveReport; }, [openSaveReport]);
+  const stableSaveReport = useCallback((p: string) => saveReportRef.current(p), []);
+
+  const doSaveReport = () => {
+    const name = saveRptName.trim();
+    if (!name || !saveRptPrompt.trim()) return;
+    setReports(prev => [{ id: `r${Date.now()}`, name, prompt: saveRptPrompt.trim(), createdAt: Date.now() }, ...prev].slice(0, 30));
+    setSaveRptOpen(false);
+    antMessage.success(`Report "${name}" saved — find it under AI Training`);
+  };
+
+  const loadSchedules = useCallback(async () => {
+    try {
+      const r = await api?.claudeReportsList?.();
+      if (r?.success) setSchedules(r.schedules || []);
+    } catch { /* ignore */ }
+  }, [api]);
+
+  useEffect(() => {
+    loadSchedules();
+    api?.onClaudeReportDone?.((_e, p) => {
+      antMessage.success(`Scheduled report "${p.name}" finished (${p.status}) — check the files folder`);
+      refreshFiles();
+      loadSchedules();
+    });
+    return () => api?.removeClaudeReportDoneListener?.();
+  }, [api, loadSchedules, refreshFiles]);
+
+  const openSchedule = (r: ReportTpl) => {
+    setSchedReport(r);
+    setSchedFreq('daily');
+    setSchedTime(dayjs('08:00', 'HH:mm'));
+    setSchedDay(1);
+    setSchedOpen(true);
+  };
+
+  const doSaveSchedule = async () => {
+    if (!schedReport) return;
+    const r = await api?.claudeReportsSave?.({
+      name: schedReport.name,
+      prompt: schedReport.prompt,
+      freq: schedFreq,
+      time: schedTime.format('HH:mm'),
+      day: schedFreq === 'weekly' ? schedDay : undefined,
+      enabled: true,
+      ctx: buildCompanyCtx(),
+    });
+    if (r?.success) {
+      antMessage.success('Schedule saved — runs while the app is open');
+      setSchedOpen(false);
+      loadSchedules();
+    } else {
+      antMessage.error(r?.error || 'Could not save the schedule');
+    }
+  };
+
   // ── "/" popup: training recipes + endpoints, like the CLI's slash menu ────
   const slashOpen = !busy && input.startsWith('/');
   const slashItems = useMemo<SlashItem[]>(() => {
@@ -1253,6 +1475,11 @@ const ClaudeChat: React.FC = () => {
         .cc-ptab-dot.direct{background:#1D7B4D}
         .cc-ptab-dot.sql{background:#2F54EB}
         .cc-ptab-dot.ai{background:#722ED1}
+        .cc-ptab-dot.diff{background:#eb6834}
+        .cc-report{position:relative;cursor:pointer}
+        .cc-ract{position:absolute;right:6px;top:6px;display:none;gap:8px;color:#b9aca7;font-size:12px}
+        .cc-report:hover .cc-ract{display:inline-flex}
+        .cc-ract .anticon:hover{color:#C74634}
         .cc-ptab-x{font-size:9px;color:#b9aca7;margin-left:2px}
         .cc-ptab-x:hover{color:#C74634}
         .cc-file{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;cursor:pointer;font-size:12px}
@@ -1362,6 +1589,55 @@ const ClaudeChat: React.FC = () => {
                   No training recipes yet — teach one from any page's "Teach AI" button.
                 </Text>
               )}
+
+              <div className="cc-epgroup" style={{ marginTop: 10 }}>Saved reports</div>
+              {reports.map(r => (
+                <div key={r.id} className="cc-recipe cc-report" onClick={() => setInput(r.prompt)}>
+                  <span className="cc-recipe-name">{r.name}</span>
+                  <span className="cc-recipe-params">{r.prompt.replace(/\s+/g, ' ').slice(0, 60)}</span>
+                  <span className="cc-ract">
+                    <Tooltip title="Run now"><CaretRightOutlined onClick={e => { e.stopPropagation(); send(r.prompt); }} /></Tooltip>
+                    <Tooltip title="Schedule…"><ClockCircleOutlined onClick={e => { e.stopPropagation(); openSchedule(r); }} /></Tooltip>
+                    <Tooltip title="Delete"><DeleteOutlined onClick={e => { e.stopPropagation(); setReports(prev => prev.filter(x => x.id !== r.id)); }} /></Tooltip>
+                  </span>
+                </div>
+              ))}
+              {!reports.length && (
+                <Text type="secondary" style={{ fontSize: 11.5, padding: '2px 8px', display: 'block' }}>
+                  Press "Save report" under any AI answer to keep its question here.
+                </Text>
+              )}
+
+              {schedules.length > 0 && (
+                <>
+                  <div className="cc-epgroup" style={{ marginTop: 10 }}>Schedules</div>
+                  {schedules.map(s => (
+                    <div key={s.id} className="cc-recipe cc-report">
+                      <span className="cc-recipe-name">
+                        <ClockCircleOutlined style={{ marginRight: 5, color: '#8a5a2b' }} />{s.name}
+                      </span>
+                      <span className="cc-recipe-params">
+                        {s.freq === 'weekly' ? `Weekly ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][s.day || 0]}` : 'Daily'} at {s.time}
+                        {s.nextRun ? ` · next ${dayjs(s.nextRun).format('DD-MMM HH:mm')}` : ''}
+                        {s.lastStatus ? ` · last: ${s.lastStatus}` : ''}
+                      </span>
+                      <span className="cc-ract">
+                        <Tooltip title="Run now"><CaretRightOutlined onClick={async e => {
+                          e.stopPropagation();
+                          const r = await api.claudeReportsRunNow?.(s.id);
+                          if (r?.success) antMessage.info(`"${s.name}" started`);
+                          else antMessage.error(r?.error || 'Could not start');
+                        }} /></Tooltip>
+                        <Tooltip title="Delete schedule"><DeleteOutlined onClick={async e => {
+                          e.stopPropagation();
+                          await api.claudeReportsDelete?.(s.id);
+                          loadSchedules();
+                        }} /></Tooltip>
+                      </span>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1386,7 +1662,13 @@ const ClaudeChat: React.FC = () => {
                 </div>
               </div>
             )}
-            {msgs.map((m, i) => <MsgBubble key={i} m={m} />)}
+            {(() => {
+              let lastUser = '';
+              return msgs.map((m, i) => {
+                if (m.role === 'user') lastUser = m.text;
+                return <MsgBubble key={i} m={m} prompt={m.role === 'assistant' ? lastUser : undefined} onSaveReport={stableSaveReport} />;
+              });
+            })()}
             {busy && (
               <div className="cc-row bot">
                 <div className="cc-bubble">
@@ -1693,8 +1975,8 @@ const ClaudeChat: React.FC = () => {
               {directResult && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <Tag color={directResult.kind === 'direct' ? 'green' : directResult.kind === 'sql' ? 'geekblue' : 'purple'} style={{ margin: 0 }}>
-                      {directResult.kind === 'direct' ? 'Direct' : directResult.kind === 'sql' ? 'SQL' : 'AI'}
+                    <Tag color={directResult.kind === 'direct' ? 'green' : directResult.kind === 'sql' ? 'geekblue' : directResult.kind === 'diff' ? 'orange' : 'purple'} style={{ margin: 0 }}>
+                      {directResult.kind === 'direct' ? 'Direct' : directResult.kind === 'sql' ? 'SQL' : directResult.kind === 'diff' ? 'Diff' : 'AI'}
                     </Tag>
                     <code style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{directResult.title}</code>
                     <Text type="secondary" style={{ fontSize: 10.5, flexShrink: 0 }}>{new Date(directResult.at).toLocaleTimeString()}</Text>
@@ -1714,6 +1996,33 @@ const ClaudeChat: React.FC = () => {
                       <Text type="secondary" style={{ fontSize: 11, flex: 1 }}>
                         {directSearch ? `${directRows.length} of ${directResult.rows.length} rows` : `${directResult.rows.length} rows`}
                       </Text>
+                      {chartSpec && (
+                        <Segmented
+                          size="small"
+                          value={directView}
+                          onChange={v => setDirectView(v as 'table' | 'chart')}
+                          options={[
+                            { label: 'Table', value: 'table', icon: <TableOutlined /> },
+                            { label: 'Chart', value: 'chart', icon: <BarChartOutlined /> },
+                          ]}
+                        />
+                      )}
+                      {prevHist.length > 1 && (
+                        <Dropdown
+                          trigger={['click']}
+                          menu={{
+                            items: prevHist.filter(e => e.id !== prevId && e.rows.length > 0).map(e => ({
+                              key: e.id,
+                              label: `${e.title.slice(0, 44)} · ${e.rows.length} rows`,
+                            })),
+                            onClick: ({ key }) => { const o = prevHist.find(e => e.id === key); if (o) compareWith(o); },
+                          }}
+                        >
+                          <Tooltip title="Compare this result (A) with another from the history (B)">
+                            <Button size="small" icon={<SwapOutlined />}>Compare</Button>
+                          </Tooltip>
+                        </Dropdown>
+                      )}
                       <Button size="small" icon={<FileExcelOutlined style={{ color: '#1D7B4D' }} />} onClick={exportDirectExcel}>Excel</Button>
                       <Button size="small" icon={<FileTextOutlined />} onClick={exportDirectPdf}>PDF</Button>
                       {directResult.kind !== 'sql' && (
@@ -1724,7 +2033,9 @@ const ClaudeChat: React.FC = () => {
                     </div>
                   )}
                   {directResult.rows.length > 0 ? (
-                    <DirectGrid data={directData} columns={directColumns} />
+                    directView === 'chart' && chartSpec
+                      ? <DirectChart spec={chartSpec} />
+                      : <DirectGrid data={directData} columns={directColumns} />
                   ) : directResult.raw ? (
                     <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>{directResult.raw.slice(0, 100000)}</pre>
                   ) : (
@@ -1811,6 +2122,60 @@ const ClaudeChat: React.FC = () => {
                 Append only pulls that do not overlap (e.g. a different month) — overlapping rows are double-counted in every total.
               </span>} />
           )}
+        </div>
+      </Modal>
+
+      <Modal
+        title={<span><SaveOutlined /> Save as report template</span>}
+        open={saveRptOpen}
+        onCancel={() => setSaveRptOpen(false)}
+        onOk={doSaveReport}
+        okText="Save report"
+        okButtonProps={{ disabled: !saveRptName.trim() }}
+        width={480}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 6 }}>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12 }}>Report name</Text>
+            <Input value={saveRptName} onChange={e => setSaveRptName(e.target.value)} onPressEnter={doSaveReport}
+              placeholder="e.g. Monthly cash categorization" />
+          </div>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12 }}>Prompt (editable — the question Claude will be asked on each run)</Text>
+            <Input.TextArea rows={4} value={saveRptPrompt} onChange={e => setSaveRptPrompt(e.target.value)} />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        title={<span><ClockCircleOutlined /> Schedule report{schedReport ? ` — ${schedReport.name}` : ''}</span>}
+        open={schedOpen}
+        onCancel={() => setSchedOpen(false)}
+        onOk={doSaveSchedule}
+        okText="Save schedule"
+        width={440}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 6 }}>
+          <Radio.Group value={schedFreq} onChange={e => setSchedFreq(e.target.value)}>
+            <Radio value="daily">Daily</Radio>
+            <Radio value="weekly">Weekly</Radio>
+          </Radio.Group>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {schedFreq === 'weekly' && (
+              <Select
+                style={{ width: 130 }}
+                value={schedDay}
+                onChange={setSchedDay}
+                options={['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => ({ value: i, label: d }))}
+              />
+            )}
+            <TimePicker format="HH:mm" value={schedTime} onChange={t => t && setSchedTime(t)} minuteStep={5} />
+          </div>
+          <Alert type="info" showIcon style={{ padding: '4px 10px' }}
+            message={<span style={{ fontSize: 12 }}>
+              Runs while the app is open: Claude executes the report and saves a formatted Excel file in the
+              workspace (folder icon in Preview). You get a notification when it finishes.
+            </span>} />
         </div>
       </Modal>
     </div>

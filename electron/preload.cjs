@@ -100,6 +100,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeChatSaveDirect: (opts)   => ipcRenderer.invoke('claude-chat:save-direct', opts),
   claudeChatLoadDb: (opts)       => ipcRenderer.invoke('claude-chat:load-db', opts),
   claudeChatQueryDb: (opts)      => ipcRenderer.invoke('claude-chat:query-db', opts),
+
+  // Scheduled Claude reports
+  claudeReportsList:   ()      => ipcRenderer.invoke('claude-reports:list'),
+  claudeReportsSave:   (s)     => ipcRenderer.invoke('claude-reports:save', s),
+  claudeReportsDelete: (id)    => ipcRenderer.invoke('claude-reports:delete', { id }),
+  claudeReportsRunNow: (id)    => ipcRenderer.invoke('claude-reports:run-now', { id }),
+  onClaudeReportDone:  (cb)    => ipcRenderer.on('claude-report:done', cb),
+  removeClaudeReportDoneListener: () => ipcRenderer.removeAllListeners('claude-report:done'),
   claudeChatListFiles: ()        => ipcRenderer.invoke('claude-chat:list-files'),
   claudeChatReadFile: (relPath)  => ipcRenderer.invoke('claude-chat:read-file', { relPath }),
   claudeChatOpenFile: (relPath)  => ipcRenderer.invoke('claude-chat:open-file', { relPath }),

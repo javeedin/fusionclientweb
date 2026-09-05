@@ -1444,6 +1444,27 @@ ipcMain.handle('claude-chat:lov', async (_event, opts = {}) => {
   }
 });
 
+// ── Scheduled Claude reports ───────────────────────────────────────────────
+const reportScheduler = require('./claude-report-scheduler.cjs');
+app.whenReady().then(() => reportScheduler.init());
+
+ipcMain.handle('claude-reports:list', async () => {
+  try { return { success: true, schedules: reportScheduler.list() }; }
+  catch (e) { return { success: false, error: e.message, schedules: [] }; }
+});
+ipcMain.handle('claude-reports:save', async (_event, schedule) => {
+  try { return { success: true, schedule: reportScheduler.save(schedule || {}) }; }
+  catch (e) { return { success: false, error: e.message }; }
+});
+ipcMain.handle('claude-reports:delete', async (_event, { id } = {}) => {
+  try { reportScheduler.remove(id); return { success: true }; }
+  catch (e) { return { success: false, error: e.message }; }
+});
+ipcMain.handle('claude-reports:run-now', async (_event, { id } = {}) => {
+  try { return reportScheduler.runNow(id); }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
 // ── MCP bridge for the in-app AI Assistant ─────────────────────────────────
 const mcpBridge = require('./mcp-bridge.cjs');
 
