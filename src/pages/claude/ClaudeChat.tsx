@@ -9,6 +9,8 @@ import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
 import { getCurrentCompany } from '../../config/company.config';
 import { getFusionInstanceUrl } from '../../config/api.helper';
+import { fetchTrainingRecipes } from '../../components/ai/aiTraining';
+import type { RecipeParam, TrainingRecipe } from '../../components/ai/aiTraining';
 
 const { Text } = Typography;
 
@@ -121,6 +123,13 @@ function getEpParams(p: string): string[] {
   return out;
 }
 
+// What the parameter form is collecting values for: a catalog endpoint or a
+// training recipe (method + URL template + declared parameters).
+interface ParamTarget { title: string; method: string; path: string; params: RecipeParam[] }
+
+// One row of the "/" popup — a training recipe or a catalog endpoint
+interface SlashItem { kind: 'recipe' | 'endpoint'; label: string; sub?: string; recipe?: TrainingRecipe }
+
 // ── xlsx preview data ───────────────────────────────────────────────────────
 interface SheetPreview { name: string; rows: (string | number)[][] }
 
@@ -136,9 +145,11 @@ const ClaudeChat: React.FC = () => {
   const [lastError, setLastError] = useState('');
   const [catalog, setCatalog] = useState<EndpointGroup[]>([]);
   const [epSearch, setEpSearch] = useState('');
-  const [paramEp, setParamEp] = useState<string | null>(null); // endpoint awaiting parameter values
+  const [paramTarget, setParamTarget] = useState<ParamTarget | null>(null); // endpoint/recipe awaiting parameter values
   const [paramVals, setParamVals] = useState<Record<string, string>>({});
   const [paramQuery, setParamQuery] = useState('');
+  const [recipes, setRecipes] = useState<TrainingRecipe[]>([]);
+  const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
   const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
   const [previewSheets, setPreviewSheets] = useState<SheetPreview[] | null>(null);
@@ -158,6 +169,7 @@ const ClaudeChat: React.FC = () => {
   useEffect(() => {
     api?.claudeCliStatus?.().then(s => setCliOk(!!s?.installed)).catch(() => setCliOk(null));
     api?.claudeChatCatalog?.().then(r => { if (r?.success) setCatalog(parseCatalog(r.markdown)); }).catch(() => { /* ignore */ });
+    fetchTrainingRecipes().then(setRecipes).catch(() => { /* ignore */ });
   }, [api]);
 
   const refreshFiles = useCallback(async () => {
@@ -240,40 +252,99 @@ const ClaudeChat: React.FC = () => {
     }
   }, [input, busy, api, convs, mutateConv]);
 
-  const newChat = () => { setCurId(''); setLastError(''); setParamEp(null); };
+  const newChat = () => { setCurId(''); setLastError(''); setParamTarget(null); };
 
   // endpoint click: parameterized paths open the fill-in form, plain ones go straight to the input
   const clickEndpoint = (p: string) => {
-    if (getEpParams(p).length) {
-      setParamEp(p);
+    const names = getEpParams(p);
+    if (names.length) {
+      setParamTarget({ title: `GET ${p}`, method: 'GET', path: p, params: names.map(n => ({ name: n })) });
       setParamVals({});
       setParamQuery('');
     } else {
-      setParamEp(null);
+      setParamTarget(null);
       setInput(`Run GET ${p}`);
     }
   };
 
+  // training recipe pick: declared params + any placeholders still in the URL template
+  const pickRecipe = (r: TrainingRecipe) => {
+    const method = (r.method || 'GET').toUpperCase();
+    const params: RecipeParam[] = [...(r.params || [])];
+    getEpParams(r.urlTemplate).forEach(n => { if (!params.some(p => p.name === n)) params.push({ name: n }); });
+    if (params.length) {
+      setParamTarget({ title: `${r.recipeName} — ${method} ${r.urlTemplate}`, method, path: r.urlTemplate, params });
+      setParamVals({});
+      setParamQuery('');
+    } else {
+      setParamTarget(null);
+      send(`Run ${method} ${r.urlTemplate} — training recipe "${r.recipeName}"${method === 'GET' ? '' : '. Show me the full request and wait for my confirmation before executing.'}`);
+    }
+  };
+
   const runParamEp = () => {
-    if (!paramEp || busy) return;
-    let path = paramEp;
+    if (!paramTarget || busy) return;
+    let path = paramTarget.path;
     const missing: string[] = [];
-    for (const name of getEpParams(paramEp)) {
-      const v = (paramVals[name] || '').trim();
+    const extraPairs: [string, string][] = []; // filled params that are not URL placeholders
+    for (const p of paramTarget.params) {
+      const v = (paramVals[p.name] || '').trim();
+      const phRe = () => new RegExp(`\\{${p.name}\\}|:${p.name}(?![A-Za-z0-9_])`, 'g');
+      const isPlaceholder = phRe().test(path);
       if (v) {
-        path = path.replace(new RegExp(`\\{${name}\\}|:${name}(?![A-Za-z0-9_])`, 'g'), encodeURIComponent(v));
-      } else {
-        missing.push(name);
+        if (isPlaceholder) path = path.replace(phRe(), encodeURIComponent(v));
+        else extraPairs.push([p.name, v]);
+      } else if (isPlaceholder || p.required) {
+        missing.push(p.name);
       }
     }
-    const q = paramQuery.trim().replace(/^[?&]/, '');
-    if (q) path += (path.includes('?') ? '&' : '?') + q;
-    let text = `Run GET ${path}`;
+    let qParts = [paramQuery.trim().replace(/^[?&]/, '')].filter(Boolean);
+    if (paramTarget.method === 'GET') {
+      qParts = qParts.concat(extraPairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`));
+    }
+    if (qParts.length) path += (path.includes('?') ? '&' : '?') + qParts.join('&');
+    let text = `Run ${paramTarget.method} ${path}`;
+    if (paramTarget.method !== 'GET') {
+      if (extraPairs.length) text += ` with ${extraPairs.map(([k, v]) => `${k}=${v}`).join(', ')}`;
+      text += ' — show me the full request and wait for my confirmation before executing';
+    }
     if (missing.length) {
       text += ` — I left ${missing.map(n => `{${n}}`).join(', ')} blank; look up a sensible value first or ask me.`;
     }
-    setParamEp(null);
+    setParamTarget(null);
     send(text);
+  };
+
+  // ── "/" popup: training recipes + endpoints, like the CLI's slash menu ────
+  const slashOpen = !busy && input.startsWith('/');
+  const slashItems = useMemo<SlashItem[]>(() => {
+    if (!slashOpen) return [];
+    const q = input.slice(1).trim().toLowerCase();
+    const match = (s?: string) => !q || (s || '').toLowerCase().includes(q);
+    const items: SlashItem[] = [];
+    recipes.forEach(r => {
+      if (match(r.recipeName) || match(r.description) || match(r.urlTemplate)) {
+        items.push({ kind: 'recipe', label: r.recipeName, sub: `${(r.method || 'GET').toUpperCase()} ${r.urlTemplate}`, recipe: r });
+      }
+    });
+    let epCount = 0;
+    for (const g of catalog) {
+      for (const p of g.paths) {
+        if (epCount >= 40) break;
+        if (match(p)) { items.push({ kind: 'endpoint', label: p, sub: g.group }); epCount++; }
+      }
+    }
+    return items;
+  }, [slashOpen, input, recipes, catalog]);
+  useEffect(() => { setSlashIdx(0); }, [input]);
+  useEffect(() => {
+    document.getElementById(`cc-slash-${slashIdx}`)?.scrollIntoView({ block: 'nearest' });
+  }, [slashIdx]);
+
+  const pickSlash = (it: SlashItem) => {
+    setInput('');
+    if (it.kind === 'recipe' && it.recipe) pickRecipe(it.recipe);
+    else clickEndpoint(it.label);
   };
 
   const cancel = async () => {
@@ -369,6 +440,17 @@ const ClaudeChat: React.FC = () => {
         .cc-params-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
         .cc-params-name{width:150px;flex-shrink:0;font-family:Consolas,monospace;font-size:12px;color:#8B2F22;text-align:right;
           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .cc-slash{position:absolute;bottom:100%;left:0;right:52px;margin-bottom:6px;background:#fff;border:1px solid #EAD2CC;
+          border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.14);max-height:300px;overflow-y:auto;z-index:20}
+        .cc-slash-head{padding:6px 12px;font-size:10.5px;color:#9a908c;border-bottom:1px solid #F3EFED;position:sticky;top:0;background:#fff}
+        .cc-slash-item{display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:12.5px}
+        .cc-slash-item.on{background:#FBF1EF}
+        .cc-slash-kind{flex-shrink:0;font-size:9.5px;font-weight:700;border-radius:4px;padding:1px 6px;background:#EEF4EC;color:#1D7B4D}
+        .cc-slash-kind.recipe{background:#F1EBF7;color:#5A4482}
+        .cc-slash-label{font-weight:600;color:#3A3632;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .cc-slash-sub{margin-left:auto;font-family:Consolas,monospace;font-size:10.5px;color:#9a908c;white-space:nowrap;
+          overflow:hidden;text-overflow:ellipsis;max-width:45%;flex-shrink:0}
+        .cc-slash-empty{padding:10px 12px;font-size:12px;color:#9a908c}
         .cc-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
         .cc-msgs{flex:1;overflow-y:auto;padding:14px;background:#FAF9F8;border-radius:10px;border:1px solid #EFEAE8}
         .cc-row{display:flex;margin-bottom:12px}
@@ -502,7 +584,8 @@ const ClaudeChat: React.FC = () => {
                   Claude on your subscription — with live ERP data
                 </div>
                 <Text type="secondary" style={{ fontSize: 13 }}>
-                  MCP tools + direct REST on every endpoint the app uses. Click an endpoint on the left to run it.
+                  MCP tools + direct REST on every endpoint the app uses. Click an endpoint on the left,
+                  or type <Text code>/</Text> to pick a training recipe.
                 </Text>
                 <div style={{ marginTop: 18 }}>
                   {suggestions.map(s => (
@@ -537,23 +620,29 @@ const ClaudeChat: React.FC = () => {
             )}
           </div>
 
-          {paramEp && (
+          {paramTarget && (
             <div className="cc-params">
               <div className="cc-params-head">
                 <ApiOutlined style={{ color: '#C74634' }} />
-                <code style={{ fontSize: 12 }}>{paramEp}</code>
+                <code style={{ fontSize: 12 }}>{paramTarget.title}</code>
                 <span style={{ flex: 1 }} />
-                <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setParamEp(null)} />
+                <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setParamTarget(null)} />
               </div>
-              {getEpParams(paramEp).map((name, i) => (
-                <div key={name} className="cc-params-row">
-                  <span className="cc-params-name">{name}</span>
+              {paramTarget.params.map((p, i) => (
+                <div key={p.name} className="cc-params-row">
+                  <span className="cc-params-name">{p.name}{p.required ? ' *' : ''}</span>
                   <Input
                     size="small"
                     autoFocus={i === 0}
-                    placeholder={`Value for {${name}} — leave blank to let Claude find it`}
-                    value={paramVals[name] || ''}
-                    onChange={e => setParamVals(prev => ({ ...prev, [name]: e.target.value }))}
+                    placeholder={
+                      p.label || p.description
+                        ? `${p.label || p.description}${p.example ? ` — e.g. ${p.example}` : ''}`
+                        : p.example
+                          ? `e.g. ${p.example}`
+                          : `Value for {${p.name}} — leave blank to let Claude find it`
+                    }
+                    value={paramVals[p.name] || ''}
+                    onChange={e => setParamVals(prev => ({ ...prev, [p.name]: e.target.value }))}
                     onPressEnter={runParamEp}
                   />
                 </div>
@@ -569,7 +658,7 @@ const ClaudeChat: React.FC = () => {
                 />
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
-                <Button size="small" onClick={() => setParamEp(null)}>Cancel</Button>
+                <Button size="small" onClick={() => setParamTarget(null)}>Cancel</Button>
                 <Button size="small" type="primary" icon={<SendOutlined />} onClick={runParamEp} disabled={busy}
                   style={{ background: '#C74634', borderColor: '#C74634' }}>
                   Run
@@ -578,22 +667,59 @@ const ClaudeChat: React.FC = () => {
             </div>
           )}
 
-          <div className="cc-compose">
-            <textarea
-              rows={1}
-              placeholder="Ask about your ERP data, run an endpoint, or give a longer agent task…"
-              value={input}
-              disabled={busy}
-              onChange={e => {
-                setInput(e.target.value);
-                const ta = e.target; ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 130) + 'px';
-              }}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-              }}
-            />
-            <Button type="primary" shape="circle" icon={<SendOutlined />} onClick={() => send()} loading={busy}
-              style={{ background: '#C74634', borderColor: '#C74634', width: 42, height: 42 }} />
+          <div style={{ position: 'relative' }}>
+            {slashOpen && (
+              <div className="cc-slash">
+                <div className="cc-slash-head">
+                  Training recipes &amp; endpoints — keep typing to filter, ↑↓ to choose, Enter to select, Esc to close
+                </div>
+                {slashItems.map((it, i) => (
+                  <div
+                    key={`${it.kind}:${it.label}`}
+                    id={`cc-slash-${i}`}
+                    className={`cc-slash-item${i === slashIdx ? ' on' : ''}`}
+                    onMouseDown={e => { e.preventDefault(); pickSlash(it); }}
+                    onMouseEnter={() => setSlashIdx(i)}
+                  >
+                    <span className={`cc-slash-kind ${it.kind}`}>{it.kind === 'recipe' ? 'RECIPE' : 'API'}</span>
+                    <span className="cc-slash-label">{it.label}</span>
+                    {it.sub && <span className="cc-slash-sub">{it.sub}</span>}
+                  </div>
+                ))}
+                {!slashItems.length && (
+                  <div className="cc-slash-empty">
+                    {recipes.length || catalog.length ? 'No matching recipes or endpoints' : 'No training recipes loaded yet'}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="cc-compose">
+              <textarea
+                rows={1}
+                placeholder="Ask about your ERP data, or type / for trained actions and endpoints…"
+                value={input}
+                disabled={busy}
+                onChange={e => {
+                  setInput(e.target.value);
+                  const ta = e.target; ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 130) + 'px';
+                }}
+                onKeyDown={e => {
+                  if (slashOpen) {
+                    if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIdx(i => Math.min(i + 1, slashItems.length - 1)); return; }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx(i => Math.max(i - 1, 0)); return; }
+                    if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+                      e.preventDefault();
+                      if (slashItems[slashIdx]) pickSlash(slashItems[slashIdx]);
+                      return;
+                    }
+                    if (e.key === 'Escape') { e.preventDefault(); setInput(''); return; }
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+                }}
+              />
+              <Button type="primary" shape="circle" icon={<SendOutlined />} onClick={() => send()} loading={busy}
+                style={{ background: '#C74634', borderColor: '#C74634', width: 42, height: 42 }} />
+            </div>
           </div>
         </div>
 
