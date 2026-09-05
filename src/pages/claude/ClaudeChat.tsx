@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Card, Input, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
 import {
-  ApiOutlined, CodeOutlined, DeleteOutlined, ExportOutlined, EyeOutlined, FileExcelOutlined,
+  ApiOutlined, CloseOutlined, CodeOutlined, DeleteOutlined, ExportOutlined, EyeOutlined, FileExcelOutlined,
   FileTextOutlined, FolderOpenOutlined, PlusOutlined, ReloadOutlined, SearchOutlined,
   SendOutlined, StopOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
@@ -109,6 +109,18 @@ function parseCatalog(md: string): EndpointGroup[] {
   return groups.filter(g => g.paths.length);
 }
 
+// Parameters inside a catalog path: {id}, {supplierNumber}, :invoice_id …
+function getEpParams(p: string): string[] {
+  const out: string[] = [];
+  const re = /\{([A-Za-z0-9_]+)\}|:([A-Za-z_][A-Za-z0-9_]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(p)) !== null) {
+    const name = m[1] || m[2];
+    if (!out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
 // ── xlsx preview data ───────────────────────────────────────────────────────
 interface SheetPreview { name: string; rows: (string | number)[][] }
 
@@ -124,6 +136,9 @@ const ClaudeChat: React.FC = () => {
   const [lastError, setLastError] = useState('');
   const [catalog, setCatalog] = useState<EndpointGroup[]>([]);
   const [epSearch, setEpSearch] = useState('');
+  const [paramEp, setParamEp] = useState<string | null>(null); // endpoint awaiting parameter values
+  const [paramVals, setParamVals] = useState<Record<string, string>>({});
+  const [paramQuery, setParamQuery] = useState('');
   const [files, setFiles] = useState<WsFile[]>([]);
   const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
   const [previewSheets, setPreviewSheets] = useState<SheetPreview[] | null>(null);
@@ -225,7 +240,41 @@ const ClaudeChat: React.FC = () => {
     }
   }, [input, busy, api, convs, mutateConv]);
 
-  const newChat = () => { setCurId(''); setLastError(''); };
+  const newChat = () => { setCurId(''); setLastError(''); setParamEp(null); };
+
+  // endpoint click: parameterized paths open the fill-in form, plain ones go straight to the input
+  const clickEndpoint = (p: string) => {
+    if (getEpParams(p).length) {
+      setParamEp(p);
+      setParamVals({});
+      setParamQuery('');
+    } else {
+      setParamEp(null);
+      setInput(`Run GET ${p}`);
+    }
+  };
+
+  const runParamEp = () => {
+    if (!paramEp || busy) return;
+    let path = paramEp;
+    const missing: string[] = [];
+    for (const name of getEpParams(paramEp)) {
+      const v = (paramVals[name] || '').trim();
+      if (v) {
+        path = path.replace(new RegExp(`\\{${name}\\}|:${name}(?![A-Za-z0-9_])`, 'g'), encodeURIComponent(v));
+      } else {
+        missing.push(name);
+      }
+    }
+    const q = paramQuery.trim().replace(/^[?&]/, '');
+    if (q) path += (path.includes('?') ? '&' : '?') + q;
+    let text = `Run GET ${path}`;
+    if (missing.length) {
+      text += ` — I left ${missing.map(n => `{${n}}`).join(', ')} blank; look up a sensible value first or ask me.`;
+    }
+    setParamEp(null);
+    send(text);
+  };
 
   const cancel = async () => {
     await api?.claudeChatCancel();
@@ -313,6 +362,13 @@ const ClaudeChat: React.FC = () => {
         .cc-ep{display:block;width:100%;text-align:left;border:none;background:none;font-family:Consolas,monospace;font-size:11px;
           color:#5b4a45;padding:3px 8px;border-radius:6px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .cc-ep:hover{background:#F6EEEC;color:#C74634}
+        .cc-ep-param{color:#8a5a2b}
+        .cc-ep-badge{display:inline-block;margin-left:5px;color:#C79A34;font-weight:700}
+        .cc-params{background:#fff;border:1px solid #EAD2CC;border-radius:10px;padding:10px 12px;box-shadow:0 -2px 10px rgba(199,70,52,.06)}
+        .cc-params-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:600;color:#3A3632}
+        .cc-params-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+        .cc-params-name{width:150px;flex-shrink:0;font-family:Consolas,monospace;font-size:12px;color:#8B2F22;text-align:right;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .cc-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
         .cc-msgs{flex:1;overflow-y:auto;padding:14px;background:#FAF9F8;border-radius:10px;border:1px solid #EFEAE8}
         .cc-row{display:flex;margin-bottom:12px}
@@ -416,11 +472,17 @@ const ClaudeChat: React.FC = () => {
               {filteredCatalog.map(g => (
                 <div key={g.group}>
                   <div className="cc-epgroup">{g.group}</div>
-                  {g.paths.map(p => (
-                    <Tooltip key={p} title={`Click to ask Claude to run GET ${p}`} placement="right" mouseEnterDelay={0.6}>
-                      <button className="cc-ep" onClick={() => setInput(`Run GET ${p}`)}>{p}</button>
-                    </Tooltip>
-                  ))}
+                  {g.paths.map(p => {
+                    const hasParams = getEpParams(p).length > 0;
+                    return (
+                      <Tooltip key={p} placement="right" mouseEnterDelay={0.6}
+                        title={hasParams ? `Has parameters — click to fill them in and run GET ${p}` : `Click to ask Claude to run GET ${p}`}>
+                        <button className={`cc-ep${hasParams ? ' cc-ep-param' : ''}`} onClick={() => clickEndpoint(p)}>
+                          {p}{hasParams && <span className="cc-ep-badge">⋯</span>}
+                        </button>
+                      </Tooltip>
+                    );
+                  })}
                 </div>
               ))}
               {!filteredCatalog.length && <Text type="secondary" style={{ fontSize: 12, padding: 8, display: 'block' }}>
@@ -474,6 +536,47 @@ const ClaudeChat: React.FC = () => {
               </div>
             )}
           </div>
+
+          {paramEp && (
+            <div className="cc-params">
+              <div className="cc-params-head">
+                <ApiOutlined style={{ color: '#C74634' }} />
+                <code style={{ fontSize: 12 }}>{paramEp}</code>
+                <span style={{ flex: 1 }} />
+                <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setParamEp(null)} />
+              </div>
+              {getEpParams(paramEp).map((name, i) => (
+                <div key={name} className="cc-params-row">
+                  <span className="cc-params-name">{name}</span>
+                  <Input
+                    size="small"
+                    autoFocus={i === 0}
+                    placeholder={`Value for {${name}} — leave blank to let Claude find it`}
+                    value={paramVals[name] || ''}
+                    onChange={e => setParamVals(prev => ({ ...prev, [name]: e.target.value }))}
+                    onPressEnter={runParamEp}
+                  />
+                </div>
+              ))}
+              <div className="cc-params-row">
+                <span className="cc-params-name">query</span>
+                <Input
+                  size="small"
+                  placeholder="Optional query string, e.g. period=Jun-26&limit=50"
+                  value={paramQuery}
+                  onChange={e => setParamQuery(e.target.value)}
+                  onPressEnter={runParamEp}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+                <Button size="small" onClick={() => setParamEp(null)}>Cancel</Button>
+                <Button size="small" type="primary" icon={<SendOutlined />} onClick={runParamEp} disabled={busy}
+                  style={{ background: '#C74634', borderColor: '#C74634' }}>
+                  Run
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="cc-compose">
             <textarea
