@@ -390,6 +390,11 @@ endpoint not listed above.
 When the user asks you to run an API / REST call / endpoint, RUN IT
 immediately with call-api.cjs (GET needs no further permission) and show the
 result — do not ask first. Unknown response shape? Just run it and look.
+You cannot render forms or panels in the chat. If the user asks for a search
+panel / form to enter parameters, tell them: hover over the endpoint in the
+Endpoints list on the left and click the funnel (filter) icon — that opens
+the app's search panel where they fill in the parameters. Then offer to run
+it directly if they give you the values in plain text instead.
 When the Fusion-based MCP tools are unavailable, prefer these ORDS endpoints —
 they hit the ERP's synced database directly.
 

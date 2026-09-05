@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Input, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
 import {
   ApiOutlined, CloseOutlined, CodeOutlined, DeleteOutlined, ExportOutlined, EyeOutlined, FileExcelOutlined,
-  FileTextOutlined, FolderOpenOutlined, PlusOutlined, ReloadOutlined, SearchOutlined,
-  SendOutlined, StopOutlined, ThunderboltOutlined,
+  FileTextOutlined, FilterOutlined, FolderOpenOutlined, MinusCircleOutlined, PlusOutlined, ReloadOutlined,
+  SearchOutlined, SendOutlined, StopOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
@@ -148,6 +148,7 @@ const ClaudeChat: React.FC = () => {
   const [paramTarget, setParamTarget] = useState<ParamTarget | null>(null); // endpoint/recipe awaiting parameter values
   const [paramVals, setParamVals] = useState<Record<string, string>>({});
   const [paramQuery, setParamQuery] = useState('');
+  const [extraRows, setExtraRows] = useState<{ k: string; v: string }[]>([]); // user-added query/body parameters
   const [recipes, setRecipes] = useState<TrainingRecipe[]>([]);
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
@@ -254,13 +255,19 @@ const ClaudeChat: React.FC = () => {
 
   const newChat = () => { setCurId(''); setLastError(''); setParamTarget(null); };
 
+  // the search panel: works for ANY endpoint — placeholders (if any) plus
+  // user-added query parameters
+  const openEndpointForm = (p: string) => {
+    setParamTarget({ title: `GET ${p}`, method: 'GET', path: p, params: getEpParams(p).map(n => ({ name: n })) });
+    setParamVals({});
+    setParamQuery('');
+    setExtraRows([]);
+  };
+
   // endpoint click: parameterized paths open the fill-in form, plain ones go straight to the input
   const clickEndpoint = (p: string) => {
-    const names = getEpParams(p);
-    if (names.length) {
-      setParamTarget({ title: `GET ${p}`, method: 'GET', path: p, params: names.map(n => ({ name: n })) });
-      setParamVals({});
-      setParamQuery('');
+    if (getEpParams(p).length) {
+      openEndpointForm(p);
     } else {
       setParamTarget(null);
       setInput(`Run GET ${p}`);
@@ -276,6 +283,7 @@ const ClaudeChat: React.FC = () => {
       setParamTarget({ title: `${r.recipeName} — ${method} ${r.urlTemplate}`, method, path: r.urlTemplate, params });
       setParamVals({});
       setParamQuery('');
+      setExtraRows([]);
     } else {
       setParamTarget(null);
       send(`Run ${method} ${r.urlTemplate} — training recipe "${r.recipeName}"${method === 'GET' ? '' : '. Show me the full request and wait for my confirmation before executing.'}`);
@@ -298,6 +306,9 @@ const ClaudeChat: React.FC = () => {
         missing.push(p.name);
       }
     }
+    extraRows.forEach(({ k, v }) => {
+      if (k.trim() && v.trim()) extraPairs.push([k.trim(), v.trim()]);
+    });
     let qParts = [paramQuery.trim().replace(/^[?&]/, '')].filter(Boolean);
     if (paramTarget.method === 'GET') {
       qParts = qParts.concat(extraPairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`));
@@ -433,6 +444,11 @@ const ClaudeChat: React.FC = () => {
         .cc-ep{display:block;width:100%;text-align:left;border:none;background:none;font-family:Consolas,monospace;font-size:11px;
           color:#5b4a45;padding:3px 8px;border-radius:6px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .cc-ep:hover{background:#F6EEEC;color:#C74634}
+        .cc-ep-row{display:flex;align-items:center}
+        .cc-ep-row .cc-ep{flex:1;min-width:0}
+        .cc-ep-gear{display:none;border:none;background:none;color:#b9aca7;cursor:pointer;padding:2px 6px;border-radius:6px;flex-shrink:0}
+        .cc-ep-row:hover .cc-ep-gear{display:inline-flex}
+        .cc-ep-gear:hover{color:#C74634;background:#F6EEEC}
         .cc-ep-param{color:#8a5a2b}
         .cc-ep-badge{display:inline-block;margin-left:5px;color:#C79A34;font-weight:700}
         .cc-params{background:#fff;border:1px solid #EAD2CC;border-radius:10px;padding:10px 12px;box-shadow:0 -2px 10px rgba(199,70,52,.06)}
@@ -557,12 +573,17 @@ const ClaudeChat: React.FC = () => {
                   {g.paths.map(p => {
                     const hasParams = getEpParams(p).length > 0;
                     return (
-                      <Tooltip key={p} placement="right" mouseEnterDelay={0.6}
-                        title={hasParams ? `Has parameters — click to fill them in and run GET ${p}` : `Click to ask Claude to run GET ${p}`}>
-                        <button className={`cc-ep${hasParams ? ' cc-ep-param' : ''}`} onClick={() => clickEndpoint(p)}>
-                          {p}{hasParams && <span className="cc-ep-badge">⋯</span>}
-                        </button>
-                      </Tooltip>
+                      <div key={p} className="cc-ep-row">
+                        <Tooltip placement="right" mouseEnterDelay={0.6}
+                          title={hasParams ? `Has parameters — click to fill them in and run GET ${p}` : `Click to ask Claude to run GET ${p}`}>
+                          <button className={`cc-ep${hasParams ? ' cc-ep-param' : ''}`} onClick={() => clickEndpoint(p)}>
+                            {p}{hasParams && <span className="cc-ep-badge">⋯</span>}
+                          </button>
+                        </Tooltip>
+                        <Tooltip title="Open the search panel to enter parameters" placement="right">
+                          <button className="cc-ep-gear" onClick={() => openEndpointForm(p)}><FilterOutlined /></button>
+                        </Tooltip>
+                      </div>
                     );
                   })}
                 </div>
@@ -647,6 +668,31 @@ const ClaudeChat: React.FC = () => {
                   />
                 </div>
               ))}
+              {!paramTarget.params.length && (
+                <Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginBottom: 6 }}>
+                  This endpoint has no path parameters — add search filters below (e.g. date_from, date_to, status, row_limit).
+                </Text>
+              )}
+              {extraRows.map((row, i) => (
+                <div key={i} className="cc-params-row">
+                  <Input
+                    size="small"
+                    style={{ width: 150, flexShrink: 0, fontFamily: 'Consolas, monospace' }}
+                    placeholder="name, e.g. date_from"
+                    value={row.k}
+                    onChange={e => setExtraRows(prev => prev.map((r, j) => (j === i ? { ...r, k: e.target.value } : r)))}
+                  />
+                  <Input
+                    size="small"
+                    placeholder="value, e.g. 2026-06-01"
+                    value={row.v}
+                    onChange={e => setExtraRows(prev => prev.map((r, j) => (j === i ? { ...r, v: e.target.value } : r)))}
+                    onPressEnter={runParamEp}
+                  />
+                  <Button size="small" type="text" icon={<MinusCircleOutlined />}
+                    onClick={() => setExtraRows(prev => prev.filter((_, j) => j !== i))} />
+                </div>
+              ))}
               <div className="cc-params-row">
                 <span className="cc-params-name">query</span>
                 <Input
@@ -657,7 +703,12 @@ const ClaudeChat: React.FC = () => {
                   onPressEnter={runParamEp}
                 />
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 6 }}>
+                <Button size="small" type="dashed" icon={<PlusOutlined />}
+                  onClick={() => setExtraRows(prev => [...prev, { k: '', v: '' }])}>
+                  Add parameter
+                </Button>
+                <span style={{ flex: 1 }} />
                 <Button size="small" onClick={() => setParamTarget(null)}>Cancel</Button>
                 <Button size="small" type="primary" icon={<SendOutlined />} onClick={runParamEp} disabled={busy}
                   style={{ background: '#C74634', borderColor: '#C74634' }}>
