@@ -354,6 +354,7 @@ const ClaudeChat: React.FC = () => {
   const [sqlLoadMode, setSqlLoadMode] = useState<'replace' | 'append'>('replace');
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
+  const [filesOpen, setFilesOpen] = useState(false); // workspace files list, hidden by default
   const listRef = useRef<HTMLDivElement>(null);
   const curIdRef = useRef(curId);
   useEffect(() => { curIdRef.current = curId; }, [curId]);
@@ -1403,6 +1404,10 @@ const ClaudeChat: React.FC = () => {
             <div className="cc-panel-head">
               <EyeOutlined /> Preview
               <span style={{ flex: 1 }} />
+              <Tooltip title={filesOpen ? 'Hide generated files' : `Show generated files (${files.length})`}>
+                <Button size="small" type={filesOpen ? 'primary' : 'text'} icon={<FolderOpenOutlined />}
+                  onClick={() => setFilesOpen(o => !o)} />
+              </Tooltip>
               <Tooltip title="Browse the local SQL database (erp-data.db)">
                 <Button size="small" type={dbOpen ? 'primary' : 'text'} icon={<DatabaseOutlined />}
                   style={dbOpen ? { background: '#1D7B4D', borderColor: '#1D7B4D' } : undefined}
@@ -1472,7 +1477,7 @@ const ClaudeChat: React.FC = () => {
                 />
               </div>
             )}
-            <div hidden={!!directResult} style={{ maxHeight: 130, overflowY: 'auto', padding: 6, borderBottom: '1px solid #F3EFED' }}>
+            <div hidden={!filesOpen} style={{ maxHeight: 130, overflowY: 'auto', padding: 6, borderBottom: '1px solid #F3EFED' }}>
               {!files.length && <Text type="secondary" style={{ fontSize: 12, padding: 6, display: 'block' }}>Generated files appear here</Text>}
               {files.map(f => (
                 <div key={f.relPath} className={`cc-file${previewFile?.relPath === f.relPath ? ' on' : ''}`} onClick={() => openPreview(f)}>
@@ -1528,7 +1533,10 @@ const ClaudeChat: React.FC = () => {
               {!previewFile && !directResult && (
                 <div style={{ textAlign: 'center', paddingTop: 60, color: '#8B8580' }}>
                   <FileExcelOutlined style={{ fontSize: 38, color: '#D9CDC9' }} />
-                  <div style={{ fontSize: 13, marginTop: 8 }}>Click a generated file to preview it here.</div>
+                  <div style={{ fontSize: 13, marginTop: 8 }}>
+                    Results appear here — run a search or ask Claude.
+                    <br />The folder icon above shows generated files (Excel, exports).
+                  </div>
                 </div>
               )}
               {previewSheets && (
