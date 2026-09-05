@@ -128,7 +128,7 @@ function getEpParams(p: string): string[] {
 interface ParamTarget { title: string; method: string; path: string; params: RecipeParam[]; trained?: boolean }
 
 // One row of the "/" popup — a training recipe or a catalog endpoint
-interface SlashItem { kind: 'recipe' | 'endpoint'; label: string; sub?: string; recipe?: TrainingRecipe; trained?: boolean }
+interface SlashItem { kind: 'recipe' | 'endpoint'; label: string; sub?: string; params?: string; recipe?: TrainingRecipe; trained?: boolean }
 
 // Normalize a path/template for comparison: strip origin, query, trailing "/"
 function normPath(t: string): string {
@@ -393,19 +393,38 @@ const ClaudeChat: React.FC = () => {
   const slashOpen = !busy && input.startsWith('/');
   const slashItems = useMemo<SlashItem[]>(() => {
     if (!slashOpen) return [];
-    const q = input.slice(1).trim().toLowerCase();
+    // "/r <q>" = recipes only, "/e <q>" = endpoints only, "/<q>" = both
+    const raw = input.slice(1);
+    let mode: 'all' | 'recipe' | 'endpoint' = 'all';
+    let q = raw.trim().toLowerCase();
+    const m = raw.match(/^([re])(?:\s+(.*))?$/i);
+    if (m) {
+      mode = m[1].toLowerCase() === 'r' ? 'recipe' : 'endpoint';
+      q = (m[2] || '').trim().toLowerCase();
+    }
     const match = (s?: string) => !q || (s || '').toLowerCase().includes(q);
     const items: SlashItem[] = [];
-    recipes.forEach(r => {
-      if (match(r.recipeName) || match(r.description) || match(r.urlTemplate)) {
-        items.push({ kind: 'recipe', label: r.recipeName, sub: `${(r.method || 'GET').toUpperCase()} ${r.urlTemplate}`, recipe: r });
-      }
-    });
-    let epCount = 0;
-    for (const g of catalog) {
-      for (const p of g.paths) {
-        if (epCount >= 40) break;
-        if (match(p)) { items.push({ kind: 'endpoint', label: p, sub: g.group, trained: trainedSet.has(p) }); epCount++; }
+    if (mode !== 'endpoint') {
+      recipes.forEach(r => {
+        if (match(r.recipeName) || match(r.description) || match(r.urlTemplate)) {
+          items.push({
+            kind: 'recipe',
+            label: r.recipeName,
+            sub: `${(r.method || 'GET').toUpperCase()} ${r.urlTemplate}`,
+            params: (r.params || []).map(p => p.name + (p.required ? '*' : '')).join(', '),
+            recipe: r,
+          });
+        }
+      });
+    }
+    if (mode !== 'recipe') {
+      let epCount = 0;
+      const cap = mode === 'endpoint' ? 100 : 40;
+      for (const g of catalog) {
+        for (const p of g.paths) {
+          if (epCount >= cap) break;
+          if (match(p)) { items.push({ kind: 'endpoint', label: p, sub: g.group, trained: trainedSet.has(p) }); epCount++; }
+        }
       }
     }
     return items;
@@ -529,7 +548,9 @@ const ClaudeChat: React.FC = () => {
         .cc-slash-item.on{background:#FBF1EF}
         .cc-slash-kind{flex-shrink:0;font-size:9.5px;font-weight:700;border-radius:4px;padding:1px 6px;background:#EEF4EC;color:#1D7B4D}
         .cc-slash-kind.recipe{background:#F1EBF7;color:#5A4482}
-        .cc-slash-label{font-weight:600;color:#3A3632;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .cc-slash-label{display:block;font-weight:600;color:#3A3632;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .cc-slash-params{display:block;font-family:Consolas,monospace;font-size:10px;color:#9a908c;white-space:nowrap;
+          overflow:hidden;text-overflow:ellipsis}
         .cc-slash-sub{margin-left:auto;font-family:Consolas,monospace;font-size:10.5px;color:#9a908c;white-space:nowrap;
           overflow:hidden;text-overflow:ellipsis;max-width:45%;flex-shrink:0}
         .cc-slash-empty{padding:10px 12px;font-size:12px;color:#9a908c}
@@ -814,7 +835,7 @@ const ClaudeChat: React.FC = () => {
             {slashOpen && (
               <div className="cc-slash">
                 <div className="cc-slash-head">
-                  Training recipes &amp; endpoints — keep typing to filter, ↑↓ to choose, Enter to select, Esc to close
+                  <b>/r</b> recipes only · <b>/e</b> endpoints only · keep typing to filter · ↑↓ choose · Enter select · Esc close
                 </div>
                 {slashItems.map((it, i) => (
                   <div
@@ -825,7 +846,10 @@ const ClaudeChat: React.FC = () => {
                     onMouseEnter={() => setSlashIdx(i)}
                   >
                     <span className={`cc-slash-kind ${it.kind}`}>{it.kind === 'recipe' ? 'RECIPE' : 'API'}</span>
-                    <span className="cc-slash-label">{it.label}{it.trained && <span className="cc-ep-tick">✓</span>}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span className="cc-slash-label">{it.label}{it.trained && <span className="cc-ep-tick">✓</span>}</span>
+                      {it.params && <span className="cc-slash-params">{it.params}</span>}
+                    </span>
                     {it.sub && <span className="cc-slash-sub">{it.sub}</span>}
                   </div>
                 ))}
