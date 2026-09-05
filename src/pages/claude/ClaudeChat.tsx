@@ -65,7 +65,7 @@ function mdToHtml(src: string): string {
   const codeBlocks: string[] = [];
   let t = src.replace(/```[a-z]*\n?([\s\S]*?)```/g, (_m, c) => {
     codeBlocks.push(`<pre class="cc-pre">${esc(c.replace(/\n$/, ''))}</pre>`);
-    return ` ${codeBlocks.length - 1} `;
+    return `\u0000CB${codeBlocks.length - 1}\u0000`;
   });
   t = esc(t);
   t = t.replace(/((?:^\|.*\|\s*$\n?)+)/gm, block => {
@@ -88,7 +88,7 @@ function mdToHtml(src: string): string {
   t = t.replace(/^\s*(\d+)\.\s+(.*)$/gm, '<div class="cc-li">$1. $2</div>');
   t = t.replace(/\n{2,}/g, '<br/><br/>').replace(/\n/g, '<br/>');
   t = t.replace(/(<\/(?:table|div|pre)>)<br\/>/g, '$1');
-  return t.replace(/ (\d+) /g, (_m, i) => codeBlocks[Number(i)]);
+  return t.replace(/\u0000CB(\d+)\u0000/g, (_m, i) => codeBlocks[Number(i)] ?? '');
 }
 
 const loadState = (): { convs: Conv[]; curId: string } => {
