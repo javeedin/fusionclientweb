@@ -8,7 +8,7 @@
 // /login flow and colors all work; the renderer renders it with xterm.js.
 
 const { app, safeStorage } = require('electron');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -144,7 +144,7 @@ function start(sender, { cols = 120, rows = 30 } = {}) {
   if (!loadPty()) {
     return {
       success: false,
-      error: `Terminal module not available (${ptyError}). Run "npm install" in the project folder, then restart the app.`,
+      error: 'Embedded terminal module is not available on this machine — use "Open in system terminal" instead (same ERP MCP setup).',
     };
   }
   if (proc) return { success: true, alreadyRunning: true };
@@ -202,6 +202,31 @@ function stop() {
   return { success: true };
 }
 
+// Fallback with no native code: open the OS terminal in the provisioned
+// workspace and run claude there — same .mcp.json / CLAUDE.md, so the ERP
+// tools work identically. Used when node-pty is unavailable, or on demand.
+function openExternal() {
+  try {
+    const ws = provisionWorkspace();
+    if (process.platform === 'win32') {
+      const launcher = path.join(ws, 'launch-claude.cmd');
+      fs.writeFileSync(launcher, '@echo off\r\ncd /d "%~dp0"\r\nclaude\r\n', 'utf8');
+      spawn('cmd.exe', ['/c', 'start', 'Claude Code - Re-ERP', 'cmd', '/k', launcher],
+        { detached: true, stdio: 'ignore' }).unref();
+    } else if (process.platform === 'darwin') {
+      const launcher = path.join(ws, 'launch-claude.command');
+      fs.writeFileSync(launcher, `#!/bin/bash\ncd "$(dirname "$0")"\nclaude\n`, { mode: 0o755 });
+      spawn('open', [launcher], { detached: true, stdio: 'ignore' }).unref();
+    } else {
+      spawn('x-terminal-emulator', ['-e', `bash -lc 'cd "${ws}" && claude'`],
+        { detached: true, stdio: 'ignore' }).unref();
+    }
+    return { success: true, workspace: ws };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
 app.on('will-quit', () => { try { if (proc) proc.kill(); } catch { /* ignore */ } });
 
-module.exports = { getStatus, start, input, resize, stop };
+module.exports = { getStatus, start, input, resize, stop, openExternal };

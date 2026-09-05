@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeCliStatus: ()            => ipcRenderer.invoke('claude-cli:status'),
   claudeCliStart:  (opts)        => ipcRenderer.invoke('claude-cli:start', opts),
   claudeCliStop:   ()            => ipcRenderer.invoke('claude-cli:stop'),
+  claudeCliOpenExternal: ()      => ipcRenderer.invoke('claude-cli:open-external'),
   claudeCliInput:  (data)        => ipcRenderer.send('claude-cli:input', data),
   claudeCliResize: (cols, rows)  => ipcRenderer.send('claude-cli:resize', { cols, rows }),
   onClaudeCliData: (cb)          => ipcRenderer.on('claude-cli:data', cb),

@@ -18,6 +18,7 @@ interface ClaudeCliApi {
   claudeCliStatus: () => Promise<CliStatus & { success: boolean; error?: string }>;
   claudeCliStart: (opts: { cols: number; rows: number }) => Promise<{ success: boolean; error?: string; alreadyRunning?: boolean }>;
   claudeCliStop: () => Promise<{ success: boolean }>;
+  claudeCliOpenExternal?: () => Promise<{ success: boolean; error?: string; workspace?: string }>;
   claudeCliInput: (data: string) => void;
   claudeCliResize: (cols: number, rows: number) => void;
   onClaudeCliData: (cb: (e: unknown, data: string) => void) => void;
@@ -122,6 +123,12 @@ const ClaudeCliTerminal: React.FC = () => {
     refreshStatus();
   };
 
+  const openExternal = async () => {
+    const r = await api?.claudeCliOpenExternal?.();
+    if (r?.success) message.success('Claude opened in a system terminal window (same ERP MCP setup)');
+    else message.error(r?.error || 'Could not open the system terminal');
+  };
+
   if (!api) {
     return (
       <div style={{ padding: 24 }}>
@@ -147,25 +154,32 @@ const ClaudeCliTerminal: React.FC = () => {
           <div style={{ flex: 1 }} />
           {!running ? (
             <Button type="primary" icon={<CaretRightOutlined />} loading={starting}
-              disabled={status !== null && !status.installed} onClick={start}>
+              disabled={status !== null && (!status.installed || status.ptyReady === false)} onClick={start}>
               Start
             </Button>
           ) : (
             <Button danger icon={<PoweroffOutlined />} onClick={stop}>Stop</Button>
           )}
+          <Tooltip title="Launch claude in a separate OS terminal window — same ERP MCP setup">
+            <Button icon={<CodeOutlined />} disabled={status !== null && !status.installed} onClick={openExternal}>
+              Open in system terminal
+            </Button>
+          </Tooltip>
           <Tooltip title="Refresh status"><Button icon={<ReloadOutlined />} onClick={refreshStatus} /></Tooltip>
         </div>
       </Card>
 
       {status !== null && status.ptyReady === false && (
         <Alert
-          type="error"
+          type="info"
           showIcon
-          message="Terminal module not installed"
+          message="Embedded terminal is not available on this machine — use the system terminal instead"
           description={
             <span>
-              Run <Text code>npm install</Text> in the project folder and restart the app
-              (this installs the embedded-terminal native module). Error: {status.ptyError}
+              The optional embedded-terminal module could not be installed here. Press{' '}
+              <Text strong>Open in system terminal</Text> — it launches <Text code>claude</Text> in a normal
+              terminal window with the exact same ERP MCP setup (.mcp.json + CLAUDE.md), so nothing is lost
+              except the in-app embedding.
             </span>
           }
         />
