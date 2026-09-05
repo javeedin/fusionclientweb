@@ -96,6 +96,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeChatCatalog: ()          => ipcRenderer.invoke('claude-chat:catalog'),
   claudeChatRecipes: (opts)      => ipcRenderer.invoke('claude-chat:recipes', opts),
   claudeChatLov: (opts)          => ipcRenderer.invoke('claude-chat:lov', opts),
+  claudeChatApiGet: (opts)       => ipcRenderer.invoke('claude-chat:apiget', opts),
   claudeChatListFiles: ()        => ipcRenderer.invoke('claude-chat:list-files'),
   claudeChatReadFile: (relPath)  => ipcRenderer.invoke('claude-chat:read-file', { relPath }),
   claudeChatOpenFile: (relPath)  => ipcRenderer.invoke('claude-chat:open-file', { relPath }),

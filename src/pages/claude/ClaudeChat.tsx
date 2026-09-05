@@ -46,6 +46,7 @@ interface ChatApi {
   claudeChatCatalog?: () => Promise<{ success: boolean; markdown: string }>;
   claudeChatRecipes?: (opts: { apexBaseUrl: string }) => Promise<{ success: boolean; items?: Record<string, unknown>[]; error?: string; url?: string }>;
   claudeChatLov?: (opts: { apexBaseUrl: string; path: string }) => Promise<{ success: boolean; items?: Record<string, unknown>[]; error?: string }>;
+  claudeChatApiGet?: (opts: { apexBaseUrl: string; path: string }) => Promise<{ success: boolean; status?: number; text?: string; error?: string; url?: string }>;
   claudeChatListFiles?: () => Promise<{ success: boolean; files: WsFile[] }>;
   claudeChatReadFile?: (relPath: string) => Promise<{ success: boolean; base64?: string; name?: string; error?: string }>;
   claudeChatOpenFile?: (relPath: string) => Promise<{ success: boolean }>;
@@ -209,6 +210,8 @@ const ClaudeChat: React.FC = () => {
   const [luBU, setLuBU] = useState<string[]>([]); // list-of-values for the search panel
   const [luLedger, setLuLedger] = useState<string[]>([]);
   const [luCompany, setLuCompany] = useState<string[]>([]);
+  const [directResult, setDirectResult] = useState<{ title: string; rows: Record<string, unknown>[]; raw: string | null } | null>(null);
+  const [directLoading, setDirectLoading] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
   const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
@@ -436,15 +439,17 @@ const ClaudeChat: React.FC = () => {
     setExtraRows([]);
   };
 
-  const runParamEp = () => {
-    if (!paramTarget || busy) return;
-    // BU / ledger / company are hard-required whenever the recipe has them
+  // Build the final request from the panel's values. Shared by "Ask Claude"
+  // and the direct (no-AI) runner. Returns null after warning when a
+  // hard-required field (BU / ledger / company) is empty.
+  const composeRequest = () => {
+    if (!paramTarget) return null;
     const forcedMissing = paramTarget.params.filter(
       p => isForcedRequired(p.name) && !(paramVals[p.name] || '').trim(),
     );
     if (forcedMissing.length) {
       antMessage.warning(`Please select: ${forcedMissing.map(p => p.label || p.name).join(', ')}`);
-      return;
+      return null;
     }
     let path = paramTarget.path;
     const missing: string[] = [];
@@ -475,16 +480,53 @@ const ClaudeChat: React.FC = () => {
       qParts = qParts.concat(extraPairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`));
     }
     if (qParts.length) path += (path.includes('?') ? '&' : '?') + qParts.join('&');
-    let text = `Run ${paramTarget.method} ${path}`;
-    if (paramTarget.method !== 'GET') {
-      if (extraPairs.length) text += ` with ${extraPairs.map(([k, v]) => `${k}=${v}`).join(', ')}`;
+    return { path, missing, extraPairs, method: paramTarget.method };
+  };
+
+  const runParamEp = () => {
+    if (busy) return;
+    const req = composeRequest();
+    if (!req) return;
+    let text = `Run ${req.method} ${req.path}`;
+    if (req.method !== 'GET') {
+      if (req.extraPairs.length) text += ` with ${req.extraPairs.map(([k, v]) => `${k}=${v}`).join(', ')}`;
       text += ' — show me the full request and wait for my confirmation before executing';
     }
-    if (missing.length) {
-      text += ` — I left ${missing.map(n => `{${n}}`).join(', ')} blank; look up a sensible value first or ask me.`;
+    if (req.missing.length) {
+      text += ` — I left ${req.missing.map(n => `{${n}}`).join(', ')} blank; look up a sensible value first or ask me.`;
     }
     setParamTarget(null);
     send(text);
+  };
+
+  // Direct query — no AI in the loop: the composed GET runs through the main
+  // process and the rows render in the Preview pane within a second or two.
+  const runDirect = async () => {
+    const req = composeRequest();
+    if (!req) return;
+    if (req.method !== 'GET') { runParamEp(); return; } // writes always go through Claude + confirmation
+    setDirectLoading(true);
+    try {
+      const r = await api?.claudeChatApiGet?.({ apexBaseUrl: buildCompanyCtx().apexBaseUrl, path: req.path });
+      if (!r?.success || !r.text) {
+        antMessage.error(r?.error || 'Request failed');
+        return;
+      }
+      let rows: Record<string, unknown>[] = [];
+      let raw: string | null = null;
+      try {
+        const j = JSON.parse(r.text);
+        if (Array.isArray(j.items)) rows = j.items;
+        else if (Array.isArray(j)) rows = j;
+        else raw = JSON.stringify(j, null, 2);
+      } catch { raw = r.text; }
+      setPreviewFile(null);
+      setPreviewSheets(null);
+      setPreviewText(null);
+      setDirectResult({ title: req.path, rows, raw });
+    } finally {
+      setDirectLoading(false);
+    }
   };
 
   // ── "/" popup: training recipes + endpoints, like the CLI's slash menu ────
@@ -552,6 +594,7 @@ const ClaudeChat: React.FC = () => {
     setPreviewFile(f);
     setPreviewSheets(null);
     setPreviewText(null);
+    setDirectResult(null);
     const r = await api.claudeChatReadFile(f.relPath);
     if (!r?.success || !r.base64) { setPreviewText(`Could not read file: ${r?.error || 'unknown'}`); return; }
     const bin = Uint8Array.from(atob(r.base64), ch => ch.charCodeAt(0));
@@ -920,7 +963,7 @@ const ClaudeChat: React.FC = () => {
                         placeholder={placeholder}
                         value={paramVals[p.name] || ''}
                         onChange={e => setVal(e.target.value)}
-                        onPressEnter={runParamEp}
+                        onPressEnter={() => (paramTarget.method === 'GET' ? runDirect() : runParamEp())}
                       />
                     )}
                   </div>
@@ -968,10 +1011,20 @@ const ClaudeChat: React.FC = () => {
                 </Button>
                 <span style={{ flex: 1 }} />
                 <Button size="small" onClick={() => setParamTarget(null)}>Cancel</Button>
-                <Button size="small" type="primary" icon={<SendOutlined />} onClick={runParamEp} disabled={busy}
-                  style={{ background: '#C74634', borderColor: '#C74634' }}>
-                  Run
-                </Button>
+                {paramTarget.method === 'GET' && (
+                  <Tooltip title="Query the data directly — instant, no AI tokens; rows show in the Preview pane">
+                    <Button size="small" type="primary" icon={<ThunderboltOutlined />} onClick={runDirect}
+                      loading={directLoading} style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }}>
+                      Run direct
+                    </Button>
+                  </Tooltip>
+                )}
+                <Tooltip title="Send to Claude for analysis, summaries or Excel">
+                  <Button size="small" type="primary" icon={<SendOutlined />} onClick={runParamEp} disabled={busy}
+                    style={{ background: '#C74634', borderColor: '#C74634' }}>
+                    Ask Claude
+                  </Button>
+                </Tooltip>
               </div>
             </div>
           )}
@@ -1059,7 +1112,46 @@ const ClaudeChat: React.FC = () => {
               ))}
             </div>
             <div className="cc-panel-body">
-              {!previewFile && (
+              {directResult && (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <Tag color="green" style={{ margin: 0 }}>Direct</Tag>
+                    <code style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{directResult.title}</code>
+                    <Text type="secondary" style={{ fontSize: 11 }}>{directResult.rows.length ? `${directResult.rows.length} rows` : ''}</Text>
+                    <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setDirectResult(null)} />
+                  </div>
+                  {directResult.rows.length > 0 ? (
+                    <div style={{ overflow: 'auto' }}>
+                      <table className="cc-xl">
+                        <tbody>
+                          <tr>{Object.keys(directResult.rows[0]).map(k => <td key={k}>{k}</td>)}</tr>
+                          {directResult.rows.slice(0, 1000).map((row, ri) => (
+                            <tr key={ri}>
+                              {Object.keys(directResult.rows[0]).map(k => {
+                                const v = row[k];
+                                const isNum = typeof v === 'number';
+                                return (
+                                  <td key={k} style={isNum ? { textAlign: 'right' } : undefined}>
+                                    {v === null || v === undefined ? '' : isNum ? (v as number).toLocaleString() : typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {directResult.rows.length > 1000 && (
+                        <Text type="secondary" style={{ fontSize: 11 }}>Showing first 1,000 of {directResult.rows.length} rows</Text>
+                      )}
+                    </div>
+                  ) : directResult.raw ? (
+                    <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>{directResult.raw.slice(0, 100000)}</pre>
+                  ) : (
+                    <Text type="secondary" style={{ fontSize: 12 }}>No rows returned.</Text>
+                  )}
+                </div>
+              )}
+              {!previewFile && !directResult && (
                 <div style={{ textAlign: 'center', paddingTop: 60, color: '#8B8580' }}>
                   <FileExcelOutlined style={{ fontSize: 38, color: '#D9CDC9' }} />
                   <div style={{ fontSize: 13, marginTop: 8 }}>Click a generated file to preview it here.</div>

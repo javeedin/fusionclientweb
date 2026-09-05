@@ -1356,6 +1356,25 @@ ipcMain.handle('claude-chat:recipes', async (_event, opts = {}) => {
 
 // Lists of values for the search panel (business units, ledgers, companies) —
 // same authenticated main-process fetch, restricted to these read-only paths.
+// Direct data query for the search panel — GET only, no AI round-trip.
+// The user composes the URL themselves in the panel; results render in the app.
+ipcMain.handle('claude-chat:apiget', async (_event, opts = {}) => {
+  const base = String((opts && opts.apexBaseUrl) || '').replace(/\/+$/, '');
+  const p = String((opts && opts.path) || '');
+  if (!/^https?:\/\//i.test(base)) return { success: false, error: 'No APEX base URL provided' };
+  if (!p.startsWith('/')) return { success: false, error: 'Path must start with /' };
+  const url = base + p;
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/json', ...(await ordsToken.getOrdsAuthHeader()) } });
+    const text = await res.text();
+    if (text.length > 8 * 1024 * 1024) return { success: false, url, status: res.status, error: 'Response over 8MB — narrow the filters or add row_limit' };
+    if (!res.ok) return { success: false, url, status: res.status, error: `HTTP ${res.status} · ${text.slice(0, 300)}` };
+    return { success: true, url, status: res.status, text };
+  } catch (e) {
+    return { success: false, url, error: e.message };
+  }
+});
+
 const CHAT_LOV_PATHS = ['gl/businessunits', 'gl/rr-trialbalance/ledgers', 'gl/rr-trialbalance/companies'];
 ipcMain.handle('claude-chat:lov', async (_event, opts = {}) => {
   const base = String((opts && opts.apexBaseUrl) || '').replace(/\/+$/, '');
