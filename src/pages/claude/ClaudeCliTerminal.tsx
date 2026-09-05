@@ -9,7 +9,10 @@ import '@xterm/xterm/css/xterm.css';
 
 const { Text, Paragraph } = Typography;
 
-interface CliStatus { installed?: boolean; version?: string; running?: boolean; workspace?: string }
+interface CliStatus {
+  installed?: boolean; version?: string; running?: boolean; workspace?: string;
+  ptyReady?: boolean; ptyError?: string;
+}
 
 interface ClaudeCliApi {
   claudeCliStatus: () => Promise<CliStatus & { success: boolean; error?: string }>;
@@ -153,6 +156,20 @@ const ClaudeCliTerminal: React.FC = () => {
           <Tooltip title="Refresh status"><Button icon={<ReloadOutlined />} onClick={refreshStatus} /></Tooltip>
         </div>
       </Card>
+
+      {status !== null && status.ptyReady === false && (
+        <Alert
+          type="error"
+          showIcon
+          message="Terminal module not installed"
+          description={
+            <span>
+              Run <Text code>npm install</Text> in the project folder and restart the app
+              (this installs the embedded-terminal native module). Error: {status.ptyError}
+            </span>
+          }
+        />
+      )}
 
       {status !== null && !status.installed && (
         <Alert

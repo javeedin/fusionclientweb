@@ -11,7 +11,21 @@ const { app, safeStorage } = require('electron');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const pty = require('@homebridge/node-pty-prebuilt-multiarch');
+
+// node-pty is a native module — load it lazily and tolerate its absence so a
+// missing/unbuilt module can never crash the whole app at startup.
+let pty = null;
+let ptyError = '';
+function loadPty() {
+  if (pty || ptyError) return pty;
+  try {
+    pty = require('@homebridge/node-pty-prebuilt-multiarch');
+  } catch (e) {
+    ptyError = e.message;
+    console.error('[Claude CLI] terminal module unavailable:', ptyError);
+  }
+  return pty;
+}
 
 const MCP_FILES = [
   'gl-mcp-server.cjs', 'ar-mcp-server.cjs', 'ar-customer-balance-server.cjs',
@@ -122,10 +136,17 @@ function getStatus() {
     version = execSync('claude --version', { shell: true, timeout: 15000 }).toString().trim();
     installed = true;
   } catch { /* not installed / not on PATH */ }
-  return { installed, version, running: !!proc, workspace: workspaceDir() };
+  const ptyReady = !!loadPty();
+  return { installed, version, running: !!proc, workspace: workspaceDir(), ptyReady, ptyError };
 }
 
 function start(sender, { cols = 120, rows = 30 } = {}) {
+  if (!loadPty()) {
+    return {
+      success: false,
+      error: `Terminal module not available (${ptyError}). Run "npm install" in the project folder, then restart the app.`,
+    };
+  }
   if (proc) return { success: true, alreadyRunning: true };
   const ws = provisionWorkspace();
   const shellFile = process.platform === 'win32' ? 'claude.cmd' : 'claude';
