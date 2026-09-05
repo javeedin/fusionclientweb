@@ -156,6 +156,7 @@ function provisionWorkspace(ctx = {}) {
       'Bash(node tools/call-api.cjs:*)',
       'Bash(node tools/load-db.cjs:*)',
       'Bash(node tools/query-db.cjs:*)',
+      'Bash(node -e:*)',
     ].forEach((r) => allow.add(r));
     settings.permissions = { ...(settings.permissions || {}), allow: [...allow] };
     const enabled = new Set(Array.isArray(settings.enabledMcpjsonServers) ? settings.enabledMcpjsonServers : []);

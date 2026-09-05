@@ -32,12 +32,15 @@ const buildCompanyCtx = () => {
   };
 };
 
-interface ChatMsg { role: 'user' | 'assistant'; text: string; tools?: string[] }
+// tools ran during a turn: old chats stored plain names, new ones carry the
+// command / SQL / path that was executed
+type ToolRef = string | { name: string; detail?: string };
+interface ChatMsg { role: 'user' | 'assistant'; text: string; tools?: ToolRef[] }
 interface Conv { id: string; title: string; sessionId: string | null; msgs: ChatMsg[]; updatedAt: number }
 
 interface ChatEvent {
   kind: 'init' | 'text' | 'tool' | 'result' | 'error' | 'done';
-  sessionId?: string; model?: string; text?: string; name?: string; input?: string;
+  sessionId?: string; model?: string; text?: string; name?: string; input?: string; detail?: string;
   isError?: boolean; resultText?: string; error?: string; code?: number;
 }
 
@@ -208,9 +211,22 @@ const MsgBubble = React.memo(function MsgBubble({ m }: { m: ChatMsg }) {
   return (
     <div className={`cc-row ${m.role === 'user' ? 'me' : 'bot'}`}>
       <div className="cc-bubble">
+        {m.role === 'assistant' && <div><span className="cc-srcflag">AI</span></div>}
         {!!m.tools?.length && (
           <div style={{ marginBottom: m.text ? 6 : 0 }}>
-            {m.tools.map((t, j) => <span key={j} className="cc-toolchip"><ApiOutlined />{t.replace(/^mcp__/, '')}</span>)}
+            {m.tools.map((t, j) => {
+              const name = (typeof t === 'string' ? t : t.name).replace(/^mcp__/, '');
+              const detail = typeof t === 'string' ? '' : (t.detail || '');
+              const chip = (
+                <span className="cc-toolchip">
+                  <ApiOutlined />{name}
+                  {detail && <span className="cc-toolcmd">{detail.length > 90 ? `${detail.slice(0, 90)}…` : detail}</span>}
+                </span>
+              );
+              return detail
+                ? <Tooltip key={j} title={<span style={{ fontSize: 11, fontFamily: 'Consolas, monospace', wordBreak: 'break-all' }}>{detail}</span>}>{chip}</Tooltip>
+                : <React.Fragment key={j}>{chip}</React.Fragment>;
+            })}
           </div>
         )}
         {m.role === 'user'
@@ -414,13 +430,14 @@ const ClaudeChat: React.FC = () => {
           return { ...c, msgs: msgsN, updatedAt: Date.now() };
         });
       } else if (evt.kind === 'tool') {
-        setLiveTool(evt.name || 'tool');
+        const entry: ToolRef = { name: evt.name || 'tool', detail: evt.detail };
+        setLiveTool(evt.detail ? `${evt.name}: ${evt.detail.slice(0, 70)}` : (evt.name || 'tool'));
         mutateConv(id, c => {
           const msgsN = [...c.msgs];
           const last = msgsN[msgsN.length - 1];
           if (last && last.role === 'assistant') {
-            msgsN[msgsN.length - 1] = { ...last, tools: [...(last.tools || []), evt.name || 'tool'] };
-          } else msgsN.push({ role: 'assistant', text: '', tools: [evt.name || 'tool'] });
+            msgsN[msgsN.length - 1] = { ...last, tools: [...(last.tools || []), entry] };
+          } else msgsN.push({ role: 'assistant', text: '', tools: [entry] });
           return { ...c, msgs: msgsN, updatedAt: Date.now() };
         });
       } else if (evt.kind === 'result') {
@@ -982,7 +999,10 @@ const ClaudeChat: React.FC = () => {
         .cc-h{font-weight:700;margin:6px 0 2px}
         .cc-li{margin-left:6px}
         .cc-toolchip{display:inline-flex;align-items:center;gap:4px;background:#F1EBF7;border:1px solid #D9CBEA;color:#5A4482;
-          border-radius:6px;padding:1px 8px;margin:2px 4px 2px 0;font-size:11px;font-family:Consolas,monospace}
+          border-radius:6px;padding:1px 8px;margin:2px 4px 2px 0;font-size:11px;font-family:Consolas,monospace;max-width:100%}
+        .cc-toolcmd{margin-left:4px;color:#8a7aa8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:430px}
+        .cc-srcflag{display:inline-block;background:#F1EBF7;border:1px solid #D9CBEA;color:#5A4482;font-size:9.5px;
+          font-weight:700;border-radius:4px;padding:0 6px;margin-bottom:4px;letter-spacing:.5px}
         .cc-typing span{display:inline-block;width:7px;height:7px;margin-right:4px;border-radius:50%;background:#C74634;opacity:.4;animation:ccB 1.2s infinite}
         .cc-typing span:nth-child(2){animation-delay:.2s}.cc-typing span:nth-child(3){animation-delay:.4s}
         @keyframes ccB{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}

@@ -21,6 +21,7 @@ const ALLOWED_TOOLS = [
   'Bash(node tools/call-api.cjs:*)',
   'Bash(node tools/load-db.cjs:*)',
   'Bash(node tools/query-db.cjs:*)',
+  'Bash(node -e:*)',
 ].join(',');
 
 let proc = null; // one in-flight turn at a time
@@ -75,7 +76,19 @@ function send(sender, { text, sessionId, ctx } = {}) {
           if (blk.type === 'text' && blk.text) {
             emit({ kind: 'text', text: blk.text });
           } else if (blk.type === 'tool_use') {
-            emit({ kind: 'tool', name: blk.name || 'tool', input: JSON.stringify(blk.input || {}).slice(0, 300) });
+            // detail = the human-readable core of the call (the Bash command /
+            // SQL, a file path, a pattern) so the UI can show what runs
+            const inp = blk.input || {};
+            const detail = typeof inp.command === 'string' ? inp.command
+              : typeof inp.file_path === 'string' ? inp.file_path
+                : typeof inp.pattern === 'string' ? inp.pattern
+                  : JSON.stringify(inp);
+            emit({
+              kind: 'tool',
+              name: blk.name || 'tool',
+              detail: String(detail).slice(0, 500),
+              input: JSON.stringify(inp).slice(0, 300),
+            });
           }
         }
       } else if (evt.type === 'result') {
