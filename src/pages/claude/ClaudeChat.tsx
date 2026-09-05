@@ -1009,14 +1009,44 @@ const ClaudeChat: React.FC = () => {
                 <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setParamTarget(null)} />
               </div>
               {paramTarget.params.map((p, i) => {
+                const allNames = paramTarget.params.map(x => x.name);
+                // date_from + date_to pairs collapse into one range picker
+                const toPartner = isDateParam(p.name) && /from$/i.test(p.name)
+                  ? (() => { const q = p.name.replace(/from$/i, 'to'); return allNames.includes(q) ? q : null; })()
+                  : null;
+                const isRangeTo = isDateParam(p.name) && /to$/i.test(p.name)
+                  && allNames.includes(p.name.replace(/to$/i, 'from'));
+                if (isRangeTo) return null; // rendered by its "from" partner
+                const partnerParam = toPartner ? paramTarget.params.find(x => x.name === toPartner) : null;
                 const lov = isBuParam(p.name) ? luBU : isLedgerParam(p.name) ? luLedger : isCompanyParam(p.name) ? luCompany : null;
-                const required = p.required || isForcedRequired(p.name);
+                const required = p.required || partnerParam?.required || isForcedRequired(p.name);
                 const placeholder = p.label || p.description
                   ? `${p.label || p.description}${p.example ? ` — e.g. ${p.example}` : ''}`
                   : p.example
                     ? `e.g. ${p.example}`
                     : `Value for {${p.name}} — leave blank to let Claude find it`;
                 const setVal = (v: string) => setParamVals(prev => ({ ...prev, [p.name]: v }));
+                if (toPartner) {
+                  return (
+                    <div key={p.name} className="cc-params-row">
+                      <span className="cc-params-name">{p.name.replace(/_?from$/i, '') || 'date'} range{required ? ' *' : ''}</span>
+                      <DatePicker.RangePicker
+                        size="small"
+                        style={{ flex: 1 }}
+                        format="YYYY-MM-DD"
+                        value={[
+                          paramVals[p.name] ? dayjs(paramVals[p.name]) : null,
+                          paramVals[toPartner] ? dayjs(paramVals[toPartner]) : null,
+                        ]}
+                        onChange={range => setParamVals(prev => ({
+                          ...prev,
+                          [p.name]: range?.[0] ? range[0].format('YYYY-MM-DD') : '',
+                          [toPartner]: range?.[1] ? range[1].format('YYYY-MM-DD') : '',
+                        }))}
+                      />
+                    </div>
+                  );
+                }
                 return (
                   <div key={p.name} className="cc-params-row">
                     <span className="cc-params-name">{p.name}{required ? ' *' : ''}</span>
