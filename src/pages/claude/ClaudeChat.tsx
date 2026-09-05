@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Card, DatePicker, Input, Select, Table, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import type { FilterDropdownProps } from 'antd/es/table/interface';
 import dayjs from 'dayjs';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   ApiOutlined, CloseOutlined, CodeOutlined, DeleteOutlined, ExportOutlined, EyeOutlined, FileExcelOutlined,
   FileTextOutlined, FilterOutlined, FolderOpenOutlined, FullscreenExitOutlined, FullscreenOutlined,
@@ -214,6 +215,7 @@ const ClaudeChat: React.FC = () => {
   const [luCompany, setLuCompany] = useState<string[]>([]);
   const [directResult, setDirectResult] = useState<{ title: string; rows: Record<string, unknown>[]; raw: string | null } | null>(null);
   const [directLoading, setDirectLoading] = useState(false);
+  const [directSearch, setDirectSearch] = useState('');
   const [previewFull, setPreviewFull] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
@@ -528,13 +530,23 @@ const ClaudeChat: React.FC = () => {
       setPreviewFile(null);
       setPreviewSheets(null);
       setPreviewText(null);
+      setDirectSearch('');
       setDirectResult({ title: req.path, rows, raw });
     } finally {
       setDirectLoading(false);
     }
   };
 
-  // grid columns for direct results: every column sortable + searchable
+  // one global search box filters every column; sorting stays per column.
+  // ID-ish columns (…Id, …Number) are identifiers — never thousand-formatted.
+  const isIdCol = (k: string) => /(id|number)$/i.test(k);
+  const directRows = useMemo(() => {
+    if (!directResult) return [];
+    const q = directSearch.trim().toLowerCase();
+    if (!q) return directResult.rows;
+    return directResult.rows.filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(q)));
+  }, [directResult, directSearch]);
+
   const directColumns = useMemo<ColumnsType<Record<string, unknown>>>(() => {
     if (!directResult?.rows.length) return [];
     return Object.keys(directResult.rows[0]).map(k => ({
@@ -547,31 +559,57 @@ const ClaudeChat: React.FC = () => {
         if (typeof av === 'number' && typeof bv === 'number') return av - bv;
         return String(av ?? '').localeCompare(String(bv ?? ''));
       },
-      filterDropdown: ({ setSelectedKeys, selectedKeys, confirm, clearFilters }: FilterDropdownProps) => (
-        <div style={{ padding: 8 }}>
-          <Input
-            size="small"
-            placeholder={`Search ${k}`}
-            value={(selectedKeys[0] as string) || ''}
-            onChange={e => setSelectedKeys(e.target.value ? [e.target.value] : [])}
-            onPressEnter={() => confirm()}
-            style={{ width: 190, display: 'block', marginBottom: 6 }}
-          />
-          <Button size="small" type="primary" onClick={() => confirm()} style={{ marginRight: 6 }}>Filter</Button>
-          <Button size="small" onClick={() => { clearFilters?.(); confirm(); }}>Clear</Button>
-        </div>
-      ),
-      filterIcon: (filtered: boolean) => <SearchOutlined style={{ color: filtered ? '#C74634' : undefined }} />,
-      onFilter: (value: unknown, record: Record<string, unknown>) =>
-        String(record[k] ?? '').toLowerCase().includes(String(value).toLowerCase()),
       render: (v: unknown) =>
         v === null || v === undefined
           ? ''
-          : typeof v === 'number'
+          : typeof v === 'number' && !isIdCol(k)
             ? <span style={{ display: 'block', textAlign: 'right' }}>{v.toLocaleString()}</span>
             : typeof v === 'object' ? JSON.stringify(v) : String(v),
     }));
   }, [directResult]);
+
+  const directCell = (k: string, v: unknown): string | number => {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'number') return isIdCol(k) ? String(v) : v;
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  };
+
+  const exportDirectExcel = async () => {
+    if (!directResult || !directRows.length) return;
+    const keys = Object.keys(directResult.rows[0]);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Data');
+    const head = ws.addRow(keys);
+    head.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    head.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC74634' } }; });
+    directRows.forEach(r => ws.addRow(keys.map(k => directCell(k, r[k]))));
+    keys.forEach((k, i) => { ws.getColumn(i + 1).width = Math.min(45, Math.max(12, k.length + 4)); });
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: keys.length } };
+    const buf = await wb.xlsx.writeBuffer();
+    const eAPI = (window as unknown as { electronAPI?: { openExcel?: (b: unknown, f: string) => Promise<unknown> } }).electronAPI;
+    const name = `direct-export-${dayjs().format('YYYYMMDD-HHmmss')}.xlsx`;
+    if (eAPI?.openExcel) await eAPI.openExcel(buf, name);
+    else antMessage.warning('Excel export needs the desktop app');
+  };
+
+  const exportDirectPdf = () => {
+    if (!directResult || !directRows.length) return;
+    const keys = Object.keys(directResult.rows[0]);
+    const doc = new jsPDF({ orientation: keys.length > 6 ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
+    doc.setFontSize(10);
+    doc.text(directResult.title.slice(0, 120), 24, 24);
+    autoTable(doc, {
+      head: [keys],
+      body: directRows.map(r => keys.map(k => String(directCell(k, r[k])))),
+      startY: 32,
+      styles: { fontSize: 6.5, cellPadding: 2, overflow: 'linebreak' },
+      headStyles: { fillColor: [199, 70, 52], textColor: 255 },
+      alternateRowStyles: { fillColor: [251, 244, 242] },
+    });
+    doc.save(`direct-export-${dayjs().format('YYYYMMDD-HHmmss')}.pdf`);
+  };
 
   // ── "/" popup: training recipes + endpoints, like the CLI's slash menu ────
   const slashOpen = !busy && input.startsWith('/');
@@ -1152,7 +1190,7 @@ const ClaudeChat: React.FC = () => {
               )}
               <Tooltip title="Refresh files"><Button size="small" type="text" icon={<ReloadOutlined />} onClick={refreshFiles} /></Tooltip>
             </div>
-            <div style={{ maxHeight: 130, overflowY: 'auto', padding: 6, borderBottom: '1px solid #F3EFED' }}>
+            <div hidden={!!directResult} style={{ maxHeight: 130, overflowY: 'auto', padding: 6, borderBottom: '1px solid #F3EFED' }}>
               {!files.length && <Text type="secondary" style={{ fontSize: 12, padding: 6, display: 'block' }}>Generated files appear here</Text>}
               {files.map(f => (
                 <div key={f.relPath} className={`cc-file${previewFile?.relPath === f.relPath ? ' on' : ''}`} onClick={() => openPreview(f)}>
@@ -1168,13 +1206,30 @@ const ClaudeChat: React.FC = () => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                     <Tag color="green" style={{ margin: 0 }}>Direct</Tag>
                     <code style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{directResult.title}</code>
-                    <Text type="secondary" style={{ fontSize: 11 }}>{directResult.rows.length ? `${directResult.rows.length} rows` : ''}</Text>
                     <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setDirectResult(null)} />
                   </div>
+                  {directResult.rows.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <Input
+                        size="small"
+                        allowClear
+                        prefix={<SearchOutlined />}
+                        placeholder="Search in all columns…"
+                        value={directSearch}
+                        onChange={e => setDirectSearch(e.target.value)}
+                        style={{ maxWidth: 280 }}
+                      />
+                      <Text type="secondary" style={{ fontSize: 11, flex: 1 }}>
+                        {directSearch ? `${directRows.length} of ${directResult.rows.length} rows` : `${directResult.rows.length} rows`}
+                      </Text>
+                      <Button size="small" icon={<FileExcelOutlined style={{ color: '#1D7B4D' }} />} onClick={exportDirectExcel}>Excel</Button>
+                      <Button size="small" icon={<FileTextOutlined />} onClick={exportDirectPdf}>PDF</Button>
+                    </div>
+                  )}
                   {directResult.rows.length > 0 ? (
                     <Table
                       size="small"
-                      dataSource={directResult.rows.map((row, i) => ({ ...row, __rk: i }))}
+                      dataSource={directRows.map((row, i) => ({ ...row, __rk: i }))}
                       rowKey="__rk"
                       columns={directColumns}
                       pagination={{ pageSize: 100, size: 'small', showSizeChanger: false, showTotal: t => `${t} rows` }}
