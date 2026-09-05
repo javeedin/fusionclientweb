@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
 import { getCurrentCompany } from '../../config/company.config';
 import { getFusionInstanceUrl } from '../../config/api.helper';
-import { fetchAllTrainingRecipes, getTrainingDebug } from '../../components/ai/aiTraining';
+import { fetchAllTrainingRecipes, fetchTrainingRecipes, getTrainingDebug } from '../../components/ai/aiTraining';
 import type { RecipeParam, TrainingRecipe } from '../../components/ai/aiTraining';
 
 const { Text } = Typography;
@@ -178,14 +178,22 @@ const ClaudeChat: React.FC = () => {
   // load recipes with diagnostics: the debug record says exactly what
   // /ai/training answered, so an empty list is never a silent mystery
   const loadRecipes = useCallback(async (): Promise<TrainingRecipe[]> => {
-    const list = (await fetchAllTrainingRecipes()).filter(r => r.enabled !== 'N');
-    setRecipes(list);
-    const dbg = getTrainingDebug();
+    // plain GET first — works on every deployed version of the ai/training
+    // handler (an older handler without the :all bind rejects ?all=Y with 400)
+    let list: TrainingRecipe[] = [];
+    try { list = await fetchTrainingRecipes(true); } catch { /* fall through */ }
+    let dbgText = '';
     if (!list.length) {
-      setRecipeErr(dbg ? `${dbg.url} → ${dbg.status}${dbg.ok ? ' (0 recipes returned)' : ` · ${dbg.body.slice(0, 200)}`}` : 'no response recorded');
-    } else {
-      setRecipeErr('');
+      try {
+        list = (await fetchAllTrainingRecipes()).filter(r => r.enabled !== 'N');
+      } catch (e) {
+        dbgText = e instanceof Error ? e.message : String(e);
+      }
+      const dbg = getTrainingDebug();
+      if (dbg) dbgText = `${dbg.url} → ${dbg.status}${dbg.ok ? ` (${dbg.count} rows)` : ` · ${dbg.body.slice(0, 300)}`}`;
     }
+    setRecipes(list);
+    setRecipeErr(list.length ? '' : (dbgText || 'no response recorded'));
     return list;
   }, []);
 
@@ -655,8 +663,11 @@ const ClaudeChat: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 2px 0' }}>
                 {recipeErr ? (
                   <Tooltip title={<span style={{ fontSize: 11, wordBreak: 'break-all' }}>{recipeErr}</span>}>
-                    <Text type="danger" style={{ fontSize: 10.5, flex: 1, cursor: 'help' }}>
-                      ⚠ training recipes not loaded
+                    <Text type="danger" style={{
+                      fontSize: 10.5, flex: 1, cursor: 'help', overflow: 'hidden',
+                      textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block',
+                    }}>
+                      ⚠ recipes: {recipeErr}
                     </Text>
                   </Tooltip>
                 ) : (
