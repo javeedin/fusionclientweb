@@ -33,18 +33,20 @@ const { Text } = Typography;
 
 const APEX = APEX_DB_CONFIG.baseUrl;
 const LS_KEY = 'reerp.ai.key';
-const LS_MODEL = 'reerp.ai.model';
+// key bumped to .model2 so everyone re-defaults to Haiku (cheapest);
+// a model picked in settings after this still persists as before
+const LS_MODEL = 'reerp.ai.model2';
 const LS_CONVS = 'reerp.ai.convs';
 const LS_CUR = 'reerp.ai.cur';
-const DEFAULT_MODEL = 'claude-opus-5';
+const DEFAULT_MODEL = 'claude-haiku-4-5';
 const MAX_TOOL_ROUNDS = 10;
 const MAX_PANELS = 4;
 const PANEL_W = 440;
 
 const MODEL_OPTIONS = [
-  { value: 'claude-opus-5', label: 'Claude Opus 5 (best)' },
-  { value: 'claude-sonnet-5', label: 'Claude Sonnet 5 (fast + smart)' },
-  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (fastest)' },
+  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (default — fast & economical)' },
+  { value: 'claude-sonnet-5', label: 'Claude Sonnet 5 (smarter)' },
+  { value: 'claude-opus-5', label: 'Claude Opus 5 (best, most expensive)' },
 ];
 
 interface ChatMsg { role: 'user' | 'assistant'; text: string; files?: DeliveredFile[]; apiCalls?: ApiCallLog[] }
@@ -414,10 +416,13 @@ const AssistantPanel: React.FC<PanelProps> = ({
           finish({ role: 'assistant', text: '⚠️ Stopped after too many tool calls — please narrow the request.' });
           break;
         }
+        // cache_control on the system block caches the whole stable prefix
+        // (tool definitions + system prompt incl. catalogs/recipes) — every
+        // following message and tool round reads it at ~10% of normal cost
         const resp = await client.messages.create({
           model,
           max_tokens: 8000,
-          system,
+          system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
           tools,
           messages: apiMsgs,
         });
