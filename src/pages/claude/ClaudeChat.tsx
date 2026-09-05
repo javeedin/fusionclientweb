@@ -1,14 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, DatePicker, Input, Modal, Radio, Select, Table, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
+import { Alert, Button, Card, DatePicker, Dropdown, Input, Modal, Radio, Select, Table, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
   ApiOutlined, CloseOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined, ExportOutlined, EyeOutlined,
-  FileExcelOutlined, FileTextOutlined, FilterOutlined, FolderOpenOutlined, FullscreenExitOutlined,
-  FullscreenOutlined, MinusCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, SendOutlined,
-  StopOutlined, ThunderboltOutlined,
+  FileExcelOutlined, FilePdfOutlined, FileTextOutlined, FilterOutlined, FolderOpenOutlined,
+  FullscreenExitOutlined, FullscreenOutlined, MailOutlined, MinusCircleOutlined, PlusOutlined,
+  ReloadOutlined, SearchOutlined, SendOutlined, ShareAltOutlined, SnippetsOutlined, StopOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
@@ -213,12 +214,123 @@ interface PreviewEntry {
   at: number;
 }
 
+// ── chat-table export & share ───────────────────────────────────────────────
+// Markdown tables in AI answers get Excel / PDF / Share actions.
+
+function extractMdTables(md: string): string[][][] {
+  const tables: string[][][] = [];
+  const blocks = md.match(/(?:^\|.*\|[ \t]*$\n?)+/gm) || [];
+  const isSep = (l: string) => /^\s*\|?[\s:|-]+\|?\s*$/.test(l) && l.includes('-');
+  for (const b of blocks) {
+    const lines = b.trim().split('\n').filter(l => l.trim().startsWith('|'));
+    const rows = lines
+      .filter(l => !isSep(l))
+      .map(l => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim().replace(/\*\*/g, '').replace(/`/g, '')));
+    if (rows.length >= 2) tables.push(rows);
+  }
+  return tables;
+}
+
+const tableCellValue = (c: string): string | number => {
+  const cleaned = c.replace(/,/g, '');
+  return c !== '' && /^[+-]?\d+(\.\d+)?$/.test(cleaned) ? Number(cleaned) : c;
+};
+
+async function buildTablesWorkbook(tables: string[][][]): Promise<ArrayBuffer> {
+  const wb = new ExcelJS.Workbook();
+  tables.forEach((t, i) => {
+    const ws = wb.addWorksheet(tables.length > 1 ? `Table ${i + 1}` : 'Report');
+    t.forEach((r, ri) => {
+      const row = ws.addRow(r.map(tableCellValue));
+      if (ri === 0) {
+        row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        row.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC74634' } }; });
+      }
+    });
+    t[0].forEach((_h, ci) => {
+      ws.getColumn(ci + 1).width = Math.min(45, Math.max(12, ...t.map(r => String(r[ci] ?? '').length + 2)));
+    });
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+  });
+  return wb.xlsx.writeBuffer() as Promise<ArrayBuffer>;
+}
+
+const chatFileStamp = () => dayjs().format('YYYYMMDD-HHmmss');
+type ElectronFileApi = {
+  openExcel?: (b: unknown, f: string) => Promise<unknown>;
+  selectFolder?: () => Promise<{ canceled?: boolean; filePaths?: string[]; folderPath?: string } | string | null>;
+  saveFileToFolder?: (b: unknown, folder: string, f: string) => Promise<unknown>;
+};
+const eFileApi = (): ElectronFileApi => (window as unknown as { electronAPI?: ElectronFileApi }).electronAPI || {};
+
+async function exportChatTablesExcel(tables: string[][][]) {
+  const buf = await buildTablesWorkbook(tables);
+  const eAPI = eFileApi();
+  if (eAPI.openExcel) await eAPI.openExcel(buf, `report-${chatFileStamp()}.xlsx`);
+  else antMessage.warning('Excel export needs the desktop app');
+}
+
+function exportChatTablesPdf(tables: string[][][]) {
+  const doc = new jsPDF({ orientation: tables.some(t => t[0].length > 6) ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
+  let y = 28;
+  tables.forEach(t => {
+    autoTable(doc, {
+      head: [t[0]],
+      body: t.slice(1),
+      startY: y,
+      styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+      headStyles: { fillColor: [199, 70, 52], textColor: 255 },
+      alternateRowStyles: { fillColor: [251, 244, 242] },
+    });
+    y = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 22;
+  });
+  doc.save(`report-${chatFileStamp()}.pdf`);
+}
+
+const tablesAsText = (tables: string[][][]) =>
+  tables.map(t => t.map(r => r.join('\t')).join('\n')).join('\n\n');
+const tablesAsMarkdown = (tables: string[][][]) =>
+  tables.map(t => [
+    `| ${t[0].join(' | ')} |`,
+    `| ${t[0].map(() => '---').join(' | ')} |`,
+    ...t.slice(1).map(r => `| ${r.join(' | ')} |`),
+  ].join('\n')).join('\n\n');
+
+async function shareChatTables(key: string, tables: string[][][]) {
+  if (key === 'copy') {
+    await navigator.clipboard.writeText(tablesAsText(tables));
+    antMessage.success('Copied — paste straight into Excel or an email');
+  } else if (key === 'markdown') {
+    await navigator.clipboard.writeText(tablesAsMarkdown(tables));
+    antMessage.success('Copied as Markdown');
+  } else if (key === 'email') {
+    const body = tablesAsText(tables);
+    const a = document.createElement('a');
+    a.href = `mailto:?subject=${encodeURIComponent('Re-ERP report')}&body=${encodeURIComponent(body.slice(0, 1800))}`;
+    a.click();
+    if (body.length > 1800) {
+      await navigator.clipboard.writeText(body);
+      antMessage.info('Table is long — the full version is on your clipboard, paste it into the email');
+    }
+  } else if (key === 'folder') {
+    const eAPI = eFileApi();
+    if (!eAPI.selectFolder || !eAPI.saveFileToFolder) { antMessage.warning('Needs the desktop app'); return; }
+    const sel = await eAPI.selectFolder();
+    const folder = typeof sel === 'string' ? sel : sel?.folderPath || sel?.filePaths?.[0];
+    if (!folder) return;
+    const buf = await buildTablesWorkbook(tables);
+    await eAPI.saveFileToFolder(buf, folder, `report-${chatFileStamp()}.xlsx`);
+    antMessage.success('Excel file saved to the selected folder');
+  }
+}
+
 // ── memoized heavy sections ─────────────────────────────────────────────────
 // Typing in the chat box re-renders the page every keystroke; these keep the
 // expensive parts (markdown bubbles, the direct-result grid, the 283-row
 // endpoint list) from re-rendering unless their own data changed.
 
 const MsgBubble = React.memo(function MsgBubble({ m }: { m: ChatMsg }) {
+  const tables = m.role === 'assistant' && m.text ? extractMdTables(m.text) : [];
   return (
     <div className={`cc-row ${m.role === 'user' ? 'me' : 'bot'}`}>
       <div className="cc-bubble">
@@ -245,6 +357,28 @@ const MsgBubble = React.memo(function MsgBubble({ m }: { m: ChatMsg }) {
           : m.text
             ? <div dangerouslySetInnerHTML={{ __html: mdToHtml(m.text) }} />
             : <Text type="secondary" style={{ fontSize: 12 }}>working…</Text>}
+        {tables.length > 0 && (
+          <div className="cc-tblactions">
+            <Button size="small" icon={<FileExcelOutlined style={{ color: '#1D7B4D' }} />}
+              onClick={() => exportChatTablesExcel(tables)}>Excel</Button>
+            <Button size="small" icon={<FilePdfOutlined style={{ color: '#C74634' }} />}
+              onClick={() => exportChatTablesPdf(tables)}>PDF</Button>
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: [
+                  { key: 'copy', icon: <SnippetsOutlined />, label: 'Copy for Excel / email (tab-separated)' },
+                  { key: 'markdown', icon: <FileTextOutlined />, label: 'Copy as Markdown' },
+                  { key: 'email', icon: <MailOutlined />, label: 'Email…' },
+                  { key: 'folder', icon: <FolderOpenOutlined />, label: 'Save Excel to folder…' },
+                ],
+                onClick: ({ key }) => { shareChatTables(key, tables); },
+              }}
+            >
+              <Button size="small" icon={<ShareAltOutlined />}>Share</Button>
+            </Dropdown>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1030,6 +1164,7 @@ const ClaudeChat: React.FC = () => {
         .cc-toolcmd{margin-left:4px;color:#8a7aa8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:430px}
         .cc-srcflag{display:inline-block;background:#F1EBF7;border:1px solid #D9CBEA;color:#5A4482;font-size:9.5px;
           font-weight:700;border-radius:4px;padding:0 6px;margin-bottom:4px;letter-spacing:.5px}
+        .cc-tblactions{display:flex;gap:6px;margin-top:10px;padding-top:8px;border-top:1px dashed #EDE3E0}
         .cc-typing span{display:inline-block;width:7px;height:7px;margin-right:4px;border-radius:50%;background:#C74634;opacity:.4;animation:ccB 1.2s infinite}
         .cc-typing span:nth-child(2){animation-delay:.2s}.cc-typing span:nth-child(3){animation-delay:.4s}
         @keyframes ccB{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
