@@ -257,7 +257,7 @@ const ClaudeChat: React.FC = () => {
 
   // A training recipe that targets this endpoint (its URL template's path
   // matches) — its declared params give the search panel real labeled fields.
-  const recipeForEndpoint = (p: string): TrainingRecipe | undefined => {
+  const recipeForEndpoint = (p: string, list: TrainingRecipe[]): TrainingRecipe | undefined => {
     const pathOf = (t: string) => {
       let s = String(t || '').trim();
       try { if (/^https?:/i.test(s)) s = new URL(s).pathname; } catch { /* keep as-is */ }
@@ -265,7 +265,7 @@ const ClaudeChat: React.FC = () => {
     };
     const target = pathOf(p);
     if (!target) return undefined;
-    const matches = recipes.filter(r => {
+    const matches = list.filter(r => {
       const rp = pathOf(r.urlTemplate);
       return rp === target || rp.endsWith(target);
     });
@@ -274,9 +274,18 @@ const ClaudeChat: React.FC = () => {
 
   // the search panel: works for ANY endpoint — a matching training recipe's
   // declared parameters when one exists, else placeholders (if any) plus
-  // user-added query parameters
-  const openEndpointForm = (p: string) => {
-    const r = recipeForEndpoint(p);
+  // user-added query parameters. If no recipe matched, the list may simply
+  // not have loaded yet (page opened offline, slow ORDS) — refetch and retry
+  // once before falling back to the generic form.
+  const openEndpointForm = async (p: string) => {
+    let r = recipeForEndpoint(p, recipes);
+    if (!r) {
+      try {
+        const fresh = await fetchTrainingRecipes(true);
+        if (fresh.length) setRecipes(fresh);
+        r = recipeForEndpoint(p, fresh);
+      } catch { /* offline — generic form below */ }
+    }
     if (r) { pickRecipe(r); return; }
     setParamTarget({ title: `GET ${p}`, method: 'GET', path: p, params: getEpParams(p).map(n => ({ name: n })) });
     setParamVals({});
