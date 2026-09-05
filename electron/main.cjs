@@ -1218,6 +1218,24 @@ ipcMain.handle('librechat:get-logs', async () => {
   catch (e) { return { success: false, error: e.message }; }
 });
 
+// ── Claude Code CLI (embedded terminal) ────────────────────────────────────
+const claudeCli = require('./claude-cli-manager.cjs');
+
+ipcMain.handle('claude-cli:status', async () => {
+  try { return { success: true, ...claudeCli.getStatus() }; }
+  catch (e) { return { success: false, error: e.message }; }
+});
+ipcMain.handle('claude-cli:start', async (event, opts) => {
+  try { return claudeCli.start(event.sender, opts || {}); }
+  catch (e) { return { success: false, error: e.message }; }
+});
+ipcMain.on('claude-cli:input', (_event, data) => { try { claudeCli.input(data); } catch { /* ignore */ } });
+ipcMain.on('claude-cli:resize', (_event, { cols, rows } = {}) => { try { claudeCli.resize(cols, rows); } catch { /* ignore */ } });
+ipcMain.handle('claude-cli:stop', async () => {
+  try { return claudeCli.stop(); }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
 // ── MCP bridge for the in-app AI Assistant ─────────────────────────────────
 const mcpBridge = require('./mcp-bridge.cjs');
 

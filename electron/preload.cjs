@@ -83,6 +83,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onGlMcpStatus: (callback)         => ipcRenderer.on('gl-mcp-status', callback),
   removeGlMcpStatusListener: ()     => ipcRenderer.removeAllListeners('gl-mcp-status'),
 
+  // Claude Code CLI — embedded subscription-billed terminal with MCP
+  claudeCliStatus: ()            => ipcRenderer.invoke('claude-cli:status'),
+  claudeCliStart:  (opts)        => ipcRenderer.invoke('claude-cli:start', opts),
+  claudeCliStop:   ()            => ipcRenderer.invoke('claude-cli:stop'),
+  claudeCliInput:  (data)        => ipcRenderer.send('claude-cli:input', data),
+  claudeCliResize: (cols, rows)  => ipcRenderer.send('claude-cli:resize', { cols, rows }),
+  onClaudeCliData: (cb)          => ipcRenderer.on('claude-cli:data', cb),
+  onClaudeCliExit: (cb)          => ipcRenderer.on('claude-cli:exit', cb),
+  removeClaudeCliListeners: ()   => {
+    ipcRenderer.removeAllListeners('claude-cli:data');
+    ipcRenderer.removeAllListeners('claude-cli:exit');
+  },
+
   // MCP bridge — in-app AI Assistant access to the local MCP servers
   mcpBridgeListTools: ()                      => ipcRenderer.invoke('mcp-bridge:list-tools'),
   mcpBridgeCallTool:  (server, tool, args)    => ipcRenderer.invoke('mcp-bridge:call-tool', { server, tool, args }),
