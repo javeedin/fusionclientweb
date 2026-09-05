@@ -672,6 +672,37 @@ const ClaudeChat: React.FC = () => {
   useEffect(() => {
     try { localStorage.setItem(RPT_LS, JSON.stringify(reports.slice(0, 30))); } catch { /* ignore */ }
   }, [reports]);
+
+  // Durable home for report templates: the _report_templates table in
+  // erp-data.db (survives cache clears, visible to the AI); localStorage is
+  // the offline cache. An empty list writes a placeholder row (load-db
+  // refuses zero rows), filtered out on read.
+  const persistReports = useCallback((next: ReportTpl[]) => {
+    setReports(next);
+    const items = next.length ? next : [{ id: '_none', name: '', prompt: '', createdAt: 0 }];
+    api?.claudeChatLoadDb?.({ json: JSON.stringify({ items }), table: '_report_templates', mode: 'replace', ctx: buildCompanyCtx() })
+      ?.catch(() => { /* DB unavailable — localStorage still has them */ });
+  }, [api]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api?.claudeChatQueryDb?.({ sql: 'SELECT * FROM _report_templates ORDER BY createdAt DESC', ctx: buildCompanyCtx() });
+        if (r?.success && Array.isArray(r.rows)) {
+          const list = r.rows
+            .map(x => ({ id: String(x.id || ''), name: String(x.name || ''), prompt: String(x.prompt || ''), createdAt: Number(x.createdAt) || 0 }))
+            .filter(x => x.id && x.name && x.prompt);
+          if (list.length) { setReports(list); return; }
+        }
+        // table missing or empty — seed it from any localStorage templates
+        const ls = loadReports();
+        if (ls.length) {
+          api?.claudeChatLoadDb?.({ json: JSON.stringify({ items: ls }), table: '_report_templates', mode: 'replace', ctx: buildCompanyCtx() })
+            ?.catch(() => { /* ignore */ });
+        }
+      } catch { /* offline — localStorage copy already loaded */ }
+    })();
+  }, [api]);
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
   const [filesOpen, setFilesOpen] = useState(false); // workspace files list, hidden by default
@@ -1209,7 +1240,7 @@ const ClaudeChat: React.FC = () => {
   const doSaveReport = () => {
     const name = saveRptName.trim();
     if (!name || !saveRptPrompt.trim()) return;
-    setReports(prev => [{ id: `r${Date.now()}`, name, prompt: saveRptPrompt.trim(), createdAt: Date.now() }, ...prev].slice(0, 30));
+    persistReports([{ id: `r${Date.now()}`, name, prompt: saveRptPrompt.trim(), createdAt: Date.now() }, ...reports].slice(0, 30));
     setSaveRptOpen(false);
     antMessage.success(`Report "${name}" saved — find it under AI Training`);
   };
@@ -1598,7 +1629,7 @@ const ClaudeChat: React.FC = () => {
                   <span className="cc-ract">
                     <Tooltip title="Run now"><CaretRightOutlined onClick={e => { e.stopPropagation(); send(r.prompt); }} /></Tooltip>
                     <Tooltip title="Schedule…"><ClockCircleOutlined onClick={e => { e.stopPropagation(); openSchedule(r); }} /></Tooltip>
-                    <Tooltip title="Delete"><DeleteOutlined onClick={e => { e.stopPropagation(); setReports(prev => prev.filter(x => x.id !== r.id)); }} /></Tooltip>
+                    <Tooltip title="Delete"><DeleteOutlined onClick={e => { e.stopPropagation(); persistReports(reports.filter(x => x.id !== r.id)); }} /></Tooltip>
                   </span>
                 </div>
               ))}
