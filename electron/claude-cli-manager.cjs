@@ -131,6 +131,10 @@ function provisionWorkspace(ctx = {}) {
     if (fs.existsSync(src)) fs.writeFileSync(path.join(mcpDir, f), fs.readFileSync(src));
   }
 
+  // full endpoint inventory (generated from the app source) for direct REST use
+  const catalogSrc = sourceDir('erp-api-catalog.md');
+  if (fs.existsSync(catalogSrc)) fs.copyFileSync(catalogSrc, path.join(ws, 'erp-api-catalog.md'));
+
   const creds = readGlCreds();
   const fusion = readFusionCreds();
   // Priority per variable: Claude Desktop's working config → the app's own
@@ -351,6 +355,12 @@ Useful GET endpoints (responses are {items:[...]}):
 - FA: /fa/assets?limit=100 · /fa/deprn-by-period
 - PC: /pc/registers · /pc/transactions/<registerId>
 - AI training recipes: /ai/training
+The FULL inventory — every endpoint the application itself uses (~280 across
+45 modules) — is in ./erp-api-catalog.md. Read it whenever you need an
+endpoint not listed above.
+When the user asks you to run an API / REST call / endpoint, RUN IT
+immediately with call-api.cjs (GET needs no further permission) and show the
+result — do not ask first. Unknown response shape? Just run it and look.
 When the Fusion-based MCP tools are unavailable, prefer these ORDS endpoints —
 they hit the ERP's synced database directly.
 
