@@ -46,6 +46,30 @@ function sourceDir(file) {
   return isDev ? path.join(__dirname, file) : path.join(app.getAppPath(), 'electron', file);
 }
 
+// Claude Desktop's MCP config — when the user's Claude Desktop setup works,
+// its env blocks hold PROVEN credentials/URLs for these same servers, so we
+// reuse them as the primary source.
+function readClaudeDesktopEnv() {
+  try {
+    const cfgPath = path.join(app.getPath('appData'), 'Claude', 'claude_desktop_config.json');
+    if (!fs.existsSync(cfgPath)) return {};
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    const out = {};
+    for (const s of Object.values(cfg.mcpServers || {})) {
+      for (const [k, v] of Object.entries(s.env || {})) {
+        if (out[k] === undefined && /^(FUSION_|ORACLE_|ORDS_|SKIP_AUTH|GL_)/.test(k) && v !== undefined && v !== '') {
+          out[k] = String(v);
+        }
+      }
+    }
+    if (Object.keys(out).length) log('reusing env from Claude Desktop config:', Object.keys(out).join(', '));
+    return out;
+  } catch (e) {
+    log('could not read Claude Desktop config:', e.message);
+    return {};
+  }
+}
+
 // Oracle Fusion credentials saved by the app's Fusion settings screen
 // (same file save-fusion-credentials writes)
 function readFusionCreds() {
@@ -105,20 +129,25 @@ function provisionWorkspace() {
 
   const creds = readGlCreds();
   const fusion = readFusionCreds();
+  // Priority per variable: Claude Desktop's working config → the app's own
+  // stored credentials → process env → defaults
+  const desktop = readClaudeDesktopEnv();
   const env = {
+    ...desktop,
     // ORDS (GL server)
-    ORACLE_BASE_URL: creds.oracleBaseUrl || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com',
-    ORACLE_USERNAME: creds.username || '',
-    ORACLE_PASSWORD: creds.password || '',
-    SKIP_AUTH: creds.skipAuth === false ? 'false' : 'true',
-    // Oracle Fusion (AR / balances / inventory / registry servers) — taken
-    // from the credentials the app stores, same as Claude Desktop setup
-    FUSION_BASE_URL: process.env.FUSION_BASE_URL || 'https://iaaobn-test.fa.ocs.oraclecloud.com',
-    ...(fusion.username ? { FUSION_USERNAME: fusion.username, FUSION_PASSWORD: fusion.password } : {}),
+    ORACLE_BASE_URL: creds.oracleBaseUrl || desktop.ORACLE_BASE_URL || 'https://g15d6279501ae08-buimerc.adb.me-dubai-1.oraclecloudapps.com',
+    ORACLE_USERNAME: creds.username || desktop.ORACLE_USERNAME || '',
+    ORACLE_PASSWORD: creds.password || desktop.ORACLE_PASSWORD || '',
+    SKIP_AUTH: creds.skipAuth === false ? 'false' : (desktop.SKIP_AUTH || 'true'),
+    // Oracle Fusion (AR / balances / inventory / registry servers)
+    FUSION_BASE_URL: desktop.FUSION_BASE_URL || process.env.FUSION_BASE_URL || 'https://iaaobn-test.fa.ocs.oraclecloud.com',
+    ...(desktop.FUSION_USERNAME
+      ? {}
+      : fusion.username ? { FUSION_USERNAME: fusion.username, FUSION_PASSWORD: fusion.password } : {}),
     // ORDS OAuth2 token passthrough (registry server)
-    ...(process.env.ORDS_USE_TOKEN ? { ORDS_USE_TOKEN: process.env.ORDS_USE_TOKEN } : {}),
-    ...(process.env.ORDS_CLIENT_ID ? { ORDS_CLIENT_ID: process.env.ORDS_CLIENT_ID } : {}),
-    ...(process.env.ORDS_CLIENT_SECRET ? { ORDS_CLIENT_SECRET: process.env.ORDS_CLIENT_SECRET } : {}),
+    ...(desktop.ORDS_USE_TOKEN ? {} : process.env.ORDS_USE_TOKEN ? { ORDS_USE_TOKEN: process.env.ORDS_USE_TOKEN } : {}),
+    ...(desktop.ORDS_CLIENT_ID ? {} : process.env.ORDS_CLIENT_ID ? { ORDS_CLIENT_ID: process.env.ORDS_CLIENT_ID } : {}),
+    ...(desktop.ORDS_CLIENT_SECRET ? {} : process.env.ORDS_CLIENT_SECRET ? { ORDS_CLIENT_SECRET: process.env.ORDS_CLIENT_SECRET } : {}),
   };
   const server = (script) => ({
     command: 'node',
