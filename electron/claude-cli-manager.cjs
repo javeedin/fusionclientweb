@@ -135,6 +135,35 @@ function provisionWorkspace(ctx = {}) {
   const catalogSrc = sourceDir('erp-api-catalog.md');
   if (fs.existsSync(catalogSrc)) fs.copyFileSync(catalogSrc, path.join(ws, 'erp-api-catalog.md'));
 
+  // Persist the permission allowlist in the workspace's own Claude settings —
+  // the --allowedTools flag proved unreliable for Bash rules in headless mode.
+  // Merge, never clobber: interactive approvals (enabledMcpjsonServers etc.)
+  // recorded by the user must survive.
+  try {
+    const claudeDir = path.join(ws, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+    const settingsPath = path.join(claudeDir, 'settings.local.json');
+    let settings = {};
+    try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) || {}; } catch { /* fresh */ }
+    const allow = new Set(
+      settings.permissions && Array.isArray(settings.permissions.allow) ? settings.permissions.allow : [],
+    );
+    [
+      'mcp__oracle-gl', 'mcp__oracle-ar', 'mcp__oracle-ar-balances',
+      'mcp__oracle-inventory', 'mcp__oracle-registry',
+      'Read(./**)', 'Write(./**)', 'Edit(./**)',
+      'Bash(node tools/make-excel.cjs:*)',
+      'Bash(node tools/call-api.cjs:*)',
+    ].forEach((r) => allow.add(r));
+    settings.permissions = { ...(settings.permissions || {}), allow: [...allow] };
+    const enabled = new Set(Array.isArray(settings.enabledMcpjsonServers) ? settings.enabledMcpjsonServers : []);
+    ['oracle-gl', 'oracle-ar', 'oracle-ar-balances', 'oracle-inventory', 'oracle-registry'].forEach((s) => enabled.add(s));
+    settings.enabledMcpjsonServers = [...enabled];
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  } catch (e) {
+    log('could not write workspace settings:', e.message);
+  }
+
   const creds = readGlCreds();
   const fusion = readFusionCreds();
   // Priority per variable: Claude Desktop's working config → the app's own
