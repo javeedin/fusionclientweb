@@ -3024,9 +3024,11 @@ const TrialBalance: React.FC = () => {
         Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11,
       };
       const [mon, yr] = periodName.split('-');
+      // format in LOCAL time — toISOString() converts to UTC, which in a
+      // UTC+ timezone turns 31-Jul 00:00 into 30-Jul and shifts the date back a day
       const periodLastDay = (mon && yr && MONTHS[mon] !== undefined)
-        ? (() => { const year = 2000 + parseInt(yr, 10); return new Date(year, MONTHS[mon] + 1, 0).toISOString().split('T')[0]; })()
-        : new Date().toISOString().split('T')[0];
+        ? dayjs(new Date(2000 + parseInt(yr, 10), MONTHS[mon] + 1, 0)).format('YYYY-MM-DD')
+        : dayjs().format('YYYY-MM-DD');
 
       const slaPayload: SlaCreatePayload = {
         header: {

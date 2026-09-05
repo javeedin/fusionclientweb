@@ -798,9 +798,13 @@ const ManageRevaluation: React.FC = () => {
         Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11,
       };
       const [mon, yr] = periodName.split('-');
+      // format in LOCAL time — toISOString() converts to UTC, which in a
+      // UTC+ timezone turns 31-Jul 00:00 into 30-Jul and shifts the date back a day
+      const fmtLocal = (dt: Date) =>
+        `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
       const periodLastDay = (mon && yr && MONTHS[mon] !== undefined)
-        ? new Date(2000 + parseInt(yr, 10), MONTHS[mon] + 1, 0).toISOString().split('T')[0]
-        : new Date().toISOString().split('T')[0];
+        ? fmtLocal(new Date(2000 + parseInt(yr, 10), MONTHS[mon] + 1, 0))
+        : fmtLocal(new Date());
 
       const payloads: { step: string; method: string; url: string; payload: any }[] = [];
 
