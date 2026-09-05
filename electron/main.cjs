@@ -1318,6 +1318,9 @@ ipcMain.handle('claude-chat:open-file', async (_event, { relPath } = {}) => {
 
 // AI training recipes fetched from the MAIN process — immune to whatever
 // blocks the renderer's cross-origin fetch (CSP, interceptors, CORS).
+// The reerp module is OAuth-protected, so the Bearer token comes from the
+// shared ords-token helper (same one the MCP servers and call-api use).
+const ordsToken = require('./ords-token.cjs');
 ipcMain.handle('claude-chat:recipes', async (_event, opts = {}) => {
   const base = String((opts && opts.apexBaseUrl) || '').replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(base)) return { success: false, error: 'No APEX base URL provided' };
@@ -1327,7 +1330,8 @@ ipcMain.handle('claude-chat:recipes', async (_event, opts = {}) => {
     return { res, text: await res.text() };
   };
   try {
-    let { res, text } = await attempt({});
+    // Bearer token first when configured; {} (plain request) when not
+    let { res, text } = await attempt(await ordsToken.getOrdsAuthHeader());
     if (res.status === 401 || res.status === 403) {
       const creds = claudeCli.readGlCreds();
       if (creds.username && creds.password) {
@@ -1336,7 +1340,12 @@ ipcMain.handle('claude-chat:recipes', async (_event, opts = {}) => {
         }));
       }
     }
-    if (!res.ok) return { success: false, url, error: `HTTP ${res.status} · ${text.slice(0, 300)}` };
+    if (!res.ok) {
+      const hint = (res.status === 401 || res.status === 403) && !ordsToken.ordsTokenEnabled()
+        ? ' — ORDS token auth is not configured (set REACT_APP_ORDS_USE_TOKEN=YES + client id/secret in .env.local, or ORDS_USE_TOKEN env)'
+        : '';
+      return { success: false, url, error: `HTTP ${res.status} · ${text.slice(0, 300)}${hint}` };
+    }
     let items = [];
     try { items = JSON.parse(text).items || []; } catch { return { success: false, url, error: 'Response was not JSON' }; }
     return { success: true, url, items };
