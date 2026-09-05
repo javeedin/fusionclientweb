@@ -214,44 +214,86 @@ interface PreviewEntry {
   at: number;
 }
 
-// ── chat-table export & share ───────────────────────────────────────────────
-// Markdown tables in AI answers get Excel / PDF / Share actions.
+// ── chat answer export & share ──────────────────────────────────────────────
+// AI answers containing tables get Excel / PDF / Share actions; exports carry
+// the FULL answer — narrative paragraphs and tables in their original order.
 
-function extractMdTables(md: string): string[][][] {
-  const tables: string[][][] = [];
-  const blocks = md.match(/(?:^\|.*\|[ \t]*$\n?)+/gm) || [];
-  const isSep = (l: string) => /^\s*\|?[\s:|-]+\|?\s*$/.test(l) && l.includes('-');
-  for (const b of blocks) {
-    const lines = b.trim().split('\n').filter(l => l.trim().startsWith('|'));
-    const rows = lines
-      .filter(l => !isSep(l))
-      .map(l => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim().replace(/\*\*/g, '').replace(/`/g, '')));
-    if (rows.length >= 2) tables.push(rows);
+type MdSegment = { kind: 'text'; text: string } | { kind: 'table'; rows: string[][] };
+
+const isSepLine = (l: string) => /^\s*\|?[\s:|-]+\|?\s*$/.test(l) && l.includes('-');
+const parseTableBlock = (b: string): string[][] =>
+  b.trim().split('\n')
+    .filter(l => l.trim().startsWith('|') && !isSepLine(l))
+    .map(l => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim().replace(/\*\*/g, '').replace(/`/g, '')));
+
+function splitMdSegments(md: string): MdSegment[] {
+  const segs: MdSegment[] = [];
+  const re = /(?:^\|.*\|[ \t]*$\n?)+/gm;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(md)) !== null) {
+    const before = md.slice(last, m.index).trim();
+    if (before) segs.push({ kind: 'text', text: before });
+    const rows = parseTableBlock(m[0]);
+    if (rows.length >= 2) segs.push({ kind: 'table', rows });
+    else if (m[0].trim()) segs.push({ kind: 'text', text: m[0].trim() });
+    last = m.index + m[0].length;
   }
-  return tables;
+  const after = md.slice(last).trim();
+  if (after) segs.push({ kind: 'text', text: after });
+  return segs;
 }
+
+const extractMdTables = (md: string): string[][][] =>
+  splitMdSegments(md).filter((s): s is { kind: 'table'; rows: string[][] } => s.kind === 'table').map(s => s.rows);
+
+// markdown → readable plain text for exports
+const mdPlain = (t: string) => t
+  .replace(/```[a-z]*\n?([\s\S]*?)```/g, '$1')
+  .replace(/\*\*/g, '')
+  .replace(/`([^`]*)`/g, '$1')
+  .replace(/^#{1,4}\s+/gm, '')
+  .replace(/^\s*[-*]\s+/gm, '• ');
 
 const tableCellValue = (c: string): string | number => {
   const cleaned = c.replace(/,/g, '');
   return c !== '' && /^[+-]?\d+(\.\d+)?$/.test(cleaned) ? Number(cleaned) : c;
 };
 
-async function buildTablesWorkbook(tables: string[][][]): Promise<ArrayBuffer> {
+async function buildAnswerWorkbook(md: string): Promise<ArrayBuffer> {
+  const segs = splitMdSegments(md);
   const wb = new ExcelJS.Workbook();
-  tables.forEach((t, i) => {
-    const ws = wb.addWorksheet(tables.length > 1 ? `Table ${i + 1}` : 'Report');
-    t.forEach((r, ri) => {
-      const row = ws.addRow(r.map(tableCellValue));
-      if (ri === 0) {
-        row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-        row.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC74634' } }; });
+  const ws = wb.addWorksheet('Report');
+  const maxCols = Math.max(2, ...segs.filter(s => s.kind === 'table').map(s => (s as { rows: string[][] }).rows[0].length));
+  const tableWidths: number[] = [];
+  for (const seg of segs) {
+    if (seg.kind === 'text') {
+      for (const para of mdPlain(seg.text).split(/\n{2,}/)) {
+        const clean = para.replace(/\n/g, ' ').trim();
+        if (!clean) continue;
+        const r = ws.addRow([clean]);
+        ws.mergeCells(r.number, 1, r.number, maxCols);
+        r.getCell(1).alignment = { wrapText: true, vertical: 'top' };
+        r.height = Math.min(160, Math.max(15, Math.ceil(clean.length / (maxCols * 11)) * 15));
       }
-    });
-    t[0].forEach((_h, ci) => {
-      ws.getColumn(ci + 1).width = Math.min(45, Math.max(12, ...t.map(r => String(r[ci] ?? '').length + 2)));
-    });
-    ws.views = [{ state: 'frozen', ySplit: 1 }];
-  });
+      ws.addRow([]);
+    } else {
+      seg.rows.forEach((r0, ri) => {
+        const row = ws.addRow(r0.map(tableCellValue));
+        if (ri === 0) {
+          row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+          row.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC74634' } }; });
+        }
+      });
+      seg.rows[0].forEach((_h, ci) => {
+        tableWidths[ci] = Math.max(tableWidths[ci] || 0, ...seg.rows.map(r0 => String(r0[ci] ?? '').length + 2));
+      });
+      ws.addRow([]);
+    }
+  }
+  for (let ci = 0; ci < maxCols; ci++) {
+    ws.getColumn(ci + 1).width = Math.min(45, Math.max(14, tableWidths[ci] || 14));
+  }
   return wb.xlsx.writeBuffer() as Promise<ArrayBuffer>;
 }
 
@@ -263,54 +305,68 @@ type ElectronFileApi = {
 };
 const eFileApi = (): ElectronFileApi => (window as unknown as { electronAPI?: ElectronFileApi }).electronAPI || {};
 
-async function exportChatTablesExcel(tables: string[][][]) {
-  const buf = await buildTablesWorkbook(tables);
+async function exportChatAnswerExcel(md: string) {
+  const buf = await buildAnswerWorkbook(md);
   const eAPI = eFileApi();
   if (eAPI.openExcel) await eAPI.openExcel(buf, `report-${chatFileStamp()}.xlsx`);
   else antMessage.warning('Excel export needs the desktop app');
 }
 
-function exportChatTablesPdf(tables: string[][][]) {
-  const doc = new jsPDF({ orientation: tables.some(t => t[0].length > 6) ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
-  let y = 28;
-  tables.forEach(t => {
-    autoTable(doc, {
-      head: [t[0]],
-      body: t.slice(1),
-      startY: y,
-      styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
-      headStyles: { fillColor: [199, 70, 52], textColor: 255 },
-      alternateRowStyles: { fillColor: [251, 244, 242] },
-    });
-    y = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 22;
-  });
+function exportChatAnswerPdf(md: string) {
+  const segs = splitMdSegments(md);
+  const wide = segs.some(s => s.kind === 'table' && s.rows[0].length > 6);
+  const doc = new jsPDF({ orientation: wide ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  let y = 32;
+  doc.setFontSize(9);
+  for (const seg of segs) {
+    if (seg.kind === 'text') {
+      const lines = doc.splitTextToSize(mdPlain(seg.text), pageW - 56) as string[];
+      for (const line of lines) {
+        if (y > pageH - 40) { doc.addPage(); y = 32; }
+        doc.text(line, 28, y);
+        y += 12;
+      }
+      y += 8;
+    } else {
+      autoTable(doc, {
+        head: [seg.rows[0]],
+        body: seg.rows.slice(1),
+        startY: y,
+        margin: { left: 28, right: 28 },
+        styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+        headStyles: { fillColor: [199, 70, 52], textColor: 255 },
+        alternateRowStyles: { fillColor: [251, 244, 242] },
+      });
+      y = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 20;
+      if (y > pageH - 60) { doc.addPage(); y = 32; }
+    }
+  }
   doc.save(`report-${chatFileStamp()}.pdf`);
 }
 
-const tablesAsText = (tables: string[][][]) =>
-  tables.map(t => t.map(r => r.join('\t')).join('\n')).join('\n\n');
-const tablesAsMarkdown = (tables: string[][][]) =>
-  tables.map(t => [
-    `| ${t[0].join(' | ')} |`,
-    `| ${t[0].map(() => '---').join(' | ')} |`,
-    ...t.slice(1).map(r => `| ${r.join(' | ')} |`),
-  ].join('\n')).join('\n\n');
+// full answer as plain text: narrative + tables tab-separated, in order
+const answerAsText = (md: string) =>
+  splitMdSegments(md)
+    .map(s => (s.kind === 'text' ? mdPlain(s.text) : s.rows.map(r => r.join('\t')).join('\n')))
+    .join('\n\n');
 
-async function shareChatTables(key: string, tables: string[][][]) {
+async function shareChatAnswer(key: string, md: string) {
   if (key === 'copy') {
-    await navigator.clipboard.writeText(tablesAsText(tables));
-    antMessage.success('Copied — paste straight into Excel or an email');
+    await navigator.clipboard.writeText(answerAsText(md));
+    antMessage.success('Full answer copied — tables paste into Excel as cells');
   } else if (key === 'markdown') {
-    await navigator.clipboard.writeText(tablesAsMarkdown(tables));
+    await navigator.clipboard.writeText(md);
     antMessage.success('Copied as Markdown');
   } else if (key === 'email') {
-    const body = tablesAsText(tables);
+    const body = answerAsText(md);
     const a = document.createElement('a');
     a.href = `mailto:?subject=${encodeURIComponent('Re-ERP report')}&body=${encodeURIComponent(body.slice(0, 1800))}`;
     a.click();
     if (body.length > 1800) {
       await navigator.clipboard.writeText(body);
-      antMessage.info('Table is long — the full version is on your clipboard, paste it into the email');
+      antMessage.info('Answer is long — the full version is on your clipboard, paste it into the email');
     }
   } else if (key === 'folder') {
     const eAPI = eFileApi();
@@ -318,7 +374,7 @@ async function shareChatTables(key: string, tables: string[][][]) {
     const sel = await eAPI.selectFolder();
     const folder = typeof sel === 'string' ? sel : sel?.folderPath || sel?.filePaths?.[0];
     if (!folder) return;
-    const buf = await buildTablesWorkbook(tables);
+    const buf = await buildAnswerWorkbook(md);
     await eAPI.saveFileToFolder(buf, folder, `report-${chatFileStamp()}.xlsx`);
     antMessage.success('Excel file saved to the selected folder');
   }
@@ -360,9 +416,9 @@ const MsgBubble = React.memo(function MsgBubble({ m }: { m: ChatMsg }) {
         {tables.length > 0 && (
           <div className="cc-tblactions">
             <Button size="small" icon={<FileExcelOutlined style={{ color: '#1D7B4D' }} />}
-              onClick={() => exportChatTablesExcel(tables)}>Excel</Button>
+              onClick={() => exportChatAnswerExcel(m.text)}>Excel</Button>
             <Button size="small" icon={<FilePdfOutlined style={{ color: '#C74634' }} />}
-              onClick={() => exportChatTablesPdf(tables)}>PDF</Button>
+              onClick={() => exportChatAnswerPdf(m.text)}>PDF</Button>
             <Dropdown
               trigger={['click']}
               menu={{
@@ -372,7 +428,7 @@ const MsgBubble = React.memo(function MsgBubble({ m }: { m: ChatMsg }) {
                   { key: 'email', icon: <MailOutlined />, label: 'Email…' },
                   { key: 'folder', icon: <FolderOpenOutlined />, label: 'Save Excel to folder…' },
                 ],
-                onClick: ({ key }) => { shareChatTables(key, tables); },
+                onClick: ({ key }) => { shareChatAnswer(key, m.text); },
               }}
             >
               <Button size="small" icon={<ShareAltOutlined />}>Share</Button>
