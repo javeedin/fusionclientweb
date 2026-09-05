@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeChatCancel: ()           => ipcRenderer.invoke('claude-chat:cancel'),
   claudeChatOpenWorkspace: ()    => ipcRenderer.invoke('claude-chat:open-workspace'),
   claudeChatCatalog: ()          => ipcRenderer.invoke('claude-chat:catalog'),
+  claudeChatRecipes: (opts)      => ipcRenderer.invoke('claude-chat:recipes', opts),
   claudeChatListFiles: ()        => ipcRenderer.invoke('claude-chat:list-files'),
   claudeChatReadFile: (relPath)  => ipcRenderer.invoke('claude-chat:read-file', { relPath }),
   claudeChatOpenFile: (relPath)  => ipcRenderer.invoke('claude-chat:open-file', { relPath }),

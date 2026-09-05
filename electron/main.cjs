@@ -1316,6 +1316,35 @@ ipcMain.handle('claude-chat:open-file', async (_event, { relPath } = {}) => {
   } catch (e) { return { success: false, error: e.message }; }
 });
 
+// AI training recipes fetched from the MAIN process — immune to whatever
+// blocks the renderer's cross-origin fetch (CSP, interceptors, CORS).
+ipcMain.handle('claude-chat:recipes', async (_event, opts = {}) => {
+  const base = String((opts && opts.apexBaseUrl) || '').replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(base)) return { success: false, error: 'No APEX base URL provided' };
+  const url = `${base}/ai/training`;
+  const attempt = async (headers) => {
+    const res = await fetch(url, { headers: { Accept: 'application/json', ...headers } });
+    return { res, text: await res.text() };
+  };
+  try {
+    let { res, text } = await attempt({});
+    if (res.status === 401 || res.status === 403) {
+      const creds = claudeCli.readGlCreds();
+      if (creds.username && creds.password) {
+        ({ res, text } = await attempt({
+          Authorization: 'Basic ' + Buffer.from(`${creds.username}:${creds.password}`).toString('base64'),
+        }));
+      }
+    }
+    if (!res.ok) return { success: false, url, error: `HTTP ${res.status} · ${text.slice(0, 300)}` };
+    let items = [];
+    try { items = JSON.parse(text).items || []; } catch { return { success: false, url, error: 'Response was not JSON' }; }
+    return { success: true, url, items };
+  } catch (e) {
+    return { success: false, url, error: e.message };
+  }
+});
+
 // ── MCP bridge for the in-app AI Assistant ─────────────────────────────────
 const mcpBridge = require('./mcp-bridge.cjs');
 

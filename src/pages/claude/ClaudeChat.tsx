@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
 import { getCurrentCompany } from '../../config/company.config';
 import { getFusionInstanceUrl } from '../../config/api.helper';
-import { fetchAllTrainingRecipes, fetchTrainingRecipes, getTrainingDebug } from '../../components/ai/aiTraining';
+import { fetchTrainingRecipes } from '../../components/ai/aiTraining';
 import type { RecipeParam, TrainingRecipe } from '../../components/ai/aiTraining';
 
 const { Text } = Typography;
@@ -43,6 +43,7 @@ interface ChatApi {
   claudeChatCancel: () => Promise<{ success: boolean }>;
   claudeChatOpenWorkspace?: () => Promise<{ success: boolean }>;
   claudeChatCatalog?: () => Promise<{ success: boolean; markdown: string }>;
+  claudeChatRecipes?: (opts: { apexBaseUrl: string }) => Promise<{ success: boolean; items?: Record<string, unknown>[]; error?: string; url?: string }>;
   claudeChatListFiles?: () => Promise<{ success: boolean; files: WsFile[] }>;
   claudeChatReadFile?: (relPath: string) => Promise<{ success: boolean; base64?: string; name?: string; error?: string }>;
   claudeChatOpenFile?: (relPath: string) => Promise<{ success: boolean }>;
@@ -130,6 +131,25 @@ interface ParamTarget { title: string; method: string; path: string; params: Rec
 // One row of the "/" popup — a training recipe or a catalog endpoint
 interface SlashItem { kind: 'recipe' | 'endpoint'; label: string; sub?: string; params?: string; recipe?: TrainingRecipe; trained?: boolean }
 
+// Map a raw /ai/training row (camelCase keys, JSON strings for params/example)
+const parseJsonSafe = <T,>(s: unknown, fallback: T): T => {
+  if (typeof s !== 'string' || !s.trim()) return fallback;
+  try { return JSON.parse(s) as T; } catch { return fallback; }
+};
+const mapRecipeRow = (r: Record<string, unknown>): TrainingRecipe => ({
+  recipeId: r.recipeId as number,
+  recipeName: String(r.recipeName || ''),
+  description: r.description as string | undefined,
+  module: r.module as string | undefined,
+  method: String(r.method || 'GET'),
+  urlTemplate: String(r.urlTemplate || ''),
+  params: parseJsonSafe<RecipeParam[]>(r.paramsJson, []),
+  example: parseJsonSafe<Record<string, string>>(r.exampleJson, {}),
+  appPath: r.appPath as string | undefined,
+  enabled: r.enabled as string | undefined,
+  createdBy: r.createdBy as string | undefined,
+});
+
 // Normalize a path/template for comparison: strip origin, query, trailing "/"
 function normPath(t: string): string {
   let s = String(t || '').trim();
@@ -178,24 +198,31 @@ const ClaudeChat: React.FC = () => {
   // load recipes with diagnostics: the debug record says exactly what
   // /ai/training answered, so an empty list is never a silent mystery
   const loadRecipes = useCallback(async (): Promise<TrainingRecipe[]> => {
-    // plain GET first — works on every deployed version of the ai/training
-    // handler (an older handler without the :all bind rejects ?all=Y with 400)
+    // main-process fetch first (same network path as the workspace's
+    // call-api script, which is known to work), renderer fetch as fallback
     let list: TrainingRecipe[] = [];
-    try { list = await fetchTrainingRecipes(true); } catch { /* fall through */ }
-    let dbgText = '';
+    let err = '';
+    try {
+      const r = await api?.claudeChatRecipes?.({ apexBaseUrl: buildCompanyCtx().apexBaseUrl });
+      if (r?.success && Array.isArray(r.items)) {
+        list = r.items.map(mapRecipeRow).filter(x => x.recipeName && x.urlTemplate && x.enabled !== 'N');
+        if (!list.length) err = `${r.url || '/ai/training'} → OK but 0 enabled recipes`;
+      } else if (r) {
+        err = `${r.url || '/ai/training'} → ${r.error || 'failed'}`;
+      }
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e);
+    }
     if (!list.length) {
       try {
-        list = (await fetchAllTrainingRecipes()).filter(r => r.enabled !== 'N');
-      } catch (e) {
-        dbgText = e instanceof Error ? e.message : String(e);
-      }
-      const dbg = getTrainingDebug();
-      if (dbg) dbgText = `${dbg.url} → ${dbg.status}${dbg.ok ? ` (${dbg.count} rows)` : ` · ${dbg.body.slice(0, 300)}`}`;
+        const viaRenderer = await fetchTrainingRecipes(true);
+        if (viaRenderer.length) { list = viaRenderer; err = ''; }
+      } catch { /* keep main-process error */ }
     }
     setRecipes(list);
-    setRecipeErr(list.length ? '' : (dbgText || 'no response recorded'));
+    setRecipeErr(list.length ? '' : (err || 'no recipes returned'));
     return list;
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     api?.claudeCliStatus?.().then(s => setCliOk(!!s?.installed)).catch(() => setCliOk(null));
@@ -544,6 +571,13 @@ const ClaudeChat: React.FC = () => {
         .cc-ep-param{color:#8a5a2b}
         .cc-ep-badge{display:inline-block;margin-left:5px;color:#C79A34;font-weight:700}
         .cc-ep-tick{display:inline-block;margin-left:5px;color:#1D7B4D;font-weight:700}
+        .cc-recipe{display:block;width:100%;text-align:left;border:none;background:none;padding:5px 8px;border-radius:8px;cursor:pointer}
+        .cc-recipe:hover{background:#F6EEEC}
+        .cc-recipe-name{display:block;font-size:12px;font-weight:600;color:#3A3632}
+        .cc-recipe-sub{display:block;font-family:Consolas,monospace;font-size:10.5px;color:#8B2F22;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .cc-recipe-params{display:block;font-family:Consolas,monospace;font-size:10px;color:#9a908c;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .cc-params{background:#fff;border:1px solid #EAD2CC;border-radius:10px;padding:10px 12px;box-shadow:0 -2px 10px rgba(199,70,52,.06)}
         .cc-params-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:600;color:#3A3632}
         .cc-params-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
@@ -633,7 +667,7 @@ const ClaudeChat: React.FC = () => {
       <div className="cc-body">
         {/* ── Section 1: history + endpoints ── */}
         <div className="cc-side">
-          <div className="cc-panel" style={{ flex: '0 0 auto', maxHeight: '42%' }}>
+          <div className="cc-panel" style={{ flex: '0 0 auto', maxHeight: '28%' }}>
             <div className="cc-panel-head">
               Chats ({convs.length})
               <span style={{ flex: 1 }} />
@@ -660,27 +694,6 @@ const ClaudeChat: React.FC = () => {
             <div style={{ padding: '6px 8px 0' }}>
               <Input size="small" prefix={<SearchOutlined />} placeholder="Filter endpoints" allowClear
                 value={epSearch} onChange={e => setEpSearch(e.target.value)} />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 2px 0' }}>
-                {recipeErr ? (
-                  <Tooltip title={<span style={{ fontSize: 11, wordBreak: 'break-all' }}>{recipeErr}</span>}>
-                    <Text type="danger" style={{
-                      fontSize: 10.5, flex: 1, cursor: 'help', overflow: 'hidden',
-                      textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block',
-                    }}>
-                      ⚠ recipes: {recipeErr}
-                    </Text>
-                  </Tooltip>
-                ) : (
-                  <Text type="secondary" style={{ fontSize: 10.5, flex: 1 }}>
-                    {recipes.length} training recipe{recipes.length === 1 ? '' : 's'} loaded
-                  </Text>
-                )}
-                <Tooltip title="Reload training recipes">
-                  <Button size="small" type="text" style={{ height: 18, width: 18, minWidth: 18 }}
-                    icon={<ReloadOutlined style={{ fontSize: 10 }} />}
-                    onClick={() => loadRecipes().catch(e => setRecipeErr(String(e)))} />
-                </Tooltip>
-              </div>
             </div>
             <div className="cc-panel-body">
               {filteredCatalog.map(g => (
@@ -714,6 +727,38 @@ const ClaudeChat: React.FC = () => {
               {!filteredCatalog.length && <Text type="secondary" style={{ fontSize: 12, padding: 8, display: 'block' }}>
                 {catalog.length ? 'No matches' : 'Catalog loads after the first workspace start'}
               </Text>}
+            </div>
+          </div>
+
+          <div className="cc-panel" style={{ flex: '0 0 auto', maxHeight: '34%' }}>
+            <div className="cc-panel-head">
+              <ThunderboltOutlined /> AI Training ({recipes.length})
+              <span style={{ flex: 1 }} />
+              <Tooltip title="Reload training recipes">
+                <Button size="small" type="text" icon={<ReloadOutlined />}
+                  onClick={() => loadRecipes().catch(e => setRecipeErr(String(e)))} />
+              </Tooltip>
+            </div>
+            <div className="cc-panel-body">
+              {!!recipeErr && (
+                <Text type="danger" style={{ fontSize: 10.5, padding: '4px 6px', display: 'block', wordBreak: 'break-all' }}>
+                  ⚠ {recipeErr}
+                </Text>
+              )}
+              {recipes.map(r => (
+                <button key={r.recipeId ?? r.recipeName} className="cc-recipe" onClick={() => pickRecipe(r)}>
+                  <span className="cc-recipe-name">{r.recipeName}<span className="cc-ep-tick">✓</span></span>
+                  <span className="cc-recipe-sub">{(r.method || 'GET').toUpperCase()} {r.urlTemplate}</span>
+                  {!!(r.params || []).length && (
+                    <span className="cc-recipe-params">{(r.params || []).map(p => p.name + (p.required ? '*' : '')).join(', ')}</span>
+                  )}
+                </button>
+              ))}
+              {!recipes.length && !recipeErr && (
+                <Text type="secondary" style={{ fontSize: 12, padding: 8, display: 'block' }}>
+                  No training recipes yet — teach one from any page's "Teach AI" button.
+                </Text>
+              )}
             </div>
           </div>
         </div>
