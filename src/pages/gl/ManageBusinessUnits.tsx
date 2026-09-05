@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Breadcrumb, Button, Card, Divider, Form, Input, Modal, Select, Space, Switch,
   Table, Tabs, Tag, Tooltip, Typography, message,
@@ -13,6 +13,12 @@ import { useAuth } from '../../context/AuthContext';
 
 const { Title, Text } = Typography;
 const APEX = APEX_DB_CONFIG.baseUrl;
+
+// Endpoints:
+//   BUs:            GET/POST gl/businessunits      (existing — POST is the sync-style {items:[...]} upsert)
+//   Legal entities: GET/POST gl/legalentities      (existing — same style)
+//   Ledgers:        GET gl/setup/ledgers, POST gl/ledgers/create (patch 129)
+// Manual records get ids generated client-side in the reserved 900000001+ range.
 
 interface BusinessUnit {
   businessUnitId: number;
@@ -48,7 +54,49 @@ interface Ledger {
   creationDate?: string;
 }
 
-const getItems = async <T,>(url: string): Promise<T[]> => {
+type Raw = Record<string, unknown>;
+const s = (v: unknown): string | undefined => (v === null || v === undefined ? undefined : String(v));
+const n = (v: unknown): number | undefined => (v === null || v === undefined || v === '' ? undefined : Number(v));
+const fmtTs = (v: unknown): string | undefined => {
+  const t = s(v);
+  return t ? t.replace('T', ' ').slice(0, 16) : undefined;
+};
+
+const mapBu = (i: Raw): BusinessUnit => ({
+  businessUnitId: n(i.business_unit_id ?? i.businessUnitId) ?? 0,
+  businessUnitName: s(i.business_unit_name ?? i.businessUnitName) ?? '',
+  company: s(i.company ?? i.Company),
+  activeFlag: s(i.active_flag ?? i.activeFlag),
+  profitCenterFlag: s(i.profit_center_flag ?? i.profitCenterFlag),
+  legalEntityId: n(i.legal_entity_id ?? i.legalEntityId),
+  legalEntityName: s(i.legal_entity_name ?? i.legalEntityName),
+  primaryLedgerId: n(i.primary_ledger_id ?? i.primaryLedgerId),
+  ledger: s(i.ledger ?? i.Ledger),
+  createdBy: s(i.created_by ?? i.createdBy),
+  creationDate: fmtTs(i.creation_date ?? i.creationDate),
+  syncDate: fmtTs(i.sync_date ?? i.syncDate),
+});
+
+const mapLe = (i: Raw): LegalEntity => ({
+  legalEntityId: n(i.legal_entity_id ?? i.legalEntityId) ?? 0,
+  name: s(i.name ?? i.Name) ?? '',
+  legalEntityIdentifier: s(i.legal_entity_identifier ?? i.legalEntityIdentifier),
+  createdBy: s(i.created_by ?? i.createdBy),
+  creationDate: fmtTs(i.creation_date ?? i.creationDate),
+  syncDate: fmtTs(i.sync_date ?? i.syncDate),
+});
+
+const mapLedger = (i: Raw): Ledger => ({
+  ledgerId: n(i.ledger_id ?? i.ledgerId) ?? 0,
+  ledgerName: s(i.ledger_name ?? i.ledgerName) ?? '',
+  description: s(i.description),
+  currencyCode: s(i.currency_code ?? i.currencyCode),
+  ledgerCategoryCode: s(i.ledger_category_code ?? i.ledgerCategoryCode),
+  createdBy: s(i.created_by ?? i.createdBy),
+  creationDate: fmtTs(i.creation_date ?? i.creationDate),
+});
+
+const getItems = async (url: string): Promise<Raw[]> => {
   const res = await fetch(url, { cache: 'no-store', headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
@@ -61,12 +109,23 @@ const postJson = async (url: string, body: unknown): Promise<{ ok: boolean; mess
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
   });
-  const data = await res.json().catch(() => ({}));
+  const text = await res.text();
+  let data: { status?: string; success?: boolean; message?: string; businessUnitId?: number; legalEntityId?: number; ledgerId?: number } = {};
+  try { data = JSON.parse(text); } catch { /* non-JSON */ }
+  const ok = res.ok && data.status !== 'error' && data.success !== false;
   return {
-    ok: res.ok && data.success !== false,
-    message: data.message || (res.ok ? 'Saved' : `HTTP ${res.status}`),
+    ok,
+    message: data.message || (ok ? 'Saved' : `HTTP ${res.status}: ${text.slice(0, 200)}`),
     id: data.businessUnitId ?? data.legalEntityId ?? data.ledgerId,
   };
+};
+
+// Manual ids live in a reserved range so they never collide with Fusion ids
+const MANUAL_MIN = 900000001;
+const MANUAL_MAX = 999999999;
+const nextManualId = (ids: (number | undefined)[]): number => {
+  const inRange = ids.filter((v): v is number => v !== undefined && v >= MANUAL_MIN && v <= MANUAL_MAX);
+  return inRange.length ? Math.max(...inRange) + 1 : MANUAL_MIN;
 };
 
 const ManageBusinessUnits: React.FC = () => {
@@ -93,45 +152,64 @@ const ManageBusinessUnits: React.FC = () => {
   const loadBus = useCallback(async () => {
     setLoading(true);
     try {
-      const p = new URLSearchParams();
-      if (search) p.set('search', search);
-      if (activeFilter) p.set('active', activeFilter);
-      setBus(await getItems<BusinessUnit>(`${APEX}/gl/businessunits/list?${p.toString()}`));
+      setBus((await getItems(`${APEX}/gl/businessunits`)).map(mapBu));
     } catch (e) {
       message.error(`Could not load business units: ${e instanceof Error ? e.message : e}`);
     } finally {
       setLoading(false);
     }
-  }, [search, activeFilter]);
+  }, []);
 
   const loadPickers = useCallback(async () => {
     try {
       const [leList, ledgerList] = await Promise.all([
-        getItems<LegalEntity>(`${APEX}/gl/setup/legalentities`),
-        getItems<Ledger>(`${APEX}/gl/setup/ledgers`),
+        getItems(`${APEX}/gl/legalentities`),
+        getItems(`${APEX}/gl/setup/ledgers`),
       ]);
-      setLes(leList);
-      setLedgers(ledgerList);
+      setLes(leList.map(mapLe));
+      setLedgers(ledgerList.map(mapLedger));
     } catch { /* pickers load lazily — surfaced when dialogs open */ }
   }, []);
 
   useEffect(() => { loadBus(); }, [loadBus]);
   useEffect(() => { loadPickers(); }, [loadPickers]);
 
+  // live client-side filtering (the existing GET has no filter parameters)
+  const filteredBus = useMemo(() => bus.filter(b =>
+    (!search || b.businessUnitName.toUpperCase().includes(search.toUpperCase())) &&
+    (!activeFilter || (b.activeFlag ?? 'Y').toUpperCase() === activeFilter),
+  ), [bus, search, activeFilter]);
+
   // ── create handlers ────────────────────────────────────────────────────────
   const createLegalEntity = async () => {
     const v = await leForm.validateFields();
+    const dup = les.some(le => le.name.toUpperCase() === String(v.name).trim().toUpperCase());
+    if (dup) { message.error(`Legal entity "${v.name}" already exists`); return; }
+    const newId = nextManualId(les.map(le => le.legalEntityId));
     setSaving(true);
-    const r = await postJson(`${APEX}/gl/legalentities/create`, {
-      name: v.name, legalEntityIdentifier: v.identifier, createdBy: currentUser,
+    // existing sync-style POST: {items:[{PascalCase fields}]}
+    const r = await postJson(`${APEX}/gl/legalentities`, {
+      items: [{
+        LegalEntityId: newId,
+        Name: String(v.name).trim(),
+        LegalEntityIdentifier: v.identifier || null,
+        EffectiveFrom: null,
+        EffectiveTo: null,
+        PartyId: null,
+        CreatedBy: currentUser,
+        CreationDate: new Date().toISOString(),
+        LastUpdateDate: null,
+        LastUpdateLogin: null,
+        LastUpdatedBy: null,
+      }],
     });
     setSaving(false);
     if (!r.ok) { message.error(r.message); return; }
-    message.success(`Legal entity created (id ${r.id})`);
+    message.success(`Legal entity created (id ${newId})`);
     setLeOpen(false);
     leForm.resetFields();
     await loadPickers();
-    if (buOpen && r.id) buForm.setFieldValue('legalEntityId', r.id);
+    if (buOpen) buForm.setFieldValue('legalEntityId', newId);
   };
 
   const createLedger = async () => {
@@ -151,22 +229,35 @@ const ManageBusinessUnits: React.FC = () => {
 
   const createBusinessUnit = async () => {
     const v = await buForm.validateFields();
+    const dup = bus.some(b => b.businessUnitName.toUpperCase() === String(v.businessUnitName).trim().toUpperCase());
+    if (dup) { message.error(`Business unit "${v.businessUnitName}" already exists`); return; }
     const le = les.find(x => x.legalEntityId === v.legalEntityId);
     const ldg = ledgers.find(x => x.ledgerId === v.primaryLedgerId);
+    const newId = nextManualId(bus.map(b => b.businessUnitId));
     setSaving(true);
-    const r = await postJson(`${APEX}/gl/businessunits/create`, {
-      businessUnitName: v.businessUnitName,
-      company: v.company,
-      legalEntityId: v.legalEntityId,
-      legalEntityName: le?.name || '',
-      primaryLedgerId: v.primaryLedgerId,
-      ledger: ldg?.ledgerName || '',
-      profitCenterFlag: v.profitCenterFlag ? 'Y' : 'N',
-      createdBy: currentUser,
+    // existing sync-style POST: {items:[{PascalCase fields}]}; the extra
+    // name/audit fields are included for handlers that map them and are
+    // ignored otherwise
+    const r = await postJson(`${APEX}/gl/businessunits`, {
+      items: [{
+        BusinessUnitId: newId,
+        BusinessUnitName: String(v.businessUnitName).trim(),
+        ActiveFlag: 'Y',
+        PrimaryLedgerId: v.primaryLedgerId,
+        LocationId: null,
+        ManagerId: null,
+        LegalEntityId: v.legalEntityId,
+        ProfitCenterFlag: v.profitCenterFlag ? 'Y' : 'N',
+        Company: v.company,
+        LegalEntityName: le?.name || '',
+        Ledger: ldg?.ledgerName || '',
+        CreatedBy: currentUser,
+        CreationDate: new Date().toISOString(),
+      }],
     });
     setSaving(false);
     if (!r.ok) { message.error(r.message); return; }
-    message.success(`Business unit created (id ${r.id})`);
+    message.success(`Business unit created (id ${newId})`);
     setBuOpen(false);
     buForm.resetFields();
     loadBus();
@@ -237,7 +328,7 @@ const ManageBusinessUnits: React.FC = () => {
           items={[
             {
               key: 'bus',
-              label: <span><ApartmentOutlined /> Business Units ({bus.length})</span>,
+              label: <span><ApartmentOutlined /> Business Units ({filteredBus.length})</span>,
               children: (
                 <>
                   <Space style={{ marginBottom: 12 }} wrap>
@@ -248,7 +339,6 @@ const ManageBusinessUnits: React.FC = () => {
                       style={{ width: 260 }}
                       value={search}
                       onChange={e => setSearch(e.target.value)}
-                      onPressEnter={loadBus}
                     />
                     <Select
                       placeholder="Active?"
@@ -258,7 +348,6 @@ const ManageBusinessUnits: React.FC = () => {
                       onChange={setActiveFilter}
                       options={[{ value: 'Y', label: 'Active' }, { value: 'N', label: 'Inactive' }]}
                     />
-                    <Button icon={<SearchOutlined />} onClick={loadBus}>Search</Button>
                     <Tooltip title="Reload"><Button icon={<ReloadOutlined />} onClick={() => { loadBus(); loadPickers(); }} /></Tooltip>
                     <Button type="primary" icon={<PlusOutlined />} onClick={() => { setBuOpen(true); loadPickers(); }}>
                       Create Business Unit
@@ -269,7 +358,7 @@ const ManageBusinessUnits: React.FC = () => {
                     rowKey="businessUnitId"
                     loading={loading}
                     columns={buCols}
-                    dataSource={bus}
+                    dataSource={filteredBus}
                     scroll={{ x: 'max-content' }}
                     pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `${t} business units` }}
                   />
