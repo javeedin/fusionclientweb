@@ -125,10 +125,17 @@ function getEpParams(p: string): string[] {
 
 // What the parameter form is collecting values for: a catalog endpoint or a
 // training recipe (method + URL template + declared parameters).
-interface ParamTarget { title: string; method: string; path: string; params: RecipeParam[] }
+interface ParamTarget { title: string; method: string; path: string; params: RecipeParam[]; trained?: boolean }
 
 // One row of the "/" popup — a training recipe or a catalog endpoint
-interface SlashItem { kind: 'recipe' | 'endpoint'; label: string; sub?: string; recipe?: TrainingRecipe }
+interface SlashItem { kind: 'recipe' | 'endpoint'; label: string; sub?: string; recipe?: TrainingRecipe; trained?: boolean }
+
+// Normalize a path/template for comparison: strip origin, query, trailing "/"
+function normPath(t: string): string {
+  let s = String(t || '').trim();
+  try { if (/^https?:/i.test(s)) s = new URL(s).pathname; } catch { /* keep as-is */ }
+  return s.split('?')[0].replace(/\/+$/, '');
+}
 
 // ── xlsx preview data ───────────────────────────────────────────────────────
 interface SheetPreview { name: string; rows: (string | number)[][] }
@@ -273,19 +280,28 @@ const ClaudeChat: React.FC = () => {
   // A training recipe that targets this endpoint (its URL template's path
   // matches) — its declared params give the search panel real labeled fields.
   const recipeForEndpoint = (p: string, list: TrainingRecipe[]): TrainingRecipe | undefined => {
-    const pathOf = (t: string) => {
-      let s = String(t || '').trim();
-      try { if (/^https?:/i.test(s)) s = new URL(s).pathname; } catch { /* keep as-is */ }
-      return s.split('?')[0].replace(/\/+$/, '');
-    };
-    const target = pathOf(p);
+    const target = normPath(p);
     if (!target) return undefined;
     const matches = list.filter(r => {
-      const rp = pathOf(r.urlTemplate);
+      const rp = normPath(r.urlTemplate);
       return rp === target || rp.endsWith(target);
     });
     return matches.find(r => (r.method || 'GET').toUpperCase() === 'GET') || matches[0];
   };
+
+  // catalog paths that have a training recipe — shown with a "Trained ✓" flag
+  const trainedSet = useMemo(() => {
+    const rps = recipes.map(r => normPath(r.urlTemplate)).filter(Boolean);
+    const s = new Set<string>();
+    if (!rps.length) return s;
+    for (const g of catalog) {
+      for (const p of g.paths) {
+        const np = normPath(p);
+        if (np && rps.some(rp => rp === np || rp.endsWith(np))) s.add(p);
+      }
+    }
+    return s;
+  }, [recipes, catalog]);
 
   // the search panel: works for ANY endpoint — a matching training recipe's
   // declared parameters when one exists, else placeholders (if any) plus
@@ -306,9 +322,10 @@ const ClaudeChat: React.FC = () => {
     setExtraRows([]);
   };
 
-  // endpoint click: parameterized paths open the fill-in form, plain ones go straight to the input
+  // endpoint click: trained or parameterized paths open the fill-in form,
+  // plain ones go straight to the input
   const clickEndpoint = (p: string) => {
-    if (getEpParams(p).length) {
+    if (trainedSet.has(p) || getEpParams(p).length) {
       openEndpointForm(p);
     } else {
       setParamTarget(null);
@@ -323,7 +340,7 @@ const ClaudeChat: React.FC = () => {
     const method = (r.method || 'GET').toUpperCase();
     const params: RecipeParam[] = [...(r.params || [])];
     getEpParams(r.urlTemplate).forEach(n => { if (!params.some(p => p.name === n)) params.push({ name: n }); });
-    setParamTarget({ title: `${r.recipeName} — ${method} ${r.urlTemplate}`, method, path: r.urlTemplate, params });
+    setParamTarget({ title: `${r.recipeName} — ${method} ${r.urlTemplate}`, method, path: r.urlTemplate, params, trained: true });
     setParamVals({});
     setParamQuery('');
     setExtraRows([]);
@@ -388,11 +405,11 @@ const ClaudeChat: React.FC = () => {
     for (const g of catalog) {
       for (const p of g.paths) {
         if (epCount >= 40) break;
-        if (match(p)) { items.push({ kind: 'endpoint', label: p, sub: g.group }); epCount++; }
+        if (match(p)) { items.push({ kind: 'endpoint', label: p, sub: g.group, trained: trainedSet.has(p) }); epCount++; }
       }
     }
     return items;
-  }, [slashOpen, input, recipes, catalog]);
+  }, [slashOpen, input, recipes, catalog, trainedSet]);
   useEffect(() => { setSlashIdx(0); }, [input]);
   useEffect(() => {
     document.getElementById(`cc-slash-${slashIdx}`)?.scrollIntoView({ block: 'nearest' });
@@ -499,6 +516,7 @@ const ClaudeChat: React.FC = () => {
         .cc-ep-gear:hover{color:#C74634;background:#F6EEEC}
         .cc-ep-param{color:#8a5a2b}
         .cc-ep-badge{display:inline-block;margin-left:5px;color:#C79A34;font-weight:700}
+        .cc-ep-tick{display:inline-block;margin-left:5px;color:#1D7B4D;font-weight:700}
         .cc-params{background:#fff;border:1px solid #EAD2CC;border-radius:10px;padding:10px 12px;box-shadow:0 -2px 10px rgba(199,70,52,.06)}
         .cc-params-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:600;color:#3A3632}
         .cc-params-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
@@ -638,12 +656,19 @@ const ClaudeChat: React.FC = () => {
                   <div className="cc-epgroup">{g.group}</div>
                   {g.paths.map(p => {
                     const hasParams = getEpParams(p).length > 0;
+                    const trained = trainedSet.has(p);
                     return (
                       <div key={p} className="cc-ep-row">
                         <Tooltip placement="right" mouseEnterDelay={0.6}
-                          title={hasParams ? `Has parameters — click to fill them in and run GET ${p}` : `Click to ask Claude to run GET ${p}`}>
+                          title={trained
+                            ? `Trained ✓ — click to open the search panel with this recipe's parameters`
+                            : hasParams
+                              ? `Has parameters — click to fill them in and run GET ${p}`
+                              : `Click to ask Claude to run GET ${p}`}>
                           <button className={`cc-ep${hasParams ? ' cc-ep-param' : ''}`} onClick={() => clickEndpoint(p)}>
-                            {p}{hasParams && <span className="cc-ep-badge">⋯</span>}
+                            {p}
+                            {trained && <span className="cc-ep-tick">✓</span>}
+                            {!trained && hasParams && <span className="cc-ep-badge">⋯</span>}
                           </button>
                         </Tooltip>
                         <Tooltip title="Open the search panel to enter parameters" placement="right">
@@ -712,6 +737,7 @@ const ClaudeChat: React.FC = () => {
               <div className="cc-params-head">
                 <ApiOutlined style={{ color: '#C74634' }} />
                 <code style={{ fontSize: 12 }}>{paramTarget.title}</code>
+                {paramTarget.trained && <Tag color="green" style={{ fontSize: 10, lineHeight: '16px', margin: 0 }}>Trained ✓</Tag>}
                 <span style={{ flex: 1 }} />
                 <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setParamTarget(null)} />
               </div>
@@ -799,7 +825,7 @@ const ClaudeChat: React.FC = () => {
                     onMouseEnter={() => setSlashIdx(i)}
                   >
                     <span className={`cc-slash-kind ${it.kind}`}>{it.kind === 'recipe' ? 'RECIPE' : 'API'}</span>
-                    <span className="cc-slash-label">{it.label}</span>
+                    <span className="cc-slash-label">{it.label}{it.trained && <span className="cc-ep-tick">✓</span>}</span>
                     {it.sub && <span className="cc-slash-sub">{it.sub}</span>}
                   </div>
                 ))}
