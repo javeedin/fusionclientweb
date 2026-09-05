@@ -1354,6 +1354,27 @@ ipcMain.handle('claude-chat:recipes', async (_event, opts = {}) => {
   }
 });
 
+// Lists of values for the search panel (business units, ledgers, companies) —
+// same authenticated main-process fetch, restricted to these read-only paths.
+const CHAT_LOV_PATHS = ['gl/businessunits', 'gl/rr-trialbalance/ledgers', 'gl/rr-trialbalance/companies'];
+ipcMain.handle('claude-chat:lov', async (_event, opts = {}) => {
+  const base = String((opts && opts.apexBaseUrl) || '').replace(/\/+$/, '');
+  const p = String((opts && opts.path) || '').replace(/^\/+/, '');
+  if (!/^https?:\/\//i.test(base)) return { success: false, error: 'No APEX base URL provided' };
+  if (!CHAT_LOV_PATHS.includes(p)) return { success: false, error: `Path not allowed: ${p}` };
+  const url = `${base}/${p}`;
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/json', ...(await ordsToken.getOrdsAuthHeader()) } });
+    const text = await res.text();
+    if (!res.ok) return { success: false, url, error: `HTTP ${res.status}` };
+    let items = [];
+    try { items = JSON.parse(text).items || []; } catch { /* leave empty */ }
+    return { success: true, url, items };
+  } catch (e) {
+    return { success: false, url, error: e.message };
+  }
+});
+
 // ── MCP bridge for the in-app AI Assistant ─────────────────────────────────
 const mcpBridge = require('./mcp-bridge.cjs');
 

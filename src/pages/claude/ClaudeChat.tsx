@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Input, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
+import { Alert, Button, Card, DatePicker, Input, Select, Tabs, Tag, Tooltip, Typography, message as antMessage } from 'antd';
+import dayjs from 'dayjs';
 import {
   ApiOutlined, CloseOutlined, CodeOutlined, DeleteOutlined, ExportOutlined, EyeOutlined, FileExcelOutlined,
   FileTextOutlined, FilterOutlined, FolderOpenOutlined, MinusCircleOutlined, PlusOutlined, ReloadOutlined,
@@ -44,6 +45,7 @@ interface ChatApi {
   claudeChatOpenWorkspace?: () => Promise<{ success: boolean }>;
   claudeChatCatalog?: () => Promise<{ success: boolean; markdown: string }>;
   claudeChatRecipes?: (opts: { apexBaseUrl: string }) => Promise<{ success: boolean; items?: Record<string, unknown>[]; error?: string; url?: string }>;
+  claudeChatLov?: (opts: { apexBaseUrl: string; path: string }) => Promise<{ success: boolean; items?: Record<string, unknown>[]; error?: string }>;
   claudeChatListFiles?: () => Promise<{ success: boolean; files: WsFile[] }>;
   claudeChatReadFile?: (relPath: string) => Promise<{ success: boolean; base64?: string; name?: string; error?: string }>;
   claudeChatOpenFile?: (relPath: string) => Promise<{ success: boolean }>;
@@ -160,6 +162,22 @@ const mapRecipeRow = (raw: Record<string, unknown>): TrainingRecipe => {
   };
 };
 
+// Field-type detection for the search panel
+const isBuParam = (n: string) => /business_?unit/i.test(n) || /^bu$/i.test(n);
+const isLedgerParam = (n: string) => /ledger/i.test(n);
+const isCompanyParam = (n: string) => /company/i.test(n);
+const isDateParam = (n: string) => /date/i.test(n);
+// BU / ledger / company are always mandatory when the recipe has them
+const isForcedRequired = (n: string) => isBuParam(n) || isLedgerParam(n) || isCompanyParam(n);
+
+// Pull one display value out of a LOV row regardless of key casing
+const lovValue = (it: Record<string, unknown>, keys: string[]): string => {
+  const n: Record<string, unknown> = {};
+  Object.keys(it).forEach(k => { n[k.toLowerCase().replace(/_/g, '')] = it[k]; });
+  for (const k of keys) { const v = n[k]; if (v !== undefined && v !== null && v !== '') return String(v); }
+  return '';
+};
+
 // Normalize a path/template for comparison: strip origin, query, trailing "/"
 function normPath(t: string): string {
   let s = String(t || '').trim();
@@ -188,6 +206,9 @@ const ClaudeChat: React.FC = () => {
   const [extraRows, setExtraRows] = useState<{ k: string; v: string }[]>([]); // user-added query/body parameters
   const [recipes, setRecipes] = useState<TrainingRecipe[]>([]);
   const [recipeErr, setRecipeErr] = useState(''); // why /ai/training returned nothing
+  const [luBU, setLuBU] = useState<string[]>([]); // list-of-values for the search panel
+  const [luLedger, setLuLedger] = useState<string[]>([]);
+  const [luCompany, setLuCompany] = useState<string[]>([]);
   const [slashIdx, setSlashIdx] = useState(0);
   const [files, setFiles] = useState<WsFile[]>([]);
   const [previewFile, setPreviewFile] = useState<WsFile | null>(null);
@@ -238,11 +259,31 @@ const ClaudeChat: React.FC = () => {
     return list;
   }, [api]);
 
+  // business units / ledgers / companies fetched once at page open —
+  // they become dropdown lists of values in the search panel
+  const loadLovs = useCallback(async () => {
+    const apex = buildCompanyCtx().apexBaseUrl;
+    const get = async (path: string): Promise<Record<string, unknown>[]> => {
+      try {
+        const r = await api?.claudeChatLov?.({ apexBaseUrl: apex, path });
+        return r?.success && Array.isArray(r.items) ? r.items : [];
+      } catch { return []; }
+    };
+    const uniq = (a: string[]) => [...new Set(a.filter(Boolean))].sort();
+    const [bus, lgs, cos] = await Promise.all([
+      get('gl/businessunits'), get('gl/rr-trialbalance/ledgers'), get('gl/rr-trialbalance/companies'),
+    ]);
+    setLuBU(uniq(bus.map(it => lovValue(it, ['businessunitname', 'buname', 'name']))));
+    setLuLedger(uniq(lgs.map(it => lovValue(it, ['ledgername', 'ledger', 'name']))));
+    setLuCompany(uniq(cos.map(it => lovValue(it, ['company', 'companycode', 'companyname', 'segment1', 'name']))));
+  }, [api]);
+
   useEffect(() => {
     api?.claudeCliStatus?.().then(s => setCliOk(!!s?.installed)).catch(() => setCliOk(null));
     api?.claudeChatCatalog?.().then(r => { if (r?.success) setCatalog(parseCatalog(r.markdown)); }).catch(() => { /* ignore */ });
     loadRecipes().catch(e => setRecipeErr(e instanceof Error ? e.message : String(e)));
-  }, [api, loadRecipes]);
+    loadLovs();
+  }, [api, loadRecipes, loadLovs]);
 
   const refreshFiles = useCallback(async () => {
     const r = await api?.claudeChatListFiles?.();
@@ -397,6 +438,14 @@ const ClaudeChat: React.FC = () => {
 
   const runParamEp = () => {
     if (!paramTarget || busy) return;
+    // BU / ledger / company are hard-required whenever the recipe has them
+    const forcedMissing = paramTarget.params.filter(
+      p => isForcedRequired(p.name) && !(paramVals[p.name] || '').trim(),
+    );
+    if (forcedMissing.length) {
+      antMessage.warning(`Please select: ${forcedMissing.map(p => p.label || p.name).join(', ')}`);
+      return;
+    }
     let path = paramTarget.path;
     const missing: string[] = [];
     const extraPairs: [string, string][] = []; // filled params that are not URL placeholders
@@ -832,25 +881,51 @@ const ClaudeChat: React.FC = () => {
                 <span style={{ flex: 1 }} />
                 <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setParamTarget(null)} />
               </div>
-              {paramTarget.params.map((p, i) => (
-                <div key={p.name} className="cc-params-row">
-                  <span className="cc-params-name">{p.name}{p.required ? ' *' : ''}</span>
-                  <Input
-                    size="small"
-                    autoFocus={i === 0}
-                    placeholder={
-                      p.label || p.description
-                        ? `${p.label || p.description}${p.example ? ` — e.g. ${p.example}` : ''}`
-                        : p.example
-                          ? `e.g. ${p.example}`
-                          : `Value for {${p.name}} — leave blank to let Claude find it`
-                    }
-                    value={paramVals[p.name] || ''}
-                    onChange={e => setParamVals(prev => ({ ...prev, [p.name]: e.target.value }))}
-                    onPressEnter={runParamEp}
-                  />
-                </div>
-              ))}
+              {paramTarget.params.map((p, i) => {
+                const lov = isBuParam(p.name) ? luBU : isLedgerParam(p.name) ? luLedger : isCompanyParam(p.name) ? luCompany : null;
+                const required = p.required || isForcedRequired(p.name);
+                const placeholder = p.label || p.description
+                  ? `${p.label || p.description}${p.example ? ` — e.g. ${p.example}` : ''}`
+                  : p.example
+                    ? `e.g. ${p.example}`
+                    : `Value for {${p.name}} — leave blank to let Claude find it`;
+                const setVal = (v: string) => setParamVals(prev => ({ ...prev, [p.name]: v }));
+                return (
+                  <div key={p.name} className="cc-params-row">
+                    <span className="cc-params-name">{p.name}{required ? ' *' : ''}</span>
+                    {lov && lov.length ? (
+                      <Select
+                        size="small"
+                        style={{ flex: 1 }}
+                        showSearch
+                        allowClear
+                        placeholder={placeholder}
+                        value={paramVals[p.name] || undefined}
+                        onChange={v => setVal(v || '')}
+                        options={lov.map(x => ({ value: x, label: x }))}
+                      />
+                    ) : isDateParam(p.name) ? (
+                      <DatePicker
+                        size="small"
+                        style={{ flex: 1 }}
+                        format="YYYY-MM-DD"
+                        placeholder={placeholder}
+                        value={paramVals[p.name] ? dayjs(paramVals[p.name]) : null}
+                        onChange={d => setVal(d ? d.format('YYYY-MM-DD') : '')}
+                      />
+                    ) : (
+                      <Input
+                        size="small"
+                        autoFocus={i === 0}
+                        placeholder={placeholder}
+                        value={paramVals[p.name] || ''}
+                        onChange={e => setVal(e.target.value)}
+                        onPressEnter={runParamEp}
+                      />
+                    )}
+                  </div>
+                );
+              })}
               {!paramTarget.params.length && (
                 <Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginBottom: 6 }}>
                   This endpoint has no path parameters — add search filters below (e.g. date_from, date_to, status, row_limit).
