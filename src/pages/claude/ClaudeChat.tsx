@@ -19,7 +19,7 @@ import {
   SearchOutlined, SendOutlined, ShareAltOutlined, SnippetsOutlined, SoundOutlined, StopOutlined,
   SwapOutlined, TableOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
-import { speak, speakableText, stopSpeaking, transcribeBlob } from './claudeVoice';
+import { VOICE_LANGS, hasVoiceFor, speak, speakableText, stopSpeaking, transcribeBlob, voiceLangByCode } from './claudeVoice';
 import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
 import { getCurrentCompany } from '../../config/company.config';
@@ -653,6 +653,19 @@ const ClaudeChat: React.FC = () => {
   const cancelRecRef = useRef(false);
   const lastAssistantRef = useRef('');
   const startRecRef = useRef<() => void>(() => { /* set below */ });
+  const [voiceLang, setVoiceLang] = useState(() => {
+    try { return localStorage.getItem('reerp.claudechat.voicelang') || 'en'; } catch { return 'en'; }
+  });
+  const voiceLangRef = useRef(voiceLang);
+  useEffect(() => {
+    voiceLangRef.current = voiceLang;
+    try { localStorage.setItem('reerp.claudechat.voicelang', voiceLang); } catch { /* ignore */ }
+    if (voiceLang !== 'en' && !hasVoiceFor(voiceLang)) {
+      antMessage.warning(`Windows has no "${voiceLangByCode(voiceLang).name}" voice installed — answers will be in that language but may be read with an English voice. Add one under Windows Settings → Time & Language → Speech.`);
+    }
+  }, [voiceLang]);
+  const viaVoiceRef = useRef(false);      // the message being sent came from the mic
+  const questionVoiceRef = useRef(false); // the in-flight question came from the mic
 
   const stopRec = useCallback(() => {
     const r = recRef.current;
@@ -872,17 +885,19 @@ const ClaudeChat: React.FC = () => {
         setBusy(false);
         setLiveTool('');
         refreshFiles();
-        // voice conversation loop: speak the answer, then reopen the mic
-        if (voiceModeRef.current && lastAssistantRef.current.trim()) {
+        // talk back whenever the question was spoken (or voice mode is on);
+        // the hands-free mic reopen only happens in voice mode
+        if ((voiceModeRef.current || questionVoiceRef.current) && lastAssistantRef.current.trim()) {
           const t = speakableText(lastAssistantRef.current);
           if (t) {
             setSpeaking(true);
-            speak(t, () => {
+            speak(t, voiceLangRef.current, () => {
               setSpeaking(false);
               if (voiceModeRef.current) startRecRef.current();
             });
           }
         }
+        questionVoiceRef.current = false;
       }
     });
     return () => api.removeClaudeChatListeners();
@@ -904,6 +919,8 @@ const ClaudeChat: React.FC = () => {
     setInput('');
     setLastError('');
     lastAssistantRef.current = '';
+    questionVoiceRef.current = viaVoiceRef.current;
+    viaVoiceRef.current = false;
     stopSpeaking();
     setSpeaking(false);
     mutateConv(id, c => ({
@@ -927,6 +944,10 @@ const ClaudeChat: React.FC = () => {
           outbound += `\n\n(Context: the data currently shown in the app came from ${src} — the full result, ${d.rows.length} rows, is saved in the workspace file direct-result.json. Read that file (or query erp-data.db if the table exists) to answer/analyze instead of re-querying the API.)`;
         }
       } catch { /* send without context */ }
+    }
+    if (voiceLangRef.current !== 'en') {
+      const ln = voiceLangByCode(voiceLangRef.current).name;
+      outbound += `\n\n(Answer in ${ln}. Keep account codes, amounts, dates and technical identifiers unchanged.)`;
     }
     const r = await api.claudeChatSend({ text: outbound, sessionId, ctx: buildCompanyCtx() });
     if (!r.success) {
@@ -966,13 +987,13 @@ const ClaudeChat: React.FC = () => {
         if (blob.size < 2000) return; // silence / instant stop
         setTranscribing(true);
         try {
-          const text = await transcribeBlob(blob, p => {
+          const text = await transcribeBlob(blob, voiceLangRef.current, p => {
             if (p.status === 'progress' && typeof p.progress === 'number') {
               setVoiceProg(`Downloading voice model… ${Math.round(p.progress)}%`);
             }
           });
           setVoiceProg('');
-          if (text) send(text);
+          if (text) { viaVoiceRef.current = true; send(text); }
           else antMessage.info('Could not hear anything — try again closer to the mic');
         } catch (e) {
           setVoiceProg('');
@@ -1662,6 +1683,15 @@ const ClaudeChat: React.FC = () => {
             <Button icon={<SoundOutlined />} type={voiceMode ? 'primary' : 'default'}
               style={voiceMode ? { background: '#1D7B4D', borderColor: '#1D7B4D' } : undefined}
               onClick={() => setVoiceMode(v => !v)} />
+          </Tooltip>
+          <Tooltip title="Answer & voice language — Claude explains in this language, spoken with a matching Windows voice">
+            <Select
+              size="middle"
+              style={{ width: 120 }}
+              value={voiceLang}
+              onChange={setVoiceLang}
+              options={VOICE_LANGS.map(l => ({ value: l.code, label: l.label }))}
+            />
           </Tooltip>
           <Tooltip title="Open the workspace folder in Explorer">
             <Button icon={<FolderOpenOutlined />} onClick={() => api.claudeChatOpenWorkspace?.()} />
