@@ -12,13 +12,14 @@ import dayjs from 'dayjs';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-  ApiOutlined, BarChartOutlined, CaretRightOutlined, ClockCircleOutlined, CloseOutlined, CodeOutlined,
+  ApiOutlined, AudioOutlined, BarChartOutlined, CaretRightOutlined, ClockCircleOutlined, CloseOutlined, CodeOutlined,
   DatabaseOutlined, DeleteOutlined, ExportOutlined, EyeOutlined, FileExcelOutlined, FilePdfOutlined,
   FileTextOutlined, FilterOutlined, FolderOpenOutlined, FullscreenExitOutlined, FullscreenOutlined,
-  MailOutlined, MinusCircleOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, SearchOutlined,
-  SendOutlined, ShareAltOutlined, SnippetsOutlined, StopOutlined, SwapOutlined, TableOutlined,
-  ThunderboltOutlined,
+  MailOutlined, MinusCircleOutlined, PauseCircleOutlined, PlusOutlined, ReloadOutlined, SaveOutlined,
+  SearchOutlined, SendOutlined, ShareAltOutlined, SnippetsOutlined, SoundOutlined, StopOutlined,
+  SwapOutlined, TableOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
+import { speak, speakableText, stopSpeaking, transcribeBlob } from './claudeVoice';
 import { Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
 import { getCurrentCompany } from '../../config/company.config';
@@ -638,6 +639,39 @@ const ClaudeChat: React.FC = () => {
   const [directLoading, setDirectLoading] = useState(false);
   const [directSearch, setDirectSearch] = useState('');
   const [previewFull, setPreviewFull] = useState(false);
+
+  // ── voice conversation (local Whisper STT + OS speech synthesis) ──────────
+  const [voiceMode, setVoiceMode] = useState(() => {
+    try { return localStorage.getItem('reerp.claudechat.voice') === '1'; } catch { return false; }
+  });
+  const voiceModeRef = useRef(voiceMode);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [voiceProg, setVoiceProg] = useState(''); // model download status text
+  const recRef = useRef<{ rec: MediaRecorder; stream: MediaStream; ctx: AudioContext; timer: number } | null>(null);
+  const cancelRecRef = useRef(false);
+  const lastAssistantRef = useRef('');
+  const startRecRef = useRef<() => void>(() => { /* set below */ });
+
+  const stopRec = useCallback(() => {
+    const r = recRef.current;
+    if (!r) return;
+    recRef.current = null;
+    window.clearInterval(r.timer);
+    try { r.rec.stop(); } catch { /* already stopped */ }
+    r.stream.getTracks().forEach(t => t.stop());
+    r.ctx.close().catch(() => { /* ignore */ });
+    setRecording(false);
+  }, []);
+  const cancelRec = useCallback(() => { cancelRecRef.current = true; stopRec(); }, [stopRec]);
+
+  useEffect(() => {
+    voiceModeRef.current = voiceMode;
+    try { localStorage.setItem('reerp.claudechat.voice', voiceMode ? '1' : '0'); } catch { /* ignore */ }
+    if (!voiceMode) { stopSpeaking(); setSpeaking(false); cancelRec(); }
+  }, [voiceMode, cancelRec]);
+  useEffect(() => () => { stopSpeaking(); cancelRec(); }, [cancelRec]); // page unmount
   const directResultRef = useRef<PreviewEntry | null>(null);
   useEffect(() => { directResultRef.current = directResult; setDirectSearch(''); setDirectView('table'); }, [directResult]);
   const lastToolDetailRef = useRef(''); // titles AI-produced preview entries
@@ -799,6 +833,7 @@ const ClaudeChat: React.FC = () => {
         mutateConv(id, c => ({ ...c, sessionId: evt.sessionId! }));
       } else if (evt.kind === 'text' && evt.text) {
         setLiveTool('');
+        lastAssistantRef.current = lastAssistantRef.current ? `${lastAssistantRef.current}\n\n${evt.text}` : evt.text;
         mutateConv(id, c => {
           const msgsN = [...c.msgs];
           const last = msgsN[msgsN.length - 1];
@@ -837,6 +872,17 @@ const ClaudeChat: React.FC = () => {
         setBusy(false);
         setLiveTool('');
         refreshFiles();
+        // voice conversation loop: speak the answer, then reopen the mic
+        if (voiceModeRef.current && lastAssistantRef.current.trim()) {
+          const t = speakableText(lastAssistantRef.current);
+          if (t) {
+            setSpeaking(true);
+            speak(t, () => {
+              setSpeaking(false);
+              if (voiceModeRef.current) startRecRef.current();
+            });
+          }
+        }
       }
     });
     return () => api.removeClaudeChatListeners();
@@ -857,6 +903,9 @@ const ClaudeChat: React.FC = () => {
     }
     setInput('');
     setLastError('');
+    lastAssistantRef.current = '';
+    stopSpeaking();
+    setSpeaking(false);
     mutateConv(id, c => ({
       ...c,
       title: c.title || text.slice(0, 42),
@@ -885,6 +934,61 @@ const ClaudeChat: React.FC = () => {
       antMessage.error(r.error || 'Could not send');
     }
   }, [input, busy, api, convs, mutateConv]);
+
+  // push-to-talk with silence auto-stop: record → transcribe locally → send
+  const startRec = useCallback(async () => {
+    if (recRef.current || busy || transcribing) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+      const ctx = new AudioContext();
+      const srcNode = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      srcNode.connect(analyser);
+      const buf = new Float32Array(analyser.fftSize);
+      let spoke = false;
+      let silentMs = 0;
+      const startedAt = Date.now();
+      const timer = window.setInterval(() => {
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const rms = Math.sqrt(sum / buf.length);
+        if (rms > 0.015) { spoke = true; silentMs = 0; } else silentMs += 200;
+        if ((spoke && silentMs >= 1800) || Date.now() - startedAt > 30000) stopRec();
+      }, 200);
+      rec.onstop = async () => {
+        if (cancelRecRef.current) { cancelRecRef.current = false; return; }
+        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        if (blob.size < 2000) return; // silence / instant stop
+        setTranscribing(true);
+        try {
+          const text = await transcribeBlob(blob, p => {
+            if (p.status === 'progress' && typeof p.progress === 'number') {
+              setVoiceProg(`Downloading voice model… ${Math.round(p.progress)}%`);
+            }
+          });
+          setVoiceProg('');
+          if (text) send(text);
+          else antMessage.info('Could not hear anything — try again closer to the mic');
+        } catch (e) {
+          setVoiceProg('');
+          antMessage.error(`Transcription failed: ${e instanceof Error ? e.message : e}`);
+        } finally {
+          setTranscribing(false);
+        }
+      };
+      rec.start();
+      recRef.current = { rec, stream, ctx, timer };
+      setRecording(true);
+    } catch (e) {
+      antMessage.error(`Microphone unavailable: ${e instanceof Error ? e.message : e}`);
+    }
+  }, [busy, transcribing, send, stopRec]);
+  startRecRef.current = startRec;
 
   const newChat = () => { setCurId(''); setLastError(''); setParamTarget(null); };
 
@@ -1500,6 +1604,8 @@ const ClaudeChat: React.FC = () => {
         .cc-srcflag{display:inline-block;background:#F1EBF7;border:1px solid #D9CBEA;color:#5A4482;font-size:9.5px;
           font-weight:700;border-radius:4px;padding:0 6px;margin-bottom:4px;letter-spacing:.5px}
         .cc-tblactions{display:flex;gap:6px;margin-top:10px;padding-top:8px;border-top:1px dashed #EDE3E0}
+        .cc-mic-on{animation:ccPulse 1.2s infinite}
+        @keyframes ccPulse{0%,100%{box-shadow:0 0 0 0 rgba(199,70,52,.45)}50%{box-shadow:0 0 0 9px rgba(199,70,52,0)}}
         .cc-typing span{display:inline-block;width:7px;height:7px;margin-right:4px;border-radius:50%;background:#C74634;opacity:.4;animation:ccB 1.2s infinite}
         .cc-typing span:nth-child(2){animation-delay:.2s}.cc-typing span:nth-child(3){animation-delay:.4s}
         @keyframes ccB{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
@@ -1545,6 +1651,18 @@ const ClaudeChat: React.FC = () => {
           <Tag icon={<ApiOutlined />}>ERP MCP + REST</Tag>
           <div style={{ flex: 1 }} />
           {busy && <Button danger icon={<StopOutlined />} onClick={cancel}>Stop</Button>}
+          {speaking && (
+            <Button icon={<PauseCircleOutlined />} onClick={() => { stopSpeaking(); setSpeaking(false); }}>
+              Stop voice
+            </Button>
+          )}
+          <Tooltip title={voiceMode
+            ? 'Voice conversation ON — answers are spoken and the mic reopens after each reply. Click to turn off.'
+            : 'Voice conversation mode: speak your questions, hear the answers'}>
+            <Button icon={<SoundOutlined />} type={voiceMode ? 'primary' : 'default'}
+              style={voiceMode ? { background: '#1D7B4D', borderColor: '#1D7B4D' } : undefined}
+              onClick={() => setVoiceMode(v => !v)} />
+          </Tooltip>
           <Tooltip title="Open the workspace folder in Explorer">
             <Button icon={<FolderOpenOutlined />} onClick={() => api.claudeChatOpenWorkspace?.()} />
           </Tooltip>
@@ -1922,9 +2040,25 @@ const ClaudeChat: React.FC = () => {
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
                 }}
               />
+              <Tooltip title={recording ? 'Listening… click to stop and send (auto-stops on silence)' : (voiceProg || 'Speak your question')}>
+                <Button
+                  shape="circle"
+                  danger={recording}
+                  icon={<AudioOutlined />}
+                  loading={transcribing}
+                  className={recording ? 'cc-mic-on' : ''}
+                  onClick={() => (recording ? stopRec() : startRec())}
+                  style={{ width: 42, height: 42 }}
+                />
+              </Tooltip>
               <Button type="primary" shape="circle" icon={<SendOutlined />} onClick={() => send()} loading={busy}
                 style={{ background: '#C74634', borderColor: '#C74634', width: 42, height: 42 }} />
             </div>
+            {(voiceProg || recording || transcribing) && (
+              <Text type="secondary" style={{ fontSize: 11, paddingLeft: 4 }}>
+                {recording ? '🎙 Listening — pause to send automatically' : transcribing ? 'Transcribing…' : voiceProg}
+              </Text>
+            )}
           </div>
         </div>
 
