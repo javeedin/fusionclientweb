@@ -101,6 +101,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeChatLoadDb: (opts)       => ipcRenderer.invoke('claude-chat:load-db', opts),
   claudeChatQueryDb: (opts)      => ipcRenderer.invoke('claude-chat:query-db', opts),
 
+  // Natural TTS (Edge neural voices)
+  claudeVoiceTts: (opts)       => ipcRenderer.invoke('claude-voice:tts', opts),
+
   // Scheduled Claude reports
   claudeReportsList:   ()      => ipcRenderer.invoke('claude-reports:list'),
   claudeReportsSave:   (s)     => ipcRenderer.invoke('claude-reports:save', s),

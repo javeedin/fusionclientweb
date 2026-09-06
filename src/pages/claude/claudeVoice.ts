@@ -100,12 +100,42 @@ export function speakableText(md: string): string {
   return t;
 }
 
-// chunked speech: Chromium can silently drop long utterances, so split into
-// sentence-sized parts and queue them; a bumped session id cancels the queue
+// a bumped session id cancels whatever is playing (neural audio or synth queue)
 let speakSession = 0;
+let currentAudio: HTMLAudioElement | null = null;
 
+type TtsApi = { claudeVoiceTts?: (o: { text: string; lang: string }) => Promise<{ success: boolean; base64?: string; error?: string }> };
+
+// Natural speech first: neural MP3 synthesized in the main process (Edge
+// read-aloud voices — the same family mobile assistants use). Falls back to
+// the OS speechSynthesis voices when the service is unreachable.
 export function speak(text: string, langCode: string, onEnd?: () => void): void {
   const session = ++speakSession;
+  stopPlayback();
+  (async () => {
+    const eAPI = (window as unknown as { electronAPI?: TtsApi }).electronAPI;
+    if (eAPI?.claudeVoiceTts) {
+      try {
+        const r = await eAPI.claudeVoiceTts({ text: text.slice(0, 2500), lang: langCode });
+        if (session !== speakSession) return; // superseded while synthesizing
+        if (r?.success && r.base64) {
+          const audio = new Audio(`data:audio/mp3;base64,${r.base64}`);
+          currentAudio = audio;
+          audio.onended = () => { if (session === speakSession) { currentAudio = null; onEnd?.(); } };
+          audio.onerror = () => { if (session === speakSession) { currentAudio = null; speakWithSynth(text, langCode, session, onEnd); } };
+          await audio.play();
+          return;
+        }
+      } catch { /* fall through to synth */ }
+      if (session !== speakSession) return;
+    }
+    speakWithSynth(text, langCode, session, onEnd);
+  })();
+}
+
+// chunked speechSynthesis fallback: Chromium silently drops long utterances,
+// so split into sentence-sized parts and queue them
+function speakWithSynth(text: string, langCode: string, session: number, onEnd?: () => void): void {
   const lang = voiceLangByCode(langCode);
   try {
     window.speechSynthesis.cancel();
@@ -139,9 +169,17 @@ export function speak(text: string, langCode: string, onEnd?: () => void): void 
   }
 }
 
+function stopPlayback(): void {
+  try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+  if (currentAudio) {
+    try { currentAudio.pause(); } catch { /* ignore */ }
+    currentAudio = null;
+  }
+}
+
 export function stopSpeaking(): void {
   speakSession += 1;
-  try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+  stopPlayback();
 }
 
 // true when Windows has a voice installed for this language — used to warn

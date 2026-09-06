@@ -1444,6 +1444,40 @@ ipcMain.handle('claude-chat:lov', async (_event, opts = {}) => {
   }
 });
 
+// ── Natural text-to-speech (Edge neural voices, no API key) ────────────────
+// Synthesizes MP3 via the Edge read-aloud service; the renderer falls back
+// to speechSynthesis when this fails (offline, service change).
+const TTS_VOICES = {
+  en: 'en-US-AriaNeural',
+  ar: 'ar-SA-ZariyahNeural',
+  hi: 'hi-IN-SwaraNeural',
+  ur: 'ur-PK-UzmaNeural',
+  ml: 'ml-IN-SobhanaNeural',
+  ta: 'ta-IN-PallaviNeural',
+  fr: 'fr-FR-DeniseNeural',
+};
+ipcMain.handle('claude-voice:tts', async (_event, { text, lang } = {}) => {
+  const t = String(text || '').slice(0, 2500).trim();
+  if (!t) return { success: false, error: 'No text' };
+  try {
+    const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(TTS_VOICES[lang] || TTS_VOICES.en, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    const { audioStream } = tts.toStream(t);
+    const base64 = await new Promise((resolve, reject) => {
+      const chunks = [];
+      const to = setTimeout(() => reject(new Error('TTS timeout')), 30000);
+      audioStream.on('data', (c) => chunks.push(c));
+      audioStream.on('end', () => { clearTimeout(to); resolve(Buffer.concat(chunks).toString('base64')); });
+      audioStream.on('error', (e) => { clearTimeout(to); reject(e); });
+    });
+    try { tts.close?.(); } catch { /* ignore */ }
+    return { success: true, base64 };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 // ── Scheduled Claude reports ───────────────────────────────────────────────
 const reportScheduler = require('./claude-report-scheduler.cjs');
 app.whenReady().then(() => reportScheduler.init());
