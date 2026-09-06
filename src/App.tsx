@@ -123,6 +123,7 @@ const MCPServerManager        = lazy(() => import('./pages/admin/MCPServerManage
 const LibreChatPage           = lazy(() => import('./pages/librechat/LibreChatPage'));
 const ClaudeCliTerminal       = lazy(() => import('./pages/claude/ClaudeCliTerminal'));
 const ClaudeChat              = lazy(() => import('./pages/claude/ClaudeChat'));
+const DashboardDesigner       = lazy(() => import('./pages/dashboards/DashboardDesigner'));
 const CashModule              = lazy(() => import('./pages/cash/CashModule'));
 const ManageBankTransfers     = lazy(() => import('./pages/cash/ManageBankTransfers'));
 const AccountingDebugPage     = lazy(() => import('./pages/cash/AccountingDebugPage'));
@@ -397,6 +398,8 @@ function App() {
               {/* Claude Code CLI — embedded subscription-billed terminal with ERP MCP */}
               <Route path="claude-cli" element={<ClaudeCliTerminal />} />
               <Route path="claude-chat" element={<ClaudeChat />} />
+              {/* Dashboard Designer — company-shared dashboards over REST data */}
+              <Route path="dashboard-designer" element={<DashboardDesigner />} />
               {/* Petty Cash */}
               <Route path="pc/registers" element={<PettyCash />} />
               {/* Cash Management */}

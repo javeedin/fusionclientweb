@@ -8,7 +8,7 @@ import {
   ThunderboltOutlined, WalletOutlined, AuditOutlined, FundOutlined,
   ShopOutlined, HomeOutlined, SettingOutlined, ArrowUpOutlined, ArrowDownOutlined,
   EditOutlined, SwapOutlined, CalculatorOutlined, BarChartOutlined, TeamOutlined,
-  CreditCardOutlined, ReconciliationOutlined, RobotOutlined,
+  CreditCardOutlined, ReconciliationOutlined, RobotOutlined, DashboardOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -52,6 +52,7 @@ const MODULES = [
   { id: 'librechat', label: 'LibreChat',      icon: <RobotOutlined />,       path: '/librechat',     color: REDWOOD.purple,    desc: 'Claude Chat · GL MCP Tools' },
   { id: 'claude-cli', label: 'Claude Code CLI', icon: <ThunderboltOutlined />, path: '/claude-cli',   color: REDWOOD.primary,   desc: 'Subscription Claude · ERP MCP Tools' },
   { id: 'claude-chat', label: 'Claude Chat',    icon: <RobotOutlined />,       path: '/claude-chat',  color: REDWOOD.teal,      desc: 'Subscription Claude · Chat UI · ERP Data' },
+  { id: 'dashdesign', label: 'Dashboard Designer', icon: <DashboardOutlined />,  path: '/dashboard-designer', color: REDWOOD.info, desc: 'Design · Share · Live Widgets' },
 ];
 
 const QUICK_ACTIONS = [
