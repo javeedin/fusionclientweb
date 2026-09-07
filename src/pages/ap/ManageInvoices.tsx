@@ -121,6 +121,9 @@ const REDWOOD = {
   reportGreen: '#1D7B4D',
 };
 
+// Distinct RR_AP_INVOICES_ALL.PAID_STATUS values used to search by paid status
+const PAID_STATUS_OPTIONS = ['Unpaid', 'Partially paid', 'Available', 'Paid', 'Cancelled'];
+
 // Invoice record interface
 interface InvoiceRecord {
   key: string;
@@ -471,6 +474,7 @@ const ManageInvoices: React.FC = () => {
   const [payMethodFilter, setPayMethodFilter] = useState<'all'|'payment'|'prepayment'|'mixed'>('all');
   const [acctFilter,      setAcctFilter]      = useState<'all'|'posted'|'unposted'>('all');
   const [createdByFilter, setCreatedByFilter] = useState<string>('');
+  const [paidStatusFilter, setPaidStatusFilter] = useState<string>(''); // '' = all
   const [knownUsers,      setKnownUsers]      = useState<string[]>([]);
 
   useEffect(() => {
@@ -741,7 +745,9 @@ const ManageInvoices: React.FC = () => {
   };
 
   const displayedInvoices = useMemo(() => {
-    let list = showFullyPaid ? invoices : invoices.filter(inv => inv.unpaidAmount !== 0);
+    // a paid-status search shows every match (paid rows have a 0 balance and
+    // would otherwise be hidden by the "show fully paid" toggle)
+    let list = (showFullyPaid || paidStatusFilter) ? invoices : invoices.filter(inv => inv.unpaidAmount !== 0);
     if (tableSearch.trim()) {
       const q = tableSearch.trim().toLowerCase();
       list = list.filter(inv =>
@@ -767,8 +773,12 @@ const ManageInvoices: React.FC = () => {
     if (createdByFilter) {
       list = list.filter(inv => inv.createdBy === createdByFilter);
     }
+    if (paidStatusFilter) {
+      const want = paidStatusFilter.toLowerCase();
+      list = list.filter(inv => (inv.holdPaidStatus || '').toLowerCase() === want);
+    }
     return list;
-  }, [invoices, showFullyPaid, tableSearch, payMethodFilter, acctFilter, createdByFilter]);
+  }, [invoices, showFullyPaid, tableSearch, payMethodFilter, acctFilter, createdByFilter, paidStatusFilter]);
 
   // Compute totals for amount columns (based on displayed invoices)
   const totals = useMemo(() => {
@@ -1813,6 +1823,10 @@ const ManageInvoices: React.FC = () => {
       if (values.supplierSite) params.append('supplier_site', values.supplierSite);
       if (values.invoiceGroup) params.append('invoice_group', values.invoiceGroup);
       if (values.invoiceType) params.append('invoice_type', values.invoiceType);
+      // Paid status: send to the server (harmless if the handler ignores it) and
+      // apply it client-side so it works regardless of backend support.
+      if (values.paidStatus) params.append('paid_status', values.paidStatus);
+      setPaidStatusFilter(values.paidStatus || '');
 
       // Build URL - call APEX endpoint directly
       const queryString = params.toString();
@@ -1886,6 +1900,7 @@ const ManageInvoices: React.FC = () => {
   // Reset search form
   const handleReset = () => {
     form.resetFields();
+    setPaidStatusFilter('');
   };
 
   // Get validation status tag
@@ -3799,6 +3814,15 @@ const ManageInvoices: React.FC = () => {
                               <Option value="Mixed">Mixed</Option>
                               <Option value="Expense Report">Expense Report</Option>
                               <Option value="Quick">Quick</Option>
+                            </Select>
+                          </Form.Item>
+                          <Form.Item
+                            label={<Text style={{ fontSize: 12 }}>Paid Status</Text>}
+                            name="paidStatus"
+                            style={{ marginBottom: 8 }}
+                          >
+                            <Select placeholder="All paid statuses" allowClear>
+                              {PAID_STATUS_OPTIONS.map(s => <Option key={s} value={s}>{s}</Option>)}
                             </Select>
                           </Form.Item>
                         </Col>
