@@ -64,6 +64,7 @@ function recordCall(entry) {
   CALL_LOG.unshift({
     at: Date.now(),
     ...entry,
+    headers: entry.headers || {},
     request: redact(entry.request).slice(0, 20000),
     response: String(entry.response || '').slice(0, 20000),
   });
@@ -217,7 +218,10 @@ async function execute({ sql, rowLimit } = {}) {
       : { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: 'runReport', Authorization: basic };
     const res = await fetch(url, { method: 'POST', headers, body });
     const text = await res.text();
-    recordCall({ kind: `runReport (${format}, SOAP ${soap12 ? '1.2' : '1.1'})`, protocol: 'SOAP', url, status: res.status, request: body, response: text });
+    recordCall({
+      kind: `runReport (${format}, SOAP ${soap12 ? '1.2' : '1.1'})`, protocol: 'SOAP', url, status: res.status,
+      headers: { ...headers, Authorization: 'Basic <base64 user:password>' }, request: body, response: text,
+    });
     return { status: res.status, ok: res.ok, text };
   };
   const versionFault = (t) => /soap.?1\.?2|not\s*compat|VersionMismatch|SupportedEnvelope/i.test(t || '');
@@ -365,18 +369,20 @@ function buildDataModelXml(dataSource) {
 
 function buildReportXml(dataModelPath) {
   return `<?xml version="1.0" encoding="UTF-8"?>
-<report xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.0" defaultTemplateType="csv"
-        target="parameterColumn" showControls="true" showReportControls="true"
-        onLine="true" isDynamicPromptRequired="false">
-   <title>QueryRunner</title>
-   <description>Re-ERP Fusion SQL query runner</description>
-   <dataModel url="${xmlEscape(dataModelPath)}"/>
-   <parameters/>
-   <listOfTemplates>
-      <template type="csv" default="true" viewOnline="true" defaultOutputFormat="csv" label="Data">
-         <outputFormats><outputFormat>csv</outputFormat><outputFormat>xml</outputFormat></outputFormats>
+<report xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.0"
+        defaultDataModel="${xmlEscape(dataModelPath)}"
+        controllableFlag="true" viewOnlineFlag="true" onLineFlag="true"
+        openLinkInNewWindowFlag="true" showControls="true" autoRunFlag="false"
+        defaultOutputFormat="csv">
+   <templates defaultTemplate="Data">
+      <template templateType="xsl-fo" default="true" active="true" viewOnlineFlag="true"
+                label="Data" location="." locale="en_US" outputName="Data">
+         <outputFormats>
+            <outputFormat>csv</outputFormat>
+            <outputFormat>xml</outputFormat>
+         </outputFormats>
       </template>
-   </listOfTemplates>
+   </templates>
 </report>`;
 }
 
@@ -392,13 +398,13 @@ async function soapCatalog(base, action, innerXml, auth) {
   <soapenv:Body>${innerXml}</soapenv:Body>
 </soapenv:Envelope>`;
   const url = catalogUrl(base);
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: action, ...(auth ? { Authorization: auth } : {}) },
-    body: env,
-  });
+  const headers = { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: action, ...(auth ? { Authorization: auth } : {}) };
+  const res = await fetch(url, { method: 'POST', headers, body: env });
   const text = await res.text();
-  recordCall({ kind: action, protocol: 'SOAP', url, status: res.status, request: env, response: text });
+  recordCall({
+    kind: action, protocol: 'SOAP', url, status: res.status,
+    headers: { ...headers, ...(auth ? { Authorization: 'Basic <base64 user:password>' } : {}) }, request: env, response: text,
+  });
   return { ok: res.ok, status: res.status, text };
 }
 

@@ -34,7 +34,7 @@ interface FusionSqlApi {
   openExcel?: (buf: unknown, filename: string) => Promise<unknown>;
 }
 interface FsConfig { baseUrl?: string; reportPath?: string; dataModelPath?: string; folderPath?: string; dataSource?: string; rowLimit?: number }
-interface ApiCall { at: number; kind: string; protocol: string; url: string; status: number; request: string; response: string }
+interface ApiCall { at: number; kind: string; protocol: string; url: string; status: number; headers?: Record<string, string>; request: string; response: string }
 interface FsResult {
   success: boolean; rows?: Record<string, unknown>[]; columns?: string[];
   rowCount?: number; capped?: boolean; error?: string; raw?: string;
@@ -424,9 +424,31 @@ const FusionSql: React.FC = () => {
                 <Text type="secondary" style={{ fontSize: 10.5, fontFamily: 'Consolas,monospace', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 320 }}>{c.url}</Text>
               </summary>
               <div style={{ marginTop: 8 }}>
-                <Text strong style={{ fontSize: 11.5 }}>Request (XML)</Text>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <Text strong style={{ fontSize: 11.5 }}>Endpoint URL</Text>
+                  <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 11 }}
+                    onClick={() => { navigator.clipboard.writeText(c.url); antMessage.success('URL copied'); }}>copy</Button>
+                </div>
+                <pre style={{ fontSize: 10.5, background: '#faf7f6', padding: 8, borderRadius: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '0 0 8px' }}>{c.url}</pre>
+
+                <Text strong style={{ fontSize: 11.5 }}>HTTP headers (for SOAP UI)</Text>
+                <pre style={{ fontSize: 10.5, background: '#faf7f6', padding: 8, borderRadius: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '4px 0 8px' }}>
+{Object.entries(c.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n')}
+{'\n'}<Text type="secondary" style={{ fontSize: 10 }}>(replace the Authorization value with your own Basic base64 of user:password in SOAP UI)</Text>
+                </pre>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <Text strong style={{ fontSize: 11.5 }}>Request body (XML)</Text>
+                  <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 11 }}
+                    onClick={() => { navigator.clipboard.writeText(c.request); antMessage.success('Request XML copied'); }}>copy</Button>
+                </div>
                 <pre style={{ fontSize: 10.5, background: '#1e1e24', color: '#e6e6e6', padding: 8, borderRadius: 6, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.request}</pre>
-                <Text strong style={{ fontSize: 11.5 }}>Response</Text>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '6px 0 4px' }}>
+                  <Text strong style={{ fontSize: 11.5 }}>Response</Text>
+                  <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 11 }}
+                    onClick={() => { navigator.clipboard.writeText(c.response); antMessage.success('Response copied'); }}>copy</Button>
+                </div>
                 <pre style={{ fontSize: 10.5, background: '#faf7f6', padding: 8, borderRadius: 6, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.response}</pre>
               </div>
             </details>
