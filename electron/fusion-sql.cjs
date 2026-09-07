@@ -55,6 +55,23 @@ const xmlEscape = (s) => String(s == null ? '' : s)
 
 const origin = (u) => { try { return new URL(u).origin; } catch { return String(u || '').replace(/\/+$/, ''); } };
 
+// ── API call log (for the in-app inspector) ─────────────────────────────────
+// last N SOAP calls with their payloads; the password is redacted so nothing
+// sensitive is ever shown or kept.
+const CALL_LOG = [];
+const redact = (s) => String(s || '').replace(/(<[^>]*password>)[\s\S]*?(<\/[^>]*password>)/gi, '$1***$2');
+function recordCall(entry) {
+  CALL_LOG.unshift({
+    at: Date.now(),
+    ...entry,
+    request: redact(entry.request).slice(0, 20000),
+    response: String(entry.response || '').slice(0, 20000),
+  });
+  if (CALL_LOG.length > 30) CALL_LOG.length = 30;
+}
+function getCalls() { return CALL_LOG; }
+function clearCalls() { CALL_LOG.length = 0; }
+
 // ── SOAP runReport ──────────────────────────────────────────────────────────
 function buildEnvelope({ reportPath, base64Sql, user, pass, format }) {
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -186,12 +203,14 @@ async function execute({ sql, rowLimit } = {}) {
   const url = `${base}/xmlpserver/services/ExternalReportWSSService`;
 
   const attempt = async (format) => {
+    const body = buildEnvelope({ reportPath: cfg.reportPath, base64Sql, user: creds.username, pass: creds.password, format });
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: '' },
-      body: buildEnvelope({ reportPath: cfg.reportPath, base64Sql, user: creds.username, pass: creds.password, format }),
+      headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: 'runReport' },
+      body,
     });
     const text = await res.text();
+    recordCall({ kind: `runReport (${format})`, protocol: 'SOAP', url, status: res.status, request: body, response: text });
     return { status: res.status, ok: res.ok, text };
   };
 
@@ -352,17 +371,21 @@ function buildReportXml(dataModelPath) {
 function catalogUrl(base) { return `${origin(base)}/xmlpserver/services/v2/CatalogService`; }
 
 async function soapCatalog(base, action, innerXml) {
+  // v2 CatalogService uses the plain service/v2 namespace (the fault told us:
+  // "Expected {http://xmlns.oracle.com/oxp/service/v2}uploadObject")
   const env = `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:pub="http://xmlns.oracle.com/oxp/service/v2/PublicReportService">
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:pub="http://xmlns.oracle.com/oxp/service/v2">
   <soapenv:Header/>
   <soapenv:Body>${innerXml}</soapenv:Body>
 </soapenv:Envelope>`;
-  const res = await fetch(catalogUrl(base), {
+  const url = catalogUrl(base);
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: action },
     body: env,
   });
   const text = await res.text();
+  recordCall({ kind: action, protocol: 'SOAP', url, status: res.status, request: env, response: text });
   return { ok: res.ok, status: res.status, text };
 }
 
@@ -403,4 +426,4 @@ async function deployRunner() {
   }
 }
 
-module.exports = { getConfig, setConfig, execute, deployRunner };
+module.exports = { getConfig, setConfig, execute, deployRunner, getCalls, clearCalls };

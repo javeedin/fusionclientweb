@@ -1458,6 +1458,10 @@ ipcMain.handle('fusion-sql:deploy', async () => {
   try { return await fusionSql.deployRunner(); }
   catch (e) { return { success: false, error: e.message }; }
 });
+ipcMain.handle('fusion-sql:calls', async (_event, { clear } = {}) => {
+  try { if (clear) fusionSql.clearCalls(); return { success: true, calls: fusionSql.getCalls() }; }
+  catch (e) { return { success: false, error: e.message, calls: [] }; }
+});
 
 // ── Natural text-to-speech (Edge neural voices, no API key) ────────────────
 // Synthesizes MP3 via the Edge read-aloud service; the renderer falls back

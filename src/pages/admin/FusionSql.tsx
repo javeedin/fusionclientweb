@@ -28,11 +28,13 @@ interface FusionSqlApi {
   fusionSqlConfig?: (patch?: Record<string, unknown>) => Promise<{ success: boolean; config?: FsConfig; error?: string }>;
   fusionSqlExecute?: (opts: { sql: string; rowLimit?: number }) => Promise<FsResult>;
   fusionSqlDeploy?: () => Promise<{ success: boolean; message?: string; error?: string; steps?: string[]; raw?: string }>;
+  fusionSqlCalls?: (opts?: { clear?: boolean }) => Promise<{ success: boolean; calls: ApiCall[]; error?: string }>;
   getFusionCredentials?: () => Promise<{ username: string; password: string } | null>;
   saveFusionCredentials?: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   openExcel?: (buf: unknown, filename: string) => Promise<unknown>;
 }
 interface FsConfig { baseUrl?: string; reportPath?: string; dataModelPath?: string; folderPath?: string; dataSource?: string; rowLimit?: number }
+interface ApiCall { at: number; kind: string; protocol: string; url: string; status: number; request: string; response: string }
 interface FsResult {
   success: boolean; rows?: Record<string, unknown>[]; columns?: string[];
   rowCount?: number; capped?: boolean; error?: string; raw?: string;
@@ -75,7 +77,14 @@ const FusionSql: React.FC = () => {
   const [creds, setCreds] = useState<{ username: string; hasPassword: boolean } | null>(null);
   const [credUser, setCredUser] = useState('');
   const [credPass, setCredPass] = useState('');
+  const [apiOpen, setApiOpen] = useState(false);
+  const [calls, setCalls] = useState<ApiCall[]>([]);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+
+  const loadCalls = useCallback(async (clear?: boolean) => {
+    const r = await api?.fusionSqlCalls?.({ clear });
+    if (r?.success) setCalls(r.calls || []);
+  }, [api]);
 
   const loadCreds = useCallback(async () => {
     try {
@@ -113,6 +122,7 @@ const FusionSql: React.FC = () => {
       } else {
         addLog(`ERROR: ${r.error} — ${q.slice(0, 80)}`, false);
       }
+      if (apiOpen) loadCalls();
     } finally {
       setRunning(false);
     }
@@ -224,6 +234,7 @@ const FusionSql: React.FC = () => {
       const r = await api.fusionSqlDeploy();
       setDeployMsg({ ok: !!r?.success, text: r?.success ? (r.message || 'Deployed') : (r?.error || 'Deploy failed'), steps: r?.steps });
       if (r?.success) antMessage.success('Runner report deployed');
+      loadCalls();
     } finally { setDeploying(false); }
   };
 
@@ -272,6 +283,9 @@ const FusionSql: React.FC = () => {
           <Dropdown menu={{ items: history.slice(0, 20).map((h, i) => ({ key: String(i), label: h.slice(0, 80) })), onClick: ({ key }) => setSql(history[Number(key)]) }}>
             <Button icon={<ReloadOutlined />}>History</Button>
           </Dropdown>
+          <Tooltip title="API inspector — see the SOAP calls & payloads">
+            <Button icon={<ApiOutlined />} onClick={() => { setApiOpen(true); loadCalls(); }} />
+          </Tooltip>
           <Tooltip title="Connection settings"><Button icon={<SettingOutlined />} onClick={() => { setDraft(cfg); setCfgOpen(true); }} /></Tooltip>
         </div>
       </Card>
@@ -390,6 +404,35 @@ const FusionSql: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <Drawer title={<span><ApiOutlined /> API inspector — SOAP calls & payloads</span>} open={apiOpen} onClose={() => setApiOpen(false)} width={720}
+        extra={<Space><Button size="small" icon={<ReloadOutlined />} onClick={() => loadCalls()}>Refresh</Button><Button size="small" onClick={() => loadCalls(true)}>Clear</Button></Space>}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          Every web-service call this tool makes, newest first — endpoint, request and response payload (password redacted).
+          These are <b>SOAP</b> POSTs of XML to the pod's BI Publisher services.
+        </Text>
+        {!calls.length && <Empty style={{ marginTop: 40 }} description="No calls yet — run a query or deploy" />}
+        <div style={{ marginTop: 12 }}>
+          {calls.map((c, i) => (
+            <details key={i} style={{ marginBottom: 8, border: '1px solid #EFEAE8', borderRadius: 8, padding: '6px 10px' }}>
+              <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Tag color={c.status >= 200 && c.status < 300 ? 'green' : 'red'}>{c.status}</Tag>
+                <Tag color="blue">{c.protocol}</Tag>
+                <b style={{ fontSize: 12.5 }}>{c.kind}</b>
+                <Text type="secondary" style={{ fontSize: 11 }}>{new Date(c.at).toLocaleTimeString()}</Text>
+                <span style={{ flex: 1 }} />
+                <Text type="secondary" style={{ fontSize: 10.5, fontFamily: 'Consolas,monospace', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 320 }}>{c.url}</Text>
+              </summary>
+              <div style={{ marginTop: 8 }}>
+                <Text strong style={{ fontSize: 11.5 }}>Request (XML)</Text>
+                <pre style={{ fontSize: 10.5, background: '#1e1e24', color: '#e6e6e6', padding: 8, borderRadius: 6, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.request}</pre>
+                <Text strong style={{ fontSize: 11.5 }}>Response</Text>
+                <pre style={{ fontSize: 10.5, background: '#faf7f6', padding: 8, borderRadius: 6, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.response}</pre>
+              </div>
+            </details>
+          ))}
+        </div>
+      </Drawer>
 
       <Drawer title="Fusion SQL — connection settings" open={cfgOpen} onClose={() => setCfgOpen(false)} width={500}
         extra={<Button type="primary" onClick={() => saveCfg().then(ok => ok && setCfgOpen(false))} style={{ background: '#C74634', borderColor: '#C74634' }}>Save</Button>}>

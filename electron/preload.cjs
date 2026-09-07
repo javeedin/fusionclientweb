@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fusionSqlConfig:  (patch) => ipcRenderer.invoke('fusion-sql:config', patch),
   fusionSqlExecute: (opts)  => ipcRenderer.invoke('fusion-sql:execute', opts),
   fusionSqlDeploy:  ()      => ipcRenderer.invoke('fusion-sql:deploy'),
+  fusionSqlCalls:   (opts)  => ipcRenderer.invoke('fusion-sql:calls', opts || {}),
 
   // Natural TTS (Edge neural voices)
   claudeVoiceTts: (opts)       => ipcRenderer.invoke('claude-voice:tts', opts),
