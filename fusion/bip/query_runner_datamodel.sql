@@ -52,17 +52,23 @@ END;
 
 
 -- ============================================================================
--- VARIANT B — CLOB-safe (use this if Variant A raises PLS-00306 on GETLENGTH)
+-- VARIANT B — CLOB-safe + ORA-17041 fix (RECOMMENDED — paste this one)
 --
--- A BI Publisher "Text" parameter binds as VARCHAR2, not a LOB, so the
--- dbms_lob.read/getlength calls in Variant A can fail. This variant copies the
--- VARCHAR2 bind into a CLOB first, then base64-decodes it in 4-char-aligned
--- chunks (base64 encodes 3 bytes -> 4 chars, so a multiple of 4 never splits a
--- group). Same behaviour, same P_QRY_STMT parameter — paste this instead.
+-- Two fixes over Variant A:
+--   1. A BI Publisher "Text" parameter binds as VARCHAR2, not a LOB, so the
+--      dbms_lob.read/getlength calls in Variant A can fail with PLS-00306.
+--      This variant copies the VARCHAR2 bind into a CLOB first, then
+--      base64-decodes it in 4-char-aligned chunks (base64 encodes 3 bytes ->
+--      4 chars, so a multiple of 4 never splits a group).
+--   2. Do NOT declare a local variable named xdo_cursor. Declaring
+--      "xdo_cursor refcursor" alongside the reserved output bind :xdo_cursor
+--      makes BI Publisher fail to register the OUT cursor, giving
+--      "ORA-17041: Missing IN or OUT parameter at index: 2". :xdo_cursor must
+--      be purely the host bind BIP provides — no local of the same name.
+--
+-- Same P_QRY_STMT parameter as before.
 -- ============================================================================
 -- DECLARE
---     TYPE refcursor IS REF CURSOR;
---     xdo_cursor  refcursor;
 --     l_b64       CLOB;
 --     l_sql       CLOB;
 --     l_chunk     VARCHAR2(32767);
@@ -84,5 +90,5 @@ END;
 --         END IF;
 --         l_pos := l_pos + l_step;
 --     END LOOP;
---     OPEN :xdo_cursor FOR l_sql;
+--     OPEN :xdo_cursor FOR l_sql;       -- reserved OUT bind; do NOT declare it
 -- END;

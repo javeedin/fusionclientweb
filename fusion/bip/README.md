@@ -52,12 +52,19 @@ BI Publisher → **Catalog** → New → **Data Model**.
 - Save the Data Model as **`QueryRunnerDM`** in a folder you control, e.g.
   `/Custom/ReERP/`.
 
-> **If running the data model then errors with `PLS-00306: wrong number or
-> types of arguments in call to 'GETLENGTH'`** (or similar LOB errors): a
-> BIP **Text** parameter binds as `VARCHAR2`, not a LOB, so the `dbms_lob.*`
-> calls on `:P_QRY_STMT` fail. Use the CLOB-safe runner variant in
-> [`query_runner_datamodel.sql`](./query_runner_datamodel.sql) (it copies the
-> bind into a CLOB first, then base64-decodes).
+> **If View Data errors with `ORA-17041: Missing IN or OUT parameter at
+> index: 2`**: the block declared a local variable named `xdo_cursor`. That
+> name is reserved for BIP's output ref-cursor bind (`:xdo_cursor`); declaring
+> a local of the same name stops BIP registering the OUT cursor. Remove the
+> `TYPE refcursor` / `xdo_cursor refcursor;` declarations — `:xdo_cursor` must
+> be purely the host bind. (Variant B in the .sql already omits it.)
+
+> **If View Data errors with `PLS-00306: wrong number or types of arguments
+> in call to 'GETLENGTH'`** (or similar LOB errors): a BIP **Text** parameter
+> binds as `VARCHAR2`, not a LOB, so the `dbms_lob.*` calls on `:P_QRY_STMT`
+> fail. Use the CLOB-safe runner (Variant B) in
+> [`query_runner_datamodel.sql`](./query_runner_datamodel.sql) — it copies the
+> bind into a CLOB first, then base64-decodes.
 
 ## 2. Create the Report
 
