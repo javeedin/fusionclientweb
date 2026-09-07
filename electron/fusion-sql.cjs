@@ -208,11 +208,13 @@ async function execute({ sql, rowLimit } = {}) {
 
   // this pod's ExternalReportWSSService is a SOAP 1.2 endpoint (it rejects
   // text/xml with an Upgrade fault); try 1.2 first, fall back to 1.1
+  // WSS endpoint: HTTP Basic auth on top of the in-body userID/password
+  const basic = 'Basic ' + Buffer.from(`${creds.username}:${creds.password}`).toString('base64');
   const post = async (format, soap12) => {
     const body = buildEnvelope({ reportPath: cfg.reportPath, base64Sql, user: creds.username, pass: creds.password, format, soap12 });
     const headers = soap12
-      ? { 'Content-Type': 'application/soap+xml; charset=utf-8; action="runReport"' }
-      : { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: 'runReport' };
+      ? { 'Content-Type': 'application/soap+xml; charset=utf-8; action="runReport"', Authorization: basic }
+      : { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: 'runReport', Authorization: basic };
     const res = await fetch(url, { method: 'POST', headers, body });
     const text = await res.text();
     recordCall({ kind: `runReport (${format}, SOAP ${soap12 ? '1.2' : '1.1'})`, protocol: 'SOAP', url, status: res.status, request: body, response: text });
@@ -381,7 +383,7 @@ function buildReportXml(dataModelPath) {
 // ── SOAP: CatalogService (folder + upload) ──────────────────────────────────
 function catalogUrl(base) { return `${origin(base)}/xmlpserver/services/v2/CatalogService`; }
 
-async function soapCatalog(base, action, innerXml) {
+async function soapCatalog(base, action, innerXml, auth) {
   // v2 CatalogService uses the plain service/v2 namespace (the fault told us:
   // "Expected {http://xmlns.oracle.com/oxp/service/v2}uploadObject")
   const env = `<?xml version="1.0" encoding="UTF-8"?>
@@ -392,7 +394,7 @@ async function soapCatalog(base, action, innerXml) {
   const url = catalogUrl(base);
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: action },
+    headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: action, ...(auth ? { Authorization: auth } : {}) },
     body: env,
   });
   const text = await res.text();
@@ -407,18 +409,19 @@ async function deployRunner() {
   const base = origin(cfg.baseUrl || '');
   if (!/^https?:\/\//.test(base)) return { success: false, error: 'No Fusion pod URL configured' };
   const u = xmlEscape(creds.username), p = xmlEscape(creds.password);
+  const auth = 'Basic ' + Buffer.from(`${creds.username}:${creds.password}`).toString('base64');
   const steps = [];
 
   try {
     // 1) folder
     const fr = await soapCatalog(base, 'createFolder',
-      `<pub:createFolder><pub:folderAbsolutePath>${xmlEscape(cfg.folderPath)}</pub:folderAbsolutePath><pub:userID>${u}</pub:userID><pub:password>${p}</pub:password></pub:createFolder>`);
+      `<pub:createFolder><pub:folderAbsolutePath>${xmlEscape(cfg.folderPath)}</pub:folderAbsolutePath><pub:userID>${u}</pub:userID><pub:password>${p}</pub:password></pub:createFolder>`, auth);
     steps.push(`folder ${cfg.folderPath}: HTTP ${fr.status}`);
 
     // 2) data model (.xdmz = zip containing _datamodel.xdm)
     const dmZip = buildZip([{ name: '_datamodel.xdm', data: buildDataModelXml(cfg.dataSource) }]).toString('base64');
     const dmr = await soapCatalog(base, 'uploadObject',
-      `<pub:uploadObject><pub:reportObjectAbsolutePathURL>${xmlEscape(cfg.dataModelPath)}</pub:reportObjectAbsolutePathURL><pub:objectType>xdmz</pub:objectType><pub:objectZippedData>${dmZip}</pub:objectZippedData><pub:userID>${u}</pub:userID><pub:password>${p}</pub:password></pub:uploadObject>`);
+      `<pub:uploadObject><pub:reportObjectAbsolutePathURL>${xmlEscape(cfg.dataModelPath)}</pub:reportObjectAbsolutePathURL><pub:objectType>xdmz</pub:objectType><pub:objectZippedData>${dmZip}</pub:objectZippedData><pub:userID>${u}</pub:userID><pub:password>${p}</pub:password></pub:uploadObject>`, auth);
     const dmFault = extractFault(dmr.text);
     steps.push(`data model: HTTP ${dmr.status}${dmFault ? ` · ${dmFault}` : ' · ok'}`);
     if (dmFault) return { success: false, error: `Data model upload failed: ${dmFault}`, steps, raw: dmr.text.slice(0, 1200) };
@@ -426,7 +429,7 @@ async function deployRunner() {
     // 3) report (.xdoz = zip containing _report.xdo)
     const rpZip = buildZip([{ name: '_report.xdo', data: buildReportXml(cfg.dataModelPath) }]).toString('base64');
     const rpr = await soapCatalog(base, 'uploadObject',
-      `<pub:uploadObject><pub:reportObjectAbsolutePathURL>${xmlEscape(cfg.reportPath)}</pub:reportObjectAbsolutePathURL><pub:objectType>xdoz</pub:objectType><pub:objectZippedData>${rpZip}</pub:objectZippedData><pub:userID>${u}</pub:userID><pub:password>${p}</pub:password></pub:uploadObject>`);
+      `<pub:uploadObject><pub:reportObjectAbsolutePathURL>${xmlEscape(cfg.reportPath)}</pub:reportObjectAbsolutePathURL><pub:objectType>xdoz</pub:objectType><pub:objectZippedData>${rpZip}</pub:objectZippedData><pub:userID>${u}</pub:userID><pub:password>${p}</pub:password></pub:uploadObject>`, auth);
     const rpFault = extractFault(rpr.text);
     steps.push(`report: HTTP ${rpr.status}${rpFault ? ` · ${rpFault}` : ' · ok'}`);
     if (rpFault) return { success: false, error: `Report upload failed: ${rpFault}`, steps, raw: rpr.text.slice(0, 1200) };
