@@ -14,7 +14,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   ApiOutlined, CaretRightOutlined, DatabaseOutlined, FileExcelOutlined, FilePdfOutlined,
-  FileTextOutlined, PlayCircleOutlined, ReloadOutlined, SearchOutlined, SettingOutlined,
+  FileTextOutlined, PlayCircleOutlined, ReloadOutlined, RobotOutlined, SearchOutlined, SendOutlined, SettingOutlined,
   TableOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import ExcelJS from 'exceljs';
@@ -32,6 +32,7 @@ interface FusionSqlApi {
   fusionSqlCacheGet?: (opts: { pod?: string; key: string }) => Promise<{ success: boolean; value: unknown }>;
   fusionSqlCacheSet?: (opts: { pod?: string; key: string; value: unknown }) => Promise<{ success: boolean; error?: string }>;
   fusionSqlCacheClear?: (opts: { pod?: string }) => Promise<{ success: boolean; error?: string }>;
+  fusionSqlAiSql?: (opts: { question: string; schema: string; history?: { role: string; content: string }[] }) => Promise<{ success: boolean; response?: string; error?: string }>;
   getFusionCredentials?: () => Promise<{ username: string; password: string } | null>;
   saveFusionCredentials?: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   openExcel?: (buf: unknown, filename: string) => Promise<unknown>;
@@ -95,6 +96,14 @@ const FusionSql: React.FC = () => {
   const [openObj, setOpenObj] = useState<string | null>(null);
   const [objCols, setObjCols] = useState<Record<string, unknown>[]>([]);
 
+  // AI SQL assistant
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiInput, setAiInput] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiMsgs, setAiMsgs] = useState<{ role: 'user' | 'assistant'; content: string; sql?: string }[]>([]);
+  // values for {{PARAM}} placeholders detected in the editor SQL
+  const [paramValues, setParamValues] = useState<Record<string, string>>({});
+
   // cache keys are scoped to the pod so switching pods never mixes schemas
   const podKey = useMemo(() => (cfg.baseUrl || 'pod').replace(/^https?:\/\//, '').replace(/[^\w.-]/g, '_'), [cfg.baseUrl]);
 
@@ -132,8 +141,19 @@ const FusionSql: React.FC = () => {
   const addLog = (text: string, ok: boolean) => setLog(l => [{ at: Date.now(), text, ok }, ...l].slice(0, 50));
 
   const run = useCallback(async (stmt?: string) => {
-    const q = (stmt ?? sql).trim();
+    let q = (stmt ?? sql).trim();
     if (!q || running || !api) return;
+    // Substitute {{PARAM}} placeholders with the entered values. Numbers go in
+    // as-is; everything else becomes a properly-quoted string literal.
+    const tokens = Array.from(new Set((q.match(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g) || [])
+      .map(t => t.replace(/[{}\s]/g, ''))));
+    const missing = tokens.filter(t => !((paramValues[t] ?? '').trim()));
+    if (missing.length) { antMessage.warning(`Enter a value for: ${missing.join(', ')}`); return; }
+    for (const t of tokens) {
+      const v = (paramValues[t] ?? '').trim();
+      const lit = /^-?\d+(\.\d+)?$/.test(v) ? v : `'${v.replace(/'/g, "''")}'`;
+      q = q.replace(new RegExp(`\\{\\{\\s*${t}\\s*\\}\\}`, 'g'), lit);
+    }
     setRunning(true);
     const t0 = Date.now();
     try {
@@ -154,7 +174,7 @@ const FusionSql: React.FC = () => {
     } finally {
       setRunning(false);
     }
-  }, [sql, rowLimit, running, api]);
+  }, [sql, rowLimit, running, api, paramValues, apiOpen, loadCalls]);
 
   // ── local cache (real file via Electron; localStorage as web fallback) ──────
   const cacheRead = useCallback(async (key: string): Promise<unknown> => {
@@ -281,6 +301,95 @@ const FusionSql: React.FC = () => {
     requestAnimationFrame(() => { el.focus(); const p = start + text.length; el.setSelectionRange(p, p); });
   };
 
+  // ── AI SQL assistant ────────────────────────────────────────────────────────
+  // Build a compact schema context for Claude from the local cache: candidate
+  // tables/views whose name matches the question's keywords (plus a few finance
+  // synonyms), with their columns (cached, or fetched live for the top matches).
+  const FINANCE_SYNONYMS: Record<string, string[]> = {
+    CUSTOMER: ['CUST', 'PARTY', 'HZ_'], SUPPLIER: ['VENDOR', 'POZ_', 'AP_SUPPLIER'],
+    INVOICE: ['RA_CUSTOMER_TRX', 'AP_INVOICES', 'TRX'], BALANCE: ['PAYMENT_SCHEDULES', 'AMOUNT_DUE', 'AR_'],
+    RECEIPT: ['CASH_RECEIPT', 'AR_CASH'], PAYMENT: ['AP_PAYMENT', 'CHECKS', 'PAYMENT_SCHEDULES'],
+    ACCOUNT: ['CODE_COMBINATION', 'GL_CODE_COMBINATIONS'], LEDGER: ['GL_', 'LEDGER'],
+    JOURNAL: ['GL_JE', 'JOURNAL'], TAX: ['ZX_', 'TAX'], BANK: ['CE_', 'IBY_', 'BANK'],
+  };
+  const buildSchemaContext = useCallback(async (question: string): Promise<string> => {
+    const owner = schemaOwner || 'FUSION';
+    const q = question.toUpperCase();
+    const kws = Array.from(new Set((q.match(/[A-Z_]{3,}/g) || [])));
+    const terms = new Set<string>(kws);
+    for (const [k, syns] of Object.entries(FINANCE_SYNONYMS)) if (q.includes(k)) syns.forEach(s => terms.add(s));
+    // candidate table/view names from the cache
+    const all: { kind: string; name: string }[] = [];
+    for (const kind of ['TABLE', 'VIEW']) {
+      const c = await cacheRead(`schema.${owner}.${kind}`) as { names?: string[] } | null;
+      (c?.names || []).forEach(n => all.push({ kind, name: n }));
+    }
+    if (!all.length) return '';
+    const termArr = Array.from(terms);
+    const cands = all.filter(t => termArr.some(kw => t.name.includes(kw))).slice(0, 40);
+    if (!cands.length) {
+      // no name match — hand over a sample of names so the model can still orient
+      return `owner ${owner}. No name matched the request. Some ${all.length} objects:\n` +
+        all.slice(0, 60).map(t => `${owner}.${t.name}`).join(', ');
+    }
+    // columns: cache first; fetch live for up to 15 uncached candidates
+    let liveBudget = 15;
+    const lines: string[] = [];
+    for (const t of cands) {
+      const ckey = `detail.${owner}.${t.kind}.${t.name}`;
+      let cols = await cacheRead(ckey) as Record<string, unknown>[] | null;
+      if ((!cols || !cols.length) && liveBudget > 0 && api?.fusionSqlExecute) {
+        liveBudget--;
+        const r = await api.fusionSqlExecute({ sql: `SELECT column_name, data_type FROM all_tab_columns WHERE owner='${sqlEsc(owner)}' AND table_name='${sqlEsc(t.name)}' ORDER BY column_id`, rowLimit: 500 });
+        if (r.success && r.rows) { cols = r.rows; cacheWrite(ckey, r.rows); }
+      }
+      const colNames = (cols || []).map(c => String(c.COLUMN_NAME ?? c.column_name ?? '')).filter(Boolean);
+      lines.push(`${owner}.${t.name}: ${colNames.length ? colNames.join(', ') : '(columns not loaded — expand this table to cache them)'}`);
+    }
+    return lines.join('\n');
+  }, [schemaOwner, cacheRead, cacheWrite, api]);
+
+  const extractSql = (text: string): string | undefined => {
+    const m = text.match(/```sql\s*([\s\S]*?)```/i) || text.match(/```\s*([\s\S]*?)```/);
+    return m ? m[1].trim().replace(/;+\s*$/, '') : undefined;
+  };
+
+  const askAi = useCallback(async (question: string) => {
+    const qq = question.trim();
+    if (!qq || aiBusy) return;
+    if (!api?.fusionSqlAiSql) { antMessage.error('AI is only available in the desktop app.'); return; }
+    setAiMsgs(prev => [...prev, { role: 'user', content: qq }]);
+    setAiInput('');
+    setAiBusy(true);
+    try {
+      const schema = await buildSchemaContext(qq);
+      const history = aiMsgs.map(m => ({ role: m.role, content: m.content }));
+      const r = await api.fusionSqlAiSql({ question: qq, schema, history });
+      if (r.success && r.response) {
+        setAiMsgs(prev => [...prev, { role: 'assistant', content: r.response!, sql: extractSql(r.response!) }]);
+      } else {
+        setAiMsgs(prev => [...prev, { role: 'assistant', content: `⚠️ ${r.error || 'AI request failed'}` }]);
+      }
+    } catch (e) {
+      setAiMsgs(prev => [...prev, { role: 'assistant', content: `⚠️ ${e instanceof Error ? e.message : e}` }]);
+    } finally { setAiBusy(false); }
+  }, [api, aiBusy, aiMsgs, buildSchemaContext]);
+
+  // put an AI-generated statement into the editor and prime its parameters
+  const useAiSql = (stmt: string) => {
+    setSql(stmt);
+    const toks = Array.from(new Set((stmt.match(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g) || []).map(t => t.replace(/[{}\s]/g, ''))));
+    setParamValues(prev => { const next = { ...prev }; toks.forEach(t => { if (!(t in next)) next[t] = ''; }); return next; });
+    setAiOpen(false);
+    antMessage.success(toks.length ? `Loaded — fill the ${toks.length} parameter(s) and Execute` : 'Loaded into the editor');
+  };
+
+  // {{PARAM}} tokens present in the current editor SQL
+  const sqlParams = useMemo(
+    () => Array.from(new Set((sql.match(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g) || []).map(t => t.replace(/[{}\s]/g, '')))),
+    [sql],
+  );
+
   // ── results grid ───────────────────────────────────────────────────────────
   const rows = result?.rows || [];
   const filtered = useMemo(() => {
@@ -402,6 +511,10 @@ const FusionSql: React.FC = () => {
           <InputNumber size="small" min={1} max={100000} value={rowLimit} onChange={v => setRowLimit(v || 100)} style={{ width: 90 }} />
           <Button type="primary" icon={<PlayCircleOutlined />} loading={running} onClick={() => run()}
             style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }}>Execute</Button>
+          <Tooltip title="Ask AI to write SQL from the cached schema">
+            <Button icon={<RobotOutlined />} onClick={() => setAiOpen(true)}
+              style={{ borderColor: '#C74634', color: '#C74634' }}>Ask AI</Button>
+          </Tooltip>
           <Dropdown menu={{ items: history.slice(0, 20).map((h, i) => ({ key: String(i), label: h.slice(0, 80) })), onClick: ({ key }) => setSql(history[Number(key)]) }}>
             <Button icon={<ReloadOutlined />}>History</Button>
           </Dropdown>
@@ -496,6 +609,21 @@ const FusionSql: React.FC = () => {
             placeholder="SELECT * FROM ap_invoices_all WHERE ...   (Ctrl+Enter to run)"
           />
 
+          {sqlParams.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', padding: '6px 8px', background: '#fff7f5', borderTop: '1px solid #f0d9d4' }}>
+              <span style={{ fontSize: 12, color: '#C74634', fontWeight: 600 }}>Parameters:</span>
+              {sqlParams.map(p => (
+                <span key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 12, color: '#6B6B6B' }}>{p}</span>
+                  <Input size="small" style={{ width: 160 }} placeholder={`value for ${p}`}
+                    value={paramValues[p] ?? ''}
+                    onChange={e => setParamValues(v => ({ ...v, [p]: e.target.value }))}
+                    onPressEnter={() => run()} />
+                </span>
+              ))}
+            </div>
+          )}
+
           <div className="fs-results">
             <Tabs
               size="small"
@@ -555,6 +683,69 @@ const FusionSql: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* ── AI SQL assistant ── */}
+      <Drawer
+        title={<span><RobotOutlined style={{ color: '#C74634' }} /> Ask AI — write SQL from the schema</span>}
+        open={aiOpen} onClose={() => setAiOpen(false)} width={520}
+        extra={aiMsgs.length ? <Button size="small" onClick={() => setAiMsgs([])}>Clear</Button> : undefined}
+        styles={{ body: { display: 'flex', flexDirection: 'column', padding: 0 } }}
+      >
+        <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
+          {!aiMsgs.length && (
+            <div style={{ color: '#6B6B6B', fontSize: 13 }}>
+              <p>Ask in plain English and I&apos;ll write an Oracle SELECT using the tables/columns cached for
+                <b> {schemaOwner}</b>. For anything to filter by, I&apos;ll add a <code>{'{{PARAMETER}}'}</code> you fill in before running.</p>
+              <p style={{ marginTop: 8 }}>Try:</p>
+              {[
+                'Customer account balance, with a parameter for customer name',
+                'Open AR invoices for a customer, parameter customer name',
+                'Supplier outstanding balance by supplier name',
+              ].map(s => (
+                <div key={s} style={{ marginBottom: 6 }}>
+                  <a onClick={() => askAi(s)} style={{ color: '#0572CE' }}>“{s}”</a>
+                </div>
+              ))}
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                Tip: load the schema (Schema browser → Refresh) for the tables you expect, so the AI has their columns.
+              </Text>
+            </div>
+          )}
+          {aiMsgs.map((m, i) => (
+            <div key={i} style={{ marginBottom: 12, textAlign: m.role === 'user' ? 'right' : 'left' }}>
+              <div style={{
+                display: 'inline-block', maxWidth: '92%', textAlign: 'left', padding: '8px 10px', borderRadius: 8,
+                background: m.role === 'user' ? '#e6f0fb' : '#f5f5f5', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              }}>
+                {m.sql ? (
+                  <>
+                    <div style={{ marginBottom: 6 }}>{m.content.replace(/```sql[\s\S]*?```/i, '').replace(/```[\s\S]*?```/, '').trim() || 'Here is the SQL:'}</div>
+                    <pre style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 8, borderRadius: 6, overflowX: 'auto', fontSize: 12, margin: 0 }}>{m.sql}</pre>
+                    <div style={{ marginTop: 6 }}>
+                      <Button size="small" type="primary" icon={<PlayCircleOutlined />}
+                        style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }}
+                        onClick={() => useAiSql(m.sql!)}>Use in editor</Button>
+                    </div>
+                  </>
+                ) : m.content}
+              </div>
+            </div>
+          ))}
+          {aiBusy && <Text type="secondary" style={{ fontSize: 12 }}>Thinking…</Text>}
+        </div>
+        <div style={{ borderTop: '1px solid #eee', padding: 8, display: 'flex', gap: 6 }}>
+          <Input.TextArea
+            value={aiInput}
+            onChange={e => setAiInput(e.target.value)}
+            onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); askAi(aiInput); } }}
+            placeholder="e.g. customer account balance, parameter for customer name"
+            autoSize={{ minRows: 1, maxRows: 4 }}
+            disabled={aiBusy}
+          />
+          <Button type="primary" icon={<SendOutlined />} loading={aiBusy} onClick={() => askAi(aiInput)}
+            style={{ background: '#C74634', borderColor: '#C74634' }} />
+        </div>
+      </Drawer>
 
       <Drawer title={<span><ApiOutlined /> API inspector — SOAP calls & payloads</span>} open={apiOpen} onClose={() => setApiOpen(false)} width={720}
         extra={<Space><Button size="small" icon={<ReloadOutlined />} onClick={() => loadCalls()}>Refresh</Button><Button size="small" onClick={() => loadCalls(true)}>Clear</Button></Space>}>

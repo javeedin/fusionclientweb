@@ -1475,6 +1475,67 @@ ipcMain.handle('fusion-sql:cache-clear', async (_event, opts) => {
   catch (e) { return { success: false, error: e.message }; }
 });
 
+// read the stored (APEX-provisioned) Claude API key from the GL creds file
+function readStoredClaudeKey() {
+  try {
+    if (!fs.existsSync(GL_CREDS_FILE)) return '';
+    const data = JSON.parse(fs.readFileSync(GL_CREDS_FILE, 'utf8'));
+    if (!data.claudeKey) return '';
+    if (data.claudeKeyEncrypted && safeStorage.isEncryptionAvailable()) {
+      return safeStorage.decryptString(Buffer.from(data.claudeKey, 'base64'));
+    }
+    return Buffer.from(data.claudeKey, 'base64').toString();
+  } catch { return ''; }
+}
+
+// Fusion SQL — AI SQL author. Given a natural-language request plus a compact
+// schema context (tables/columns the renderer pulls from its local cache), ask
+// Claude for a single read-only Oracle SELECT, parameterised with {{TOKENS}}.
+ipcMain.handle('fusion-sql:ai-sql', async (_event, { question, schema, history } = {}) => {
+  try {
+    const apiKey = readStoredClaudeKey();
+    if (!apiKey) {
+      return { success: false, error: 'No Claude API key stored. Open GL MCP settings and fetch the key from Oracle APEX first.' };
+    }
+    const system = [
+      'You are an expert Oracle SQL author for an Oracle Fusion (Fusion Applications) database.',
+      'You write a SINGLE read-only SELECT statement (or a WITH … SELECT) that answers the user\'s request.',
+      '',
+      'Hard rules:',
+      '- Output ONLY one SQL statement inside a ```sql code block, then a short one or two line explanation after it.',
+      '- SELECT / WITH only. Never INSERT/UPDATE/DELETE/MERGE/DDL/PL-SQL. No semicolon at the end.',
+      '- Use ONLY tables and columns that appear in the "Available schema" below. Never invent column names.',
+      '  If the schema is insufficient, say exactly which table or column you still need instead of guessing.',
+      '- Qualify tables with their owner when the owner is not FUSION (e.g. FUSION_SETUP.SOME_TABLE).',
+      '- For any value the user wants to filter by (a customer name, date, id, …), DO NOT hardcode it.',
+      '  Put a placeholder token of the form {{PARAM_NAME}} in its place, e.g.',
+      '     WHERE UPPER(party_name) LIKE UPPER(\'%\' || {{CUSTOMER_NAME}} || \'%\')',
+      '  The application substitutes {{PARAM_NAME}} with a properly-quoted literal before running,',
+      '  so write the token where a bind/literal would go (the app adds the quotes for text).',
+      '- Cap wide results yourself only if it helps; the app already applies a ROWNUM cap.',
+    ].join('\n');
+
+    const msgs = Array.isArray(history) ? history.slice(-8) : [];
+    msgs.push({ role: 'user', content: `Request: ${question}\n\nAvailable schema (owner.TABLE → columns):\n${schema || '(none provided)'}` });
+
+    const resp = await fetch(CLAUDE_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-opus-5', max_tokens: 4096, system, messages: msgs }),
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      return { success: false, error: `Claude API ${resp.status}: ${t.slice(0, 200)}` };
+    }
+    const data = await resp.json();
+    const text = (data.content || []).filter(b => b.type === 'text' && b.text).map(b => b.text).join('\n');
+    if (!text) return { success: false, error: `No text from Claude (stop_reason: ${data.stop_reason || 'unknown'})` };
+    return { success: true, response: text };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 // ── Natural text-to-speech (Edge neural voices, no API key) ────────────────
 // Synthesizes MP3 via the Edge read-aloud service; the renderer falls back
 // to speechSynthesis when this fails (offline, service change).
