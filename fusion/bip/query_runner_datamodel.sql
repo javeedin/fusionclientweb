@@ -49,3 +49,40 @@ BEGIN
     -- 3) execute it and hand the ref cursor to BI Publisher
     OPEN :xdo_cursor FOR l_clob;
 END;
+
+
+-- ============================================================================
+-- VARIANT B — CLOB-safe (use this if Variant A raises PLS-00306 on GETLENGTH)
+--
+-- A BI Publisher "Text" parameter binds as VARCHAR2, not a LOB, so the
+-- dbms_lob.read/getlength calls in Variant A can fail. This variant copies the
+-- VARCHAR2 bind into a CLOB first, then base64-decodes it in 4-char-aligned
+-- chunks (base64 encodes 3 bytes -> 4 chars, so a multiple of 4 never splits a
+-- group). Same behaviour, same P_QRY_STMT parameter — paste this instead.
+-- ============================================================================
+-- DECLARE
+--     TYPE refcursor IS REF CURSOR;
+--     xdo_cursor  refcursor;
+--     l_b64       CLOB;
+--     l_sql       CLOB;
+--     l_chunk     VARCHAR2(32767);
+--     l_dec       VARCHAR2(32767);
+--     l_raw       RAW(32767);
+--     l_len       PLS_INTEGER;
+--     l_pos       PLS_INTEGER := 1;
+--     l_step      PLS_INTEGER := 7500;   -- multiple of 4 (base64 group size)
+-- BEGIN
+--     l_b64 := :P_QRY_STMT;              -- VARCHAR2 bind -> CLOB (implicit)
+--     dbms_lob.createtemporary(l_sql, TRUE);
+--     l_len := dbms_lob.getlength(l_b64);
+--     WHILE l_pos <= l_len LOOP
+--         l_chunk := dbms_lob.substr(l_b64, l_step, l_pos);
+--         l_raw   := utl_encode.base64_decode(utl_raw.cast_to_raw(l_chunk));
+--         l_dec   := utl_raw.cast_to_varchar2(l_raw);
+--         IF l_dec IS NOT NULL THEN
+--             dbms_lob.writeappend(l_sql, LENGTH(l_dec), l_dec);
+--         END IF;
+--         l_pos := l_pos + l_step;
+--     END LOOP;
+--     OPEN :xdo_cursor FOR l_sql;
+-- END;

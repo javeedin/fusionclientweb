@@ -32,18 +32,32 @@ to the manual steps below.
 
 BI Publisher → **Catalog** → New → **Data Model**.
 
-- Add a **parameter**:
-  - Name: `P_QRY_STMT`
+> **Create the parameter FIRST — BIP will not add it for you.** BIP only
+> auto-detects `:bind` variables (and offers to create a matching parameter)
+> for a **Standard SQL** data set. Our runner is a PL/SQL block, so the data
+> set must be **Non-standard SQL**, and BIP does **not** scan it for binds —
+> no prompt appears and no parameter is created. You must add the parameter
+> by hand, then the `:P_QRY_STMT` bind resolves to it by name at runtime.
+
+- **Parameters** (left panel) → **＋ Create Parameter**:
+  - Name: `P_QRY_STMT`  *(case-sensitive — must match the bind exactly)*
   - Data Type: `String`
   - Parameter Type: `Text`  *(leave the default value empty)*
 - Add a **Data Set** of type **SQL Query**, name it `Q1`, data source = the
-  Fusion transactional DB, and paste the PL/SQL runner from
-  [`query_runner_datamodel.sql`](./query_runner_datamodel.sql). *(In some BIP
-  versions this goes under the data set's "before data" / PL/SQL cursor
-  option; the block ends by opening a ref cursor from the decoded statement.)*
-- On the parameter, allow it to be passed to the data set.
+  Fusion transactional DB, set **Type of SQL = Non-standard SQL** (NOT
+  "Standard SQL" — that validates the PL/SQL as plain SQL and fails with
+  `ORA-00907`), and paste the PL/SQL runner from
+  [`query_runner_datamodel.sql`](./query_runner_datamodel.sql). The block
+  ends by opening a ref cursor from the decoded statement.
 - Save the Data Model as **`QueryRunnerDM`** in a folder you control, e.g.
   `/Custom/ReERP/`.
+
+> **If running the data model then errors with `PLS-00306: wrong number or
+> types of arguments in call to 'GETLENGTH'`** (or similar LOB errors): a
+> BIP **Text** parameter binds as `VARCHAR2`, not a LOB, so the `dbms_lob.*`
+> calls on `:P_QRY_STMT` fail. Use the CLOB-safe runner variant in
+> [`query_runner_datamodel.sql`](./query_runner_datamodel.sql) (it copies the
+> bind into a CLOB first, then base64-decodes).
 
 ## 2. Create the Report
 
