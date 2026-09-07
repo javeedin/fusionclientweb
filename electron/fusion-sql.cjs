@@ -25,6 +25,9 @@ function getConfig() {
     baseUrl: '', reportPath: '/Custom/ReERP/QueryRunner.xdo',
     dataModelPath: '/Custom/ReERP/QueryRunnerDM.xdm', folderPath: '/Custom/ReERP',
     dataSource: 'ApplicationDB_FSCM', rowLimit: 100,
+    // report-service SOAP endpoint (relative to the pod origin) — overridable
+    reportServicePath: '/xmlpserver/services/v2/ReportService',
+    catalogServicePath: '/xmlpserver/services/v2/CatalogService',
   };
   try { return { ...d, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; }
   catch { return d; }
@@ -74,34 +77,32 @@ function getCalls() { return CALL_LOG; }
 function clearCalls() { CALL_LOG.length = 0; }
 
 // ── SOAP runReport ──────────────────────────────────────────────────────────
-const SOAP11_NS = 'http://schemas.xmlsoap.org/soap/envelope/';
-const SOAP12_NS = 'http://www.w3.org/2003/05/soap-envelope';
-
-function buildEnvelope({ reportPath, base64Sql, user, pass, format, soap12 }) {
-  const ns = soap12 ? SOAP12_NS : SOAP11_NS;
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="${ns}" xmlns:pub="http://xmlns.oracle.com/oxp/service/PublicReportService">
+// Mirrors the app's proven customerSearchBip service: v2 ReportService,
+// v2 namespace, SOAP 1.1 text/xml, credentials in the body (no Basic auth).
+function buildEnvelope({ reportPath, base64Sql, user, pass, format }) {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:v2="http://xmlns.oracle.com/oxp/service/v2">
   <soapenv:Header/>
   <soapenv:Body>
-    <pub:runReport>
-      <pub:reportRequest>
-        <pub:attributeFormat>${format}</pub:attributeFormat>
-        <pub:attributeLocale>en-US</pub:attributeLocale>
-        <pub:flattenXML>true</pub:flattenXML>
-        <pub:reportAbsolutePath>${xmlEscape(reportPath)}</pub:reportAbsolutePath>
-        <pub:sizeOfDataChunkDownload>-1</pub:sizeOfDataChunkDownload>
-        <pub:parameterNameValues>
-          <pub:listOfParamNameValues>
-            <pub:item>
-              <pub:name>P_QRY_STMT</pub:name>
-              <pub:values><pub:item>${base64Sql}</pub:item></pub:values>
-            </pub:item>
-          </pub:listOfParamNameValues>
-        </pub:parameterNameValues>
-      </pub:reportRequest>
-      <pub:userID>${xmlEscape(user)}</pub:userID>
-      <pub:password>${xmlEscape(pass)}</pub:password>
-    </pub:runReport>
+    <v2:runReport>
+      <v2:reportRequest>
+        <v2:attributeFormat>${format}</v2:attributeFormat>
+        <v2:reportAbsolutePath>${xmlEscape(reportPath)}</v2:reportAbsolutePath>
+        <v2:sizeOfDataChunkDownload>-1</v2:sizeOfDataChunkDownload>
+        <v2:parameterNameValues>
+          <v2:listOfParamNameValues>
+            <v2:item>
+              <v2:name>P_QRY_STMT</v2:name>
+              <v2:values><v2:item>${base64Sql}</v2:item></v2:values>
+            </v2:item>
+          </v2:listOfParamNameValues>
+        </v2:parameterNameValues>
+        <v2:reportData/>
+        <v2:reportOutputPath/>
+      </v2:reportRequest>
+      <v2:userID>${xmlEscape(user)}</v2:userID>
+      <v2:password>${xmlEscape(pass)}</v2:password>
+    </v2:runReport>
   </soapenv:Body>
 </soapenv:Envelope>`;
 }
@@ -205,30 +206,17 @@ async function execute({ sql, rowLimit } = {}) {
   const cap = Math.max(1, Math.min(100000, Number(rowLimit || cfg.rowLimit) || 100));
   const capped = `SELECT * FROM (${stmt}) WHERE ROWNUM <= ${cap}`;
   const base64Sql = Buffer.from(capped, 'utf8').toString('base64');
-  const url = `${base}/xmlpserver/services/ExternalReportWSSService`;
+  const url = `${base}${cfg.reportServicePath || '/xmlpserver/services/v2/ReportService'}`;
 
-  // this pod's ExternalReportWSSService is a SOAP 1.2 endpoint (it rejects
-  // text/xml with an Upgrade fault); try 1.2 first, fall back to 1.1
-  // WSS endpoint: HTTP Basic auth on top of the in-body userID/password
-  const basic = 'Basic ' + Buffer.from(`${creds.username}:${creds.password}`).toString('base64');
-  const post = async (format, soap12) => {
-    const body = buildEnvelope({ reportPath: cfg.reportPath, base64Sql, user: creds.username, pass: creds.password, format, soap12 });
-    const headers = soap12
-      ? { 'Content-Type': 'application/soap+xml; charset=utf-8; action="runReport"', Authorization: basic }
-      : { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: 'runReport', Authorization: basic };
+  // v2 ReportService: SOAP 1.1 text/xml, credentials in the body — mirrors
+  // the app's proven customerSearchBip service (no HTTP Basic auth needed)
+  const attempt = async (format) => {
+    const body = buildEnvelope({ reportPath: cfg.reportPath, base64Sql, user: creds.username, pass: creds.password, format });
+    const headers = { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: '"runReport"' };
     const res = await fetch(url, { method: 'POST', headers, body });
     const text = await res.text();
-    recordCall({
-      kind: `runReport (${format}, SOAP ${soap12 ? '1.2' : '1.1'})`, protocol: 'SOAP', url, status: res.status,
-      headers: { ...headers, Authorization: 'Basic <base64 user:password>' }, request: body, response: text,
-    });
+    recordCall({ kind: `runReport (${format})`, protocol: 'SOAP', url, status: res.status, headers, request: body, response: text });
     return { status: res.status, ok: res.ok, text };
-  };
-  const versionFault = (t) => /soap.?1\.?2|not\s*compat|VersionMismatch|SupportedEnvelope/i.test(t || '');
-  const attempt = async (format) => {
-    let r = await post(format, true);          // SOAP 1.2
-    if (!extractReportBytes(r.text) && versionFault(r.text)) r = await post(format, false); // fall back to 1.1
-    return r;
   };
 
   try {
