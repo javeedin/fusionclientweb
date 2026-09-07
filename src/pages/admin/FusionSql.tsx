@@ -28,6 +28,8 @@ interface FusionSqlApi {
   fusionSqlConfig?: (patch?: Record<string, unknown>) => Promise<{ success: boolean; config?: FsConfig; error?: string }>;
   fusionSqlExecute?: (opts: { sql: string; rowLimit?: number }) => Promise<FsResult>;
   fusionSqlDeploy?: () => Promise<{ success: boolean; message?: string; error?: string; steps?: string[]; raw?: string }>;
+  getFusionCredentials?: () => Promise<{ username: string; password: string } | null>;
+  saveFusionCredentials?: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   openExcel?: (buf: unknown, filename: string) => Promise<unknown>;
 }
 interface FsConfig { baseUrl?: string; reportPath?: string; dataModelPath?: string; folderPath?: string; dataSource?: string; rowLimit?: number }
@@ -70,7 +72,19 @@ const FusionSql: React.FC = () => {
   const [draft, setDraft] = useState<FsConfig>({});
   const [deploying, setDeploying] = useState(false);
   const [deployMsg, setDeployMsg] = useState<{ ok: boolean; text: string; steps?: string[] } | null>(null);
+  const [creds, setCreds] = useState<{ username: string; hasPassword: boolean } | null>(null);
+  const [credUser, setCredUser] = useState('');
+  const [credPass, setCredPass] = useState('');
   const editorRef = useRef<HTMLTextAreaElement>(null);
+
+  const loadCreds = useCallback(async () => {
+    try {
+      const c = await api?.getFusionCredentials?.();
+      if (c && c.username) { setCreds({ username: c.username, hasPassword: !!c.password }); setCredUser(c.username); }
+      else setCreds(null);
+    } catch { setCreds(null); }
+  }, [api]);
+  useEffect(() => { loadCreds(); }, [loadCreds]);
 
   useEffect(() => {
     api?.fusionSqlConfig?.().then(r => {
@@ -192,8 +206,16 @@ const FusionSql: React.FC = () => {
     return r?.success;
   };
 
+  const saveCreds = async () => {
+    if (!credUser.trim() || !credPass) { antMessage.warning('Enter both username and password'); return; }
+    const r = await api?.saveFusionCredentials?.(credUser.trim(), credPass);
+    if (r?.success) { antMessage.success('Fusion credentials saved'); setCredPass(''); loadCreds(); }
+    else antMessage.error(r?.error || 'Could not save credentials');
+  };
+
   const deploy = async () => {
     if (!api?.fusionSqlDeploy) return;
+    if (!creds?.hasPassword) { antMessage.warning('Save your Fusion username & password first (below)'); return; }
     // save current settings first so the deploy uses them
     await saveCfg();
     setDeploying(true);
@@ -237,6 +259,11 @@ const FusionSql: React.FC = () => {
           <Tag color="volcano">Live Oracle Fusion</Tag>
           <Tag icon={<ThunderboltOutlined />}>Read-only (SELECT)</Tag>
           {pod ? <Tag color="green">{pod}</Tag> : <Tag color="red">Not configured</Tag>}
+          <Tooltip title={creds?.hasPassword ? `Signed in as ${creds.username}` : 'No Fusion credentials — open settings'}>
+            <Tag color={creds?.hasPassword ? 'blue' : 'orange'} icon={<ApiOutlined />}>
+              {creds?.hasPassword ? creds.username : 'No credentials'}
+            </Tag>
+          </Tooltip>
           <div style={{ flex: 1 }} />
           <span style={{ fontSize: 12, color: '#6B6B6B' }}>Row limit</span>
           <InputNumber size="small" min={1} max={100000} value={rowLimit} onChange={v => setRowLimit(v || 100)} style={{ width: 90 }} />
@@ -383,7 +410,29 @@ const FusionSql: React.FC = () => {
             <InputNumber min={1} max={100000} value={draft.rowLimit ?? 100} onChange={v => setDraft({ ...draft, rowLimit: v || 100 })} />
           </div>
 
-          <Card size="small" title={<span style={{ fontSize: 13 }}><ApiOutlined /> Auto-deploy runner report</span>}
+          <Card size="small" title={<span style={{ fontSize: 13 }}><ApiOutlined /> Fusion credentials</span>}
+            styles={{ body: { padding: 12 } }}>
+            <Space direction="vertical" style={{ width: '100%' }} size={10}>
+              {creds?.hasPassword
+                ? <Alert type="success" showIcon style={{ padding: '4px 10px' }}
+                    message={<span style={{ fontSize: 12 }}>Saved — <b>{creds.username}</b> (password stored, encrypted)</span>} />
+                : <Alert type="warning" showIcon style={{ padding: '4px 10px' }}
+                    message={<span style={{ fontSize: 12 }}>
+                      {creds ? <>Username <b>{creds.username}</b> is saved, but no password — enter it below.</> : 'No Fusion credentials saved — enter them below.'}
+                    </span>} />}
+              <Text type="secondary" style={{ fontSize: 11.5 }}>
+                Fusion SQL calls the pod's SOAP services with a username/password (the browser SSO login can't supply one).
+                Use a dedicated BI account for this — not a personal login.
+              </Text>
+              <Input placeholder="Fusion username (e.g. SHAIK / user@company.com)" value={credUser}
+                onChange={e => setCredUser(e.target.value)} autoComplete="off" />
+              <Input.Password placeholder="Fusion password" value={credPass}
+                onChange={e => setCredPass(e.target.value)} onPressEnter={saveCreds} autoComplete="new-password" />
+              <Button icon={<SettingOutlined />} onClick={saveCreds}>Save credentials</Button>
+            </Space>
+          </Card>
+
+          <Card size="small" title={<span style={{ fontSize: 13 }}><ThunderboltOutlined /> Auto-deploy runner report</span>}
             styles={{ body: { padding: 12 } }}>
             <Space direction="vertical" style={{ width: '100%' }} size={10}>
               <Text type="secondary" style={{ fontSize: 11.5 }}>
