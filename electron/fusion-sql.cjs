@@ -262,39 +262,52 @@ async function execute({ sql, rowLimit } = {}) {
   const base64Sql = Buffer.from(capped, 'utf8').toString('base64');
   const url = `${base}${cfg.reportServicePath || '/xmlpserver/services/v2/ReportService'}`;
 
+  // per-call timeout so a slow/hung pod fails cleanly instead of spinning
+  const timeoutMs = Math.max(5000, Math.min(600000, Number(cfg.timeoutMs) || 120000));
+
   // v2 ReportService: SOAP 1.1 text/xml, credentials in the body — mirrors
   // the app's proven customerSearchBip service (no HTTP Basic auth needed)
   const attempt = async (format) => {
     const body = buildEnvelope({ reportPath: cfg.reportPath, base64Sql, user: creds.username, pass: creds.password, format });
     const headers = { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: '"runReport"' };
-    const res = await fetch(url, { method: 'POST', headers, body });
-    const text = await res.text();
-    recordCall({ kind: `runReport (${format})`, protocol: 'SOAP', url, status: res.status, headers, request: body, response: text });
-    return { status: res.status, ok: res.ok, text };
+    const started = Date.now();
+    try {
+      const res = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(timeoutMs) });
+      const text = await res.text();
+      recordCall({ kind: `runReport (${format})`, protocol: 'SOAP', url, status: res.status, headers, request: body, response: text });
+      return { status: res.status, ok: res.ok, text };
+    } catch (e) {
+      const timedOut = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+      const msg = timedOut
+        ? `runReport timed out after ${Math.round((Date.now() - started) / 1000)}s (limit ${Math.round(timeoutMs / 1000)}s)`
+        : `runReport request failed: ${e && e.message ? e.message : e}`;
+      recordCall({ kind: `runReport (${format})`, protocol: 'SOAP', url, status: timedOut ? 'timeout' : 'error', headers, request: body, response: msg });
+      return { status: 0, ok: false, text: '', error: msg };
+    }
   };
 
-  // parse a decoded report body: the DBMS_XMLGEN runner wraps the result as an
-  // inner ROWSET (handled first); otherwise fall back to plain CSV / BIP XML.
-  const parseBody = (decoded) => parseXmlGenRows(decoded) ?? parseCsv(decoded);
-
   try {
-    // CSV first (deterministic parse), XML as fallback
-    let r = await attempt('csv');
+    // XML first — the DBMS_XMLGEN runner is XML-native, and CSV output is often
+    // not enabled on the report (a CSV attempt can stall). CSV is the fallback.
+    let r = await attempt('xml');
     let bytes = extractReportBytes(r.text);
     let rows = [];
-    if (bytes) rows = parseBody(Buffer.from(bytes, 'base64').toString('utf8'));
-    if (!rows.length) {
-      const r2 = await attempt('xml');
+    if (bytes) {
+      const decoded = Buffer.from(bytes, 'base64').toString('utf8');
+      rows = parseXmlGenRows(decoded) ?? parseXmlRows(decoded);
+    }
+    if (!rows.length && !r.error) {
+      const r2 = await attempt('csv');
       const b2 = extractReportBytes(r2.text);
       if (b2) {
         const decoded2 = Buffer.from(b2, 'base64').toString('utf8');
-        rows = parseXmlGenRows(decoded2) ?? parseXmlRows(decoded2);
+        rows = parseXmlGenRows(decoded2) ?? parseCsv(decoded2);
       }
       if (!bytes) { r = r2; bytes = b2; }
     }
     if (!bytes) {
-      const fault = extractFault(r.text) || `HTTP ${r.status}`;
-      return { success: false, error: fault, raw: r.text.slice(0, 1200) };
+      const fault = r.error || extractFault(r.text) || `HTTP ${r.status}`;
+      return { success: false, error: fault, raw: (r.text || '').slice(0, 1200) };
     }
     const columns = unionColumns(rows);
     return { success: true, rows, columns, rowCount: rows.length, capped: rows.length >= cap };
