@@ -93,6 +93,7 @@ const FusionSql: React.FC = () => {
   const [schemaBusy, setSchemaBusy] = useState(false);
   const [schemaCapped, setSchemaCapped] = useState(false);
   const [schemaAt, setSchemaAt] = useState<number | null>(null);
+  const [schemaLoadedFor, setSchemaLoadedFor] = useState<string>(''); // owner.kind actually loaded
   const [openObj, setOpenObj] = useState<string | null>(null);
   const [objCols, setObjCols] = useState<Record<string, unknown>[]>([]);
 
@@ -223,6 +224,7 @@ const FusionSql: React.FC = () => {
       const c = await cacheRead(key) as { at?: number; names?: string[]; capped?: boolean } | null;
       if (c && Array.isArray(c.names) && c.names.length) {
         setSchemaList(c.names); setSchemaCapped(!!c.capped); setSchemaAt(c.at || null);
+        setSchemaLoadedFor(key);
         return;
       }
     }
@@ -234,6 +236,7 @@ const FusionSql: React.FC = () => {
         const names = Array.from(new Set(namesOf(r.rows)));
         const at = Date.now();
         setSchemaList(names); setSchemaCapped(!!r.capped); setSchemaAt(at);
+        setSchemaLoadedFor(key); // loaded (even if 0 rows — schema has none visible)
         cacheWrite(key, { at, names, capped: !!r.capped });
       } else {
         antMessage.error(r.error || 'Schema query failed');
@@ -555,7 +558,9 @@ const FusionSql: React.FC = () => {
             {schemaBusy && <Text type="secondary" style={{ fontSize: 12, padding: 10, display: 'block' }}>Loading…</Text>}
             {!schemaBusy && !schemaList.length && (
               <Text type="secondary" style={{ fontSize: 12, padding: 10, display: 'block' }}>
-                No cached {schemaKind.toLowerCase()}s yet — click the refresh icon to load them from the pod.
+                {schemaLoadedFor === `schema.${schemaOwner}.${schemaKind}`
+                  ? <>No {schemaKind.toLowerCase()}s in <b>{schemaOwner}</b> are visible to your BI user. Try the <b>FUSION</b> schema (where the transactional tables live), or another owner.</>
+                  : <>Loading {schemaKind.toLowerCase()}s from <b>{schemaOwner}</b>… if nothing appears, click the refresh icon to load them from the pod.</>}
               </Text>
             )}
             {!schemaBusy && schemaList.length > 0 && !filteredSchema.length && (
