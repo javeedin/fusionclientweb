@@ -100,6 +100,46 @@ const substituteParams = (s: string, vals: Record<string, string>): string => {
   return out;
 };
 
+// Isolated so typing in a parameter field re-renders only this dialog, not the
+// whole Fusion SQL screen (which holds a large results table) — keeps input fast.
+const ParamDialog: React.FC<{
+  open: boolean;
+  params: string[];
+  initial: Record<string, string>;
+  onRun: (vals: Record<string, string>) => void;
+  onCancel: () => void;
+}> = ({ open, params, initial, onRun, onCancel }) => {
+  const [vals, setVals] = useState<Record<string, string>>({});
+  useEffect(() => { if (open) setVals(initial); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <Modal
+      title="Enter parameter values"
+      open={open}
+      onCancel={onCancel}
+      okText="Run"
+      okButtonProps={{ icon: <PlayCircleOutlined />, style: { background: '#1D7B4D', borderColor: '#1D7B4D' } }}
+      onOk={() => onRun(vals)}
+      width={460}
+    >
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+        This query has bind variables. Leave a value blank to treat it as <b>NULL</b> (i.e. “all”). Numbers are used as-is; text is quoted automatically.
+      </Text>
+      {params.map((p, i) => (
+        <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <span style={{ width: 150, fontSize: 13, fontFamily: 'monospace', color: '#C74634', textAlign: 'right' }}>{p}</span>
+          <Input
+            autoFocus={i === 0}
+            value={vals[p] ?? ''}
+            placeholder="blank = all"
+            onChange={e => { const v = e.target.value; setVals(prev => ({ ...prev, [p]: v })); }}
+            onPressEnter={() => onRun(vals)}
+          />
+        </div>
+      ))}
+    </Modal>
+  );
+};
+
 const FusionSql: React.FC = () => {
   const api = getApi();
   const [cfg, setCfg] = useState<FsConfig>({ reportPath: '/Custom/ReERP/QueryRunner.xdo', rowLimit: 100 });
@@ -865,40 +905,18 @@ const FusionSql: React.FC = () => {
           onPressEnter={confirmSave} autoFocus />
       </Modal>
 
-      {/* ── Bind / parameter prompt ── */}
-      <Modal
-        title="Enter parameter values"
+      {/* ── Bind / parameter prompt (isolated component to keep typing fast) ── */}
+      <ParamDialog
         open={paramDlgOpen}
+        params={extractParams(pendingSql)}
+        initial={paramDraft}
         onCancel={() => setParamDlgOpen(false)}
-        okText="Run"
-        okButtonProps={{ icon: <PlayCircleOutlined />, style: { background: '#1D7B4D', borderColor: '#1D7B4D' } }}
-        onOk={() => {
-          setParamValues(prev => ({ ...prev, ...paramDraft }));
+        onRun={vals => {
+          setParamValues(prev => ({ ...prev, ...vals }));
           setParamDlgOpen(false);
-          doExecute(pendingSql, paramDraft);
+          doExecute(pendingSql, vals);
         }}
-        width={460}
-      >
-        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
-          This query has bind variables. Leave a value blank to treat it as <b>NULL</b> (i.e. “all”). Numbers are used as-is; text is quoted automatically.
-        </Text>
-        {extractParams(pendingSql).map(p => (
-          <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span style={{ width: 150, fontSize: 13, fontFamily: 'monospace', color: '#C74634', textAlign: 'right' }}>{p}</span>
-            <Input
-              autoFocus={extractParams(pendingSql)[0] === p}
-              value={paramDraft[p] ?? ''}
-              placeholder="blank = all"
-              onChange={e => setParamDraft(v => ({ ...v, [p]: e.target.value }))}
-              onPressEnter={() => {
-                setParamValues(prev => ({ ...prev, ...paramDraft }));
-                setParamDlgOpen(false);
-                doExecute(pendingSql, paramDraft);
-              }}
-            />
-          </div>
-        ))}
-      </Modal>
+      />
 
       {/* ── AI SQL assistant ── */}
       <Drawer
