@@ -123,7 +123,9 @@ const REDWOOD = {
 
 const APEX_SUPPLIERS_URL      = `${APEX_DB_CONFIG.baseUrl}/suppliers?limit=500`;
 const APEX_BUSINESS_UNITS_URL = `${APEX_DB_CONFIG.baseUrl}/gl/businessunits`;
-const APEX_SUPPLIER_SITES_URL = `${APEX_DB_CONFIG.baseUrl}/suppliers/sites`;
+// NOTE: supplier sites are loaded per-supplier via suppliers/sitelist/:id
+// (see buildSupplierSitesUrl); the plain suppliers/sites GET is the sync feed
+// that returns ALL sites and must not be used to populate the site dropdown.
 
 // Supplier record
 interface SupplierRecord {
@@ -541,6 +543,8 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
   // Supplier sites
   const [supplierSites, setSupplierSites] = useState<SupplierSiteRecord[]>([]);
   const [supplierSiteLoading, setSupplierSiteLoading] = useState(false);
+  // last supplier-sites webservice URL actually called (shown in the API dialog)
+  const [supplierSitesUrl, setSupplierSitesUrl] = useState<string>('');
 
   // Header completion tracking
   const [headerValues, setHeaderValues] = useState<Record<string, any>>({
@@ -2660,18 +2664,29 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
     });
   };
 
+  // Build the supplier-scoped sites webservice URL. Uses the supplier-filtered
+  // ORDS handler (suppliers/sitelist/:supplier_id) — the plain suppliers/sites
+  // GET is the sync feed that returns ALL sites, so it must not be used here.
+  const buildSupplierSitesUrl = (supplierId: number) =>
+    buildApexUrl(`suppliers/sitelist/${supplierId}`);
+
   const fetchSupplierSites = async (supplierId: number, procurementBU: string) => {
     setSupplierSiteLoading(true);
     setSupplierSites([]);
+    const url = buildSupplierSitesUrl(supplierId);
+    setSupplierSitesUrl(url);
     try {
-      const url = `${buildApexUrl("suppliers/sites?P_SUPPLIER_ID=${supplierId}&P_PROCUREMENT_BU=${encodeURIComponent(procurementBU)}")}`;
+      // These ORDS endpoints read the app's own synced Oracle data — no Fusion
+      // token is required (and none of the other GETs on this page send one).
+      console.debug('[CreateInvoice] supplier sites', { supplierId, procurementBU, url });
       const res = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const items: any[] = data.items || (Array.isArray(data) ? data : []);
       const mapped: SupplierSiteRecord[] = items.map((item: any) => ({
-        siteId:       item.suppliersiteid?.toString() || '',
-        siteName: item.supplier_site || item.SUPPLIER_SITE || '',
+        // accept camelCase (sitelist handler), snake_case and UPPER just in case
+        siteId:   (item.supplierSiteId ?? item.suppliersiteid ?? item.SUPPLIER_SITE_ID ?? item.supplier_site_id)?.toString() || '',
+        siteName: item.supplierSite ?? item.supplier_site ?? item.SUPPLIER_SITE ?? '',
       })).filter(s => s.siteId);
       setSupplierSites(mapped);
       if (mapped.length === 1) {
@@ -6148,46 +6163,70 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
                                 />
                               </Badge>
                             </Tooltip>
-                            <Tooltip title="View supplier webservice URL">
+                            <Tooltip title="View supplier / supplier-site webservice URLs">
                               <Button
                                 icon={<ApiOutlined />}
                                 onClick={() => {
                                   const bu = form.getFieldValue('businessUnit') || '';
-                                  const url = bu
+                                  const supplierUrl = bu
                                     ? `${APEX_SUPPLIERS_URL}&P_BUSINESS_UNIT=${encodeURIComponent(bu)}`
                                     : APEX_SUPPLIERS_URL;
+                                  const supplierId = form.getFieldValue('supplierId');
+                                  const sitesUrl = supplierSitesUrl
+                                    || (supplierId ? buildSupplierSitesUrl(Number(supplierId)) : '');
+                                  const box = (u: string) => (
+                                    <div style={{
+                                      marginTop: 8, padding: '10px 14px', background: '#f5f5f5',
+                                      borderRadius: 6, fontFamily: 'monospace', fontSize: 12,
+                                      wordBreak: 'break-all', color: REDWOOD.primary,
+                                    }}>{u}</div>
+                                  );
                                   Modal.info({
                                     title: 'Supplier List Webservice',
-                                    width: 600,
+                                    width: 640,
                                     content: (
                                       <div>
-                                        <Text type="secondary" style={{ fontSize: 12 }}>Endpoint called to populate supplier dropdown:</Text>
-                                        <div style={{
-                                          marginTop: 8,
-                                          padding: '10px 14px',
-                                          background: '#f5f5f5',
-                                          borderRadius: 6,
-                                          fontFamily: 'monospace',
-                                          fontSize: 12,
-                                          wordBreak: 'break-all',
-                                          color: REDWOOD.primary,
-                                        }}>
-                                          {url}
-                                        </div>
+                                        <Text strong style={{ fontSize: 12 }}>1. Supplier list</Text>
+                                        <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                                          Populates the supplier dropdown (GET):
+                                        </Text>
+                                        {box(supplierUrl)}
                                         {bu && (
-                                          <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: 'block' }}>
+                                          <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
                                             Filtered by Business Unit: <strong>{bu}</strong>
                                           </Text>
                                         )}
-                                        <div style={{ marginTop: 12 }}>
-                                          <Button
-                                            size="small"
-                                            icon={<CopyOutlined />}
-                                            onClick={() => { navigator.clipboard.writeText(url); }}
-                                          >
+                                        <div style={{ marginTop: 6 }}>
+                                          <Button size="small" icon={<CopyOutlined />}
+                                            onClick={() => { navigator.clipboard.writeText(supplierUrl); }}>
                                             Copy URL
                                           </Button>
                                         </div>
+
+                                        <div style={{ height: 16 }} />
+
+                                        <Text strong style={{ fontSize: 12 }}>2. Supplier sites</Text>
+                                        <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                                          Populates the Supplier Site dropdown for the selected supplier (GET):
+                                        </Text>
+                                        {sitesUrl
+                                          ? box(sitesUrl)
+                                          : (
+                                            <Text type="warning" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+                                              Select a supplier first — the site URL is built from the supplier id.
+                                            </Text>
+                                          )}
+                                        {sitesUrl && (
+                                          <div style={{ marginTop: 6 }}>
+                                            <Button size="small" icon={<CopyOutlined />}
+                                              onClick={() => { navigator.clipboard.writeText(sitesUrl); }}>
+                                              Copy URL
+                                            </Button>
+                                          </div>
+                                        )}
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 12 }}>
+                                          Both read the app&apos;s synced Oracle data via ORDS — no Fusion token is sent.
+                                        </Text>
                                       </div>
                                     ),
                                   });
