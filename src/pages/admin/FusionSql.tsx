@@ -84,6 +84,8 @@ const FusionSql: React.FC = () => {
   });
 
   // schema browser
+  const [schemaOwner, setSchemaOwner] = useState<string>('FUSION');
+  const [owners, setOwners] = useState<string[]>(['FUSION']);
   const [schemaKind, setSchemaKind] = useState<string>('TABLE');
   const [schemaQ, setSchemaQ] = useState('');
   const [schemaList, setSchemaList] = useState<string[]>([]);
@@ -171,17 +173,32 @@ const FusionSql: React.FC = () => {
     try { localStorage.setItem(`reerp.fusionsql.${podKey}.${key}`, JSON.stringify(value)); } catch { /* quota */ }
   }, [api, cfg.baseUrl, podKey]);
 
-  // owner filter — most Fusion objects are owned by FUSION, but synonyms are
-  // mostly PUBLIC, so widen that one so synonyms actually show up.
-  const ownerClause = (kind: string) => (kind === 'SYNONYM' ? "owner IN ('FUSION','PUBLIC')" : "owner='FUSION'");
   const namesOf = (rows: Record<string, unknown>[]) =>
     rows.map(x => String(x.OBJECT_NAME ?? x.object_name ?? '')).filter(Boolean);
 
-  // fetch the FULL object list for a kind once, cache it to the local file, and
-  // filter it client-side. force=true re-pulls from the pod.
+  // the pod has many schemas (FUSION, FUSION_SETUP, FUSION_RUNTIME, …). Load the
+  // owner list once (cached) so the user can pick which schema to browse.
+  const loadOwners = useCallback(async (force = false) => {
+    if (!api) return;
+    if (!force) {
+      const c = await cacheRead('owners') as string[] | null;
+      if (Array.isArray(c) && c.length) { setOwners(c); return; }
+    }
+    const r = await api.fusionSqlExecute!({ sql: 'SELECT username FROM all_users ORDER BY username', rowLimit: 5000 });
+    if (r.success && r.rows) {
+      let names = r.rows.map(x => String(x.USERNAME ?? x.username ?? '')).filter(Boolean);
+      if (!names.includes('PUBLIC')) names = ['PUBLIC', ...names]; // for public synonyms
+      names = Array.from(new Set(names)).sort();
+      setOwners(names);
+      cacheWrite('owners', names);
+    }
+  }, [api, cacheRead, cacheWrite]);
+
+  // fetch the FULL object list for the selected owner+kind once, cache it to the
+  // local file, and filter it client-side. force=true re-pulls from the pod.
   const loadSchema = useCallback(async (force = false) => {
     if (!api) return;
-    const key = `schema.${schemaKind}`;
+    const key = `schema.${schemaOwner}.${schemaKind}`;
     if (!force) {
       const c = await cacheRead(key) as { at?: number; names?: string[]; capped?: boolean } | null;
       if (c && Array.isArray(c.names) && c.names.length) {
@@ -190,11 +207,11 @@ const FusionSql: React.FC = () => {
       }
     }
     setSchemaBusy(true);
-    const q = `SELECT object_name FROM all_objects WHERE ${ownerClause(schemaKind)} AND object_type='${schemaKind}' ORDER BY object_name`;
+    const q = `SELECT object_name FROM all_objects WHERE owner='${sqlEsc(schemaOwner)}' AND object_type='${schemaKind}' ORDER BY object_name`;
     try {
       const r = await api.fusionSqlExecute!({ sql: q, rowLimit: SCHEMA_CAP });
       if (r.success && r.rows) {
-        const names = Array.from(new Set(namesOf(r.rows))); // PUBLIC+FUSION synonyms can dup
+        const names = Array.from(new Set(namesOf(r.rows)));
         const at = Date.now();
         setSchemaList(names); setSchemaCapped(!!r.capped); setSchemaAt(at);
         cacheWrite(key, { at, names, capped: !!r.capped });
@@ -202,7 +219,7 @@ const FusionSql: React.FC = () => {
         antMessage.error(r.error || 'Schema query failed');
       }
     } finally { setSchemaBusy(false); }
-  }, [api, schemaKind, cacheRead, cacheWrite]);
+  }, [api, schemaOwner, schemaKind, cacheRead, cacheWrite]);
 
   // find objects the cached list may not hold (beyond the cap): server LIKE
   // search, merged into the cached list so the local copy grows over time.
@@ -210,14 +227,14 @@ const FusionSql: React.FC = () => {
     if (!api || !schemaQ.trim()) return;
     setSchemaBusy(true);
     const like = `%${sqlEsc(schemaQ.trim().toUpperCase())}%`;
-    const q = `SELECT object_name FROM all_objects WHERE ${ownerClause(schemaKind)} AND object_type='${schemaKind}' AND UPPER(object_name) LIKE '${like}' ORDER BY object_name`;
+    const q = `SELECT object_name FROM all_objects WHERE owner='${sqlEsc(schemaOwner)}' AND object_type='${schemaKind}' AND UPPER(object_name) LIKE '${like}' ORDER BY object_name`;
     try {
       const r = await api.fusionSqlExecute!({ sql: q, rowLimit: 2000 });
       if (r.success && r.rows) {
         const found = namesOf(r.rows);
         setSchemaList(prev => {
           const merged = Array.from(new Set([...prev, ...found])).sort();
-          cacheWrite(`schema.${schemaKind}`, { at: Date.now(), names: merged, capped: schemaCapped });
+          cacheWrite(`schema.${schemaOwner}.${schemaKind}`, { at: Date.now(), names: merged, capped: schemaCapped });
           return merged;
         });
         if (!found.length) antMessage.info('No matching objects on the pod.');
@@ -225,10 +242,13 @@ const FusionSql: React.FC = () => {
         antMessage.error(r.error || 'Schema search failed');
       }
     } finally { setSchemaBusy(false); }
-  }, [api, schemaKind, schemaQ, cacheWrite, schemaCapped]);
+  }, [api, schemaOwner, schemaKind, schemaQ, cacheWrite, schemaCapped]);
 
-  // auto-load (from cache if available) once the pod is known / kind changes.
-  useEffect(() => { if (api && cfg.baseUrl) { setOpenObj(null); loadSchema(false); } }, [api, cfg.baseUrl, schemaKind, loadSchema]);
+  // load owners once the pod is known
+  useEffect(() => { if (api && cfg.baseUrl) loadOwners(false); }, [api, cfg.baseUrl, loadOwners]);
+
+  // auto-load (from cache if available) once the pod is known / owner / kind changes.
+  useEffect(() => { if (api && cfg.baseUrl) { setOpenObj(null); loadSchema(false); } }, [api, cfg.baseUrl, schemaOwner, schemaKind, loadSchema]);
 
   // client-side filter over the cached list — instant, no round-trip
   const filteredSchema = useMemo(() => {
@@ -242,15 +262,15 @@ const FusionSql: React.FC = () => {
     if (!hasColumns(schemaKind) && !hasArgs(schemaKind)) return; // nothing to expand
     setOpenObj(name);
     setObjCols([]);
-    const ckey = `detail.${schemaKind}.${name}`;
+    const ckey = `detail.${schemaOwner}.${schemaKind}.${name}`;
     const cached = await cacheRead(ckey);
     if (Array.isArray(cached) && cached.length) { setObjCols(cached as Record<string, unknown>[]); return; }
     const q = hasArgs(schemaKind)
-      ? `SELECT NVL(argument_name,'(return)') AS column_name, data_type, in_out FROM all_arguments WHERE owner='FUSION' AND object_name='${sqlEsc(name)}' AND argument_name IS NOT NULL ORDER BY position`
-      : `SELECT column_name, data_type, data_length, nullable FROM all_tab_columns WHERE owner='FUSION' AND table_name='${sqlEsc(name)}' ORDER BY column_id`;
+      ? `SELECT NVL(argument_name,'(return)') AS column_name, data_type, in_out FROM all_arguments WHERE owner='${sqlEsc(schemaOwner)}' AND object_name='${sqlEsc(name)}' AND argument_name IS NOT NULL ORDER BY position`
+      : `SELECT column_name, data_type, data_length, nullable FROM all_tab_columns WHERE owner='${sqlEsc(schemaOwner)}' AND table_name='${sqlEsc(name)}' ORDER BY column_id`;
     const r = await api!.fusionSqlExecute!({ sql: q, rowLimit: 1000 });
     if (r.success && r.rows) { setObjCols(r.rows); cacheWrite(ckey, r.rows); }
-  }, [api, openObj, schemaKind, cacheRead, cacheWrite]);
+  }, [api, openObj, schemaOwner, schemaKind, cacheRead, cacheWrite]);
 
   const insert = (text: string) => {
     const el = editorRef.current;
@@ -409,6 +429,9 @@ const FusionSql: React.FC = () => {
             </Tooltip>
           </div>
           <div style={{ padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <Select size="small" showSearch value={schemaOwner} onChange={v => setSchemaOwner(v)}
+              style={{ width: '100%' }} placeholder="Schema (owner)"
+              options={owners.map(o => ({ value: o, label: o }))} optionFilterProp="label" />
             <Select size="small" value={schemaKind} onChange={v => setSchemaKind(v)}
               style={{ width: '100%' }} options={OBJECT_TYPES} />
             <Input size="small" prefix={<SearchOutlined />} placeholder={`Filter ${schemaList.length ? schemaList.length.toLocaleString() + ' ' : ''}objects`} allowClear
@@ -429,9 +452,12 @@ const FusionSql: React.FC = () => {
             )}
             {filteredSchema.map(name => {
               const expandable = hasColumns(schemaKind) || hasArgs(schemaKind);
+              // FUSION/PUBLIC objects resolve unqualified; other schemas need owner.name
+              const qualified = (schemaOwner === 'FUSION' || schemaOwner === 'PUBLIC')
+                ? name.toLowerCase() : `${schemaOwner}.${name}`.toLowerCase();
               return (
               <div key={name}>
-                <button className="fs-obj" onClick={() => insert(name.toLowerCase())} onDoubleClick={() => expandable && loadColumns(name)}
+                <button className="fs-obj" onClick={() => insert(qualified)} onDoubleClick={() => expandable && loadColumns(name)}
                   title={expandable ? 'Click: insert into editor · Double-click: show columns' : 'Click: insert into editor'}>
                   {expandable
                     ? <CaretRightOutlined style={{ fontSize: 9, marginRight: 4, transform: openObj === name ? 'rotate(90deg)' : 'none' }}
