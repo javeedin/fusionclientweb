@@ -3301,8 +3301,16 @@ const ManageInvoices: React.FC = () => {
       key: 'invoiceNumber',
       width: 200,
       fixed: 'left',
-      render: (text: string, record: InvoiceRecord) => (
+      render: (text: string, record: InvoiceRecord) => {
+        const vs = (record.validationStatus || '').toLowerCase();
+        const cancelled = record.holdPaidStatus === 'Cancelled' || vs === 'canceled' || vs === 'cancelled';
+        return (
         <Space size={4}>
+          {cancelled && (
+            <Tag style={{ background: REDWOOD.error, color: '#fff', border: 'none', fontSize: 10, margin: 0, padding: '0 5px', lineHeight: '18px' }}>
+              Cancelled
+            </Tag>
+          )}
           <Tooltip title={APPROVAL_ACTIONED_STATUSES.includes(record.approvalStatus) ? 'Resend for Approval' : 'Send for Approval'}>
             <Button
               size="small"
@@ -3332,7 +3340,7 @@ const ManageInvoices: React.FC = () => {
           ) : null}
           <a
             onClick={() => openInvoiceTab(record)}
-            style={{ color: REDWOOD.info, cursor: 'pointer' }}
+            style={{ color: cancelled ? REDWOOD.error : REDWOOD.info, cursor: 'pointer', textDecoration: cancelled ? 'line-through' : 'none' }}
           >
             {text}
           </a>
@@ -3345,7 +3353,8 @@ const ManageInvoices: React.FC = () => {
             </Tooltip>
           )}
         </Space>
-      ),
+        );
+      },
       sorter: (a, b) => a.invoiceNumber.localeCompare(b.invoiceNumber),
     },
     {
