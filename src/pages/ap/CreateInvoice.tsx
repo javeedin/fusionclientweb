@@ -123,9 +123,8 @@ const REDWOOD = {
 
 const APEX_SUPPLIERS_URL      = `${APEX_DB_CONFIG.baseUrl}/suppliers?limit=500`;
 const APEX_BUSINESS_UNITS_URL = `${APEX_DB_CONFIG.baseUrl}/gl/businessunits`;
-// NOTE: supplier sites are loaded per-supplier via suppliers/sitelist/:id
-// (see buildSupplierSitesUrl); the plain suppliers/sites GET is the sync feed
-// that returns ALL sites and must not be used to populate the site dropdown.
+// NOTE: supplier sites are loaded from suppliers/sites with the P_SUPPLIER_ID
+// (and optional P_PROCUREMENT_BU) binds — see buildSupplierSitesUrl.
 
 // Supplier record
 interface SupplierRecord {
@@ -2664,30 +2663,55 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
     });
   };
 
-  // Build the supplier-scoped sites webservice URL. Uses the supplier-filtered
-  // ORDS handler (suppliers/sitelist/:supplier_id) — the plain suppliers/sites
-  // GET is the sync feed that returns ALL sites, so it must not be used here.
-  const buildSupplierSitesUrl = (supplierId: number) =>
-    buildApexUrl(`suppliers/sitelist/${supplierId}`);
+  // Supplier-sites webservice: the deployed suppliers/sites GET, whose handler
+  // filters on optional binds:
+  //   WHERE SUPPLIER_ID   = NVL(:P_SUPPLIER_ID, SUPPLIER_ID)
+  //     AND PROCUREMENT_BU = NVL(:P_PROCUREMENT_BU, PROCUREMENT_BU)
+  // Pass P_SUPPLIER_ID always; P_PROCUREMENT_BU only when narrowing to the
+  // invoice's BU. (No Fusion token — this reads the app's synced Oracle data.)
+  const buildSupplierSitesUrl = (supplierId: number, procurementBU?: string) => {
+    const qs = new URLSearchParams({ P_SUPPLIER_ID: String(supplierId) });
+    if (procurementBU) qs.set('P_PROCUREMENT_BU', procurementBU);
+    return `${buildApexUrl('suppliers/sites')}?${qs.toString()}`;
+  };
+
+  // Guard against a handler build that ignores P_SUPPLIER_ID and returns every
+  // site: if rows carry a supplier id, keep only the selected supplier's.
+  const scopeToSupplier = (items: any[], supplierId: number): any[] => {
+    const idOf = (i: any) => Number(i.supplierid ?? i.supplierId ?? i.SupplierId ?? i.supplier_id ?? i.SUPPLIER_ID ?? NaN);
+    return items.some(i => !Number.isNaN(idOf(i)))
+      ? items.filter(i => idOf(i) === Number(supplierId))
+      : items;
+  };
+
+  const mapSiteRows = (items: any[]): SupplierSiteRecord[] =>
+    items.map((item: any) => ({
+      // handler aliases are unquoted, so ORDS returns lowercase keys
+      // (suppliersiteid / supplier_site); accept other casings defensively
+      siteId:   (item.suppliersiteid ?? item.supplierSiteId ?? item.SupplierSiteId ?? item.supplier_site_id ?? item.SUPPLIER_SITE_ID)?.toString() || '',
+      siteName: item.supplier_site ?? item.supplierSite ?? item.SupplierSite ?? item.SUPPLIER_SITE ?? '',
+    })).filter(s => s.siteId);
 
   const fetchSupplierSites = async (supplierId: number, procurementBU: string) => {
     setSupplierSiteLoading(true);
     setSupplierSites([]);
-    const url = buildSupplierSitesUrl(supplierId);
-    setSupplierSitesUrl(url);
-    try {
-      // These ORDS endpoints read the app's own synced Oracle data — no Fusion
-      // token is required (and none of the other GETs on this page send one).
-      console.debug('[CreateInvoice] supplier sites', { supplierId, procurementBU, url });
+    // Prefer sites in the invoice's procurement BU; the dialog shows this URL.
+    const primaryUrl = buildSupplierSitesUrl(supplierId, procurementBU || undefined);
+    setSupplierSitesUrl(primaryUrl);
+    const getItems = async (url: string): Promise<any[]> => {
       const res = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const items: any[] = data.items || (Array.isArray(data) ? data : []);
-      const mapped: SupplierSiteRecord[] = items.map((item: any) => ({
-        // accept camelCase (sitelist handler), snake_case and UPPER just in case
-        siteId:   (item.supplierSiteId ?? item.suppliersiteid ?? item.SUPPLIER_SITE_ID ?? item.supplier_site_id)?.toString() || '',
-        siteName: item.supplierSite ?? item.supplier_site ?? item.SUPPLIER_SITE ?? '',
-      })).filter(s => s.siteId);
+      return data.items || (Array.isArray(data) ? data : []);
+    };
+    try {
+      let mapped = mapSiteRows(scopeToSupplier(await getItems(primaryUrl), supplierId));
+      // Fallback: if the BU-narrowed query found nothing (e.g. the BU label
+      // doesn't match PROCUREMENT_BU exactly), retry with supplier only so the
+      // dropdown never comes back empty when the supplier does have sites.
+      if (mapped.length === 0 && procurementBU) {
+        mapped = mapSiteRows(scopeToSupplier(await getItems(buildSupplierSitesUrl(supplierId)), supplierId));
+      }
       setSupplierSites(mapped);
       if (mapped.length === 1) {
         form.setFieldsValue({ supplierSite: mapped[0].siteId });
@@ -6173,7 +6197,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
                                     : APEX_SUPPLIERS_URL;
                                   const supplierId = form.getFieldValue('supplierId');
                                   const sitesUrl = supplierSitesUrl
-                                    || (supplierId ? buildSupplierSitesUrl(Number(supplierId)) : '');
+                                    || (supplierId ? buildSupplierSitesUrl(Number(supplierId), bu || undefined) : '');
                                   const box = (u: string) => (
                                     <div style={{
                                       marginTop: 8, padding: '10px 14px', background: '#f5f5f5',
