@@ -5593,9 +5593,19 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
               : invoiceBalance !== null
                 ? (
                   <Space size={4}>
-                    <Text strong style={{ fontSize: 15, color: invoiceBalance === 0 ? REDWOOD.success : REDWOOD.primary, whiteSpace: 'nowrap' }}>
+                    {(() => {
+                      const cancelledView = isCancelled || liveHoldPaidStatus === 'Cancelled';
+                      return (
+                    <Text strong style={{
+                      fontSize: 15,
+                      color: cancelledView ? REDWOOD.error : (invoiceBalance === 0 ? REDWOOD.success : REDWOOD.primary),
+                      whiteSpace: 'nowrap',
+                      textDecoration: cancelledView ? 'line-through' : 'none',
+                    }}>
                       {`Balance: ${formatAmount(invoiceBalance)} ${initialData?.invoiceCurrency || headerValues.invoiceCurrency || 'AED'}`}
                     </Text>
+                      );
+                    })()}
                     <Tooltip
                       title={
                         <span style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
