@@ -8,7 +8,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Button, Card, Drawer, Dropdown, Empty, Input, InputNumber, Select, Space, Table,
+  Alert, Button, Card, Drawer, Dropdown, Empty, Input, InputNumber, Modal, Select, Space, Table,
   Tabs, Tag, Tooltip, Typography, message as antMessage,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -71,6 +71,33 @@ const sqlEsc = (s: string) => s.replace(/'/g, "''");
 const cell = (v: unknown): string => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
 const isIdCol = (k: string) => /(_id|_number|id|number)$/i.test(k);
 
+// Parameters the app substitutes before running: {{TOKEN}} placeholders and
+// Oracle :BIND variables (the runner can't bind, so both are text-substituted).
+const extractParams = (s: string): string[] => {
+  const out: string[] = [];
+  const add = (t: string) => { if (t && !out.includes(t)) out.push(t); };
+  (s.match(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g) || []).forEach(m => add(m.replace(/[{}\s]/g, '')));
+  (s.match(/(?<![:\w]):([A-Za-z][A-Za-z0-9_]*)/g) || []).forEach(m => add(m.replace(/^:/, '')));
+  return out;
+};
+// a blank value becomes NULL (so nvl(:P, col)-style optional filters mean "all");
+// pure numbers pass through; everything else becomes a quoted, escaped literal.
+const litFor = (v: string): string => {
+  const t = (v ?? '').trim();
+  if (t === '') return 'NULL';
+  return /^-?\d+(\.\d+)?$/.test(t) ? t : `'${t.replace(/'/g, "''")}'`;
+};
+const substituteParams = (s: string, vals: Record<string, string>): string => {
+  let out = s;
+  for (const t of extractParams(s)) {
+    const lit = litFor(vals[t] ?? '');
+    out = out
+      .replace(new RegExp(`\\{\\{\\s*${t}\\s*\\}\\}`, 'g'), lit)
+      .replace(new RegExp(`(?<![:\\w]):${t}\\b`, 'g'), lit);
+  }
+  return out;
+};
+
 const FusionSql: React.FC = () => {
   const api = getApi();
   const [cfg, setCfg] = useState<FsConfig>({ reportPath: '/Custom/ReERP/QueryRunner.xdo', rowLimit: 100 });
@@ -104,6 +131,10 @@ const FusionSql: React.FC = () => {
   const [aiMsgs, setAiMsgs] = useState<{ role: 'user' | 'assistant'; content: string; sql?: string }[]>([]);
   // values for {{PARAM}} placeholders detected in the editor SQL
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
+  // bind/parameter prompt dialog
+  const [paramDlgOpen, setParamDlgOpen] = useState(false);
+  const [paramDraft, setParamDraft] = useState<Record<string, string>>({});
+  const [pendingSql, setPendingSql] = useState('');
 
   // cache keys are scoped to the pod so switching pods never mixes schemas
   const podKey = useMemo(() => (cfg.baseUrl || 'pod').replace(/^https?:\/\//, '').replace(/[^\w.-]/g, '_'), [cfg.baseUrl]);
@@ -141,20 +172,10 @@ const FusionSql: React.FC = () => {
 
   const addLog = (text: string, ok: boolean) => setLog(l => [{ at: Date.now(), text, ok }, ...l].slice(0, 50));
 
-  const run = useCallback(async (stmt?: string) => {
-    let q = (stmt ?? sql).trim();
-    if (!q || running || !api) return;
-    // Substitute {{PARAM}} placeholders with the entered values. Numbers go in
-    // as-is; everything else becomes a properly-quoted string literal.
-    const tokens = Array.from(new Set((q.match(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g) || [])
-      .map(t => t.replace(/[{}\s]/g, ''))));
-    const missing = tokens.filter(t => !((paramValues[t] ?? '').trim()));
-    if (missing.length) { antMessage.warning(`Enter a value for: ${missing.join(', ')}`); return; }
-    for (const t of tokens) {
-      const v = (paramValues[t] ?? '').trim();
-      const lit = /^-?\d+(\.\d+)?$/.test(v) ? v : `'${v.replace(/'/g, "''")}'`;
-      q = q.replace(new RegExp(`\\{\\{\\s*${t}\\s*\\}\\}`, 'g'), lit);
-    }
+  // execute a raw statement, substituting {{PARAM}} / :BIND with `vals`
+  const doExecute = useCallback(async (rawSql: string, vals: Record<string, string>) => {
+    const q = substituteParams(rawSql.trim(), vals);
+    if (!q || !api) return;
     setRunning(true);
     const t0 = Date.now();
     try {
@@ -164,7 +185,7 @@ const FusionSql: React.FC = () => {
       if (r.success) {
         addLog(`${r.rowCount ?? 0} rows in ${Date.now() - t0} ms — ${q.slice(0, 80)}`, true);
         setHistory(prev => {
-          const next = [q, ...prev.filter(x => x !== q)].slice(0, 30);
+          const next = [rawSql.trim(), ...prev.filter(x => x !== rawSql.trim())].slice(0, 30);
           try { localStorage.setItem(HIST_KEY, JSON.stringify(next)); } catch { /* ignore */ }
           return next;
         });
@@ -175,7 +196,22 @@ const FusionSql: React.FC = () => {
     } finally {
       setRunning(false);
     }
-  }, [sql, rowLimit, running, api, paramValues, apiOpen, loadCalls]);
+  }, [rowLimit, api, apiOpen, loadCalls]);
+
+  // Execute entry point. If the statement carries {{PARAM}} / :BIND variables,
+  // prompt for their values in a dialog first; otherwise run straight away.
+  const run = useCallback((stmt?: string) => {
+    const base = (stmt ?? sql).trim();
+    if (!base || running || !api) return;
+    const params = extractParams(base);
+    if (params.length) {
+      setPendingSql(base);
+      setParamDraft(prev => { const d: Record<string, string> = {}; params.forEach(p => { d[p] = paramValues[p] ?? prev[p] ?? ''; }); return d; });
+      setParamDlgOpen(true);
+      return;
+    }
+    doExecute(base, {});
+  }, [sql, running, api, paramValues, doExecute]);
 
   // ── local cache (real file via Electron; localStorage as web fallback) ──────
   const cacheRead = useCallback(async (key: string): Promise<unknown> => {
@@ -381,17 +417,14 @@ const FusionSql: React.FC = () => {
   // put an AI-generated statement into the editor and prime its parameters
   const useAiSql = (stmt: string) => {
     setSql(stmt);
-    const toks = Array.from(new Set((stmt.match(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g) || []).map(t => t.replace(/[{}\s]/g, ''))));
+    const toks = extractParams(stmt);
     setParamValues(prev => { const next = { ...prev }; toks.forEach(t => { if (!(t in next)) next[t] = ''; }); return next; });
     setAiOpen(false);
     antMessage.success(toks.length ? `Loaded — fill the ${toks.length} parameter(s) and Execute` : 'Loaded into the editor');
   };
 
   // {{PARAM}} tokens present in the current editor SQL
-  const sqlParams = useMemo(
-    () => Array.from(new Set((sql.match(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g) || []).map(t => t.replace(/[{}\s]/g, '')))),
-    [sql],
-  );
+  const sqlParams = useMemo(() => extractParams(sql), [sql]);
 
   // ── results grid ───────────────────────────────────────────────────────────
   const rows = result?.rows || [];
@@ -615,17 +648,10 @@ const FusionSql: React.FC = () => {
           />
 
           {sqlParams.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', padding: '6px 8px', background: '#fff7f5', borderTop: '1px solid #f0d9d4' }}>
-              <span style={{ fontSize: 12, color: '#C74634', fontWeight: 600 }}>Parameters:</span>
-              {sqlParams.map(p => (
-                <span key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 12, color: '#6B6B6B' }}>{p}</span>
-                  <Input size="small" style={{ width: 160 }} placeholder={`value for ${p}`}
-                    value={paramValues[p] ?? ''}
-                    onChange={e => setParamValues(v => ({ ...v, [p]: e.target.value }))}
-                    onPressEnter={() => run()} />
-                </span>
-              ))}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', padding: '5px 8px', background: '#fff7f5', borderTop: '1px solid #f0d9d4', fontSize: 12 }}>
+              <span style={{ color: '#C74634', fontWeight: 600 }}>Parameters:</span>
+              {sqlParams.map(p => <Tag key={p} style={{ margin: 0 }}>{p}</Tag>)}
+              <span style={{ color: '#8c7f7a' }}>— Execute will prompt for these.</span>
             </div>
           )}
 
@@ -688,6 +714,41 @@ const FusionSql: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* ── Bind / parameter prompt ── */}
+      <Modal
+        title="Enter parameter values"
+        open={paramDlgOpen}
+        onCancel={() => setParamDlgOpen(false)}
+        okText="Run"
+        okButtonProps={{ icon: <PlayCircleOutlined />, style: { background: '#1D7B4D', borderColor: '#1D7B4D' } }}
+        onOk={() => {
+          setParamValues(prev => ({ ...prev, ...paramDraft }));
+          setParamDlgOpen(false);
+          doExecute(pendingSql, paramDraft);
+        }}
+        width={460}
+      >
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+          This query has bind variables. Leave a value blank to treat it as <b>NULL</b> (i.e. “all”). Numbers are used as-is; text is quoted automatically.
+        </Text>
+        {extractParams(pendingSql).map(p => (
+          <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ width: 150, fontSize: 13, fontFamily: 'monospace', color: '#C74634', textAlign: 'right' }}>{p}</span>
+            <Input
+              autoFocus={extractParams(pendingSql)[0] === p}
+              value={paramDraft[p] ?? ''}
+              placeholder="blank = all"
+              onChange={e => setParamDraft(v => ({ ...v, [p]: e.target.value }))}
+              onPressEnter={() => {
+                setParamValues(prev => ({ ...prev, ...paramDraft }));
+                setParamDlgOpen(false);
+                doExecute(pendingSql, paramDraft);
+              }}
+            />
+          </div>
+        ))}
+      </Modal>
 
       {/* ── AI SQL assistant ── */}
       <Drawer

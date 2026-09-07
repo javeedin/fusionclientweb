@@ -329,17 +329,24 @@ async function execute({ sql, rowLimit } = {}) {
       const decoded = Buffer.from(bytes, 'base64').toString('utf8');
       rows = parseXmlGenRows(decoded) ?? parseXmlRows(decoded);
     }
-    if (!rows.length && !r.error) {
+    // The XML attempt's own fault (e.g. an ORA error from the query itself —
+    // unbound binds, bad column) IS the real error. Only fall back to CSV when
+    // XML produced neither rows nor a fault; never let a CSV "invalid format"
+    // error mask the actual XML failure.
+    const xmlFault = bytes ? null : (r.error || extractFault(r.text));
+    if (!bytes && !xmlFault) {
       const r2 = await attempt('csv');
       const b2 = extractReportBytes(r2.text);
       if (b2) {
         const decoded2 = Buffer.from(b2, 'base64').toString('utf8');
         rows = parseXmlGenRows(decoded2) ?? parseCsv(decoded2);
+        bytes = b2;
+      } else {
+        r = r2; // surface the CSV response only if XML gave us nothing to report
       }
-      if (!bytes) { r = r2; bytes = b2; }
     }
     if (!bytes) {
-      const fault = r.error || extractFault(r.text) || `HTTP ${r.status}`;
+      const fault = xmlFault || r.error || extractFault(r.text) || `HTTP ${r.status}`;
       return { success: false, error: fault, raw: (r.text || '').slice(0, 1200) };
     }
     const columns = unionColumns(rows);
