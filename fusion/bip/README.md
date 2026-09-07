@@ -32,39 +32,38 @@ to the manual steps below.
 
 BI Publisher → **Catalog** → New → **Data Model**.
 
-> **Create the parameter FIRST — BIP will not add it for you.** BIP only
-> auto-detects `:bind` variables (and offers to create a matching parameter)
-> for a **Standard SQL** data set. Our runner is a PL/SQL block, so the data
-> set must be **Non-standard SQL**, and BIP does **not** scan it for binds —
-> no prompt appears and no parameter is created. You must add the parameter
-> by hand, then the `:P_QRY_STMT` bind resolves to it by name at runtime.
+> **Use `DBMS_XMLGEN`, not a ref cursor.** On Fusion SaaS, BI Publisher does
+> **not** register the reserved `:xdo_cursor` output bind for a Non-standard
+> SQL (PL/SQL) data set, so a ref-cursor runner fails at run time with
+> `ORA-17041: Missing IN or OUT parameter at index: N`. `DBMS_XMLGEN.getXML`
+> avoids the problem: it turns a SQL string into an XML result in a single
+> **Standard SQL** column, so the data set stays Standard SQL and BIP
+> auto-detects the `:P_QRY_STMT` bind.
 
-- **Parameters** (left panel) → **＋ Create Parameter**:
+- Add a **Data Set** of type **SQL Query**, name it `Q1`, data source =
+  `ApplicationDB_FSCM`, **Type of SQL = Standard SQL**, and paste the query
+  from [`query_runner_datamodel.sql`](./query_runner_datamodel.sql)
+  (`SELECT REGEXP_REPLACE(DBMS_XMLGEN.getxml(<decode :P_QRY_STMT>), …) AS
+  result FROM dual`).
+- **Parameters** (left panel) → **＋ Create Parameter** — create it explicitly
+  so `runReport` can pass a value even though Standard SQL also auto-detects
+  the bind:
   - Name: `P_QRY_STMT`  *(case-sensitive — must match the bind exactly)*
   - Data Type: `String`
   - Parameter Type: `Text`  *(leave the default value empty)*
-- Add a **Data Set** of type **SQL Query**, name it `Q1`, data source = the
-  Fusion transactional DB, set **Type of SQL = Non-standard SQL** (NOT
-  "Standard SQL" — that validates the PL/SQL as plain SQL and fails with
-  `ORA-00907`), and paste the PL/SQL runner from
-  [`query_runner_datamodel.sql`](./query_runner_datamodel.sql). The block
-  ends by opening a ref cursor from the decoded statement.
+- **View Data** to test: paste a base64 value into the `P_QRY_STMT` box, e.g.
+  `c2VsZWN0ICogZnJvbSByYV9iYXRjaGVzX2FsbA==` (= `select * from ra_batches_all`).
+  The editor's tree preview shows a `RESULT` node and may flag a red
+  *"XML declaration allowed only at the start of the document"* — that is just
+  the preview choking on the nested XML document inside `RESULT`; the data is
+  there and the app parses it correctly.
 - Save the Data Model as **`QueryRunnerDM`** in a folder you control, e.g.
   `/Custom/ReERP/`.
 
-> **If View Data errors with `ORA-17041: Missing IN or OUT parameter at
-> index: 2`**: the block declared a local variable named `xdo_cursor`. That
-> name is reserved for BIP's output ref-cursor bind (`:xdo_cursor`); declaring
-> a local of the same name stops BIP registering the OUT cursor. Remove the
-> `TYPE refcursor` / `xdo_cursor refcursor;` declarations — `:xdo_cursor` must
-> be purely the host bind. (Variant B in the .sql already omits it.)
-
-> **If View Data errors with `PLS-00306: wrong number or types of arguments
-> in call to 'GETLENGTH'`** (or similar LOB errors): a BIP **Text** parameter
-> binds as `VARCHAR2`, not a LOB, so the `dbms_lob.*` calls on `:P_QRY_STMT`
-> fail. Use the CLOB-safe runner (Variant B) in
-> [`query_runner_datamodel.sql`](./query_runner_datamodel.sql) — it copies the
-> bind into a CLOB first, then base64-decodes.
+> **`ORA-17041: Missing IN or OUT parameter at index: N`** means a ref-cursor
+> data set is still in use — switch to the `DBMS_XMLGEN` query above. Fusion
+> SaaS does not support the `:xdo_cursor` output bind, so no PL/SQL edit fixes
+> it.
 
 ## 2. Create the Report
 

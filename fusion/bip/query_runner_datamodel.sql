@@ -1,94 +1,45 @@
 -- ============================================================================
--- Fusion SQL — "Query Runner" data-model PL/SQL
+-- Fusion SQL — "Query Runner" data-model SQL (DBMS_XMLGEN approach)
 --
 -- Paste this as the data set of the QueryRunnerDM BI Publisher data model
--- (see README.md). It base64-decodes the P_QRY_STMT parameter (the user's
--- SELECT, encoded by the app for safe SOAP transport) and opens a ref cursor
--- for it, which BI Publisher renders as the report output.
+-- (see README.md), with **Type of SQL = Standard SQL** and Data Source =
+-- ApplicationDB_FSCM.
 --
--- Read-only: a data-model ref cursor cannot perform DML. The app also caps
--- rows with ROWNUM and rejects anything that is not SELECT/WITH before it ever
--- reaches here.
--- ============================================================================
-DECLARE
-    TYPE refcursor IS REF CURSOR;
-    xdo_cursor         refcursor;
-    v_blob             BLOB;
-    v_result           BLOB;
-    l_offset           INTEGER;
-    l_buffer_size      BINARY_INTEGER := 48;
-    l_buffer_varchar   VARCHAR2(48);
-    l_buffer_raw       RAW(48);
-    l_clob             CLOB;
-    l_varchar          VARCHAR2(32767);
-    l_start            PLS_INTEGER := 1;
-    l_buffer           PLS_INTEGER := 32767;
-BEGIN
-    -- 1) base64-decode P_QRY_STMT (arrives as text) into a BLOB
-    dbms_lob.createtemporary(v_blob, TRUE);
-    l_offset := 1;
-    FOR i IN 1 .. CEIL(dbms_lob.getlength(:P_QRY_STMT) / l_buffer_size) LOOP
-        dbms_lob.read(:P_QRY_STMT, l_buffer_size, l_offset, l_buffer_varchar);
-        l_buffer_raw := utl_raw.cast_to_raw(l_buffer_varchar);
-        l_buffer_raw := utl_encode.base64_decode(l_buffer_raw);
-        dbms_lob.writeappend(v_blob, utl_raw.length(l_buffer_raw), l_buffer_raw);
-        l_offset := l_offset + l_buffer_size;
-    END LOOP;
-
-    v_result := v_blob;
-    dbms_lob.freetemporary(v_blob);
-
-    -- 2) turn the decoded bytes back into the SQL text (CLOB)
-    dbms_lob.createtemporary(l_clob, TRUE);
-    FOR i IN 1 .. CEIL(dbms_lob.getlength(v_result) / l_buffer) LOOP
-        l_varchar := utl_raw.cast_to_varchar2(dbms_lob.substr(v_result, l_buffer, l_start));
-        dbms_lob.writeappend(l_clob, LENGTH(l_varchar), l_varchar);
-        l_start := l_start + l_buffer;
-    END LOOP;
-
-    -- 3) execute it and hand the ref cursor to BI Publisher
-    OPEN :xdo_cursor FOR l_clob;
-END;
-
-
--- ============================================================================
--- VARIANT B — CLOB-safe + ORA-17041 fix (RECOMMENDED — paste this one)
+-- Why not a ref cursor? On Fusion SaaS, BI Publisher does NOT register the
+-- reserved `:xdo_cursor` output bind for a Non-standard SQL (PL/SQL) data set,
+-- so a ref-cursor runner fails at run time with:
+--     java.sql.SQLException: ORA-17041: Missing IN or OUT parameter at index: N
+-- DBMS_XMLGEN.getXML sidesteps that entirely: it takes a SQL string and returns
+-- the whole result set as an XML document in a single scalar column, so the
+-- data set is plain **Standard SQL** and BIP auto-detects the :P_QRY_STMT bind.
 --
--- Two fixes over Variant A:
---   1. A BI Publisher "Text" parameter binds as VARCHAR2, not a LOB, so the
---      dbms_lob.read/getlength calls in Variant A can fail with PLS-00306.
---      This variant copies the VARCHAR2 bind into a CLOB first, then
---      base64-decodes it in 4-char-aligned chunks (base64 encodes 3 bytes ->
---      4 chars, so a multiple of 4 never splits a group).
---   2. Do NOT declare a local variable named xdo_cursor. Declaring
---      "xdo_cursor refcursor" alongside the reserved output bind :xdo_cursor
---      makes BI Publisher fail to register the OUT cursor, giving
---      "ORA-17041: Missing IN or OUT parameter at index: 2". :xdo_cursor must
---      be purely the host bind BIP provides — no local of the same name.
+-- P_QRY_STMT is the base64 of the user's SELECT (the app encodes it for safe
+-- SOAP transport). We base64-decode it inline, run it through DBMS_XMLGEN, and
+-- strip the leading <?xml?> prolog so nothing downstream trips on a nested
+-- declaration. The app unwraps the inner <ROWSET>/<ROW> into rows/columns.
 --
--- Same P_QRY_STMT parameter as before.
+-- Read-only: the app rejects anything that is not SELECT/WITH and caps rows
+-- with ROWNUM before encoding, so only bounded SELECTs ever reach here.
 -- ============================================================================
--- DECLARE
---     l_b64       CLOB;
---     l_sql       CLOB;
---     l_chunk     VARCHAR2(32767);
---     l_dec       VARCHAR2(32767);
---     l_raw       RAW(32767);
---     l_len       PLS_INTEGER;
---     l_pos       PLS_INTEGER := 1;
---     l_step      PLS_INTEGER := 7500;   -- multiple of 4 (base64 group size)
--- BEGIN
---     l_b64 := :P_QRY_STMT;              -- VARCHAR2 bind -> CLOB (implicit)
---     dbms_lob.createtemporary(l_sql, TRUE);
---     l_len := dbms_lob.getlength(l_b64);
---     WHILE l_pos <= l_len LOOP
---         l_chunk := dbms_lob.substr(l_b64, l_step, l_pos);
---         l_raw   := utl_encode.base64_decode(utl_raw.cast_to_raw(l_chunk));
---         l_dec   := utl_raw.cast_to_varchar2(l_raw);
---         IF l_dec IS NOT NULL THEN
---             dbms_lob.writeappend(l_sql, LENGTH(l_dec), l_dec);
---         END IF;
---         l_pos := l_pos + l_step;
---     END LOOP;
---     OPEN :xdo_cursor FOR l_sql;       -- reserved OUT bind; do NOT declare it
--- END;
+SELECT REGEXP_REPLACE(
+         DBMS_XMLGEN.getxml(
+           UTL_RAW.cast_to_varchar2(
+             UTL_ENCODE.base64_decode(UTL_RAW.cast_to_raw(:P_QRY_STMT))
+           )
+         ),
+         '<\?xml[^>]*\?>', ''
+       ) AS result
+FROM dual
+
+-- ----------------------------------------------------------------------------
+-- Notes
+--  * Parameter: create P_QRY_STMT manually (String / Text). Standard SQL
+--    auto-detects the :bind, but you still define the parameter so runReport
+--    can pass it.
+--  * DBMS_XMLGEN.getXML returns NULL when the query has zero rows -> the app
+--    treats an empty/absent result as an empty grid.
+--  * The base64 (and thus the decoded SQL) must fit VARCHAR2 (<= 32767 chars),
+--    which is far more than any capped SELECT the app sends.
+--  * Column element names in the inner XML are DBMS_XMLGEN's uppercased column
+--    names; alias columns in your SELECT if you want specific casing.
+-- ----------------------------------------------------------------------------

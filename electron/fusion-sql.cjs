@@ -188,6 +188,60 @@ const coerce = (v) => {
   return s;
 };
 
+// unescape one level of XML entities (&amp; last to avoid double-decoding)
+const xmlUnescape = (s) => String(s)
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+  .replace(/&#(\d+);/g, (_m, d) => String.fromCharCode(Number(d)))
+  .replace(/&amp;/g, '&');
+
+// DBMS_XMLGEN runner output: the query result is returned as an inner
+// <ROWSET><ROW>...</ROW></ROWSET> document embedded (XML-escaped) inside the
+// report. Pull every <ROW> regardless of how many there are (parseXmlRows
+// can't — it needs a wrapper that repeats >1). Column tags are DBMS_XMLGEN's
+// uppercased column names; NULL columns are simply omitted from a row.
+function parseRowset(xml) {
+  const rows = [];
+  const rowRe = /<ROW\b[^>]*>([\s\S]*?)<\/ROW>/gi;
+  let r;
+  while ((r = rowRe.exec(xml))) {
+    const o = {};
+    const cellRe = /<([A-Za-z_][\w.-]*)\b[^>]*>([\s\S]*?)<\/\1>/g;
+    let c;
+    while ((c = cellRe.exec(r[1]))) {
+      if (/<[A-Za-z_]/.test(c[2])) continue; // nested element, not a scalar cell
+      o[c[1]] = coerce(xmlUnescape(c[2]).trim());
+    }
+    rows.push(o);
+  }
+  return rows;
+}
+
+// Detect + parse the DBMS_XMLGEN wrapper in a decoded report body. The inner
+// ROWSET reaches us either with real tags (CSV output — BIP puts the CLOB in a
+// field verbatim) or fully XML-escaped (XML output — BIP escapes the RESULT
+// element's text). Only in the escaped case do we unescape the blob one level;
+// parseRowset then unescapes cell data the remaining level. Returns null if
+// this isn't the DBMS_XMLGEN shape.
+function parseXmlGenRows(decoded) {
+  if (!/ROWSET/i.test(decoded)) return null;
+  const body = (/&lt;ROWSET/i.test(decoded) && !/<ROWSET\b/i.test(decoded))
+    ? xmlUnescape(decoded)   // XML output: whole inner doc was escaped
+    : decoded;               // CSV output: tags are already real
+  if (!/<ROWSET\b/i.test(body) && !/<ROW\b/i.test(body)) return null;
+  const rows = parseRowset(body);
+  // a valid-but-empty result set (<ROWSET/> or <ROWSET></ROWSET>) is success
+  const emptyRowset = /<ROWSET\b[^>]*\/>|<ROWSET\b[^>]*>\s*<\/ROWSET>/i.test(body);
+  return (rows.length || emptyRowset) ? rows : null;
+}
+
+// union of every row's keys, in first-seen order (columns a NULL hid in row 0)
+const unionColumns = (rows) => {
+  const seen = [];
+  for (const row of rows) for (const k of Object.keys(row)) if (!seen.includes(k)) seen.push(k);
+  return seen;
+};
+
 // ── execute ─────────────────────────────────────────────────────────────────
 // runs one statement; returns { success, rows, columns, rowCount, raw?, error? }
 async function execute({ sql, rowLimit } = {}) {
@@ -219,23 +273,30 @@ async function execute({ sql, rowLimit } = {}) {
     return { status: res.status, ok: res.ok, text };
   };
 
+  // parse a decoded report body: the DBMS_XMLGEN runner wraps the result as an
+  // inner ROWSET (handled first); otherwise fall back to plain CSV / BIP XML.
+  const parseBody = (decoded) => parseXmlGenRows(decoded) ?? parseCsv(decoded);
+
   try {
     // CSV first (deterministic parse), XML as fallback
     let r = await attempt('csv');
     let bytes = extractReportBytes(r.text);
     let rows = [];
-    if (bytes) rows = parseCsv(Buffer.from(bytes, 'base64').toString('utf8'));
+    if (bytes) rows = parseBody(Buffer.from(bytes, 'base64').toString('utf8'));
     if (!rows.length) {
       const r2 = await attempt('xml');
       const b2 = extractReportBytes(r2.text);
-      if (b2) rows = parseXmlRows(Buffer.from(b2, 'base64').toString('utf8'));
+      if (b2) {
+        const decoded2 = Buffer.from(b2, 'base64').toString('utf8');
+        rows = parseXmlGenRows(decoded2) ?? parseXmlRows(decoded2);
+      }
       if (!bytes) { r = r2; bytes = b2; }
     }
     if (!bytes) {
       const fault = extractFault(r.text) || `HTTP ${r.status}`;
       return { success: false, error: fault, raw: r.text.slice(0, 1200) };
     }
-    const columns = rows.length ? Object.keys(rows[0]) : [];
+    const columns = unionColumns(rows);
     return { success: true, rows, columns, rowCount: rows.length, capped: rows.length >= cap };
   } catch (e) {
     return { success: false, error: e.message };
@@ -290,40 +351,19 @@ function buildZip(files) {
   return Buffer.concat([localBuf, centralBuf, end]);
 }
 
-// the query-runner PL/SQL (kept in sync with fusion/bip/query_runner_datamodel.sql)
-const RUNNER_PLSQL = `DECLARE
-    TYPE refcursor IS REF CURSOR;
-    xdo_cursor         refcursor;
-    v_blob             BLOB;
-    v_result           BLOB;
-    l_offset           INTEGER;
-    l_buffer_size      BINARY_INTEGER := 48;
-    l_buffer_varchar   VARCHAR2(48);
-    l_buffer_raw       RAW(48);
-    l_clob             CLOB;
-    l_varchar          VARCHAR2(32767);
-    l_start            PLS_INTEGER := 1;
-    l_buffer           PLS_INTEGER := 32767;
-BEGIN
-    dbms_lob.createtemporary(v_blob, TRUE);
-    l_offset := 1;
-    FOR i IN 1 .. CEIL(dbms_lob.getlength(:P_QRY_STMT) / l_buffer_size) LOOP
-        dbms_lob.read(:P_QRY_STMT, l_buffer_size, l_offset, l_buffer_varchar);
-        l_buffer_raw := utl_raw.cast_to_raw(l_buffer_varchar);
-        l_buffer_raw := utl_encode.base64_decode(l_buffer_raw);
-        dbms_lob.writeappend(v_blob, utl_raw.length(l_buffer_raw), l_buffer_raw);
-        l_offset := l_offset + l_buffer_size;
-    END LOOP;
-    v_result := v_blob;
-    dbms_lob.freetemporary(v_blob);
-    dbms_lob.createtemporary(l_clob, TRUE);
-    FOR i IN 1 .. CEIL(dbms_lob.getlength(v_result) / l_buffer) LOOP
-        l_varchar := utl_raw.cast_to_varchar2(dbms_lob.substr(v_result, l_buffer, l_start));
-        dbms_lob.writeappend(l_clob, LENGTH(l_varchar), l_varchar);
-        l_start := l_start + l_buffer;
-    END LOOP;
-    OPEN :xdo_cursor FOR l_clob;
-END;`;
+// the query-runner SQL (kept in sync with fusion/bip/query_runner_datamodel.sql)
+// DBMS_XMLGEN.getXML turns the decoded SELECT into an XML result in one Standard
+// SQL column — Fusion SaaS BIP does not register the :xdo_cursor ref-cursor
+// output bind, so a PL/SQL ref cursor is not usable here.
+const RUNNER_SQL = `SELECT REGEXP_REPLACE(
+         DBMS_XMLGEN.getxml(
+           UTL_RAW.cast_to_varchar2(
+             UTL_ENCODE.base64_decode(UTL_RAW.cast_to_raw(:P_QRY_STMT))
+           )
+         ),
+         '<\\?xml[^>]*\\?>', ''
+       ) AS result
+FROM dual`;
 
 function buildDataModelXml(dataSource) {
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -344,8 +384,8 @@ function buildDataModelXml(dataSource) {
       </parameter>
    </parameters>
    <dataSets>
-      <dataSet name="Q1" type="complex">
-         <sql dataSourceRef="${xmlEscape(dataSource)}" nsQuery="false" xmlRowTagName="G_1" sqlReturnType="ref_cursor"><![CDATA[${RUNNER_PLSQL}]]></sql>
+      <dataSet name="Q1" type="simple">
+         <sql dataSourceRef="${xmlEscape(dataSource)}" nsQuery="false" xmlRowTagName="G_1"><![CDATA[${RUNNER_SQL}]]></sql>
       </dataSet>
    </dataSets>
    <output rootName="DATA_DS" uniqueRowName="false"><nodeList/></output>
