@@ -242,7 +242,7 @@ const ManageBusinessUnits: React.FC = () => {
       items: [{
         BusinessUnitId: newId,
         BusinessUnitName: String(v.businessUnitName).trim(),
-        ActiveFlag: 'Y',
+        ActiveFlag: v.activeFlag ?? 'Y',
         PrimaryLedgerId: v.primaryLedgerId,
         LocationId: null,
         ManagerId: null,
@@ -269,7 +269,13 @@ const ManageBusinessUnits: React.FC = () => {
     { title: 'Business Unit', dataIndex: 'businessUnitName', width: 260, sorter: (a, b) => (a.businessUnitName || '').localeCompare(b.businessUnitName || '') },
     { title: 'Company', dataIndex: 'company', width: 90, align: 'center' },
     { title: 'Legal Entity', dataIndex: 'legalEntityName', width: 240, ellipsis: true },
-    { title: 'Ledger', dataIndex: 'ledger', width: 180, ellipsis: true },
+    {
+      title: 'Ledger', dataIndex: 'ledger', width: 180, ellipsis: true,
+      // GET may not carry a ledger name yet — fall back to resolving it from
+      // the loaded ledger list by PRIMARY_LEDGER_ID.
+      render: (v: string | undefined, r) =>
+        v || ledgers.find(l => l.ledgerId === r.primaryLedgerId)?.ledgerName || <Text type="secondary">—</Text>,
+    },
     {
       title: 'Active', dataIndex: 'activeFlag', width: 80, align: 'center',
       render: (v?: string) => <Tag color={(v ?? 'Y') === 'Y' ? 'green' : 'red'}>{(v ?? 'Y') === 'Y' ? 'Yes' : 'No'}</Tag>,
@@ -408,7 +414,7 @@ const ManageBusinessUnits: React.FC = () => {
         width={560}
         destroyOnClose
       >
-        <Form form={buForm} layout="vertical" initialValues={{ profitCenterFlag: false }}>
+        <Form form={buForm} layout="vertical" initialValues={{ profitCenterFlag: false, activeFlag: 'Y' }}>
           <Form.Item name="businessUnitName" label="Business Unit Name" rules={[{ required: true, message: 'Enter the business unit name' }]}>
             <Input maxLength={360} placeholder="e.g. BUIMERC CORP_DIFC_TRADING" />
           </Form.Item>
@@ -437,11 +443,17 @@ const ManageBusinessUnits: React.FC = () => {
               dropdownRender={pickerFooter('Create new Ledger', () => setLedgerOpen(true))}
             />
           </Form.Item>
+          <Form.Item name="activeFlag" label="Active Flag" rules={[{ required: true }]}>
+            <Select
+              style={{ width: 160 }}
+              options={[{ value: 'Y', label: 'Active (Y)' }, { value: 'N', label: 'Inactive (N)' }]}
+            />
+          </Form.Item>
           <Form.Item name="profitCenterFlag" label="Profit Center" valuePropName="checked">
             <Switch checkedChildren="Yes" unCheckedChildren="No" />
           </Form.Item>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            Created as Active, by {currentUser}. Manual records get IDs in the 900000001+ range so they never clash with Fusion-synced data.
+            Created by {currentUser}. Manual records get IDs in the 900000001+ range so they never clash with Fusion-synced data.
           </Text>
         </Form>
       </Modal>
