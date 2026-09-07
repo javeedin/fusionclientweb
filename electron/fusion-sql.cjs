@@ -38,6 +38,39 @@ function setConfig(patch) {
   return next;
 }
 
+// ── schema cache (persisted to a real file, not browser storage) ────────────
+// The renderer caches the object lists / column lists here so the schema
+// browser never re-queries the pod unless the user refreshes. One JSON file
+// per pod, keyed inside by object-type / table name.
+const cacheDir = () => {
+  const d = path.join(app.getPath('userData'), 'fusion-sql-cache');
+  try { fs.mkdirSync(d, { recursive: true }); } catch { /* exists */ }
+  return d;
+};
+const safeName = (s) => String(s || 'pod').replace(/[^\w.-]/g, '_').slice(0, 120);
+const cacheFile = (pod) => path.join(cacheDir(), `schema-${safeName(pod)}.json`);
+
+function cacheGet({ pod, key } = {}) {
+  try {
+    const all = JSON.parse(fs.readFileSync(cacheFile(pod), 'utf8'));
+    return { success: true, value: key ? (all[key] ?? null) : all };
+  } catch { return { success: true, value: key ? null : {} }; }
+}
+function cacheSet({ pod, key, value } = {}) {
+  try {
+    const file = cacheFile(pod);
+    let all = {};
+    try { all = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* new file */ }
+    all[key] = value;
+    fs.writeFileSync(file, JSON.stringify(all), 'utf8');
+    return { success: true };
+  } catch (e) { return { success: false, error: e.message }; }
+}
+function cacheClear({ pod } = {}) {
+  try { fs.unlinkSync(cacheFile(pod)); } catch { /* already gone */ }
+  return { success: true };
+}
+
 // Fusion credentials — reuse the app's stored, safeStorage-encrypted creds
 function readFusionCreds() {
   try {
@@ -487,4 +520,4 @@ async function deployRunner() {
   }
 }
 
-module.exports = { getConfig, setConfig, execute, deployRunner, getCalls, clearCalls };
+module.exports = { getConfig, setConfig, execute, deployRunner, getCalls, clearCalls, cacheGet, cacheSet, cacheClear };

@@ -1462,6 +1462,18 @@ ipcMain.handle('fusion-sql:calls', async (_event, { clear } = {}) => {
   try { if (clear) fusionSql.clearCalls(); return { success: true, calls: fusionSql.getCalls() }; }
   catch (e) { return { success: false, error: e.message, calls: [] }; }
 });
+ipcMain.handle('fusion-sql:cache-get', async (_event, opts) => {
+  try { return fusionSql.cacheGet(opts || {}); }
+  catch (e) { return { success: false, error: e.message, value: null }; }
+});
+ipcMain.handle('fusion-sql:cache-set', async (_event, opts) => {
+  try { return fusionSql.cacheSet(opts || {}); }
+  catch (e) { return { success: false, error: e.message }; }
+});
+ipcMain.handle('fusion-sql:cache-clear', async (_event, opts) => {
+  try { return fusionSql.cacheClear(opts || {}); }
+  catch (e) { return { success: false, error: e.message }; }
+});
 
 // ── Natural text-to-speech (Edge neural voices, no API key) ────────────────
 // Synthesizes MP3 via the Edge read-aloud service; the renderer falls back
