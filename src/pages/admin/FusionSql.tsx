@@ -14,7 +14,8 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   ApiOutlined, CaretRightOutlined, DatabaseOutlined, FileExcelOutlined, FilePdfOutlined,
-  FileTextOutlined, PlayCircleOutlined, ReloadOutlined, RobotOutlined, SearchOutlined, SendOutlined, SettingOutlined,
+  DeleteOutlined, EditOutlined, FileTextOutlined, PlayCircleOutlined, ReloadOutlined, RobotOutlined,
+  SaveOutlined, SearchOutlined, SendOutlined, SettingOutlined,
   TableOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import ExcelJS from 'exceljs';
@@ -43,6 +44,7 @@ interface FsResult {
   success: boolean; rows?: Record<string, unknown>[]; columns?: string[];
   rowCount?: number; capped?: boolean; error?: string; raw?: string;
 }
+interface SavedQuery { id: string; name: string; sql: string; at: number; }
 const getApi = (): FusionSqlApi | undefined => {
   const api = (window as unknown as { electronAPI?: FusionSqlApi }).electronAPI;
   return api?.fusionSqlExecute ? api : undefined;
@@ -136,6 +138,14 @@ const FusionSql: React.FC = () => {
   const [paramDraft, setParamDraft] = useState<Record<string, string>>({});
   const [pendingSql, setPendingSql] = useState('');
 
+  // top-level tabs + saved queries
+  const [activeTab, setActiveTab] = useState<'builder' | 'list'>('builder');
+  const [saved, setSaved] = useState<SavedQuery[]>([]);
+  const [saveDlgOpen, setSaveDlgOpen] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [saveEditId, setSaveEditId] = useState<string | null>(null);
+  const [savedSearch, setSavedSearch] = useState('');
+
   // cache keys are scoped to the pod so switching pods never mixes schemas
   const podKey = useMemo(() => (cfg.baseUrl || 'pod').replace(/^https?:\/\//, '').replace(/[^\w.-]/g, '_'), [cfg.baseUrl]);
 
@@ -212,6 +222,51 @@ const FusionSql: React.FC = () => {
     }
     doExecute(base, {});
   }, [sql, running, api, paramValues, doExecute]);
+
+  // ── saved queries (persisted to a pod-independent local file) ───────────────
+  const SAVED_LS = 'reerp.fusionsql.savedQueries';
+  const loadSaved = useCallback(async () => {
+    try {
+      if (api?.fusionSqlCacheGet) {
+        const r = await api.fusionSqlCacheGet({ pod: '__queries', key: 'list' });
+        if (r?.success && Array.isArray(r.value)) { setSaved(r.value as SavedQuery[]); return; }
+      }
+    } catch { /* fall through */ }
+    try { const v = JSON.parse(localStorage.getItem(SAVED_LS) || '[]'); setSaved(Array.isArray(v) ? v : []); } catch { setSaved([]); }
+  }, [api]);
+  const persistSaved = useCallback(async (list: SavedQuery[]) => {
+    setSaved(list);
+    try { if (api?.fusionSqlCacheSet) { await api.fusionSqlCacheSet({ pod: '__queries', key: 'list', value: list }); return; } } catch { /* fall through */ }
+    try { localStorage.setItem(SAVED_LS, JSON.stringify(list)); } catch { /* quota */ }
+  }, [api]);
+  useEffect(() => { loadSaved(); }, [loadSaved]);
+
+  const deriveName = (s: string) => {
+    const m = s.match(/\bfrom\s+([A-Za-z0-9_.]+)/i);
+    return m ? `Query on ${m[1]}` : 'Untitled query';
+  };
+  const openSave = () => {
+    if (!sql.trim()) { antMessage.warning('Editor is empty'); return; }
+    setSaveName(prev => prev || deriveName(sql));
+    setSaveDlgOpen(true);
+  };
+  const confirmSave = () => {
+    const name = saveName.trim();
+    if (!name) { antMessage.warning('Enter a name'); return; }
+    const sqlText = sql.trim();
+    if (!sqlText) { antMessage.warning('Nothing to save'); return; }
+    const list = [...saved];
+    const idx = list.findIndex(q => q.id === saveEditId || q.name.toLowerCase() === name.toLowerCase());
+    if (idx >= 0) list[idx] = { ...list[idx], name, sql: sqlText, at: Date.now() };
+    else list.unshift({ id: `q_${Date.now()}`, name, sql: sqlText, at: Date.now() });
+    persistSaved(list);
+    setSaveEditId(idx >= 0 ? list[idx].id : list[0].id);
+    setSaveDlgOpen(false);
+    antMessage.success(idx >= 0 ? 'Query updated' : 'Query saved');
+  };
+  const runSaved = (item: SavedQuery) => { setSql(item.sql); setSaveEditId(item.id); setSaveName(item.name); setActiveTab('builder'); run(item.sql); };
+  const editSaved = (item: SavedQuery) => { setSql(item.sql); setSaveEditId(item.id); setSaveName(item.name); setActiveTab('builder'); };
+  const deleteSaved = (id: string) => { persistSaved(saved.filter(q => q.id !== id)); if (saveEditId === id) setSaveEditId(null); };
 
   // ── local cache (real file via Electron; localStorage as web fallback) ──────
   const cacheRead = useCallback(async (key: string): Promise<unknown> => {
@@ -528,7 +583,22 @@ const FusionSql: React.FC = () => {
           background:#1e1e24;color:#e6e6e6;tab-size:2}
         .fs-editor:focus{border-color:#C74634;box-shadow:0 0 0 2px rgba(199,70,52,.14)}
         .fs-results{flex:1;min-height:0;background:#fff;border:1px solid #EFEAE8;border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+        .fs-tabs{flex:1;min-height:0;display:flex;flex-direction:column}
+        .fs-tabs>.ant-tabs-content-holder{flex:1;min-height:0;display:flex}
+        .fs-tabs .ant-tabs-content{height:100%;width:100%}
+        .fs-tabs .ant-tabs-tabpane{height:100%}
       `}</style>
+
+      <Tabs
+        className="fs-tabs"
+        activeKey={activeTab}
+        onChange={k => setActiveTab(k as 'builder' | 'list')}
+        style={{ flex: 1, minHeight: 0 }}
+        items={[{
+          key: 'builder',
+          label: <span><DatabaseOutlined /> SQL Builder</span>,
+          children: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: '100%' }}>
 
       <Card size="small" styles={{ body: { padding: '8px 12px' } }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -550,6 +620,9 @@ const FusionSql: React.FC = () => {
           <Tooltip title="Ask AI to write SQL from the cached schema">
             <Button icon={<RobotOutlined />} onClick={() => setAiOpen(true)}
               style={{ borderColor: '#C74634', color: '#C74634' }}>Ask AI</Button>
+          </Tooltip>
+          <Tooltip title="Save this query to the List of Queries">
+            <Button icon={<SaveOutlined />} onClick={openSave}>Save</Button>
           </Tooltip>
           <Dropdown menu={{ items: history.slice(0, 20).map((h, i) => ({ key: String(i), label: h.slice(0, 80) })), onClick: ({ key }) => setSql(history[Number(key)]) }}>
             <Button icon={<ReloadOutlined />}>History</Button>
@@ -714,6 +787,83 @@ const FusionSql: React.FC = () => {
           </div>
         </div>
       </div>
+            </div>
+          ),
+        }, {
+          key: 'list',
+          label: <span><FileTextOutlined /> List of Queries ({saved.length})</span>,
+          children: (
+            <div style={{ height: '100%', overflowY: 'auto', background: '#fff', border: '1px solid #EFEAE8', borderRadius: 10, padding: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <Input size="small" allowClear prefix={<SearchOutlined />} placeholder="Search saved queries"
+                  style={{ width: 260 }} value={savedSearch} onChange={e => setSavedSearch(e.target.value)} />
+                <div style={{ flex: 1 }} />
+                <Text type="secondary" style={{ fontSize: 12 }}>{saved.length} saved</Text>
+              </div>
+              {!saved.length ? (
+                <Empty description="No saved queries yet — write a query in SQL Builder and click Save." />
+              ) : (
+                <Table<SavedQuery>
+                  size="small"
+                  rowKey="id"
+                  pagination={{ pageSize: 15, showSizeChanger: true }}
+                  dataSource={saved.filter(q =>
+                    !savedSearch.trim() ||
+                    q.name.toLowerCase().includes(savedSearch.trim().toLowerCase()) ||
+                    q.sql.toLowerCase().includes(savedSearch.trim().toLowerCase()))}
+                  columns={[
+                    { title: 'Name', dataIndex: 'name', width: 220, render: (v: string) => <Text strong>{v}</Text> },
+                    {
+                      title: 'SQL', dataIndex: 'sql', ellipsis: true,
+                      render: (v: string) => (
+                        <Tooltip title={<pre style={{ maxHeight: 300, overflow: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>{v}</pre>} overlayStyle={{ maxWidth: 640 }}>
+                          <span style={{ fontFamily: 'Consolas,monospace', fontSize: 12, color: '#6B6B6B' }}>{v.replace(/\s+/g, ' ').slice(0, 90)}</span>
+                        </Tooltip>
+                      ),
+                    },
+                    {
+                      title: 'Parameters', key: 'params', width: 160,
+                      render: (_: unknown, r: SavedQuery) => {
+                        const ps = extractParams(r.sql);
+                        return ps.length ? <span>{ps.map(p => <Tag key={p} style={{ margin: '0 2px 2px 0' }}>{p}</Tag>)}</span> : <Text type="secondary">—</Text>;
+                      },
+                    },
+                    { title: 'Saved', dataIndex: 'at', width: 130, render: (v: number) => <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(v).format('MMM D, HH:mm')}</Text> },
+                    {
+                      title: 'Actions', key: 'act', width: 190,
+                      render: (_: unknown, r: SavedQuery) => (
+                        <Space size={4}>
+                          <Button size="small" type="primary" icon={<PlayCircleOutlined />}
+                            style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }} onClick={() => runSaved(r)}>Run</Button>
+                          <Button size="small" icon={<EditOutlined />} onClick={() => editSaved(r)}>Edit</Button>
+                          <Button size="small" danger icon={<DeleteOutlined />}
+                            onClick={() => Modal.confirm({ title: `Delete “${r.name}”?`, okText: 'Delete', okButtonProps: { danger: true }, onOk: () => deleteSaved(r.id) })} />
+                        </Space>
+                      ),
+                    },
+                  ]}
+                />
+              )}
+            </div>
+          ),
+        }]}
+      />
+
+      {/* ── Save query ── */}
+      <Modal
+        title={saveEditId ? 'Update saved query' : 'Save query'}
+        open={saveDlgOpen}
+        onCancel={() => setSaveDlgOpen(false)}
+        onOk={confirmSave}
+        okText={saveEditId ? 'Update' : 'Save'}
+        width={440}
+      >
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+          Saved queries appear in the <b>List of Queries</b> tab, with Run / Edit. A name that already exists updates that query.
+        </Text>
+        <Input value={saveName} onChange={e => setSaveName(e.target.value)} placeholder="Query name"
+          onPressEnter={confirmSave} autoFocus />
+      </Modal>
 
       {/* ── Bind / parameter prompt ── */}
       <Modal
