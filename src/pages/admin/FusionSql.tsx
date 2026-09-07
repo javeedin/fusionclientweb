@@ -45,6 +45,7 @@ const getApi = (): FusionSqlApi | undefined => {
 };
 
 const HIST_KEY = 'reerp.fusionsql.history';
+const SCHEMA_CAP = 20000; // max objects fetched per kind for the local schema cache
 const sqlEsc = (s: string) => s.replace(/'/g, "''");
 const cell = (v: unknown): string => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
 const isIdCol = (k: string) => /(_id|_number|id|number)$/i.test(k);
@@ -67,8 +68,13 @@ const FusionSql: React.FC = () => {
   const [schemaQ, setSchemaQ] = useState('');
   const [schemaList, setSchemaList] = useState<string[]>([]);
   const [schemaBusy, setSchemaBusy] = useState(false);
+  const [schemaCapped, setSchemaCapped] = useState(false);
+  const [schemaAt, setSchemaAt] = useState<number | null>(null);
   const [openObj, setOpenObj] = useState<string | null>(null);
   const [objCols, setObjCols] = useState<Record<string, unknown>[]>([]);
+
+  // cache keys are scoped to the pod so switching pods never mixes schemas
+  const podKey = useMemo(() => (cfg.baseUrl || 'pod').replace(/^https?:\/\//, '').replace(/[^\w.-]/g, '_'), [cfg.baseUrl]);
 
   const [cfgOpen, setCfgOpen] = useState(false);
   const [draft, setDraft] = useState<FsConfig>({});
@@ -128,27 +134,90 @@ const FusionSql: React.FC = () => {
     }
   }, [sql, rowLimit, running, api]);
 
-  // schema browser: run a dictionary query through the same runner
-  const loadSchema = useCallback(async () => {
+  // schema browser: fetch the FULL object list for a kind once, cache it in
+  // localStorage (per pod + kind), and filter it client-side. force=true
+  // re-pulls from the pod; otherwise a cached list is used when present.
+  const schemaCacheKey = useCallback((kind: string) => `reerp.fusionsql.schema.${podKey}.${kind}`, [podKey]);
+  const namesOf = (rows: Record<string, unknown>[]) =>
+    rows.map(x => String(x.OBJECT_NAME ?? x.object_name ?? '')).filter(Boolean);
+
+  const loadSchema = useCallback(async (force = false) => {
     if (!api) return;
+    const key = schemaCacheKey(schemaKind);
+    if (!force) {
+      try {
+        const c = JSON.parse(localStorage.getItem(key) || 'null');
+        if (c && Array.isArray(c.names) && c.names.length) {
+          setSchemaList(c.names); setSchemaCapped(!!c.capped); setSchemaAt(c.at || null);
+          return;
+        }
+      } catch { /* ignore bad cache */ }
+    }
     setSchemaBusy(true);
-    const like = schemaQ.trim() ? `AND UPPER(object_name) LIKE '%${sqlEsc(schemaQ.trim().toUpperCase())}%'` : '';
-    const q = `SELECT object_name FROM all_objects WHERE owner='FUSION' AND object_type='${schemaKind}' ${like} ORDER BY object_name`;
+    const q = `SELECT object_name FROM all_objects WHERE owner='FUSION' AND object_type='${schemaKind}' ORDER BY object_name`;
     try {
-      const r = await api.fusionSqlExecute!({ sql: q, rowLimit: 300 });
-      setSchemaList(r.success && r.rows ? r.rows.map(x => String(x.OBJECT_NAME ?? x.object_name ?? '')).filter(Boolean) : []);
-      if (!r.success) antMessage.error(r.error || 'Schema query failed');
+      const r = await api.fusionSqlExecute!({ sql: q, rowLimit: SCHEMA_CAP });
+      if (r.success && r.rows) {
+        const names = namesOf(r.rows);
+        const at = Date.now();
+        setSchemaList(names); setSchemaCapped(!!r.capped); setSchemaAt(at);
+        try { localStorage.setItem(key, JSON.stringify({ at, names, capped: !!r.capped })); } catch { /* quota */ }
+      } else {
+        antMessage.error(r.error || 'Schema query failed');
+      }
     } finally { setSchemaBusy(false); }
-  }, [api, schemaKind, schemaQ]);
+  }, [api, schemaKind, schemaCacheKey]);
+
+  // find objects the cached list may not hold (beyond the cap): server LIKE
+  // search, merged into the cached list so the local copy grows over time.
+  const searchServer = useCallback(async () => {
+    if (!api || !schemaQ.trim()) return;
+    setSchemaBusy(true);
+    const like = `%${sqlEsc(schemaQ.trim().toUpperCase())}%`;
+    const q = `SELECT object_name FROM all_objects WHERE owner='FUSION' AND object_type='${schemaKind}' AND UPPER(object_name) LIKE '${like}' ORDER BY object_name`;
+    try {
+      const r = await api.fusionSqlExecute!({ sql: q, rowLimit: 2000 });
+      if (r.success && r.rows) {
+        const found = namesOf(r.rows);
+        setSchemaList(prev => {
+          const merged = Array.from(new Set([...prev, ...found])).sort();
+          try { localStorage.setItem(schemaCacheKey(schemaKind), JSON.stringify({ at: Date.now(), names: merged, capped: schemaCapped })); } catch { /* quota */ }
+          return merged;
+        });
+        if (!found.length) antMessage.info('No matching objects on the pod.');
+      } else {
+        antMessage.error(r.error || 'Schema search failed');
+      }
+    } finally { setSchemaBusy(false); }
+  }, [api, schemaKind, schemaQ, schemaCacheKey, schemaCapped]);
+
+  // auto-load (from cache if available) once the pod is known / kind changes.
+  // Gated on cfg.baseUrl so we don't fetch under a placeholder key before the
+  // saved config has loaded.
+  useEffect(() => { if (api && cfg.baseUrl) loadSchema(false); }, [api, cfg.baseUrl, schemaKind, loadSchema]);
+
+  // client-side filter over the cached list — instant, no round-trip
+  const filteredSchema = useMemo(() => {
+    const s = schemaQ.trim().toUpperCase();
+    return s ? schemaList.filter(n => n.toUpperCase().includes(s)) : schemaList;
+  }, [schemaList, schemaQ]);
 
   const loadColumns = useCallback(async (name: string) => {
     if (openObj === name) { setOpenObj(null); return; }
     setOpenObj(name);
     setObjCols([]);
+    const ckey = `reerp.fusionsql.cols.${podKey}.${name}`;
+    try {
+      const cached = JSON.parse(localStorage.getItem(ckey) || 'null');
+      if (Array.isArray(cached) && cached.length) { setObjCols(cached); return; }
+    } catch { /* ignore */ }
     const q = `SELECT column_name, data_type, data_length, nullable FROM all_tab_columns WHERE owner='FUSION' AND table_name='${sqlEsc(name)}' ORDER BY column_id`;
-    const r = await api!.fusionSqlExecute!({ sql: q, rowLimit: 500 });
-    if (r.success && r.rows) setObjCols(r.rows);
-  }, [api, openObj]);
+    const r = await api!.fusionSqlExecute!({ sql: q, rowLimit: 1000 });
+    if (r.success && r.rows) {
+      setObjCols(r.rows);
+      try { localStorage.setItem(ckey, JSON.stringify(r.rows)); } catch { /* quota */ }
+    }
+  }, [api, openObj, podKey]);
 
   const insert = (text: string) => {
     const el = editorRef.current;
@@ -299,22 +368,33 @@ const FusionSql: React.FC = () => {
       <div className="fs-body">
         {/* schema browser */}
         <div className="fs-side">
-          <div className="fs-side-head"><TableOutlined /> Schema browser</div>
+          <div className="fs-side-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span><TableOutlined /> Schema browser</span>
+            <Tooltip title="Reload the full list from the pod (updates the local cache)">
+              <ReloadOutlined spin={schemaBusy} onClick={() => loadSchema(true)}
+                style={{ cursor: 'pointer', fontSize: 12, opacity: 0.85 }} />
+            </Tooltip>
+          </div>
           <div style={{ padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <Segmented size="small" block value={schemaKind} onChange={v => setSchemaKind(v as 'TABLE')}
               options={[{ label: 'Tables', value: 'TABLE' }, { label: 'Views', value: 'VIEW' }, { label: 'Synonyms', value: 'SYNONYM' }]} />
-            <Input size="small" prefix={<SearchOutlined />} placeholder="Filter FUSION objects" allowClear
-              value={schemaQ} onChange={e => setSchemaQ(e.target.value)} onPressEnter={loadSchema}
-              suffix={<CaretRightOutlined onClick={loadSchema} style={{ color: '#C74634', cursor: 'pointer' }} />} />
+            <Input size="small" prefix={<SearchOutlined />} placeholder={`Filter ${schemaList.length ? schemaList.length.toLocaleString() : ''} ${schemaKind.toLowerCase()}s`} allowClear
+              value={schemaQ} onChange={e => setSchemaQ(e.target.value)} onPressEnter={searchServer}
+              suffix={<Tooltip title="Search the pod for more matches"><CaretRightOutlined onClick={searchServer} style={{ color: '#C74634', cursor: 'pointer' }} /></Tooltip>} />
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {schemaBusy && <Text type="secondary" style={{ fontSize: 12, padding: 10, display: 'block' }}>Loading…</Text>}
             {!schemaBusy && !schemaList.length && (
               <Text type="secondary" style={{ fontSize: 12, padding: 10, display: 'block' }}>
-                Type a name and press Enter to search {schemaKind.toLowerCase()}s.
+                No cached {schemaKind.toLowerCase()}s yet — click the refresh icon to load them from the pod.
               </Text>
             )}
-            {schemaList.map(name => (
+            {!schemaBusy && schemaList.length > 0 && !filteredSchema.length && (
+              <Text type="secondary" style={{ fontSize: 12, padding: 10, display: 'block' }}>
+                No local match. Press Enter to search the pod for “{schemaQ.trim()}”.
+              </Text>
+            )}
+            {filteredSchema.map(name => (
               <div key={name}>
                 <button className="fs-obj" onClick={() => insert(name.toLowerCase())} onDoubleClick={() => loadColumns(name)}
                   title="Click: insert into editor · Double-click: show columns">
@@ -331,6 +411,13 @@ const FusionSql: React.FC = () => {
               </div>
             ))}
           </div>
+          {!!schemaList.length && (
+            <div style={{ padding: '4px 8px', borderTop: '1px solid #eee', fontSize: 11, color: '#8c7f7a' }}>
+              {schemaQ.trim() ? `${filteredSchema.length.toLocaleString()} of ` : ''}{schemaList.length.toLocaleString()} cached
+              {schemaCapped ? ` (capped at ${SCHEMA_CAP.toLocaleString()} — press Enter to find more)` : ''}
+              {schemaAt ? ` · ${dayjs(schemaAt).format('MMM D HH:mm')}` : ''}
+            </div>
+          )}
         </div>
 
         {/* editor + results */}
