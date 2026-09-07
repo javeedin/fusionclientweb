@@ -27,9 +27,10 @@ const { Text } = Typography;
 interface FusionSqlApi {
   fusionSqlConfig?: (patch?: Record<string, unknown>) => Promise<{ success: boolean; config?: FsConfig; error?: string }>;
   fusionSqlExecute?: (opts: { sql: string; rowLimit?: number }) => Promise<FsResult>;
+  fusionSqlDeploy?: () => Promise<{ success: boolean; message?: string; error?: string; steps?: string[]; raw?: string }>;
   openExcel?: (buf: unknown, filename: string) => Promise<unknown>;
 }
-interface FsConfig { baseUrl?: string; reportPath?: string; rowLimit?: number }
+interface FsConfig { baseUrl?: string; reportPath?: string; dataModelPath?: string; folderPath?: string; dataSource?: string; rowLimit?: number }
 interface FsResult {
   success: boolean; rows?: Record<string, unknown>[]; columns?: string[];
   rowCount?: number; capped?: boolean; error?: string; raw?: string;
@@ -67,6 +68,8 @@ const FusionSql: React.FC = () => {
 
   const [cfgOpen, setCfgOpen] = useState(false);
   const [draft, setDraft] = useState<FsConfig>({});
+  const [deploying, setDeploying] = useState(false);
+  const [deployMsg, setDeployMsg] = useState<{ ok: boolean; text: string; steps?: string[] } | null>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -184,8 +187,22 @@ const FusionSql: React.FC = () => {
 
   const saveCfg = async () => {
     const r = await api?.fusionSqlConfig?.(draft);
-    if (r?.success && r.config) { setCfg(r.config); setRowLimit(r.config.rowLimit || 100); antMessage.success('Saved'); setCfgOpen(false); }
-    else antMessage.error(r?.error || 'Could not save');
+    if (r?.success && r.config) { setCfg(r.config); setRowLimit(r.config.rowLimit || 100); antMessage.success('Saved'); }
+    else { antMessage.error(r?.error || 'Could not save'); }
+    return r?.success;
+  };
+
+  const deploy = async () => {
+    if (!api?.fusionSqlDeploy) return;
+    // save current settings first so the deploy uses them
+    await saveCfg();
+    setDeploying(true);
+    setDeployMsg(null);
+    try {
+      const r = await api.fusionSqlDeploy();
+      setDeployMsg({ ok: !!r?.success, text: r?.success ? (r.message || 'Deployed') : (r?.error || 'Deploy failed'), steps: r?.steps });
+      if (r?.success) antMessage.success('Runner report deployed');
+    } finally { setDeploying(false); }
   };
 
   if (!api) {
@@ -347,8 +364,8 @@ const FusionSql: React.FC = () => {
         </div>
       </div>
 
-      <Drawer title="Fusion SQL — connection settings" open={cfgOpen} onClose={() => setCfgOpen(false)} width={480}
-        extra={<Button type="primary" onClick={saveCfg} style={{ background: '#C74634', borderColor: '#C74634' }}>Save</Button>}>
+      <Drawer title="Fusion SQL — connection settings" open={cfgOpen} onClose={() => setCfgOpen(false)} width={500}
+        extra={<Button type="primary" onClick={() => saveCfg().then(ok => ok && setCfgOpen(false))} style={{ background: '#C74634', borderColor: '#C74634' }}>Save</Button>}>
         <Space direction="vertical" style={{ width: '100%' }} size={14}>
           <div>
             <Text type="secondary" style={{ fontSize: 12 }}>Fusion pod URL</Text>
@@ -365,10 +382,46 @@ const FusionSql: React.FC = () => {
             <br />
             <InputNumber min={1} max={100000} value={draft.rowLimit ?? 100} onChange={v => setDraft({ ...draft, rowLimit: v || 100 })} />
           </div>
+
+          <Card size="small" title={<span style={{ fontSize: 13 }}><ApiOutlined /> Auto-deploy runner report</span>}
+            styles={{ body: { padding: 12 } }}>
+            <Space direction="vertical" style={{ width: '100%' }} size={10}>
+              <Text type="secondary" style={{ fontSize: 11.5 }}>
+                Creates the folder, data model and report in the BI catalog for you (like CloudMiner) — no manual BIP steps.
+                Needs a Fusion login with <b>BI Author / Administrator</b> rights.
+              </Text>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>BI data source name (JDBC connection in BIP)</Text>
+                <Input placeholder="ApplicationDB_FSCM" value={draft.dataSource || ''}
+                  onChange={e => setDraft({ ...draft, dataSource: e.target.value })} />
+                <Text type="secondary" style={{ fontSize: 10.5 }}>
+                  Find it in BIP → Administration → JDBC Connection. Financials pods are usually <Text code>ApplicationDB_FSCM</Text>.
+                </Text>
+              </div>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>Folder path</Text>
+                <Input placeholder="/Custom/ReERP" value={draft.folderPath || ''}
+                  onChange={e => setDraft({ ...draft, folderPath: e.target.value })} />
+              </div>
+              <Button icon={<ThunderboltOutlined />} loading={deploying} onClick={deploy}
+                style={{ background: '#1D7B4D', borderColor: '#1D7B4D', color: '#fff' }}>
+                Deploy runner report
+              </Button>
+              {deployMsg && (
+                <Alert type={deployMsg.ok ? 'success' : 'error'} showIcon
+                  message={deployMsg.ok ? 'Deployed' : 'Deploy failed'}
+                  description={<div style={{ fontSize: 11.5 }}>
+                    <div>{deployMsg.text}</div>
+                    {deployMsg.steps?.map((s, i) => <div key={i} style={{ fontFamily: 'Consolas,monospace' }}>· {s}</div>)}
+                  </div>} />
+              )}
+            </Space>
+          </Card>
+
           <Alert type="info" showIcon style={{ padding: '6px 10px' }}
             message={<span style={{ fontSize: 12 }}>
-              Uses the Fusion username/password saved in the app. The runner report is deployed once — see
-              <Text code>fusion/bip/README.md</Text>. Read-only: only SELECT/WITH statements run.
+              Uses the Fusion username/password saved in the app. Read-only: only SELECT/WITH run. Prefer not to auto-deploy?
+              Deploy the report by hand — see <Text code>fusion/bip/README.md</Text>.
             </span>} />
         </Space>
       </Drawer>

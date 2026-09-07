@@ -21,8 +21,13 @@ const credsFile = () => path.join(app.getPath('userData'), 'fusion-creds.json');
 
 // ── config (pod url + report path + row cap) ────────────────────────────────
 function getConfig() {
-  try { return { reportPath: '/Custom/ReERP/QueryRunner.xdo', rowLimit: 100, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; }
-  catch { return { baseUrl: '', reportPath: '/Custom/ReERP/QueryRunner.xdo', rowLimit: 100 }; }
+  const d = {
+    baseUrl: '', reportPath: '/Custom/ReERP/QueryRunner.xdo',
+    dataModelPath: '/Custom/ReERP/QueryRunnerDM.xdm', folderPath: '/Custom/ReERP',
+    dataSource: 'ApplicationDB_FSCM', rowLimit: 100,
+  };
+  try { return { ...d, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; }
+  catch { return d; }
 }
 function setConfig(patch) {
   const next = { ...getConfig(), ...(patch || {}) };
@@ -213,4 +218,189 @@ async function execute({ sql, rowLimit } = {}) {
   }
 }
 
-module.exports = { getConfig, setConfig, execute };
+// ── auto-deploy the runner report (CloudMiner-style) ────────────────────────
+// Creates the folder + data model + report in the BI catalog via
+// CatalogService.createFolder / uploadObject, so no manual BIP setup is
+// needed. The account must hold BI Author/Administrator rights. Building
+// catalog objects is version-sensitive; on failure the SOAP fault is
+// surfaced and the manual path (fusion/bip/README.md) still works.
+
+// minimal CRC32 (for the ZIP central directory)
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+// build a store-mode (no compression) ZIP — BIP accepts these
+function buildZip(files) {
+  const locals = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = Buffer.from(f.name, 'utf8');
+    const data = Buffer.from(f.data, 'utf8');
+    const crc = crc32(data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0, 6);
+    lh.writeUInt16LE(0, 8); lh.writeUInt16LE(0, 10); lh.writeUInt16LE(0, 12);
+    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(data.length, 22);
+    lh.writeUInt16LE(name.length, 26); lh.writeUInt16LE(0, 28);
+    locals.push(lh, name, data);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6);
+    ch.writeUInt16LE(0, 8); ch.writeUInt16LE(0, 10); ch.writeUInt16LE(0, 12); ch.writeUInt16LE(0, 14);
+    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(data.length, 24);
+    ch.writeUInt16LE(name.length, 28); ch.writeUInt32LE(offset, 42);
+    central.push(ch, name);
+    offset += lh.length + name.length + data.length;
+  }
+  const localBuf = Buffer.concat(locals);
+  const centralBuf = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(centralBuf.length, 12); end.writeUInt32LE(localBuf.length, 16);
+  return Buffer.concat([localBuf, centralBuf, end]);
+}
+
+// the query-runner PL/SQL (kept in sync with fusion/bip/query_runner_datamodel.sql)
+const RUNNER_PLSQL = `DECLARE
+    TYPE refcursor IS REF CURSOR;
+    xdo_cursor         refcursor;
+    v_blob             BLOB;
+    v_result           BLOB;
+    l_offset           INTEGER;
+    l_buffer_size      BINARY_INTEGER := 48;
+    l_buffer_varchar   VARCHAR2(48);
+    l_buffer_raw       RAW(48);
+    l_clob             CLOB;
+    l_varchar          VARCHAR2(32767);
+    l_start            PLS_INTEGER := 1;
+    l_buffer           PLS_INTEGER := 32767;
+BEGIN
+    dbms_lob.createtemporary(v_blob, TRUE);
+    l_offset := 1;
+    FOR i IN 1 .. CEIL(dbms_lob.getlength(:P_QRY_STMT) / l_buffer_size) LOOP
+        dbms_lob.read(:P_QRY_STMT, l_buffer_size, l_offset, l_buffer_varchar);
+        l_buffer_raw := utl_raw.cast_to_raw(l_buffer_varchar);
+        l_buffer_raw := utl_encode.base64_decode(l_buffer_raw);
+        dbms_lob.writeappend(v_blob, utl_raw.length(l_buffer_raw), l_buffer_raw);
+        l_offset := l_offset + l_buffer_size;
+    END LOOP;
+    v_result := v_blob;
+    dbms_lob.freetemporary(v_blob);
+    dbms_lob.createtemporary(l_clob, TRUE);
+    FOR i IN 1 .. CEIL(dbms_lob.getlength(v_result) / l_buffer) LOOP
+        l_varchar := utl_raw.cast_to_varchar2(dbms_lob.substr(v_result, l_buffer, l_start));
+        dbms_lob.writeappend(l_clob, LENGTH(l_varchar), l_varchar);
+        l_start := l_start + l_buffer;
+    END LOOP;
+    OPEN :xdo_cursor FOR l_clob;
+END;`;
+
+function buildDataModelXml(dataSource) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<dataModel xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.0"
+           xmlns:xdm="http://xmlns.oracle.com/oxp/xmlp" xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+           defaultDataSourceRef="${xmlEscape(dataSource)}">
+   <description><![CDATA[Re-ERP Fusion SQL query runner]]></description>
+   <dataProperties>
+      <property name="include_parameters" value="true"/>
+      <property name="include_null_Element" value="false"/>
+      <property name="include_rowsettag" value="false"/>
+      <property name="xml_tag_case" value="upper"/>
+      <property name="db_fetch_size" value="500"/>
+   </dataProperties>
+   <parameters>
+      <parameter name="P_QRY_STMT" defaultValue="" dataType="xsd:string" rowPlacement="1">
+         <input label="P_QRY_STMT"/>
+      </parameter>
+   </parameters>
+   <dataSets>
+      <dataSet name="Q1" type="complex">
+         <sql dataSourceRef="${xmlEscape(dataSource)}" nsQuery="false" xmlRowTagName="G_1" sqlReturnType="ref_cursor"><![CDATA[${RUNNER_PLSQL}]]></sql>
+      </dataSet>
+   </dataSets>
+   <output rootName="DATA_DS" uniqueRowName="false"><nodeList/></output>
+   <eventTriggers/>
+   <lexicals/>
+   <valueSets/>
+</dataModel>`;
+}
+
+function buildReportXml(dataModelPath) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<report xmlns="http://xmlns.oracle.com/oxp/xmlp" version="2.0" defaultTemplateType="csv"
+        target="parameterColumn" showControls="true" showReportControls="true"
+        onLine="true" isDynamicPromptRequired="false">
+   <title>QueryRunner</title>
+   <description>Re-ERP Fusion SQL query runner</description>
+   <dataModel url="${xmlEscape(dataModelPath)}"/>
+   <parameters/>
+   <listOfTemplates>
+      <template type="csv" default="true" viewOnline="true" defaultOutputFormat="csv" label="Data">
+         <outputFormats><outputFormat>csv</outputFormat><outputFormat>xml</outputFormat></outputFormats>
+      </template>
+   </listOfTemplates>
+</report>`;
+}
+
+// ── SOAP: CatalogService (folder + upload) ──────────────────────────────────
+function catalogUrl(base) { return `${origin(base)}/xmlpserver/services/v2/CatalogService`; }
+
+async function soapCatalog(base, action, innerXml) {
+  const env = `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:pub="http://xmlns.oracle.com/oxp/service/v2/PublicReportService">
+  <soapenv:Header/>
+  <soapenv:Body>${innerXml}</soapenv:Body>
+</soapenv:Envelope>`;
+  const res = await fetch(catalogUrl(base), {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: action },
+    body: env,
+  });
+  const text = await res.text();
+  return { ok: res.ok, status: res.status, text };
+}
+
+async function deployRunner() {
+  const cfg = getConfig();
+  const creds = readFusionCreds();
+  if (!creds || !creds.username) return { success: false, error: 'No Fusion credentials saved' };
+  const base = origin(cfg.baseUrl || '');
+  if (!/^https?:\/\//.test(base)) return { success: false, error: 'No Fusion pod URL configured' };
+  const u = xmlEscape(creds.username), p = xmlEscape(creds.password);
+  const steps = [];
+
+  try {
+    // 1) folder
+    const fr = await soapCatalog(base, 'createFolder',
+      `<pub:createFolder><pub:folderAbsolutePath>${xmlEscape(cfg.folderPath)}</pub:folderAbsolutePath><pub:userID>${u}</pub:userID><pub:password>${p}</pub:password></pub:createFolder>`);
+    steps.push(`folder ${cfg.folderPath}: HTTP ${fr.status}`);
+
+    // 2) data model (.xdmz = zip containing _datamodel.xdm)
+    const dmZip = buildZip([{ name: '_datamodel.xdm', data: buildDataModelXml(cfg.dataSource) }]).toString('base64');
+    const dmr = await soapCatalog(base, 'uploadObject',
+      `<pub:uploadObject><pub:reportObjectAbsolutePathURL>${xmlEscape(cfg.dataModelPath)}</pub:reportObjectAbsolutePathURL><pub:objectType>xdmz</pub:objectType><pub:objectZippedData>${dmZip}</pub:objectZippedData><pub:userID>${u}</pub:userID><pub:password>${p}</pub:password></pub:uploadObject>`);
+    const dmFault = extractFault(dmr.text);
+    steps.push(`data model: HTTP ${dmr.status}${dmFault ? ` · ${dmFault}` : ' · ok'}`);
+    if (dmFault) return { success: false, error: `Data model upload failed: ${dmFault}`, steps, raw: dmr.text.slice(0, 1200) };
+
+    // 3) report (.xdoz = zip containing _report.xdo)
+    const rpZip = buildZip([{ name: '_report.xdo', data: buildReportXml(cfg.dataModelPath) }]).toString('base64');
+    const rpr = await soapCatalog(base, 'uploadObject',
+      `<pub:uploadObject><pub:reportObjectAbsolutePathURL>${xmlEscape(cfg.reportPath)}</pub:reportObjectAbsolutePathURL><pub:objectType>xdoz</pub:objectType><pub:objectZippedData>${rpZip}</pub:objectZippedData><pub:userID>${u}</pub:userID><pub:password>${p}</pub:password></pub:uploadObject>`);
+    const rpFault = extractFault(rpr.text);
+    steps.push(`report: HTTP ${rpr.status}${rpFault ? ` · ${rpFault}` : ' · ok'}`);
+    if (rpFault) return { success: false, error: `Report upload failed: ${rpFault}`, steps, raw: rpr.text.slice(0, 1200) };
+
+    return { success: true, steps, message: `Deployed ${cfg.reportPath}. Run a query to verify.` };
+  } catch (e) {
+    return { success: false, error: e.message, steps };
+  }
+}
+
+module.exports = { getConfig, setConfig, execute, deployRunner };

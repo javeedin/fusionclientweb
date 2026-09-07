@@ -10,6 +10,17 @@ This is the same technique commercial tools (e.g. CloudMiner) use. You deploy
 **one** report once; the app's schema browser bootstraps itself by running
 data-dictionary queries through that same runner, so nothing else is needed.
 
+## Fastest path: auto-deploy from the app
+
+Fusion SQL → **Connection settings** → **Deploy runner report**. With a Fusion
+login that has **BI Author / Administrator** rights, this creates the folder,
+data model and report for you via `CatalogService` (`createFolder` +
+`uploadObject`) — no manual BIP steps. Set the **BI data source name** first
+(BIP → Administration → JDBC Connection; Financials pods are usually
+`ApplicationDB_FSCM`). If your pod rejects the generated object (BIP catalog
+formats vary by version), the failure is shown with the SOAP fault — fall back
+to the manual steps below.
+
 > **Read-only.** BI Publisher data-model cursors cannot run DML — only SELECT.
 > The statement runs as whatever Fusion user the app authenticates with and is
 > audited as that user. **Use a dedicated, least-privilege BI account on
