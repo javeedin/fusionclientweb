@@ -73,9 +73,13 @@ function getCalls() { return CALL_LOG; }
 function clearCalls() { CALL_LOG.length = 0; }
 
 // ── SOAP runReport ──────────────────────────────────────────────────────────
-function buildEnvelope({ reportPath, base64Sql, user, pass, format }) {
+const SOAP11_NS = 'http://schemas.xmlsoap.org/soap/envelope/';
+const SOAP12_NS = 'http://www.w3.org/2003/05/soap-envelope';
+
+function buildEnvelope({ reportPath, base64Sql, user, pass, format, soap12 }) {
+  const ns = soap12 ? SOAP12_NS : SOAP11_NS;
   return `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:pub="http://xmlns.oracle.com/oxp/service/PublicReportService">
+<soapenv:Envelope xmlns:soapenv="${ns}" xmlns:pub="http://xmlns.oracle.com/oxp/service/PublicReportService">
   <soapenv:Header/>
   <soapenv:Body>
     <pub:runReport>
@@ -202,16 +206,23 @@ async function execute({ sql, rowLimit } = {}) {
   const base64Sql = Buffer.from(capped, 'utf8').toString('base64');
   const url = `${base}/xmlpserver/services/ExternalReportWSSService`;
 
-  const attempt = async (format) => {
-    const body = buildEnvelope({ reportPath: cfg.reportPath, base64Sql, user: creds.username, pass: creds.password, format });
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: 'runReport' },
-      body,
-    });
+  // this pod's ExternalReportWSSService is a SOAP 1.2 endpoint (it rejects
+  // text/xml with an Upgrade fault); try 1.2 first, fall back to 1.1
+  const post = async (format, soap12) => {
+    const body = buildEnvelope({ reportPath: cfg.reportPath, base64Sql, user: creds.username, pass: creds.password, format, soap12 });
+    const headers = soap12
+      ? { 'Content-Type': 'application/soap+xml; charset=utf-8; action="runReport"' }
+      : { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: 'runReport' };
+    const res = await fetch(url, { method: 'POST', headers, body });
     const text = await res.text();
-    recordCall({ kind: `runReport (${format})`, protocol: 'SOAP', url, status: res.status, request: body, response: text });
+    recordCall({ kind: `runReport (${format}, SOAP ${soap12 ? '1.2' : '1.1'})`, protocol: 'SOAP', url, status: res.status, request: body, response: text });
     return { status: res.status, ok: res.ok, text };
+  };
+  const versionFault = (t) => /soap.?1\.?2|not\s*compat|VersionMismatch|SupportedEnvelope/i.test(t || '');
+  const attempt = async (format) => {
+    let r = await post(format, true);          // SOAP 1.2
+    if (!extractReportBytes(r.text) && versionFault(r.text)) r = await post(format, false); // fall back to 1.1
+    return r;
   };
 
   try {
