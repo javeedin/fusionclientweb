@@ -33,7 +33,7 @@ interface FusionSqlApi {
   saveFusionCredentials?: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   openExcel?: (buf: unknown, filename: string) => Promise<unknown>;
 }
-interface FsConfig { baseUrl?: string; reportPath?: string; dataModelPath?: string; folderPath?: string; dataSource?: string; rowLimit?: number }
+interface FsConfig { baseUrl?: string; reportPath?: string; dataModelPath?: string; folderPath?: string; dataSource?: string; rowLimit?: number; reportServicePath?: string }
 interface ApiCall { at: number; kind: string; protocol: string; url: string; status: number; headers?: Record<string, string>; request: string; response: string }
 interface FsResult {
   success: boolean; rows?: Record<string, unknown>[]; columns?: string[];
@@ -463,6 +463,14 @@ const FusionSql: React.FC = () => {
             <Text type="secondary" style={{ fontSize: 12 }}>Fusion pod URL</Text>
             <Input placeholder="https://efmh-test.fa.em3.oraclecloud.com" value={draft.baseUrl || ''}
               onChange={e => setDraft({ ...draft, baseUrl: e.target.value })} />
+          </div>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12 }}>Report service endpoint (relative to the pod)</Text>
+            <Input placeholder="/xmlpserver/services/v2/ReportService" value={draft.reportServicePath || ''}
+              onChange={e => setDraft({ ...draft, reportServicePath: e.target.value })} />
+            <Text type="secondary" style={{ fontSize: 10.5 }}>
+              This is the same BIP endpoint Order Management uses (<Text code>/xmlpserver/services/v2/ReportService</Text>).
+            </Text>
           </div>
           <div>
             <Text type="secondary" style={{ fontSize: 12 }}>Query-runner report path (absolute, in the BI catalog)</Text>
