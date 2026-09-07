@@ -1,0 +1,81 @@
+# Fusion SQL — BI Publisher "Query Runner" report
+
+The **Fusion SQL** admin page (`/admin/fusion-sql`) runs live SELECT statements
+against the Oracle Fusion pod. There is no direct database connection to a
+Fusion SaaS pod — instead the app calls BI Publisher's SOAP service
+`ExternalReportWSSService.runReport`, targeting a small **query-runner report**
+whose data model executes an arbitrary, base64-encoded statement.
+
+This is the same technique commercial tools (e.g. CloudMiner) use. You deploy
+**one** report once; the app's schema browser bootstraps itself by running
+data-dictionary queries through that same runner, so nothing else is needed.
+
+> **Read-only.** BI Publisher data-model cursors cannot run DML — only SELECT.
+> The statement runs as whatever Fusion user the app authenticates with and is
+> audited as that user. **Use a dedicated, least-privilege BI account on
+> production**, not a super-user login.
+
+---
+
+## 1. Create the Data Model
+
+BI Publisher → **Catalog** → New → **Data Model**.
+
+- Add a **parameter**:
+  - Name: `P_QRY_STMT`
+  - Data Type: `String`
+  - Parameter Type: `Text`  *(leave the default value empty)*
+- Add a **Data Set** of type **SQL Query**, name it `Q1`, data source = the
+  Fusion transactional DB, and paste the PL/SQL runner from
+  [`query_runner_datamodel.sql`](./query_runner_datamodel.sql). *(In some BIP
+  versions this goes under the data set's "before data" / PL/SQL cursor
+  option; the block ends by opening a ref cursor from the decoded statement.)*
+- On the parameter, allow it to be passed to the data set.
+- Save the Data Model as **`QueryRunnerDM`** in a folder you control, e.g.
+  `/Custom/ReERP/`.
+
+## 2. Create the Report
+
+New → **Report**, using `QueryRunnerDM` as its data model.
+
+- Skip the guided layout; add one minimal layout so the report is runnable.
+- **Enable CSV output** (Report → Properties → Formats → CSV) — the app parses
+  CSV first, falling back to XML. Enabling both is fine.
+- Save the report as **`QueryRunner`** in the same folder.
+- The **absolute path** is then `/Custom/ReERP/QueryRunner.xdo` — put this in
+  the app's **Connection settings → Query-runner report path** (and the pod
+  URL, e.g. `https://efmh-test.fa.em3.oraclecloud.com`).
+
+## 3. Grant access
+
+The Fusion account the app uses needs, at minimum:
+- **BI Consumer** (run reports), and
+- SELECT access (via its data roles) to the tables you intend to query.
+
+Setup of the report itself needs an author role (**BI Author** / **BI
+Administrator**) once.
+
+---
+
+## How it works (mechanism)
+
+1. You type SQL in Fusion SQL. The app wraps it with a `ROWNUM` cap and
+   **base64-encodes** it (safe transport through SOAP/XML).
+2. The app POSTs a `runReport` SOAP envelope to
+   `<pod>/xmlpserver/services/ExternalReportWSSService`, passing the encoded
+   statement as parameter `P_QRY_STMT` and your Fusion credentials.
+3. The report's data model **base64-decodes** the statement and does
+   `OPEN :xdo_cursor FOR <your SQL>` — BI Publisher runs it inside the pod and
+   returns the rows as CSV/XML (base64 in `<reportBytes>`).
+4. The app decodes and parses that into the results grid.
+
+The **schema browser** just runs dictionary queries through the same path,
+e.g. `SELECT object_name FROM all_objects WHERE owner='FUSION' AND
+object_type='TABLE' …` and `all_tab_columns` for a table's columns.
+
+## Roadmap
+
+Once this report exists, the same `fusion-sql:execute` channel can be exposed
+to **Claude Chat** as a tool, so Claude can query live Fusion data directly
+(write SQL → run → load into the SQLite/analysis layer), alongside the existing
+ORDS-synced data.

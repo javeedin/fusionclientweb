@@ -1444,6 +1444,17 @@ ipcMain.handle('claude-chat:lov', async (_event, opts = {}) => {
   }
 });
 
+// ── Fusion SQL (live query over Oracle Fusion via BIP runReport) ───────────
+const fusionSql = require('./fusion-sql.cjs');
+ipcMain.handle('fusion-sql:config', async (_event, patch) => {
+  try { return { success: true, config: patch ? fusionSql.setConfig(patch) : fusionSql.getConfig() }; }
+  catch (e) { return { success: false, error: e.message }; }
+});
+ipcMain.handle('fusion-sql:execute', async (_event, opts) => {
+  try { return await fusionSql.execute(opts || {}); }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
 // ── Natural text-to-speech (Edge neural voices, no API key) ────────────────
 // Synthesizes MP3 via the Edge read-aloud service; the renderer falls back
 // to speechSynthesis when this fails (offline, service change).

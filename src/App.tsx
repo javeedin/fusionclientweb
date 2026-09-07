@@ -120,6 +120,7 @@ const BrevoSettings           = lazy(() => import('./pages/admin/BrevoSettings')
 const ManageChangeRequest     = lazy(() => import('./pages/admin/ManageChangeRequest'));
 const ReleaseUploader         = lazy(() => import('./pages/admin/ReleaseUploader'));
 const MCPServerManager        = lazy(() => import('./pages/admin/MCPServerManager'));
+const FusionSql               = lazy(() => import('./pages/admin/FusionSql'));
 const LibreChatPage           = lazy(() => import('./pages/librechat/LibreChatPage'));
 const ClaudeCliTerminal       = lazy(() => import('./pages/claude/ClaudeCliTerminal'));
 const ClaudeChat              = lazy(() => import('./pages/claude/ClaudeChat'));
@@ -393,6 +394,7 @@ function App() {
               <Route path="admin/releases" element={<ReleaseUploader />} />
               <Route path="admin/change-requests" element={<ManageChangeRequest />} />
               <Route path="admin/mcp-servers" element={<MCPServerManager />} />
+              <Route path="admin/fusion-sql" element={<FusionSql />} />
               {/* LibreChat — self-hosted Claude chat with Oracle GL MCP tools */}
               <Route path="librechat" element={<LibreChatPage />} />
               {/* Claude Code CLI — embedded subscription-billed terminal with ERP MCP */}

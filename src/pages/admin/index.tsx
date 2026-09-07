@@ -158,6 +158,14 @@ const adminCards: AdminCard[] = [
     color: '#722ed1',
     path: '/admin/mcp-servers',
   },
+  {
+    key: 'fusion-sql',
+    title: 'Fusion SQL',
+    description: 'Run live SQL directly against the Oracle Fusion pod (CloudMiner-style) via BI Publisher — schema browser, results grid, Excel/PDF export. Read-only. Foundation for querying live Fusion data from Claude Chat.',
+    icon: <DatabaseOutlined />,
+    color: '#C74634',
+    path: '/admin/fusion-sql',
+  },
 ];
 
 const AdminModule: React.FC = () => {
