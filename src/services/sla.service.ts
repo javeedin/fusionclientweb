@@ -143,6 +143,16 @@ export async function checkAccountingExists(
   sourceId: number,
   eventType?: string,
 ): Promise<SlaExistsResult> {
+  // A missing/invalid sourceId must never hit the server: the URL would carry
+  // sourceId=undefined and ORDS returns 555. Treat it as "no accounting yet".
+  if (sourceId == null || Number.isNaN(Number(sourceId))) {
+    return {
+      exists: false, headerId: null, eventTypeCode: eventType ?? null,
+      accountingStatus: null, postingStatus: null, accountingDate: null,
+      creationDate: null, postedDate: null, canCreate: false,
+      message: 'No source id',
+    };
+  }
   let url = `${BASE}/${EP.slaAccountingExists}?sourceTable=${encodeURIComponent(sourceTable)}&sourceId=${sourceId}`;
   if (eventType) url += `&eventType=${encodeURIComponent(eventType)}`;
   return apexGet<SlaExistsResult>(url);

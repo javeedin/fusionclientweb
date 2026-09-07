@@ -7241,9 +7241,9 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
                         title: 'Prepayment Number',
                         dataIndex: 'prepaymentNumber',
                         width: 150,
-                        render: (v: string) => (
+                        render: (v?: string) => (
                           <Text style={{ color: REDWOOD.info, fontSize: 12 }}>
-                            {v.length > 15 ? v.slice(0, 15) + '…' : v}
+                            {v ? (v.length > 15 ? v.slice(0, 15) + '…' : v) : '—'}
                           </Text>
                         ),
                       },
