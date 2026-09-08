@@ -1518,6 +1518,51 @@ ipcMain.handle('fusion-sql:cache-clear', async (_event, opts) => {
   try { return fusionSql.cacheClear(opts || {}); }
   catch (e) { return { success: false, error: e.message }; }
 });
+// ── Fusion schema SQLite store (sql.js) ──────────────────────────────────────
+const fusionDb = require('./fusion-sqlite.cjs');
+ipcMain.handle('fusion-db:save', async (_event, payload) => {
+  try { return await fusionDb.saveSchema(payload || {}); }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('fusion-db:info', async () => {
+  try { return await fusionDb.info(); }
+  catch (e) { return { ok: false, error: e.message, tables: [] }; }
+});
+ipcMain.handle('fusion-db:query', async (_event, { sql, rowLimit } = {}) => {
+  try { return await fusionDb.query(sql, rowLimit); }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+// Export (copy out) the fusion-schema.db via a native Save dialog.
+ipcMain.handle('fusion-db:export', async (event) => {
+  try {
+    const src = fusionDb.dbPath();
+    if (!fs.existsSync(src)) return { ok: false, error: 'No fusion-schema.db yet — Save to SQLite first.' };
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Export Fusion schema database',
+      defaultPath: 'fusion-schema.db',
+      filters: [{ name: 'SQLite', extensions: ['db', 'sqlite'] }],
+    });
+    if (canceled || !filePath) return { ok: false, canceled: true };
+    fs.copyFileSync(src, filePath);
+    return { ok: true, path: filePath };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// Import (copy in) a .db from anywhere into the userData path.
+ipcMain.handle('fusion-db:import', async (event) => {
+  try {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: 'Import Fusion schema database',
+      properties: ['openFile'],
+      filters: [{ name: 'SQLite', extensions: ['db', 'sqlite'] }],
+    });
+    if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true };
+    fs.copyFileSync(filePaths[0], fusionDb.dbPath());
+    return { ok: true, path: fusionDb.dbPath() };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 // Download the schema cache file for a pod via a native Save dialog.
 ipcMain.handle('fusion-sql:cache-export', async (event, { pod } = {}) => {
   try {

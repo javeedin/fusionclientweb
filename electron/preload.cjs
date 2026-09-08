@@ -110,6 +110,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fusionSqlCacheSet:   (opts) => ipcRenderer.invoke('fusion-sql:cache-set', opts || {}),
   fusionSqlCacheClear: (opts) => ipcRenderer.invoke('fusion-sql:cache-clear', opts || {}),
   fusionSqlCacheExport: (opts) => ipcRenderer.invoke('fusion-sql:cache-export', opts || {}),
+  // Fusion schema SQLite store
+  fusionDbSave:   (payload) => ipcRenderer.invoke('fusion-db:save', payload || {}),
+  fusionDbInfo:   () => ipcRenderer.invoke('fusion-db:info'),
+  fusionDbQuery:  (opts) => ipcRenderer.invoke('fusion-db:query', opts || {}),
+  fusionDbExport: () => ipcRenderer.invoke('fusion-db:export'),
+  fusionDbImport: () => ipcRenderer.invoke('fusion-db:import'),
   fusionSqlAiSql:      (opts) => ipcRenderer.invoke('fusion-sql:ai-sql', opts || {}),
 
   // Natural TTS (Edge neural voices)

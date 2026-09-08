@@ -1,7 +1,16 @@
-import React, { useMemo, useState } from 'react';
-import { Button, Select, Input, Table, Tag, Progress, Space, Typography, message } from 'antd';
-import { TableOutlined, PartitionOutlined, KeyOutlined, DownloadOutlined } from '@ant-design/icons';
+import React, { useMemo, useState, useCallback } from 'react';
+import { Button, Select, Input, Table, Tag, Progress, Space, Typography, Tooltip, message } from 'antd';
+import { TableOutlined, PartitionOutlined, KeyOutlined, DownloadOutlined, DatabaseOutlined, ImportOutlined, SaveOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+
+interface DbTable { name: string; rows: number }
+interface DbInfo { ok: boolean; exists?: boolean; path?: string; sizeKB?: number; tables?: DbTable[] }
+interface DbApi {
+  fusionDbSave?: (p: { owner: string; tables: string[]; indexes: unknown[]; fks: unknown[] }) => Promise<{ ok: boolean; path?: string; error?: string }>;
+  fusionDbInfo?: () => Promise<DbInfo>;
+  fusionDbExport?: () => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+  fusionDbImport?: () => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+}
 
 const { Text } = Typography;
 
@@ -37,6 +46,16 @@ const FusionTablesList: React.FC<Props> = ({ owners, defaultOwner, exec, cacheRe
   const [fks, setFks] = useState<Record<string, unknown>[]>([]);
   const [prog, setProg] = useState<Record<Loader, Prog>>({ tables: IDLE, indexes: IDLE, fks: IDLE });
   const [q, setQ] = useState('');
+  const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
+  const [dbBusy, setDbBusy] = useState(false);
+
+  const db = (window as unknown as { electronAPI?: DbApi }).electronAPI;
+
+  const refreshDbInfo = useCallback(async () => {
+    if (!db?.fusionDbInfo) return;
+    try { setDbInfo(await db.fusionDbInfo()); } catch { /* ignore */ }
+  }, [db]);
+  React.useEffect(() => { refreshDbInfo(); }, [refreshDbInfo]);
 
   const setP = (l: Loader, p: Partial<Prog>) => setProg(prev => ({ ...prev, [l]: { ...prev[l], ...p } }));
 
@@ -99,6 +118,37 @@ const FusionTablesList: React.FC<Props> = ({ owners, defaultOwner, exec, cacheRe
     `GROUP BY ac.table_name, ac.constraint_name`,
     rows => { setFks(rows); cacheWrite(`bulk.fk.${owner}`, rows); },
   );
+
+  // ── SQLite (sql.js) save / export / import ──────────────────────────────────
+  const saveToSqlite = async () => {
+    if (!db?.fusionDbSave) { message.warning('The desktop app is required to save to SQLite.'); return; }
+    if (!tables.length && !indexes.length && !fks.length) { message.warning('Load tables / indexes / FKs first.'); return; }
+    setDbBusy(true);
+    try {
+      const idxNorm = indexes.map(r => ({
+        table_name: val(r, 'TABLE_NAME', 'table_name'), index_name: val(r, 'INDEX_NAME', 'index_name'),
+        uniqueness: val(r, 'UNIQUENESS', 'uniqueness'), columns: val(r, 'COLUMNS', 'columns'),
+      }));
+      const fkNorm = fks.map(r => ({
+        table_name: val(r, 'TABLE_NAME', 'table_name'), fk_name: val(r, 'FK_NAME', 'fk_name'),
+        fk_columns: val(r, 'FK_COLUMNS', 'fk_columns'), ref_table: val(r, 'REF_TABLE', 'ref_table'),
+      }));
+      const r = await db.fusionDbSave({ owner, tables, indexes: idxNorm, fks: fkNorm });
+      if (r.ok) { message.success('Saved to fusion-schema.db'); refreshDbInfo(); }
+      else message.error(r.error || 'Save failed');
+    } finally { setDbBusy(false); }
+  };
+  const exportDb = async () => {
+    if (!db?.fusionDbExport) { message.warning('Desktop app required.'); return; }
+    const r = await db.fusionDbExport();
+    if (r.ok) message.success(`Exported to ${r.path}`); else if (!r.canceled) message.error(r.error || 'Export failed');
+  };
+  const importDb = async () => {
+    if (!db?.fusionDbImport) { message.warning('Desktop app required.'); return; }
+    const r = await db.fusionDbImport();
+    if (r.ok) { message.success('Imported fusion-schema.db'); refreshDbInfo(); }
+    else if (!r.canceled) message.error(r.error || 'Import failed');
+  };
 
   // load cached copies when the owner changes
   React.useEffect(() => {
@@ -170,11 +220,38 @@ const FusionTablesList: React.FC<Props> = ({ owners, defaultOwner, exec, cacheRe
         {!exec && <Tag color="orange">Desktop app required</Tag>}
       </Space>
 
-      <Space wrap size="large" style={{ marginBottom: 16 }}>
+      <Space wrap size="large" style={{ marginBottom: 12 }}>
         {loadBtn('tables', 'Load Tables', <TableOutlined />, loadTables, tables.length)}
         {loadBtn('indexes', 'Load Indexes', <PartitionOutlined />, loadIndexes, indexes.length)}
         {loadBtn('fks', 'Load Foreign Keys', <KeyOutlined />, loadFks, fks.length)}
       </Space>
+
+      {/* SQLite (sql.js) store */}
+      <div style={{ marginBottom: 16, padding: '8px 12px', background: '#fafafa', border: '1px solid #eee', borderRadius: 8 }}>
+        <Space wrap align="center">
+          <DatabaseOutlined style={{ color: '#C74634' }} />
+          <Text strong style={{ fontSize: 13 }}>SQLite (fusion-schema.db)</Text>
+          <Tooltip title="Write the loaded tables / indexes / foreign keys for this owner into the local SQLite database">
+            <Button size="small" type="primary" icon={<SaveOutlined />} loading={dbBusy} onClick={saveToSqlite} disabled={!db?.fusionDbSave}
+              style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }}>Save to SQLite</Button>
+          </Tooltip>
+          <Tooltip title="Copy the .db out to a location you choose (to share it)">
+            <Button size="small" icon={<DownloadOutlined />} onClick={exportDb} disabled={!db?.fusionDbExport}>Export .db</Button>
+          </Tooltip>
+          <Tooltip title="Place a .db from anywhere — it is copied into the app's data folder automatically">
+            <Button size="small" icon={<ImportOutlined />} onClick={importDb} disabled={!db?.fusionDbImport}>Import .db</Button>
+          </Tooltip>
+          {dbInfo?.exists
+            ? <Tag color="green">{(dbInfo.tables || []).reduce((s, t) => s + t.rows, 0).toLocaleString()} rows · {dbInfo.sizeKB?.toLocaleString()} KB</Tag>
+            : <Tag>empty</Tag>}
+        </Space>
+        {dbInfo?.path && (
+          <div style={{ fontSize: 11, color: '#8c7f7a', marginTop: 6, wordBreak: 'break-all', fontFamily: 'monospace' }}>
+            {dbInfo.path}
+            {!!dbInfo.tables?.length && <> · {dbInfo.tables.map(t => `${t.name}(${t.rows})`).join(', ')}</>}
+          </div>
+        )}
+      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 16 }}>
         <div>
