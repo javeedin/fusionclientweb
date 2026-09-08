@@ -14,7 +14,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   ApiOutlined, CaretRightOutlined, DatabaseOutlined, FileExcelOutlined, FilePdfOutlined,
-  DeleteOutlined, EditOutlined, FileTextOutlined, PlayCircleOutlined, ReloadOutlined, RobotOutlined,
+  DeleteOutlined, DownloadOutlined, EditOutlined, FileTextOutlined, PlayCircleOutlined, ReloadOutlined, RobotOutlined,
   SaveOutlined, SearchOutlined, SendOutlined, SettingOutlined,
   TableOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
@@ -33,6 +33,7 @@ interface FusionSqlApi {
   fusionSqlCacheGet?: (opts: { pod?: string; key: string }) => Promise<{ success: boolean; value: unknown }>;
   fusionSqlCacheSet?: (opts: { pod?: string; key: string; value: unknown }) => Promise<{ success: boolean; error?: string }>;
   fusionSqlCacheClear?: (opts: { pod?: string }) => Promise<{ success: boolean; error?: string }>;
+  fusionSqlCacheExport?: (opts: { pod?: string }) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>;
   fusionSqlAiSql?: (opts: { question: string; schema: string; history?: { role: string; content: string }[] }) => Promise<{ success: boolean; response?: string; error?: string }>;
   getFusionCredentials?: () => Promise<{ username: string; password: string } | null>;
   saveFusionCredentials?: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
@@ -428,6 +429,14 @@ const FusionSql: React.FC = () => {
   }, [pageBase, schemaQ]);
   // commit a whole-list search from the search icon / Enter
   const commitSearch = () => { setCommittedSearch(schemaQ.trim()); setSchemaPage(0); };
+
+  // Download the on-disk schema cache (tables & columns) for the current pod.
+  const downloadSchemaCache = async () => {
+    if (!api?.fusionSqlCacheExport) { antMessage.warning('The desktop app is required to download the cache file.'); return; }
+    const r = await api.fusionSqlCacheExport({ pod: cfg.baseUrl });
+    if (r?.success) antMessage.success(`Saved to ${r.path}`);
+    else if (!r?.canceled) antMessage.error(r?.error || 'Could not download the schema cache');
+  };
   // keep the page in range if the underlying list shrinks
   useEffect(() => { if (schemaPage > pageCount - 1) setSchemaPage(0); }, [pageCount, schemaPage]);
 
@@ -720,10 +729,16 @@ const FusionSql: React.FC = () => {
         <div className="fs-side">
           <div className="fs-side-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span><TableOutlined /> Schema browser</span>
-            <Tooltip title="Reload the full list from the pod (updates the local cache)">
-              <ReloadOutlined spin={schemaBusy} onClick={() => loadSchema(true)}
-                style={{ cursor: 'pointer', fontSize: 12, opacity: 0.85 }} />
-            </Tooltip>
+            <Space size={10}>
+              <Tooltip title="Download the schema cache file (tables & columns JSON) for this pod">
+                <DownloadOutlined onClick={downloadSchemaCache}
+                  style={{ cursor: 'pointer', fontSize: 12, opacity: 0.85 }} />
+              </Tooltip>
+              <Tooltip title="Reload the full list from the pod (updates the local cache)">
+                <ReloadOutlined spin={schemaBusy} onClick={() => loadSchema(true)}
+                  style={{ cursor: 'pointer', fontSize: 12, opacity: 0.85 }} />
+              </Tooltip>
+            </Space>
           </div>
           <div style={{ padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <Select size="small" showSearch value={schemaOwner} onChange={v => setSchemaOwner(v)}

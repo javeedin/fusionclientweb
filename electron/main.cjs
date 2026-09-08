@@ -1518,6 +1518,27 @@ ipcMain.handle('fusion-sql:cache-clear', async (_event, opts) => {
   try { return fusionSql.cacheClear(opts || {}); }
   catch (e) { return { success: false, error: e.message }; }
 });
+// Download the schema cache file for a pod via a native Save dialog.
+ipcMain.handle('fusion-sql:cache-export', async (event, { pod } = {}) => {
+  try {
+    const src = fusionSql.cacheFilePath(pod);
+    if (!fs.existsSync(src)) {
+      return { success: false, error: 'No schema cache file yet — load the schema browser first.' };
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const base = String(pod || 'pod').replace(/^https?:\/\//, '').replace(/[^\w.-]/g, '_').slice(0, 120);
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Download schema cache',
+      defaultPath: `schema-${base}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (canceled || !filePath) return { success: false, canceled: true };
+    fs.copyFileSync(src, filePath);
+    return { success: true, path: filePath };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
 
 // read the stored (APEX-provisioned) Claude API key from the GL creds file
 function readStoredClaudeKey() {

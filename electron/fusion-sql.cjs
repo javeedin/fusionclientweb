@@ -527,4 +527,4 @@ async function deployRunner() {
   }
 }
 
-module.exports = { getConfig, setConfig, execute, deployRunner, getCalls, clearCalls, cacheGet, cacheSet, cacheClear };
+module.exports = { getConfig, setConfig, execute, deployRunner, getCalls, clearCalls, cacheGet, cacheSet, cacheClear, cacheFilePath: cacheFile };

@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fusionSqlCacheGet:   (opts) => ipcRenderer.invoke('fusion-sql:cache-get', opts || {}),
   fusionSqlCacheSet:   (opts) => ipcRenderer.invoke('fusion-sql:cache-set', opts || {}),
   fusionSqlCacheClear: (opts) => ipcRenderer.invoke('fusion-sql:cache-clear', opts || {}),
+  fusionSqlCacheExport: (opts) => ipcRenderer.invoke('fusion-sql:cache-export', opts || {}),
   fusionSqlAiSql:      (opts) => ipcRenderer.invoke('fusion-sql:ai-sql', opts || {}),
 
   // Natural TTS (Edge neural voices)
