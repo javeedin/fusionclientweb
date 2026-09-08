@@ -662,6 +662,7 @@ const RegisterDetail: React.FC<{
   const [convertSuspenseForm] = Form.useForm();
   const [editTxnForm]        = Form.useForm();
   const needsRefresh = React.useRef(false);
+  const bankTxnPostingRef = React.useRef(false); // guards against a double-click creating two bank txns
   const [distCombinations, setDistCombinations] = useState<DistCombination[]>([]);
   const [openPeriods, setOpenPeriods]           = useState<APPeriod[]>([]);
   const [periodsLoaded, setPeriodsLoaded]       = useState(false);
@@ -1576,13 +1577,20 @@ const RegisterDetail: React.FC<{
 
   // ── Create Bank Transaction (from Add Money) ──────────────
   const handleCreateBankTxn = async (values: any) => {
+    if (bankTxnPostingRef.current) return; // a post is already in flight (double-click guard)
+    bankTxnPostingRef.current = true;
     setBankTxnSaving(true);
     const uniqueRef = values.referenceText?.trim() || `PC-REG${register.registerId}-${Date.now()}`;
+    // Petty-cash side is Money In (debit to the register), but the funding
+    // BANK account pays out — so the external/bank transaction is Money Out:
+    // a negative amount (the grid derives DR/CR from the amount sign).
+    const outAmount = -Math.abs(Number(values.amount) || 0);
     const payload = {
       items: [{
         BankAccountName:          values.bankAccountName,
         BusinessUnitName:         values.businessUnitName ?? register.businessUnit,
-        Amount:                   values.amount,
+        Amount:                   outAmount,
+        TransactionDirection:     'CR',
         TransactionDate:          values.transactionDate?.format('YYYY-MM-DD'),
         CurrencyCode:             values.currencyCode ?? register.currency,
         ReferenceText:            uniqueRef,
@@ -1650,6 +1658,7 @@ const RegisterDetail: React.FC<{
       message.error(e?.message ?? 'Network error');
     } finally {
       setBankTxnSaving(false);
+      bankTxnPostingRef.current = false;
     }
   };
 
