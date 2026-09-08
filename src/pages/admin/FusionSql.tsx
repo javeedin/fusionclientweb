@@ -52,6 +52,7 @@ const getApi = (): FusionSqlApi | undefined => {
 
 const HIST_KEY = 'reerp.fusionsql.history';
 const SCHEMA_CAP = 20000; // max objects fetched per kind for the local schema cache
+const SCHEMA_VISIBLE = 400; // max object rows rendered at once (type to narrow)
 
 // object types the schema browser can list (all_objects.object_type values)
 const OBJECT_TYPES = [
@@ -543,6 +544,20 @@ const FusionSql: React.FC = () => {
     }));
   }, [rows]);
 
+  // Memoise the results table element so editor typing / tab switches don't
+  // re-render the (potentially large) grid — only rebuild when data changes.
+  const resultDataSource = useMemo(() => filtered.map((r, i) => ({ ...r, __k: i })), [filtered]);
+  const resultsTableEl = useMemo(() => (
+    <Table
+      size="small"
+      rowKey="__k"
+      columns={gridCols}
+      dataSource={resultDataSource}
+      pagination={{ pageSize: 100, size: 'small', showSizeChanger: false, showTotal: t => `${t} rows` }}
+      scroll={{ x: 'max-content' }}
+    />
+  ), [gridCols, resultDataSource]);
+
   const exportExcel = async () => {
     if (!filtered.length) return;
     const keys = Object.keys(rows[0]);
@@ -714,7 +729,7 @@ const FusionSql: React.FC = () => {
                 No local match. Press Enter to search the pod for “{schemaQ.trim()}”.
               </Text>
             )}
-            {filteredSchema.map(name => {
+            {filteredSchema.slice(0, SCHEMA_VISIBLE).map(name => {
               const expandable = hasColumns(schemaKind) || hasArgs(schemaKind);
               // FUSION/PUBLIC objects resolve unqualified; other schemas need owner.name
               const qualified = (schemaOwner === 'FUSION' || schemaOwner === 'PUBLIC')
@@ -738,6 +753,11 @@ const FusionSql: React.FC = () => {
               </div>
               );
             })}
+            {filteredSchema.length > SCHEMA_VISIBLE && (
+              <Text type="secondary" style={{ fontSize: 11, padding: '6px 10px', display: 'block' }}>
+                Showing first {SCHEMA_VISIBLE} of {filteredSchema.length.toLocaleString()} — type in the filter to narrow.
+              </Text>
+            )}
           </div>
           {!!schemaList.length && (
             <div style={{ padding: '4px 8px', borderTop: '1px solid #eee', fontSize: 11, color: '#8c7f7a' }}>
@@ -796,10 +816,7 @@ const FusionSql: React.FC = () => {
                           </div>
                           {rows.length ? (
                             <div style={{ flex: 1, overflow: 'auto' }}>
-                              <Table size="small" rowKey={(_r, i) => String(i)} columns={gridCols}
-                                dataSource={filtered.map((r, i) => ({ ...r, __k: i }))}
-                                pagination={{ pageSize: 100, size: 'small', showSizeChanger: false, showTotal: t => `${t} rows` }}
-                                scroll={{ x: 'max-content' }} />
+                              {resultsTableEl}
                             </div>
                           ) : <Empty description="Statement ran — no rows returned" />}
                         </>
