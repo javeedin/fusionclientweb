@@ -571,7 +571,7 @@ function getStatus() {
     installed = true;
   } catch { /* not installed / not on PATH */ }
   const ptyReady = !!loadPty();
-  return { installed, version, running: !!proc, workspace: workspaceDir(), ptyReady, ptyError };
+  return { installed, version, running: !!proc, pid: proc ? proc.pid : null, workspace: workspaceDir(), ptyReady, ptyError };
 }
 
 function start(sender, { cols = 120, rows = 30, ctx } = {}) {

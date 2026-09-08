@@ -160,6 +160,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeOpenUpdateCheckerListener: () => ipcRenderer.removeAllListeners('open-update-checker'),
   onOpenAbout: (callback) => ipcRenderer.on('open-about', callback),
 
+  // System process monitor (Notifications → Processes tab)
+  listProcesses: () => ipcRenderer.invoke('system:process-list'),
+  killProcess: (pid) => ipcRenderer.invoke('system:kill-process', { pid }),
+
   // Check if running in Electron
   isElectron: true,
 

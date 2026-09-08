@@ -1235,6 +1235,50 @@ ipcMain.handle('claude-cli:stop', async () => {
   try { return claudeCli.stop(); }
   catch (e) { return { success: false, error: e.message }; }
 });
+
+// ── System process monitor (for the Notifications → Processes tab) ───────────
+// Lists every process that makes up the running Re-ERP desktop app (main,
+// window renderers, GPU, utility/service processes) with live CPU and memory,
+// plus the Claude CLI child if one is running, and can terminate one by PID.
+ipcMain.handle('system:process-list', async () => {
+  try {
+    const mainPid = process.pid;
+    const items = (app.getAppMetrics() || []).map((m) => ({
+      pid: m.pid,
+      type: m.type,                                  // Browser | Tab | GPU | Utility | ...
+      name: m.name || m.serviceName || '',
+      cpu: m.cpu ? Number((m.cpu.percentCPUUsage || 0).toFixed(1)) : 0,
+      // workingSetSize is reported in kilobytes
+      memoryMB: m.memory ? Math.round((m.memory.workingSetSize || 0) / 1024) : 0,
+      // the main (Browser) process backs the whole app — protect it from kill
+      isMain: m.pid === mainPid || m.type === 'Browser',
+    }));
+
+    // Surface the Claude CLI child process (spawned outside Chromium) if alive
+    try {
+      const st = claudeCli.getStatus && claudeCli.getStatus();
+      if (st && st.running && st.pid && !items.some((i) => i.pid === st.pid)) {
+        items.push({ pid: st.pid, type: 'Claude CLI', name: 'claude', cpu: 0, memoryMB: 0, isMain: false });
+      }
+    } catch { /* claude cli optional */ }
+
+    return { ok: true, mainPid, items };
+  } catch (e) {
+    return { ok: false, error: e.message, items: [] };
+  }
+});
+
+ipcMain.handle('system:kill-process', async (_event, { pid } = {}) => {
+  try {
+    const target = Number(pid);
+    if (!target) return { ok: false, error: 'No PID supplied' };
+    if (target === process.pid) return { ok: false, error: 'Refusing to kill the main application process' };
+    process.kill(target);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
 ipcMain.handle('claude-cli:open-external', async (_event, opts) => {
   try { return claudeCli.openExternal((opts || {}).ctx); }
   catch (e) { return { success: false, error: e.message }; }

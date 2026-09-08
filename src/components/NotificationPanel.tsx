@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Drawer, Button, Badge, Tag, Typography, Space, Tooltip, Empty, Spin,
+  Drawer, Button, Badge, Tag, Typography, Space, Tooltip, Empty, Spin, Tabs,
   Table, Select, Modal, Descriptions, Divider, Input, message,
 } from 'antd';
 import {
   BellOutlined, CheckOutlined, DeleteOutlined, ReloadOutlined,
   WarningOutlined, InfoCircleOutlined, CloseCircleOutlined, ApiOutlined,
-  CheckCircleOutlined, StopOutlined, EyeOutlined,
+  CheckCircleOutlined, StopOutlined, EyeOutlined, ThunderboltOutlined, PoweroffOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
@@ -44,6 +44,130 @@ const MODULE_COLOR: Record<string, string> = {
   AP: 'purple', GL: 'blue', AR: 'cyan', CM: 'geekblue',
   RM: 'volcano', FA: 'orange', PMS: 'magenta', General: 'default',
   Approvals: 'gold',
+};
+
+// ── Process Monitor (Notifications → Processes tab) ─────────────────────────────
+interface ProcRow {
+  pid: number;
+  type: string;
+  name: string;
+  cpu: number;
+  memoryMB: number;
+  isMain: boolean;
+}
+
+const TYPE_COLOR: Record<string, string> = {
+  Browser: 'gold', Tab: 'blue', GPU: 'purple', Utility: 'cyan', 'Claude CLI': 'green',
+};
+
+type ProcApi = {
+  listProcesses?: () => Promise<{ ok: boolean; mainPid?: number; items?: ProcRow[]; error?: string }>;
+  killProcess?: (pid: number) => Promise<{ ok: boolean; error?: string }>;
+};
+
+const ProcessMonitor: React.FC<{ active: boolean }> = ({ active }) => {
+  const api = (window as unknown as { electronAPI?: ProcApi }).electronAPI;
+  const [items, setItems] = useState<ProcRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [killing, setKilling] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    if (!api?.listProcesses) return;
+    setLoading(true);
+    try {
+      const r = await api.listProcesses();
+      setItems((r.items || []).slice().sort((a, b) => b.memoryMB - a.memoryMB));
+    } catch { /* ignore */ } finally { setLoading(false); }
+  }, [api]);
+
+  // poll only while this tab is open, so it never runs in the background
+  useEffect(() => {
+    if (!active || !api?.listProcesses) return;
+    load();
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, [active, api, load]);
+
+  const confirmKill = (row: ProcRow) => {
+    Modal.confirm({
+      title: `Kill process ${row.pid}?`,
+      content: `${row.type}${row.name ? ` · ${row.name}` : ''}. Terminating a window / GPU / utility process may reload or briefly disrupt part of the app.`,
+      okText: 'Kill', okButtonProps: { danger: true },
+      onOk: async () => {
+        if (!api?.killProcess) return;
+        setKilling(row.pid);
+        try {
+          const r = await api.killProcess(row.pid);
+          if (r?.ok) message.success(`Killed PID ${row.pid}`);
+          else message.error(r?.error || 'Could not kill process');
+          setTimeout(load, 500);
+        } finally { setKilling(null); }
+      },
+    });
+  };
+
+  if (!api?.listProcesses) {
+    return (
+      <div style={{ padding: 24 }}>
+        <Empty description="Process monitor is only available in the desktop app" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      </div>
+    );
+  }
+
+  const totalMem = items.reduce((sum, i) => sum + i.memoryMB, 0);
+  const totalCpu = items.reduce((sum, i) => sum + i.cpu, 0);
+
+  const columns: ColumnsType<ProcRow> = [
+    {
+      title: 'PID', dataIndex: 'pid', width: 90,
+      render: (v: number, r) => (
+        <Text style={{ fontSize: 11, fontFamily: 'monospace' }}>
+          {v}{r.isMain && <Tag color="gold" style={{ marginLeft: 6, fontSize: 9 }}>main</Tag>}
+        </Text>
+      ),
+    },
+    { title: 'Type', dataIndex: 'type', width: 100, render: (v: string) => <Tag color={TYPE_COLOR[v] || 'default'} style={{ fontSize: 10 }}>{v}</Tag> },
+    { title: 'Name', dataIndex: 'name', ellipsis: true, render: (v: string) => v ? <Text style={{ fontSize: 11 }}>{v}</Text> : <Text type="secondary" style={{ fontSize: 11 }}>—</Text> },
+    {
+      title: 'CPU %', dataIndex: 'cpu', width: 88, align: 'right', sorter: (a, b) => a.cpu - b.cpu,
+      render: (v: number) => <Text style={{ fontSize: 11, fontFamily: 'monospace', color: v > 25 ? '#C74634' : undefined, fontWeight: v > 25 ? 600 : undefined }}>{v.toFixed(1)}</Text>,
+    },
+    {
+      title: 'Memory', dataIndex: 'memoryMB', width: 104, align: 'right', defaultSortOrder: 'descend',
+      sorter: (a, b) => a.memoryMB - b.memoryMB,
+      render: (v: number) => <Text style={{ fontSize: 11, fontFamily: 'monospace' }}>{v.toLocaleString()} MB</Text>,
+    },
+    {
+      title: '', key: 'act', width: 64,
+      render: (_: unknown, r: ProcRow) => (
+        <Tooltip title={r.isMain ? 'The main app process cannot be killed here' : 'Terminate this process'}>
+          <Button size="small" danger icon={<PoweroffOutlined />} disabled={r.isMain} loading={killing === r.pid} onClick={() => confirmKill(r)} />
+        </Tooltip>
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <Tag icon={<ThunderboltOutlined />} color="purple" style={{ fontSize: 11 }}>{items.length} processes</Tag>
+        <Tag style={{ fontSize: 11 }}>≈ {totalMem.toLocaleString()} MB</Tag>
+        <Tag style={{ fontSize: 11 }}>CPU {totalCpu.toFixed(1)}%</Tag>
+        <Text type="secondary" style={{ fontSize: 11 }}>Auto-refreshes every 3s</Text>
+        <div style={{ marginLeft: 'auto' }}>
+          <Button size="small" icon={<ReloadOutlined spin={loading} />} onClick={load}>Refresh</Button>
+        </div>
+      </div>
+      <div style={{ background: '#fff', borderRadius: 8, border: '1px solid #E5E5E5', overflow: 'hidden' }}>
+        <Table columns={columns} dataSource={items} rowKey="pid" size="small" pagination={false} loading={loading && items.length === 0} />
+      </div>
+      <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
+        These are the processes that make up the running desktop app. High CPU or memory on a “Tab” (window) or “Utility”
+        process points to a heavy screen; killing it reloads that part. The <b>main</b> process can’t be killed here
+        (that would quit the app).
+      </Text>
+    </div>
+  );
 };
 
 // ── Transaction Detail Modal ──────────────────────────────────────────────────
@@ -271,6 +395,7 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
   const [approvalApiModalOpen, setApprovalApiModalOpen] = useState(false);
   const [detailNotif, setDetailNotif]         = useState<AppNotification | null>(null);
   const [actingId, setActingId]               = useState<string | null>(null);
+  const [tab, setTab]                         = useState<'notifs' | 'procs'>('notifs');
 
   const filtered = notifications.filter(n => {
     if (activeModule !== 'All' && n.module !== activeModule) return false;
@@ -512,6 +637,15 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
       styles={{ body: { padding: '12px 16px', background: '#F7F7F7' } }}
       closable
     >
+      <Tabs
+        activeKey={tab}
+        onChange={(k) => setTab(k as 'notifs' | 'procs')}
+        items={[
+          {
+            key: 'notifs',
+            label: <span><BellOutlined /> Notifications</span>,
+            children: (
+              <>
       {/* Module filter toggles */}
       <div style={{ marginBottom: 10, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
         {MODULES.map(m => {
@@ -596,6 +730,16 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
           />
         </div>
       )}
+              </>
+            ),
+          },
+          {
+            key: 'procs',
+            label: <span><ThunderboltOutlined /> Processes</span>,
+            children: <ProcessMonitor active={open && tab === 'procs'} />,
+          },
+        ]}
+      />
 
       <style>{`
         .notif-unread-row td { background: #fdf4ff !important; }
