@@ -19,6 +19,7 @@ import {
   TableOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import ExcelJS from 'exceljs';
+import FusionTablesList from './FusionTablesList';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import dayjs from 'dayjs';
@@ -185,7 +186,7 @@ const FusionSql: React.FC = () => {
   const [pendingSql, setPendingSql] = useState('');
 
   // top-level tabs + saved queries
-  const [activeTab, setActiveTab] = useState<'builder' | 'list'>('builder');
+  const [activeTab, setActiveTab] = useState<'builder' | 'list' | 'tables'>('builder');
   const [saved, setSaved] = useState<SavedQuery[]>([]);
   const [saveDlgOpen, setSaveDlgOpen] = useState(false);
   const [saveName, setSaveName] = useState('');
@@ -734,7 +735,7 @@ const FusionSql: React.FC = () => {
       <Tabs
         className="fs-tabs"
         activeKey={activeTab}
-        onChange={k => setActiveTab(k as 'builder' | 'list')}
+        onChange={k => setActiveTab(k as 'builder' | 'list' | 'tables')}
         style={{ flex: 1, minHeight: 0 }}
         items={[{
           key: 'builder',
@@ -1053,6 +1054,18 @@ const FusionSql: React.FC = () => {
                 />
               )}
             </div>
+          ),
+        }, {
+          key: 'tables',
+          label: <span><TableOutlined /> Tables List</span>,
+          children: (
+            <FusionTablesList
+              owners={owners}
+              defaultOwner={schemaOwner}
+              exec={api ? (sql, rowLimit) => api.fusionSqlExecute!({ sql, rowLimit }) : undefined}
+              cacheRead={cacheRead}
+              cacheWrite={cacheWrite}
+            />
           ),
         }]}
       />
