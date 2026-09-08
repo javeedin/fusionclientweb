@@ -1569,7 +1569,10 @@ const RegisterDetail: React.FC<{
     try {
       const res  = await fetch(url, { headers: { Accept: 'application/json' } });
       const data = await res.json();
-      const item = (data.items || [])[0] || null;
+      // Match the row by id so we never show a wrong record if the handler
+      // ignores the external_transaction_id filter (shows "not found" instead).
+      const items = data.items || [];
+      const item = items.find((i: any) => String(i.externalTransactionId) === String(bankTxnId)) ?? null;
       setBankTxnDetail(item);
     } catch { setBankTxnDetail(null); }
     finally { setBankTxnDetailLoading(false); }
