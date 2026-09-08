@@ -10,6 +10,7 @@ import {
 import { Link } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { useAuth } from '../../context/AuthContext';
+import BusinessUnitWizard from './BusinessUnitWizard';
 
 const { Title, Text } = Typography;
 const APEX = APEX_DB_CONFIG.baseUrl;
@@ -153,6 +154,7 @@ const ManageBusinessUnits: React.FC = () => {
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [calOpen, setCalOpen] = useState(false);
   const [calBu, setCalBu] = useState<BusinessUnit | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [buForm] = Form.useForm();
@@ -220,31 +222,21 @@ const ManageBusinessUnits: React.FC = () => {
     const v = await leForm.validateFields();
     const dup = les.some(le => le.name.toUpperCase() === String(v.name).trim().toUpperCase());
     if (dup) { message.error(`Legal entity "${v.name}" already exists`); return; }
-    const newId = nextManualId(les.map(le => le.legalEntityId));
     setSaving(true);
-    // existing sync-style POST: {items:[{PascalCase fields}]}
-    const r = await postJson(`${APEX}/gl/legalentities`, {
-      items: [{
-        LegalEntityId: newId,
-        Name: String(v.name).trim(),
-        LegalEntityIdentifier: v.identifier || null,
-        EffectiveFrom: null,
-        EffectiveTo: null,
-        PartyId: null,
-        CreatedBy: currentUser,
-        CreationDate: new Date().toISOString(),
-        LastUpdateDate: null,
-        LastUpdateLogin: null,
-        LastUpdatedBy: null,
-      }],
+    // INSERT-only create endpoint (server-assigned id); the old sync POST did a
+    // MERGE keyed by id, which overwrote an existing legal entity.
+    const r = await postJson(`${APEX}/gl/legalentities/create`, {
+      name: String(v.name).trim(),
+      identifier: v.identifier || null,
+      createdBy: currentUser,
     });
     setSaving(false);
     if (!r.ok) { message.error(r.message); return; }
-    message.success(`Legal entity created (id ${newId})`);
+    message.success(`Legal entity created (id ${r.id})`);
     setLeOpen(false);
     leForm.resetFields();
     await loadPickers();
-    if (buOpen) buForm.setFieldValue('legalEntityId', newId);
+    if (buOpen && r.id) buForm.setFieldValue('legalEntityId', r.id);
   };
 
   const createLedger = async () => {
@@ -453,7 +445,7 @@ const ManageBusinessUnits: React.FC = () => {
                       options={[{ value: 'Y', label: 'Active' }, { value: 'N', label: 'Inactive' }]}
                     />
                     <Tooltip title="Reload"><Button icon={<ReloadOutlined />} onClick={() => { loadBus(); loadPickers(); loadCalendars(); }} /></Tooltip>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={() => { setBuOpen(true); loadPickers(); }}>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => setWizardOpen(true)}>
                       Create Business Unit
                     </Button>
                   </Space>
@@ -656,6 +648,14 @@ const ManageBusinessUnits: React.FC = () => {
           )}
         </Form>
       </Modal>
+
+      {/* ── New Business Unit Setup Wizard ── */}
+      <BusinessUnitWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onDone={() => { loadBus(); loadPickers(); loadCalendars(); }}
+        currentUser={currentUser}
+      />
     </div>
   );
 };
