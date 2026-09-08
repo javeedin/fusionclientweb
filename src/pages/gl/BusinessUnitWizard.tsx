@@ -42,12 +42,6 @@ const postJson = async (url: string, body: unknown): Promise<{ ok: boolean; mess
   };
 };
 
-const MANUAL_MIN = 900000001;
-const nextManualId = (ids: (number | undefined)[]): number => {
-  const inRange = ids.filter((v): v is number => v !== undefined && v >= MANUAL_MIN && v <= 999999999);
-  return inRange.length ? Math.max(...inRange) + 1 : MANUAL_MIN;
-};
-
 // ── API inspector (shows the exact GET/POST calls each step uses) ────────────
 interface ApiCall { label: string; method: 'GET' | 'POST'; url: string; body?: unknown; }
 const ApiInspector: React.FC<{ calls: ApiCall[] }> = ({ calls }) => (
@@ -100,7 +94,6 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
   const [coa, setCoa] = useState<CoaOpt[]>([]);
   const [linkedLedgerIds, setLinkedLedgerIds] = useState<Set<number>>(new Set());
   const [linkedLeIds, setLinkedLeIds] = useState<Set<number>>(new Set());
-  const [buIds, setBuIds] = useState<number[]>([]);
   const [buNames, setBuNames] = useState<string[]>([]);
 
   // committed results
@@ -145,21 +138,17 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
       })).filter(c => c.id));
       const lLedger = new Set<number>();
       const lLe = new Set<number>();
-      const ids: number[] = [];
       const names: string[] = [];
       buList.forEach(b => {
         const lid = n(b.primary_ledger_id ?? b.primaryLedgerId);
         const eid = n(b.legal_entity_id ?? b.legalEntityId);
-        const bid = n(b.business_unit_id ?? b.businessUnitId);
         const bname = s(b.business_unit_name ?? b.businessUnitName);
         if (lid) lLedger.add(lid);
         if (eid) lLe.add(eid);
-        if (bid) ids.push(bid);
         if (bname) names.push(bname.toUpperCase());
       });
       setLinkedLedgerIds(lLedger);
       setLinkedLeIds(lLe);
-      setBuIds(ids);
       setBuNames(names);
     } catch { /* surfaced per step */ }
   }, []);
@@ -227,27 +216,21 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
     if (buNames.includes(String(v.businessUnitName).trim().toUpperCase())) {
       message.error(`Business unit "${v.businessUnitName}" already exists`); return;
     }
-    const newId = nextManualId(buIds);
     setBusy(true);
-    const r = await postJson(`${APEX}/gl/businessunits`, {
-      items: [{
-        BusinessUnitId: newId,
-        BusinessUnitName: String(v.businessUnitName).trim(),
-        ActiveFlag: v.activeFlag ?? 'Y',
-        PrimaryLedgerId: ledger.id,
-        LegalEntityId: le.id,
-        ProfitCenterFlag: v.profitCenterFlag ? 'Y' : 'N',
-        Company: v.company,
-        LegalEntityName: le.name,
-        Ledger: ledger.name,
-        CreatedBy: currentUser,
-        CreationDate: new Date().toISOString(),
-      }],
+    const r = await postJson(`${APEX}/gl/businessunits/create`, {
+      businessUnitName: String(v.businessUnitName).trim(),
+      company: v.company,
+      activeFlag: v.activeFlag ?? 'Y',
+      profitCenterFlag: v.profitCenterFlag ? 'Y' : 'N',
+      primaryLedgerId: ledger.id,
+      legalEntityId: le.id,
+      legalEntityName: le.name,
+      createdBy: currentUser,
     });
     setBusy(false);
-    if (!r.ok) { message.error(r.message); return; }
-    message.success(`Business unit created (id ${newId})`);
-    setBu({ id: newId, name: String(v.businessUnitName).trim() });
+    if (!r.ok || !r.id) { message.error(r.message); return; }
+    message.success(`Business unit created (id ${r.id})`);
+    setBu({ id: r.id, name: String(v.businessUnitName).trim() });
     setStep(3);
   };
 
@@ -401,20 +384,16 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
         </Space>
       </Form>
       <ApiInspector calls={[{
-        label: ' create business unit', method: 'POST', url: `${APEX}/gl/businessunits`,
+        label: ' create business unit (sequence id)', method: 'POST', url: `${APEX}/gl/businessunits/create`,
         body: {
-          items: [{
-            BusinessUnitId: nextManualId(buIds),
-            BusinessUnitName: buForm.getFieldValue('businessUnitName') || '<name>',
-            ActiveFlag: buForm.getFieldValue('activeFlag') || 'Y',
-            PrimaryLedgerId: ledger?.id,
-            LegalEntityId: le?.id,
-            ProfitCenterFlag: buForm.getFieldValue('profitCenterFlag') ? 'Y' : 'N',
-            Company: buForm.getFieldValue('company') || '<company>',
-            LegalEntityName: le?.name,
-            Ledger: ledger?.name,
-            CreatedBy: currentUser,
-          }],
+          businessUnitName: buForm.getFieldValue('businessUnitName') || '<name>',
+          company: buForm.getFieldValue('company') || '<company>',
+          activeFlag: buForm.getFieldValue('activeFlag') || 'Y',
+          profitCenterFlag: buForm.getFieldValue('profitCenterFlag') ? 'Y' : 'N',
+          primaryLedgerId: ledger?.id,
+          legalEntityId: le?.id,
+          legalEntityName: le?.name,
+          createdBy: currentUser,
         },
       }]} />
     </>
