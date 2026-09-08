@@ -1214,7 +1214,7 @@ const RegisterDetail: React.FC<{
     if (!txn.bankTxnId) return;
     setReverseBankLoading(true);
     try {
-      const res      = await fetch(`${EXT_TXN_URL}?external_transaction_id=${txn.bankTxnId}&row_limit=1`, { headers: { Accept: 'application/json' } });
+      const res      = await fetch(`${EXT_TXN_URL}/${txn.bankTxnId}`, { headers: { Accept: 'application/json' } });
       const data     = await res.json();
       const bankItem = (data.items || [])[0] ?? null;
       setReverseBankData(bankItem);
@@ -1564,7 +1564,7 @@ const RegisterDetail: React.FC<{
     setBankTxnDetailLoading(true);
     setBankTxnDetailOpen(true);
     setBankTxnDetail(null);
-    const url = `${EXT_TXN_URL}?external_transaction_id=${bankTxnId}&row_limit=1`;
+    const url = `${EXT_TXN_URL}/${bankTxnId}`; // GET one external txn by id (patch 132)
     setBankTxnDetailUrl(url);
     try {
       const res  = await fetch(url, { headers: { Accept: 'application/json' } });
@@ -1634,7 +1634,7 @@ const RegisterDetail: React.FC<{
         if (extId) {
           try {
             const srch = await fetch(
-              `${EXT_TXN_URL}?external_transaction_id=${extId}&row_limit=1`,
+              `${EXT_TXN_URL}/${extId}`,
               { headers: { Accept: 'application/json' } }
             );
             lookupResult = await srch.json();
