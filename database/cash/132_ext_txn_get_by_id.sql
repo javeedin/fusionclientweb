@@ -1,34 +1,42 @@
 -- ============================================================
 -- PATCH 132: GET a single external cash transaction by id
 --
---   GET  cash/externaltransactions/:externalTransactionId
+--   GET  cash/externaltransactions/:txnId
 --
 -- Why:
---   The single-segment path cash/externaltransactions/:id had only
+--   The single-segment path cash/externaltransactions/<id> had only
 --   PUT (reconcile) and DELETE handlers — there was NO GET, so the
 --   Petty Cash "Bank Txn ID" drill (which only has the id) could not
 --   fetch the row and showed "Bank transaction not found".
 --
---   Note: the URL is cash/externaltransactions/<id> (e.g.
---   .../cash/externaltransactions/1000000395). The template variable
---   is :externalTransactionId — the same single-segment template that
---   already carries PUT/DELETE — so this only ADDS the GET method and
---   does not create a conflicting second template.
+--   IMPORTANT — template name:
+--   In the deployed ORDS the single-segment template that actually
+--   routes .../cash/externaltransactions/<id> is :txnId. ORDS matches
+--   a single-segment URI to whatever single-segment template exists on
+--   that path REGARDLESS of the variable name, and only one such
+--   template can exist. Defining a SECOND single-segment template
+--   (e.g. :externalTransactionId) does not add a method to the routed
+--   template — it creates a conflicting/shadowed template, so the GET
+--   never fires and the URL returns no data.
+--
+--   So this patch attaches the GET to the :txnId template and binds
+--   :txnId in the WHERE clause (bind name MUST equal the template
+--   variable name for ORDS to substitute it).
 --
 -- Returns ORDS json/collection shape: {"items":[ { ...one row... } ]}
 -- with camelCase keys matching the search handler, so the app's
--- existing mapping works unchanged. :externalTransactionId filters on
+-- existing mapping works unchanged. :txnId filters on
 -- EXTERNAL_TRANSACTION_ID (what the app stores as Bank Txn ID).
 --
 -- HOW TO RUN: APEX SQL Workshop → SQL Commands — run this block.
 -- ============================================================
 
 BEGIN
-  -- make sure the single-segment template exists (created by patch 74)
+  -- make sure the single-segment template exists (routes .../<id>)
   BEGIN
     ORDS.DEFINE_TEMPLATE(
       p_module_name => 'reerp',
-      p_pattern     => 'cash/externaltransactions/:externalTransactionId'
+      p_pattern     => 'cash/externaltransactions/:txnId'
     );
   EXCEPTION WHEN OTHERS THEN NULL; -- already exists
   END;
@@ -36,7 +44,7 @@ BEGIN
   BEGIN
     ORDS.DELETE_HANDLER(
       p_module_name => 'reerp',
-      p_pattern     => 'cash/externaltransactions/:externalTransactionId',
+      p_pattern     => 'cash/externaltransactions/:txnId',
       p_method      => 'GET'
     );
   EXCEPTION WHEN OTHERS THEN NULL;
@@ -44,7 +52,7 @@ BEGIN
 
   ORDS.DEFINE_HANDLER(
     p_module_name    => 'reerp',
-    p_pattern        => 'cash/externaltransactions/:externalTransactionId',
+    p_pattern        => 'cash/externaltransactions/:txnId',
     p_method         => 'GET',
     p_source_type    => 'json/collection',
     p_items_per_page => 1,
@@ -89,7 +97,7 @@ SELECT
     PAYEE_ID                                            AS "payeeId",
     TO_CHAR(SYNC_DATE,        'YYYY-MM-DD"T"HH24:MI:SS') AS "syncDate"
 FROM RR_EXTERNAL_CASH_TRANSACTIONS
-WHERE EXTERNAL_TRANSACTION_ID = TO_NUMBER(:externalTransactionId)
+WHERE EXTERNAL_TRANSACTION_ID = TO_NUMBER(:txnId)
 ]'
   );
 
