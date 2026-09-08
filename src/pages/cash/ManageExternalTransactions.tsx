@@ -925,8 +925,11 @@ const ExternalTxnForm: React.FC<{
     }
   }, [watchedRate]);
 
-  const filteredBankAccounts = selectedBu && buBankMap[selectedBu]?.length
-    ? buBankMap[selectedBu].sort().map(n => ({ label: n, value: n }))
+  // Once a BU is selected, restrict to that BU's banks — show NONE if it has
+  // none associated (don't fall back to the full list). Show all only when no
+  // BU is selected.
+  const filteredBankAccounts = selectedBu
+    ? (buBankMap[selectedBu] || []).slice().sort().map(n => ({ label: n, value: n }))
     : bankAccounts;
 
   const updateExtLine = (idx: number, field: string, value: any) =>
@@ -2968,9 +2971,11 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
   const [showApiModal, setShowApiModal]   = useState(false);
   const [searchForm] = Form.useForm();
 
-  // Bank accounts filtered by selected BU (or all if no BU selected)
-  const filteredBankAccounts = selectedBU && buBankMap[selectedBU]
-    ? buBankMap[selectedBU].sort().map(n => ({ label: n, value: n }))
+  // Bank accounts filtered by selected BU. Once a BU is selected, show only its
+  // banks — NONE if it has none associated (don't fall back to all). Show all
+  // only when no BU is selected.
+  const filteredBankAccounts = selectedBU
+    ? (buBankMap[selectedBU] || []).slice().sort().map(n => ({ label: n, value: n }))
     : allBankAccounts;
 
   // ── Account combinations (for description lookup in Create Accounting) ──────
