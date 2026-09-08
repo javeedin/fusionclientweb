@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Modal, Steps, Form, Input, Select, Switch, InputNumber, Button, Space, Tag,
-  Typography, Radio, Alert, Descriptions, Collapse, message,
+  Typography, Radio, Alert, Descriptions, Collapse, Tooltip, message,
 } from 'antd';
 import {
   BankOutlined, ApartmentOutlined, CalendarOutlined, ApiOutlined,
@@ -196,7 +196,7 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
     if (v.mode === 'existing') {
       const found = les.find(l => l.legalEntityId === v.existingLeId);
       if (!found) { message.error('Pick a legal entity'); return; }
-      setLe({ id: found.legalEntityId, name: found.name });
+      setLe({ id: found.legalEntityId, name: found.name || `LE ${found.legalEntityId}` });
       setStep(2); return;
     }
     setBusy(true);
@@ -217,6 +217,11 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
       message.error(`Business unit "${v.businessUnitName}" already exists`); return;
     }
     setBusy(true);
+    // resolve the names robustly so we never send the string "undefined"
+    const leName = (le.name && le.name !== 'undefined')
+      ? le.name : (les.find(l => l.legalEntityId === le.id)?.name || '');
+    const ledgerName = (ledger.name && ledger.name !== 'undefined')
+      ? ledger.name : (ledgers.find(l => l.ledgerId === ledger.id)?.ledgerName || '');
     const r = await postJson(`${APEX}/gl/businessunits/create`, {
       businessUnitName: String(v.businessUnitName).trim(),
       company: v.company,
@@ -224,7 +229,8 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
       profitCenterFlag: v.profitCenterFlag ? 'Y' : 'N',
       primaryLedgerId: ledger.id,
       legalEntityId: le.id,
-      legalEntityName: le.name,
+      legalEntityName: leName,
+      ledger: ledgerName,
       createdBy: currentUser,
     });
     setBusy(false);
@@ -393,6 +399,7 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
           primaryLedgerId: ledger?.id,
           legalEntityId: le?.id,
           legalEntityName: le?.name,
+          ledger: ledger?.name,
           createdBy: currentUser,
         },
       }]} />
@@ -455,6 +462,11 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
   ];
 
   const cur = steps[step];
+  // once a step's record is created, its previous step is locked — no going back
+  const backLocked =
+    (step === 1 && !!ledger) ||
+    (step === 2 && !!le) ||
+    (step === 3 && !!bu);
 
   return (
     <Modal
@@ -466,7 +478,11 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
       maskClosable={false}
       footer={
         <Space>
-          {step > 0 && step < 4 && <Button disabled={busy} onClick={() => setStep(step - 1)}>Back</Button>}
+          {step > 0 && step < 4 && (
+            <Tooltip title={backLocked ? 'This step is already created — you can’t go back' : ''}>
+              <Button disabled={busy || backLocked} onClick={() => setStep(step - 1)}>Back</Button>
+            </Tooltip>
+          )}
           {step < 4 && <Button onClick={onClose} disabled={busy}>Cancel</Button>}
           <Button type="primary" loading={busy} onClick={cur.onNext}>{cur.nextText}</Button>
         </Space>
