@@ -52,7 +52,7 @@ const getApi = (): FusionSqlApi | undefined => {
 };
 
 const HIST_KEY = 'reerp.fusionsql.history';
-const SCHEMA_CAP = 20000; // max objects fetched per kind for the local schema cache
+const SCHEMA_CAP = 200000; // safety ceiling for objects fetched per kind (paged in 5k windows)
 const SCHEMA_PAGE_SIZE = 200; // objects shown per page in the schema browser
 
 // object types the schema browser can list (all_objects.object_type values)
@@ -364,17 +364,38 @@ const FusionSql: React.FC = () => {
       }
     }
     setSchemaBusy(true);
-    const q = `SELECT object_name FROM all_objects WHERE owner='${sqlEsc(schemaOwner)}' AND object_type='${schemaKind}' ORDER BY object_name`;
+    // Page through all_objects so we retrieve EVERY object, not just the first
+    // ROWNUM<=cap slice. Each page is a windowed ROW_NUMBER query; we stop when
+    // a page returns fewer than PAGE rows (the last page).
+    const PAGE = 5000;
+    const MAX_PAGES = Math.max(1, Math.ceil(SCHEMA_CAP / PAGE)); // safety ceiling
+    const all: string[] = [];
+    let capped = false;
+    let ok = true;
     try {
-      const r = await api.fusionSqlExecute!({ sql: q, rowLimit: SCHEMA_CAP });
-      if (r.success && r.rows) {
-        const names = Array.from(new Set(namesOf(r.rows)));
+      for (let p = 0; p < MAX_PAGES; p++) {
+        const from = p * PAGE + 1;
+        const to = from + PAGE - 1;
+        const q =
+          `SELECT object_name FROM (` +
+          `SELECT object_name, ROW_NUMBER() OVER (ORDER BY object_name) rn ` +
+          `FROM all_objects WHERE owner='${sqlEsc(schemaOwner)}' AND object_type='${schemaKind}'` +
+          `) WHERE rn BETWEEN ${from} AND ${to}`;
+        const r = await api.fusionSqlExecute!({ sql: q, rowLimit: PAGE });
+        if (!r.success) { antMessage.error(r.error || 'Schema query failed'); ok = false; break; }
+        const names = namesOf(r.rows || []);
+        all.push(...names);
+        setSchemaList([...all]);          // progressive — the list grows as pages arrive
+        if (names.length < PAGE) break;   // last page reached
+        if (p === MAX_PAGES - 1) capped = true; // hit the safety ceiling
+      }
+      if (ok) {
+        const uniq = Array.from(new Set(all));
         const at = Date.now();
-        setSchemaList(names); setSchemaCapped(!!r.capped); setSchemaAt(at);
+        setSchemaList(uniq); setSchemaCapped(capped); setSchemaAt(at);
         setSchemaLoadedFor(key); // loaded (even if 0 rows — schema has none visible)
-        cacheWrite(key, { at, names, capped: !!r.capped });
-      } else {
-        antMessage.error(r.error || 'Schema query failed');
+        cacheWrite(key, { at, names: uniq, capped });
+        if (force) antMessage.success(`Loaded ${uniq.length.toLocaleString()} ${schemaKind.toLowerCase()}(s)`);
       }
     } finally { setSchemaBusy(false); }
   }, [api, schemaOwner, schemaKind, cacheRead, cacheWrite]);
