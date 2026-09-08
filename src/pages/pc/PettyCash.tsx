@@ -1569,10 +1569,20 @@ const RegisterDetail: React.FC<{
     try {
       const res  = await fetch(url, { headers: { Accept: 'application/json' } });
       const data = await res.json();
-      // Match the row by id so we never show a wrong record if the handler
-      // ignores the external_transaction_id filter (shows "not found" instead).
-      const items = data.items || [];
-      const item = items.find((i: any) => String(i.externalTransactionId) === String(bankTxnId)) ?? null;
+      // Normalise the response shape. The GET-by-id handler returns an ORDS
+      // json/collection body {"items":[ {...} ]}, but tolerate a bare object
+      // or a plain array too so a differently-shaped handler still works.
+      let items: any[] = [];
+      if (Array.isArray(data?.items))      items = data.items;
+      else if (Array.isArray(data))        items = data;
+      else if (data && typeof data === 'object') items = [data];
+      // Match by id (case-insensitive on the key), but since we queried by a
+      // specific id, fall back to the single row returned rather than "not
+      // found" if the id key is named differently by the handler.
+      const idOf = (i: any) => i?.externalTransactionId ?? i?.EXTERNAL_TRANSACTION_ID ?? i?.externaltransactionid;
+      const item =
+        items.find((i: any) => String(idOf(i)) === String(bankTxnId)) ??
+        (items.length === 1 ? items[0] : null);
       setBankTxnDetail(item);
     } catch { setBankTxnDetail(null); }
     finally { setBankTxnDetailLoading(false); }
