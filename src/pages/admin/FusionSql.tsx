@@ -169,6 +169,8 @@ const FusionSql: React.FC = () => {
   const [committedSearch, setCommittedSearch] = useState(''); // whole-list search (from the search icon)
   const [openObj, setOpenObj] = useState<string | null>(null);
   const [objCols, setObjCols] = useState<Record<string, unknown>[]>([]);
+  const [objIdx, setObjIdx] = useState<Record<string, unknown>[]>([]);
+  const [objFk, setObjFk] = useState<Record<string, unknown>[]>([]);
 
   // AI SQL assistant
   const [aiOpen, setAiOpen] = useState(false);
@@ -466,15 +468,50 @@ const FusionSql: React.FC = () => {
     if (openObj === name) { setOpenObj(null); return; }
     if (!hasColumns(schemaKind) && !hasArgs(schemaKind)) return; // nothing to expand
     setOpenObj(name);
-    setObjCols([]);
+    setObjCols([]); setObjIdx([]); setObjFk([]);
+    const o = sqlEsc(schemaOwner);
+    const nm = sqlEsc(name);
+
+    // columns (or arguments for program units)
     const ckey = `detail.${schemaOwner}.${schemaKind}.${name}`;
     const cached = await cacheRead(ckey);
-    if (Array.isArray(cached) && cached.length) { setObjCols(cached as Record<string, unknown>[]); return; }
-    const q = hasArgs(schemaKind)
-      ? `SELECT NVL(argument_name,'(return)') AS column_name, data_type, in_out FROM all_arguments WHERE owner='${sqlEsc(schemaOwner)}' AND object_name='${sqlEsc(name)}' AND argument_name IS NOT NULL ORDER BY position`
-      : `SELECT column_name, data_type, data_length, nullable FROM all_tab_columns WHERE owner='${sqlEsc(schemaOwner)}' AND table_name='${sqlEsc(name)}' ORDER BY column_id`;
-    const r = await api!.fusionSqlExecute!({ sql: q, rowLimit: 1000 });
-    if (r.success && r.rows) { setObjCols(r.rows); cacheWrite(ckey, r.rows); }
+    if (Array.isArray(cached) && cached.length) { setObjCols(cached as Record<string, unknown>[]); }
+    else {
+      const q = hasArgs(schemaKind)
+        ? `SELECT NVL(argument_name,'(return)') AS column_name, data_type, in_out FROM all_arguments WHERE owner='${o}' AND object_name='${nm}' AND argument_name IS NOT NULL ORDER BY position`
+        : `SELECT column_name, data_type, data_length, nullable FROM all_tab_columns WHERE owner='${o}' AND table_name='${nm}' ORDER BY column_id`;
+      const r = await api!.fusionSqlExecute!({ sql: q, rowLimit: 1000 });
+      if (r.success && r.rows) { setObjCols(r.rows); cacheWrite(ckey, r.rows); }
+    }
+
+    // indexes + foreign keys — real tables only
+    if (schemaKind === 'TABLE') {
+      const ikey = `idx.${schemaOwner}.${name}`;
+      const ic = await cacheRead(ikey);
+      if (Array.isArray(ic)) setObjIdx(ic as Record<string, unknown>[]);
+      else {
+        const iq = `SELECT i.index_name AS index_name, i.uniqueness AS uniqueness, ` +
+          `LISTAGG(c.column_name, ', ') WITHIN GROUP (ORDER BY c.column_position) AS columns ` +
+          `FROM all_indexes i JOIN all_ind_columns c ON c.index_owner=i.owner AND c.index_name=i.index_name ` +
+          `WHERE i.table_owner='${o}' AND i.table_name='${nm}' GROUP BY i.index_name, i.uniqueness ORDER BY i.index_name`;
+        const r = await api!.fusionSqlExecute!({ sql: iq, rowLimit: 500 });
+        if (r.success && r.rows) { setObjIdx(r.rows); cacheWrite(ikey, r.rows); }
+      }
+      const fkey = `fk.${schemaOwner}.${name}`;
+      const fc = await cacheRead(fkey);
+      if (Array.isArray(fc)) setObjFk(fc as Record<string, unknown>[]);
+      else {
+        const fq = `SELECT ac.constraint_name AS fk_name, ` +
+          `LISTAGG(cc.column_name, ', ') WITHIN GROUP (ORDER BY cc.position) AS fk_columns, ` +
+          `MAX(rc.table_name) AS ref_table ` +
+          `FROM all_constraints ac JOIN all_cons_columns cc ON cc.owner=ac.owner AND cc.constraint_name=ac.constraint_name ` +
+          `LEFT JOIN all_constraints rc ON rc.owner=ac.r_owner AND rc.constraint_name=ac.r_constraint_name ` +
+          `WHERE ac.owner='${o}' AND ac.table_name='${nm}' AND ac.constraint_type='R' ` +
+          `GROUP BY ac.constraint_name ORDER BY ac.constraint_name`;
+        const r = await api!.fusionSqlExecute!({ sql: fq, rowLimit: 500 });
+        if (r.success && r.rows) { setObjFk(r.rows); cacheWrite(fkey, r.rows); }
+      }
+    }
   }, [api, openObj, schemaOwner, schemaKind, cacheRead, cacheWrite]);
 
   const insert = (text: string) => {
@@ -817,12 +854,50 @@ const FusionSql: React.FC = () => {
                     : <span style={{ display: 'inline-block', width: 13 }} />}
                   {name}
                 </button>
-                {openObj === name && objCols.map((c, i) => (
-                  <div key={i} className="fs-col" onClick={() => insert(String(c.COLUMN_NAME ?? c.column_name ?? '').toLowerCase())}>
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(c.COLUMN_NAME ?? c.column_name ?? '')}</span>
-                    <span style={{ color: '#b9aca7' }}>{String(c.DATA_TYPE ?? c.data_type ?? '')}</span>
-                  </div>
-                ))}
+                {openObj === name && (
+                  <>
+                    {objCols.map((c, i) => (
+                      <div key={`c${i}`} className="fs-col" onClick={() => insert(String(c.COLUMN_NAME ?? c.column_name ?? '').toLowerCase())}>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(c.COLUMN_NAME ?? c.column_name ?? '')}</span>
+                        <span style={{ color: '#b9aca7' }}>{String(c.DATA_TYPE ?? c.data_type ?? '')}</span>
+                      </div>
+                    ))}
+                    {objIdx.length > 0 && (
+                      <>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: '#8c7f7a', padding: '3px 8px 1px 22px', textTransform: 'uppercase', letterSpacing: 0.4 }}>Indexes</div>
+                        {objIdx.map((ix, i) => {
+                          const nm = String(ix.INDEX_NAME ?? ix.index_name ?? '');
+                          const cols = String(ix.COLUMNS ?? ix.columns ?? '');
+                          const uniq = String(ix.UNIQUENESS ?? ix.uniqueness ?? '') === 'UNIQUE';
+                          return (
+                            <div key={`i${i}`} className="fs-col" title={`${nm} (${cols})`}>
+                              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {uniq && <span style={{ color: '#1D7B4D', marginRight: 4 }}>◆</span>}{nm}
+                              </span>
+                              <span style={{ color: '#b9aca7', maxWidth: '48%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cols}</span>
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+                    {objFk.length > 0 && (
+                      <>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: '#8c7f7a', padding: '3px 8px 1px 22px', textTransform: 'uppercase', letterSpacing: 0.4 }}>Foreign Keys</div>
+                        {objFk.map((fk, i) => {
+                          const cols = String(fk.FK_COLUMNS ?? fk.fk_columns ?? '');
+                          const ref = String(fk.REF_TABLE ?? fk.ref_table ?? '');
+                          return (
+                            <div key={`f${i}`} className="fs-col" title={String(fk.FK_NAME ?? fk.fk_name ?? '')}
+                              onClick={() => ref && insert(ref.toLowerCase())}>
+                              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{cols}</span>
+                              <span style={{ color: '#b9aca7', maxWidth: '52%', overflow: 'hidden', textOverflow: 'ellipsis' }}>→ {ref}</span>
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+                  </>
+                )}
               </div>
               );
             })}
