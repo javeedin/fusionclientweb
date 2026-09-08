@@ -111,6 +111,17 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
   const leMode = Form.useWatch('mode', leForm) as 'create' | 'existing' | undefined;
   const calType = Form.useWatch('calendarType', calForm) as string | undefined;
   const calStartYear = Form.useWatch('startYear', calForm) as number | undefined;
+  // live values so the API-payload preview reflects what will actually be sent
+  const wLedgerName = Form.useWatch('ledgerName', ledgerForm) as string | undefined;
+  const wLedgerDesc = Form.useWatch('description', ledgerForm) as string | undefined;
+  const wLedgerCcy = Form.useWatch('currencyCode', ledgerForm) as string | undefined;
+  const wLedgerCoa = Form.useWatch('chartOfAccountsId', ledgerForm) as string | undefined;
+  const wLeName = Form.useWatch('name', leForm) as string | undefined;
+  const wLeIdent = Form.useWatch('identifier', leForm) as string | undefined;
+  const wBuName = Form.useWatch('businessUnitName', buForm) as string | undefined;
+  const wBuCompany = Form.useWatch('company', buForm) as string | undefined;
+  const wBuActive = Form.useWatch('activeFlag', buForm) as string | undefined;
+  const wBuPcf = Form.useWatch('profitCenterFlag', buForm) as boolean | undefined;
 
   const loadRefs = useCallback(async () => {
     try {
@@ -178,16 +189,32 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
       setStep(1); return;
     }
     setBusy(true);
+    const nm = String(v.ledgerName).trim();
     const coaSel = coa.find(c => c.id === v.chartOfAccountsId);
     const r = await postJson(`${APEX}/gl/ledgers/create`, {
-      ledgerName: v.ledgerName, description: v.description, currencyCode: v.currencyCode || 'AED',
+      ledgerName: nm, description: v.description, currencyCode: v.currencyCode || 'AED',
       chartOfAccountsId: v.chartOfAccountsId, chartOfAccountsName: coaSel?.name,
       createdBy: currentUser,
     });
+    if (!r.ok || !r.id) {
+      // name already exists → continue with the existing (unlinked) ledger
+      if (/already exists/i.test(r.message || '')) {
+        const list = await getItems(`${APEX}/gl/setup/ledgers`).catch(() => []);
+        const m = list.map(i => ({ id: n(i.ledgerId ?? i.ledger_id) ?? 0, name: s(i.ledgerName ?? i.ledger_name) ?? '', currency: s(i.currencyCode ?? i.currency_code) }))
+          .find(x => x.name.toUpperCase() === nm.toUpperCase());
+        setBusy(false);
+        if (m) {
+          if (linkedLedgerIds.has(m.id)) { message.error(`Ledger "${m.name}" already exists and is linked to a business unit — use a different name.`); return; }
+          message.info(`Ledger "${m.name}" already exists — using it.`);
+          setLedger({ id: m.id, name: m.name, currency: m.currency }); setStep(1); return;
+        }
+        message.error(`Ledger "${nm}" already exists. Pick it under "Use existing", or use a different name.`); return;
+      }
+      setBusy(false); message.error(r.message); return;
+    }
     setBusy(false);
-    if (!r.ok || !r.id) { message.error(r.message); return; }
     message.success(`Ledger created (id ${r.id})`);
-    setLedger({ id: r.id, name: v.ledgerName, currency: v.currencyCode });
+    setLedger({ id: r.id, name: nm, currency: v.currencyCode });
     setStep(1);
   };
 
@@ -200,13 +227,29 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
       setStep(2); return;
     }
     setBusy(true);
+    const nm = String(v.name).trim();
     const r = await postJson(`${APEX}/gl/legalentities/create`, {
-      name: String(v.name).trim(), identifier: v.identifier || null, createdBy: currentUser,
+      name: nm, identifier: v.identifier || null, createdBy: currentUser,
     });
+    if (!r.ok || !r.id) {
+      // name already exists → continue with the existing (unlinked) legal entity
+      if (/already exists/i.test(r.message || '')) {
+        const list = await getItems(`${APEX}/gl/legalentities/all`).catch(() => []);
+        const m = list.map(i => ({ id: n(i.legalEntityId ?? i.legal_entity_id ?? i.LegalEntityId) ?? 0, name: s(i.name ?? i.Name ?? i.legal_entity_name) ?? '' }))
+          .find(x => x.name.toUpperCase() === nm.toUpperCase());
+        setBusy(false);
+        if (m) {
+          if (linkedLeIds.has(m.id)) { message.error(`"${nm}" already exists and is linked to a business unit — use a different name.`); return; }
+          message.info(`Legal entity "${m.name}" already exists — using it.`);
+          setLe({ id: m.id, name: m.name || `LE ${m.id}` }); setStep(2); return;
+        }
+        message.error(`"${nm}" already exists. Pick it under "Use existing", or use a different name.`); return;
+      }
+      setBusy(false); message.error(r.message); return;
+    }
     setBusy(false);
-    if (!r.ok || !r.id) { message.error(r.message); return; }
     message.success(`Legal entity created (id ${r.id})`);
-    setLe({ id: r.id, name: String(v.name).trim() });
+    setLe({ id: r.id, name: nm });
     setStep(2);
   };
 
@@ -315,11 +358,11 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
         {
           label: ' create ledger', method: 'POST', url: `${APEX}/gl/ledgers/create`,
           body: {
-            ledgerName: ledgerForm.getFieldValue('ledgerName') || '<name>',
-            description: ledgerForm.getFieldValue('description') || null,
-            currencyCode: ledgerForm.getFieldValue('currencyCode') || 'AED',
-            chartOfAccountsId: ledgerForm.getFieldValue('chartOfAccountsId') || null,
-            chartOfAccountsName: coa.find(c => c.id === ledgerForm.getFieldValue('chartOfAccountsId'))?.name || null,
+            ledgerName: wLedgerName || '<enter ledger name>',
+            description: wLedgerDesc || null,
+            currencyCode: wLedgerCcy || 'AED',
+            chartOfAccountsId: wLedgerCoa || null,
+            chartOfAccountsName: coa.find(c => c.id === wLedgerCoa)?.name || null,
             createdBy: currentUser,
           },
         },
@@ -359,7 +402,7 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
         { label: ' legal entities list', method: 'GET', url: `${APEX}/gl/legalentities/all` },
         {
           label: ' create legal entity', method: 'POST', url: `${APEX}/gl/legalentities/create`,
-          body: { name: leForm.getFieldValue('name') || '<name>', identifier: leForm.getFieldValue('identifier') || null, createdBy: currentUser },
+          body: { name: wLeName || '<enter legal entity name>', identifier: wLeIdent || null, createdBy: currentUser },
         },
       ]} />
     </>
@@ -392,10 +435,10 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
       <ApiInspector calls={[{
         label: ' create business unit (sequence id)', method: 'POST', url: `${APEX}/gl/businessunits/create`,
         body: {
-          businessUnitName: buForm.getFieldValue('businessUnitName') || '<name>',
-          company: buForm.getFieldValue('company') || '<company>',
-          activeFlag: buForm.getFieldValue('activeFlag') || 'Y',
-          profitCenterFlag: buForm.getFieldValue('profitCenterFlag') ? 'Y' : 'N',
+          businessUnitName: wBuName || '<enter business unit name>',
+          company: wBuCompany || '<company>',
+          activeFlag: wBuActive || 'Y',
+          profitCenterFlag: wBuPcf ? 'Y' : 'N',
           primaryLedgerId: ledger?.id,
           legalEntityId: le?.id,
           legalEntityName: le?.name,
