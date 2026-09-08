@@ -1558,6 +1558,33 @@ const RegisterDetail: React.FC<{
     }
   };
 
+  // Re-key an external-cash-transaction row to the camelCase shape the detail
+  // modal expects, tolerating handlers that return lowercase (or UPPERCASE)
+  // column names. For each field, take row[camel] else row[lowercase].
+  const normalizeExtTxn = (row: any): any => {
+    if (!row || typeof row !== 'object') return row;
+    const fields = [
+      'externalTransactionId', 'transactionId', 'transactionDate', 'valueDate',
+      'clearedDate', 'amount', 'currencyCode', 'description', 'referenceText',
+      'source', 'status', 'transactionType', 'accountingFlag', 'reconciledFlag',
+      'bankAccountName', 'businessUnitName', 'legalEntityName',
+      'assetAccountCombination', 'offsetAccountCombination', 'bankConversionRate',
+      'bankConversionRateType', 'transferId', 'checkNumber', 'reconReference',
+      'createdBy', 'creationDate', 'lastUpdatedBy', 'lastUpdateDate',
+      'transactionDirection', 'paymentMethod', 'paymentDocument',
+      'paperDocumentNumber', 'payeeName', 'payeeId', 'syncDate',
+    ];
+    const out: any = { ...row };
+    for (const f of fields) {
+      if (out[f] === undefined) {
+        const lower = f.toLowerCase();
+        const upper = f.replace(/([A-Z])/g, '_$1').toUpperCase();
+        out[f] = row[lower] ?? row[upper] ?? undefined;
+      }
+    }
+    return out;
+  };
+
   // ── Open bank transaction detail popup ────────────────────
   const openBankTxnDetail = async (bankTxnId: number) => {
     setBankTxnDetailSourceId(bankTxnId);   // store so footer can find the PC transaction
@@ -1580,9 +1607,14 @@ const RegisterDetail: React.FC<{
       // specific id, fall back to the single row returned rather than "not
       // found" if the id key is named differently by the handler.
       const idOf = (i: any) => i?.externalTransactionId ?? i?.EXTERNAL_TRANSACTION_ID ?? i?.externaltransactionid;
-      const item =
+      const raw =
         items.find((i: any) => String(idOf(i)) === String(bankTxnId)) ??
         (items.length === 1 ? items[0] : null);
+      // The deployed handler may return all-lowercase keys (Oracle folds
+      // unquoted aliases to uppercase, ORDS then lowercases). The modal reads
+      // camelCase, so re-key the row: look each expected field up by its
+      // camelCase name OR its lowercased form so casing no longer matters.
+      const item = raw ? normalizeExtTxn(raw) : null;
       setBankTxnDetail(item);
     } catch { setBankTxnDetail(null); }
     finally { setBankTxnDetailLoading(false); }
