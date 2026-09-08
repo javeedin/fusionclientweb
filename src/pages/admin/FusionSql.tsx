@@ -52,7 +52,7 @@ const getApi = (): FusionSqlApi | undefined => {
 
 const HIST_KEY = 'reerp.fusionsql.history';
 const SCHEMA_CAP = 20000; // max objects fetched per kind for the local schema cache
-const SCHEMA_VISIBLE = 400; // max object rows rendered at once (type to narrow)
+const SCHEMA_PAGE_SIZE = 200; // objects shown per page in the schema browser
 
 // object types the schema browser can list (all_objects.object_type values)
 const OBJECT_TYPES = [
@@ -164,6 +164,8 @@ const FusionSql: React.FC = () => {
   const [schemaCapped, setSchemaCapped] = useState(false);
   const [schemaAt, setSchemaAt] = useState<number | null>(null);
   const [schemaLoadedFor, setSchemaLoadedFor] = useState<string>(''); // owner.kind actually loaded
+  const [schemaPage, setSchemaPage] = useState(0);          // current page of the object list
+  const [committedSearch, setCommittedSearch] = useState(''); // whole-list search (from the search icon)
   const [openObj, setOpenObj] = useState<string | null>(null);
   const [objCols, setObjCols] = useState<Record<string, unknown>[]>([]);
 
@@ -403,13 +405,31 @@ const FusionSql: React.FC = () => {
   useEffect(() => { if (api && cfg.baseUrl) loadOwners(false); }, [api, cfg.baseUrl, loadOwners]);
 
   // auto-load (from cache if available) once the pod is known / owner / kind changes.
-  useEffect(() => { if (api && cfg.baseUrl) { setOpenObj(null); loadSchema(false); } }, [api, cfg.baseUrl, schemaOwner, schemaKind, loadSchema]);
+  useEffect(() => {
+    if (api && cfg.baseUrl) { setOpenObj(null); setSchemaPage(0); setCommittedSearch(''); setSchemaQ(''); loadSchema(false); }
+  }, [api, cfg.baseUrl, schemaOwner, schemaKind, loadSchema]);
 
-  // client-side filter over the cached list — instant, no round-trip
-  const filteredSchema = useMemo(() => {
-    const s = schemaQ.trim().toUpperCase();
+  // Whole-list search (the search icon) narrows the entire cached list; the
+  // result is then paginated. Typing in the box auto-filters the CURRENT page
+  // only — click the search icon (or Enter) to search across all pages.
+  const searchedBase = useMemo(() => {
+    const s = committedSearch.trim().toUpperCase();
     return s ? schemaList.filter(n => n.toUpperCase().includes(s)) : schemaList;
-  }, [schemaList, schemaQ]);
+  }, [schemaList, committedSearch]);
+  const pageCount = Math.max(1, Math.ceil(searchedBase.length / SCHEMA_PAGE_SIZE));
+  const pageBase = useMemo(
+    () => searchedBase.slice(schemaPage * SCHEMA_PAGE_SIZE, schemaPage * SCHEMA_PAGE_SIZE + SCHEMA_PAGE_SIZE),
+    [searchedBase, schemaPage],
+  );
+  // live auto-filter over just the current page
+  const visibleSchema = useMemo(() => {
+    const s = schemaQ.trim().toUpperCase();
+    return s ? pageBase.filter(n => n.toUpperCase().includes(s)) : pageBase;
+  }, [pageBase, schemaQ]);
+  // commit a whole-list search from the search icon / Enter
+  const commitSearch = () => { setCommittedSearch(schemaQ.trim()); setSchemaPage(0); };
+  // keep the page in range if the underlying list shrinks
+  useEffect(() => { if (schemaPage > pageCount - 1) setSchemaPage(0); }, [pageCount, schemaPage]);
 
   // expand a table/view (columns) or a program unit (arguments), cached locally
   const loadColumns = useCallback(async (name: string) => {
@@ -711,9 +731,22 @@ const FusionSql: React.FC = () => {
               options={owners.map(o => ({ value: o, label: o }))} optionFilterProp="label" />
             <Select size="small" value={schemaKind} onChange={v => setSchemaKind(v)}
               style={{ width: '100%' }} options={OBJECT_TYPES} />
-            <Input size="small" prefix={<SearchOutlined />} placeholder={`Filter ${schemaList.length ? schemaList.length.toLocaleString() + ' ' : ''}objects`} allowClear
-              value={schemaQ} onChange={e => setSchemaQ(e.target.value)} onPressEnter={searchServer}
-              suffix={<Tooltip title="Search the pod for more matches"><CaretRightOutlined onClick={searchServer} style={{ color: '#C74634', cursor: 'pointer' }} /></Tooltip>} />
+            <Input size="small" placeholder="Filter current page — click 🔍 to search all"
+              allowClear
+              value={schemaQ}
+              onChange={e => { const v = e.target.value; setSchemaQ(v); if (!v.trim() && committedSearch) { setCommittedSearch(''); setSchemaPage(0); } }}
+              onPressEnter={commitSearch}
+              suffix={
+                <Tooltip title="Search across all pages of the cached list">
+                  <SearchOutlined onClick={commitSearch} style={{ color: '#C74634', cursor: 'pointer' }} />
+                </Tooltip>
+              } />
+            {committedSearch && (
+              <div style={{ fontSize: 11, color: '#8c7f7a' }}>
+                Searching all for “{committedSearch}” — {searchedBase.length.toLocaleString()} match(es).{' '}
+                <a onClick={() => { setCommittedSearch(''); setSchemaPage(0); }} style={{ color: '#0572CE' }}>clear</a>
+              </div>
+            )}
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {schemaBusy && <Text type="secondary" style={{ fontSize: 12, padding: 10, display: 'block' }}>Loading…</Text>}
@@ -724,12 +757,16 @@ const FusionSql: React.FC = () => {
                   : <>Loading {schemaKind.toLowerCase()}s from <b>{schemaOwner}</b>… if nothing appears, click the refresh icon to load them from the pod.</>}
               </Text>
             )}
-            {!schemaBusy && schemaList.length > 0 && !filteredSchema.length && (
+            {!schemaBusy && schemaList.length > 0 && !visibleSchema.length && (
               <Text type="secondary" style={{ fontSize: 12, padding: 10, display: 'block' }}>
-                No local match. Press Enter to search the pod for “{schemaQ.trim()}”.
+                No match on this page.{' '}
+                {committedSearch
+                  ? 'No matches across the whole cached list.'
+                  : <a onClick={commitSearch} style={{ color: '#0572CE' }}>Search all pages for “{schemaQ.trim()}”</a>}
+                {schemaCapped && <> · <a onClick={searchServer} style={{ color: '#0572CE' }}>search the pod</a></>}
               </Text>
             )}
-            {filteredSchema.slice(0, SCHEMA_VISIBLE).map(name => {
+            {visibleSchema.map(name => {
               const expandable = hasColumns(schemaKind) || hasArgs(schemaKind);
               // FUSION/PUBLIC objects resolve unqualified; other schemas need owner.name
               const qualified = (schemaOwner === 'FUSION' || schemaOwner === 'PUBLIC')
@@ -753,16 +790,19 @@ const FusionSql: React.FC = () => {
               </div>
               );
             })}
-            {filteredSchema.length > SCHEMA_VISIBLE && (
-              <Text type="secondary" style={{ fontSize: 11, padding: '6px 10px', display: 'block' }}>
-                Showing first {SCHEMA_VISIBLE} of {filteredSchema.length.toLocaleString()} — type in the filter to narrow.
-              </Text>
-            )}
           </div>
+          {/* pagination */}
+          {pageCount > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', borderTop: '1px solid #eee', fontSize: 11 }}>
+              <Button size="small" type="text" disabled={schemaPage <= 0} onClick={() => setSchemaPage(p => Math.max(0, p - 1))}>‹ Prev</Button>
+              <span style={{ color: '#8c7f7a' }}>Page {schemaPage + 1} / {pageCount}</span>
+              <Button size="small" type="text" disabled={schemaPage >= pageCount - 1} onClick={() => setSchemaPage(p => Math.min(pageCount - 1, p + 1))}>Next ›</Button>
+            </div>
+          )}
           {!!schemaList.length && (
             <div style={{ padding: '4px 8px', borderTop: '1px solid #eee', fontSize: 11, color: '#8c7f7a' }}>
-              {schemaQ.trim() ? `${filteredSchema.length.toLocaleString()} of ` : ''}{schemaList.length.toLocaleString()} cached
-              {schemaCapped ? ` (capped at ${SCHEMA_CAP.toLocaleString()} — press Enter to find more)` : ''}
+              {committedSearch ? `${searchedBase.length.toLocaleString()} of ` : ''}{schemaList.length.toLocaleString()} cached
+              {schemaCapped ? ` (capped at ${SCHEMA_CAP.toLocaleString()})` : ''}
               {schemaAt ? ` · ${dayjs(schemaAt).format('MMM D HH:mm')}` : ''}
             </div>
           )}
