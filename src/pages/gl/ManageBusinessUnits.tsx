@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Breadcrumb, Button, Card, Divider, Form, Input, Modal, Select, Space, Switch,
+  Breadcrumb, Button, Card, Divider, Form, Input, InputNumber, Modal, Select, Space, Switch,
   Table, Tabs, Tag, Tooltip, Typography, message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  ApartmentOutlined, BankOutlined, HomeOutlined, PlusOutlined, ReloadOutlined, SearchOutlined,
+  ApartmentOutlined, BankOutlined, CalendarOutlined, HomeOutlined, PlusOutlined, ReloadOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../../config/api.config';
@@ -52,6 +52,13 @@ interface Ledger {
   ledgerCategoryCode?: string;
   createdBy?: string;
   creationDate?: string;
+}
+
+// accounting-calendar summary per ledger (RR_ACCOUNTING_PERIODS_STATUS)
+interface CalInfo {
+  periodCount: number;
+  minYear?: number;
+  maxYear?: number;
 }
 
 type Raw = Record<string, unknown>;
@@ -136,6 +143,7 @@ const ManageBusinessUnits: React.FC = () => {
   const [bus, setBus] = useState<BusinessUnit[]>([]);
   const [les, setLes] = useState<LegalEntity[]>([]);
   const [ledgers, setLedgers] = useState<Ledger[]>([]);
+  const [calMap, setCalMap] = useState<Record<number, CalInfo>>({});
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<string | undefined>();
@@ -143,11 +151,19 @@ const ManageBusinessUnits: React.FC = () => {
   const [buOpen, setBuOpen] = useState(false);
   const [leOpen, setLeOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [calOpen, setCalOpen] = useState(false);
+  const [calBu, setCalBu] = useState<BusinessUnit | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [buForm] = Form.useForm();
   const [leForm] = Form.useForm();
   const [ledgerForm] = Form.useForm();
+  const [calForm] = Form.useForm();
+
+  // live preview of the first generated period
+  const calType = Form.useWatch('calendarType', calForm) as string | undefined;
+  const calStartYear = Form.useWatch('startYear', calForm) as number | undefined;
+  const calYears = Form.useWatch('numberOfYears', calForm) as number | undefined;
 
   const loadBus = useCallback(async () => {
     setLoading(true);
@@ -171,8 +187,27 @@ const ManageBusinessUnits: React.FC = () => {
     } catch { /* pickers load lazily — surfaced when dialogs open */ }
   }, []);
 
+  // which ledgers already have an accounting calendar (one summary call)
+  const loadCalendars = useCallback(async () => {
+    try {
+      const items = await getItems(`${APEX}/accountingcalendar`);
+      const map: Record<number, CalInfo> = {};
+      for (const it of items) {
+        const lid = n(it.ledgerId ?? (it as Raw).ledgerid ?? (it as Raw).LEDGER_ID);
+        if (lid == null) continue;
+        map[lid] = {
+          periodCount: n(it.periodCount ?? (it as Raw).periodcount) ?? 0,
+          minYear: n(it.minYear ?? (it as Raw).minyear),
+          maxYear: n(it.maxYear ?? (it as Raw).maxyear),
+        };
+      }
+      setCalMap(map);
+    } catch { /* summary optional — the button just stays enabled */ }
+  }, []);
+
   useEffect(() => { loadBus(); }, [loadBus]);
   useEffect(() => { loadPickers(); }, [loadPickers]);
+  useEffect(() => { loadCalendars(); }, [loadCalendars]);
 
   // live client-side filtering (the existing GET has no filter parameters)
   const filteredBus = useMemo(() => bus.filter(b =>
@@ -263,6 +298,50 @@ const ManageBusinessUnits: React.FC = () => {
     loadBus();
   };
 
+  // ── accounting calendar ─────────────────────────────────────────────────────
+  const openCalendar = (bu: BusinessUnit) => {
+    setCalBu(bu);
+    calForm.setFieldsValue({
+      calendarType: 'FISCAL',
+      startYear: new Date().getFullYear(),
+      numberOfYears: 10,
+      includeAdjustment: true,
+    });
+    setCalOpen(true);
+  };
+
+  const createCalendar = async () => {
+    if (!calBu?.primaryLedgerId) { message.error('This business unit has no ledger'); return; }
+    const v = await calForm.validateFields();
+    setSaving(true);
+    const r = await postJson(`${APEX}/accountingcalendar`, {
+      ledgerId: calBu.primaryLedgerId,
+      calendarType: v.calendarType,
+      startYear: Number(v.startYear),
+      numberOfYears: Number(v.numberOfYears),
+      includeAdjustment: v.includeAdjustment ? 'Y' : 'N',
+      createdBy: currentUser,
+    });
+    setSaving(false);
+    if (!r.ok) { message.error(r.message); return; }
+    message.success(`Accounting calendar generated for ledger ${calBu.primaryLedgerId}`);
+    setCalOpen(false);
+    calForm.resetFields();
+    loadCalendars();
+  };
+
+  // first-period preview for the calendar dialog
+  const calPreview = useMemo(() => {
+    const y = Number(calStartYear);
+    if (!y) return '';
+    const yy = (yr: number) => String(yr).slice(-2).padStart(2, '0');
+    const span = calType === 'CALENDAR'
+      ? `Jan-${yy(y)} … Dec-${yy(y)}`
+      : `Apr-${yy(y - 1)} … Mar-${yy(y)}`;
+    const yrs = Number(calYears) || 1;
+    return `${span}  ·  ${yrs} year${yrs > 1 ? 's' : ''} (${y}–${y + yrs - 1})`;
+  }, [calType, calStartYear, calYears]);
+
   // ── columns ────────────────────────────────────────────────────────────────
   const buCols: ColumnsType<BusinessUnit> = [
     { title: 'BU ID', dataIndex: 'businessUnitId', width: 130 },
@@ -287,6 +366,25 @@ const ManageBusinessUnits: React.FC = () => {
     { title: 'Created By', dataIndex: 'createdBy', width: 120, render: (v?: string) => v || <Text type="secondary">sync</Text> },
     { title: 'Creation Date', dataIndex: 'creationDate', width: 140, render: (v?: string) => v || '—' },
     { title: 'Sync Date', dataIndex: 'syncDate', width: 140, render: (v?: string) => v || '—' },
+    {
+      title: 'Calendar', key: 'calendar', width: 170, align: 'center', fixed: 'right',
+      render: (_: unknown, r: BusinessUnit) => {
+        if (!r.primaryLedgerId) return <Tooltip title="No ledger assigned"><Text type="secondary">—</Text></Tooltip>;
+        const info = calMap[r.primaryLedgerId];
+        if (info && info.periodCount > 0) {
+          return (
+            <Tooltip title={`${info.periodCount} periods · years ${info.minYear ?? '?'}–${info.maxYear ?? '?'} · ledger ${r.primaryLedgerId}`}>
+              <Tag color="green" icon={<CalendarOutlined />}>Calendar ✓</Tag>
+            </Tooltip>
+          );
+        }
+        return (
+          <Button size="small" icon={<CalendarOutlined />} onClick={() => openCalendar(r)}>
+            Create Calendar
+          </Button>
+        );
+      },
+    },
   ];
 
   const leCols: ColumnsType<LegalEntity> = [
@@ -354,7 +452,7 @@ const ManageBusinessUnits: React.FC = () => {
                       onChange={setActiveFilter}
                       options={[{ value: 'Y', label: 'Active' }, { value: 'N', label: 'Inactive' }]}
                     />
-                    <Tooltip title="Reload"><Button icon={<ReloadOutlined />} onClick={() => { loadBus(); loadPickers(); }} /></Tooltip>
+                    <Tooltip title="Reload"><Button icon={<ReloadOutlined />} onClick={() => { loadBus(); loadPickers(); loadCalendars(); }} /></Tooltip>
                     <Button type="primary" icon={<PlusOutlined />} onClick={() => { setBuOpen(true); loadPickers(); }}>
                       Create Business Unit
                     </Button>
@@ -504,6 +602,58 @@ const ManageBusinessUnits: React.FC = () => {
               options={['AED', 'USD', 'EUR', 'GBP', 'INR', 'SAR', 'QAR', 'OMR', 'KWD', 'BHD'].map(c => ({ value: c, label: c }))}
             />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* ── Create Accounting Calendar ── */}
+      <Modal
+        title={<span><CalendarOutlined /> Create Accounting Calendar</span>}
+        open={calOpen}
+        onCancel={() => setCalOpen(false)}
+        onOk={createCalendar}
+        okText="Generate"
+        confirmLoading={saving}
+        width={540}
+        destroyOnClose
+      >
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          Ledger: <b>{calBu?.ledger || ledgers.find(l => l.ledgerId === calBu?.primaryLedgerId)?.ledgerName || '—'}</b>
+          {calBu?.primaryLedgerId ? ` (id ${calBu.primaryLedgerId})` : ''}
+        </Text>
+        <Form form={calForm} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item name="calendarType" label="Calendar Type" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'FISCAL', label: 'Fiscal (Apr – Mar)' },
+                { value: 'CALENDAR', label: 'Calendar (Jan – Dec)' },
+              ]}
+            />
+          </Form.Item>
+          <Space size="large" align="start">
+            <Form.Item
+              name="startYear" label="Start Year"
+              tooltip="First period year. Fiscal 2025 = Apr-2024 … Mar-2025."
+              rules={[{ required: true, message: 'Enter the start year' }]}
+            >
+              <InputNumber min={2000} max={2100} style={{ width: 150 }} />
+            </Form.Item>
+            <Form.Item
+              name="numberOfYears" label="Number of Years"
+              rules={[{ required: true, message: 'Enter number of years' }]}
+            >
+              <InputNumber min={1} max={50} style={{ width: 150 }} />
+            </Form.Item>
+          </Space>
+          <Form.Item name="includeAdjustment" label="Include quarter adjustment periods" valuePropName="checked">
+            <Switch checkedChildren="Yes" unCheckedChildren="No" />
+          </Form.Item>
+          {calPreview && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              First year: <b>{calPreview}</b>. Each year has 12 monthly periods
+              {calForm.getFieldValue('includeAdjustment') !== false ? ' + 4 quarter-adjustment periods (16 total)' : ' (no adjustments)'},
+              seeded for GL / AP / AR / INV as status “N” (Never Opened).
+            </Text>
+          )}
         </Form>
       </Modal>
     </div>
