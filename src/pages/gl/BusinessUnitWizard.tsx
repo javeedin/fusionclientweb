@@ -44,34 +44,64 @@ const postJson = async (url: string, body: unknown): Promise<{ ok: boolean; mess
 
 // ── API inspector (shows the exact GET/POST calls each step uses) ────────────
 interface ApiCall { label: string; method: 'GET' | 'POST'; url: string; body?: unknown; }
-const ApiInspector: React.FC<{ calls: ApiCall[] }> = ({ calls }) => (
-  <Collapse
-    ghost
-    size="small"
-    style={{ marginTop: 10 }}
-    items={[{
-      key: 'api',
-      label: <span style={{ fontSize: 12 }}><ApiOutlined style={{ color: '#722ed1' }} /> API — URLs &amp; JSON payloads</span>,
-      children: (
-        <div style={{ maxHeight: 240, overflow: 'auto' }}>
-          {calls.map((c, i) => (
-            <div key={i} style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>
-                <Tag color={c.method === 'GET' ? 'blue' : 'green'} style={{ fontSize: 10 }}>{c.method}</Tag>{c.label}
-              </div>
-              <div style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', color: '#0572CE' }}>{c.url}</div>
-              {c.body !== undefined && (
-                <pre style={{ fontSize: 11, background: '#f6f6f6', padding: 8, borderRadius: 4, marginTop: 4, whiteSpace: 'pre-wrap' }}>
-                  {JSON.stringify(c.body, null, 2)}
-                </pre>
-              )}
-            </div>
-          ))}
-        </div>
-      ),
-    }]}
-  />
-);
+const ApiInspector: React.FC<{ calls: ApiCall[] }> = ({ calls }) => {
+  const [res, setRes] = useState<Record<number, { status: number | string; body: string; busy?: boolean }>>({});
+  const send = async (i: number, c: ApiCall) => {
+    setRes(p => ({ ...p, [i]: { status: '…', body: '', busy: true } }));
+    try {
+      const r = await fetch(c.url, {
+        method: c.method,
+        headers: c.method === 'POST'
+          ? { 'Content-Type': 'application/json', Accept: 'application/json' }
+          : { Accept: 'application/json' },
+        body: c.method === 'POST' ? JSON.stringify(c.body ?? {}) : undefined,
+      });
+      const text = await r.text();
+      setRes(p => ({ ...p, [i]: { status: r.status, body: text.slice(0, 3000) } }));
+    } catch (e) {
+      setRes(p => ({ ...p, [i]: { status: 'ERR', body: e instanceof Error ? e.message : String(e) } }));
+    }
+  };
+  return (
+    <Collapse
+      ghost
+      size="small"
+      style={{ marginTop: 10 }}
+      items={[{
+        key: 'api',
+        label: <span style={{ fontSize: 12 }}><ApiOutlined style={{ color: '#722ed1' }} /> API — URLs, JSON payloads &amp; test</span>,
+        children: (
+          <div style={{ maxHeight: 300, overflow: 'auto' }}>
+            {calls.map((c, i) => {
+              const ok = typeof res[i]?.status === 'number' && (res[i].status as number) < 400;
+              return (
+                <div key={i} style={{ marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, marginBottom: 2 }}>
+                    <Tag color={c.method === 'GET' ? 'blue' : 'green'} style={{ fontSize: 10, margin: 0 }}>{c.method}</Tag>{c.label}
+                    <Button size="small" loading={res[i]?.busy} onClick={() => send(i, c)} style={{ marginLeft: 'auto' }}>
+                      {c.method === 'POST' ? 'Send test (creates data)' : 'Send test'}
+                    </Button>
+                  </div>
+                  <div style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', color: '#0572CE' }}>{c.url}</div>
+                  {c.body !== undefined && (
+                    <pre style={{ fontSize: 11, background: '#f6f6f6', padding: 8, borderRadius: 4, marginTop: 4, whiteSpace: 'pre-wrap' }}>
+                      {JSON.stringify(c.body, null, 2)}
+                    </pre>
+                  )}
+                  {res[i] && !res[i].busy && (
+                    <pre style={{ fontSize: 11, background: ok ? '#f6ffed' : '#fff2f0', border: `1px solid ${ok ? '#b7eb8f' : '#ffccc7'}`, padding: 8, borderRadius: 4, marginTop: 4, whiteSpace: 'pre-wrap' }}>
+                      {`HTTP ${res[i].status}\n${res[i].body}`}
+                    </pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ),
+      }]}
+    />
+  );
+};
 
 interface LedgerOpt { ledgerId: number; ledgerName: string; currencyCode?: string; chartOfAccountsName?: string; }
 interface LeOpt { legalEntityId: number; name: string; identifier?: string; }
@@ -533,7 +563,11 @@ const BusinessUnitWizard: React.FC<Props> = ({ open, onClose, onDone, currentUse
     >
       <Steps current={step} size="small" style={{ marginBottom: 18 }}
         items={steps.map(st => ({ title: st.title, icon: st.icon }))} />
-      {cur.body}
+      {/* key by step so each step's <Form> mounts fresh and binds to its own
+          form instance — without this React reuses the previous step's Form
+          (swapping the `form` prop), which leaves the inputs disconnected and
+          validateFields returns undefined. */}
+      <div key={`step-${step}`}>{cur.body}</div>
     </Modal>
   );
 };
