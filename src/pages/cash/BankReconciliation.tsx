@@ -22,7 +22,6 @@ import { ReconciliationViewer } from '../../components/ReconciliationViewer';
 import { reconcileWithClaude, type ReconciliationResult } from '../../services/claudeReconciliation.service';
 import ReconAgent from './ReconAgent';
 import { APEX_DB_CONFIG } from '../../config/api.config';
-import { buildPcBankTxnSlaPayload, fetchLedgerByBusinessUnit, derivePeriodName, createAccounting } from '../../services/sla.service';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 
@@ -989,8 +988,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
   const [extTxnResponse, setExtTxnResponse]     = useState<any>(null);
   const [extTxnRawError, setExtTxnRawError]     = useState('');
   const [extTxnCreatedId, setExtTxnCreatedId]   = useState<number | null>(null);
-  const [extAcctRunning, setExtAcctRunning]     = useState(false);
-  const [extAcctResult, setExtAcctResult]       = useState<{ ok: boolean; msg: string } | null>(null);
 
   // ── Add Statement Line modal ──────────────────────────────────────────────
   const [addLineOpen, setAddLineOpen]         = useState(false);
@@ -2280,138 +2277,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
     }
   }, [reconCalls, executeReconCall, selectedStatement, lastParams, handleSelectStatement, fetchStmtLines, fetchSysTxns, stmtReconFilter]);
 
-  // ── Create Accounting for ext txn from bank recon modal ──────────────────
-  const createExtTxnAccounting = useCallback(async () => {
-    if (!extTxnCreatedId) return;
-    const values = extTxnForm.getFieldsValue();
-    setExtAcctRunning(true);
-    setExtAcctResult(null);
-    try {
-      const ledger = await fetchLedgerByBusinessUnit(values.businessUnitName);
-      if (!ledger) { setExtAcctResult({ ok: false, msg: 'Could not resolve ledger for BU' }); setExtAcctRunning(false); return; }
-
-      const absAmount  = Math.abs(values.amount ?? 0);
-      const direction  = values.transactionDirection ?? extTxnDirection;
-      const txnDate    = values.transactionDate?.format('YYYY-MM-DD') ?? new Date().toISOString().slice(0, 10);
-      const periodName = derivePeriodName(new Date(txnDate));
-
-      // CR = money in: DR bank asset / CR offset. DR = money out: DR offset / CR bank asset
-      const drAcct = direction === 'CR' ? values.assetAccountCombination : values.offsetAccountCombination;
-      const crAcct = direction === 'CR' ? values.offsetAccountCombination : values.assetAccountCombination;
-
-      const slaPayload = buildPcBankTxnSlaPayload({
-        externalTransactionId:    extTxnCreatedId,
-        referenceText:            values.referenceText || String(extTxnCreatedId),
-        transactionDate:          txnDate,
-        accountingDate:           txnDate,
-        periodName,
-        currency:                 values.currencyCode || 'AED',
-        amount:                   absAmount,
-        assetAccountCombination:  crAcct,   // buildPcBankTxnSlaPayload: assetAccount = CR line
-        offsetAccountCombination: drAcct,   // offsetAccount = DR line
-        businessUnit:             values.businessUnitName,
-        ledgerId:                 ledger.ledgerId,
-        ledgerName:               ledger.ledgerName,
-        createdBy:                'SYSTEM',
-      });
-
-      const slaResult = await createAccounting(slaPayload);
-      if (!slaResult?.headerId) { setExtAcctResult({ ok: false, msg: 'SLA creation failed' }); setExtAcctRunning(false); return; }
-
-      // 2. Create GL journal
-      const batchName = `BANK-${extTxnCreatedId}-${Date.now()}`;
-      const glPayload = {
-        batch: {
-          batchName,
-          batchDescription: `Bank External Txn ${extTxnCreatedId}`,
-          ledgerName: ledger.ledgerName,
-          ledgerId:   ledger.ledgerId,
-          status:     'NEW',
-          accountingPeriod:  periodName,
-          controlTotal:      absAmount,
-          runningTotalDr:    absAmount,
-          runningTotalCr:    absAmount,
-          batchSource:  'Cash Management',
-          createdBy:    'SYSTEM',
-        },
-        header: {
-          ledgerId:    ledger.ledgerId,
-          ledgerName:  ledger.ledgerName,
-          jeCategory:  'Cash Management',
-          jeSource:    'Cash Management',
-          periodName,
-          journalName: `BANK-EXT-${extTxnCreatedId}`,
-          description: `Bank Ext Txn – ${values.referenceText || extTxnCreatedId}`,
-          currencyCode:             values.currencyCode || 'AED',
-          currencyConversionType:   'User',
-          currencyConversionDate:   txnDate,
-          currencyConversionRate:   1,
-          defaultEffectiveDate:     txnDate,
-          status:          'NEW',
-          runningTotalDr:  absAmount,
-          runningTotalCr:  absAmount,
-          createdBy:       'SYSTEM',
-        },
-        lines: slaPayload.lines.map(l => ({
-          enteredDr:   l.lineType === 'DR' ? l.enteredDr  : null,
-          enteredCr:   l.lineType === 'CR' ? l.enteredCr  : null,
-          accountedDr: l.accountedDr || null,
-          accountedCr: l.accountedCr || null,
-          statAmount:  null,
-          description: l.description,
-          currencyCode:               values.currencyCode || 'AED',
-          currencyConversionDate:     txnDate,
-          currencyConversionRate:     1,
-          userCurrencyConversionType: 'User',
-          accountCombination:         l.accountCombination,
-          chartOfAccountsName:        'Chart of Accounts',
-          reference1: String(extTxnCreatedId),
-          reference2: values.referenceText || '',
-          reference3: l.accountingClass || null,
-          reference4: values.businessUnitName || null,
-          reference5: null,
-          createdBy:  'SYSTEM',
-        })),
-      };
-
-      const glRes = await fetch(`${APEX_BASE}/journals/create`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body:    JSON.stringify(glPayload),
-      });
-
-      let glMsg = '';
-      if (glRes.ok) {
-        const glData = await glRes.json();
-        // 3. Post SLA — link to GL batch/header
-        await fetch(`${APEX_BASE}/sla/accounting/post`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body:    JSON.stringify({
-            headerId:    slaResult.headerId,
-            glBatchId:   glData.batchId  || 0,
-            glBatchName: batchName,
-            glHeaderId:  glData.headerId || 0,
-            postedBy:    'SYSTEM',
-          }),
-        });
-        glMsg = `GL: ${batchName}`;
-      } else {
-        glMsg = 'GL journal failed — SLA is Draft';
-      }
-
-      // 4. Mark accounting flag on the external transaction
-      const flagUrl = `${EXT_TXN_URL}/${extTxnCreatedId}/acctflag?updated_by=SYSTEM`;
-      await fetch(flagUrl, { method: 'PUT', headers: { Accept: 'application/json' } }).catch(() => {});
-
-      setExtAcctResult({ ok: true, msg: `Accounting created — SLA Header ${slaResult.headerId} — ${glMsg}` });
-    } catch (err: any) {
-      setExtAcctResult({ ok: false, msg: err?.message || 'Accounting failed' });
-    } finally {
-      setExtAcctRunning(false);
-    }
-  }, [extTxnCreatedId, extTxnForm]);
-
   // ── Column definitions ────────────────────────────────────────────────────
   const stmtColumns: ColumnsType<StmtLine> = [
     {
@@ -2920,9 +2785,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
 
   // Memoized: these full-array scans must not re-run on unrelated state
   // changes (e.g. typing in a dialog input re-rendering this component).
+  const filteredSysTxnsBase = useMemo(
+    () => (txnSourceFilter === 'ALL' ? sysTxns : sysTxns.filter((t) => t.source === txnSourceFilter)),
+    [sysTxns, txnSourceFilter],
+  );
+
   const filteredSysTxns = useMemo(() => {
-    const filteredSysTxnsBase =
-      txnSourceFilter === 'ALL' ? sysTxns : sysTxns.filter((t) => t.source === txnSourceFilter);
     const sysQ = sysSearch.toLowerCase();
     return sysQ
     ? filteredSysTxnsBase.filter(t =>
@@ -2956,7 +2824,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         (t.createdBy            || '').toLowerCase().includes(sysQ)
       )
     : filteredSysTxnsBase;
-  }, [sysTxns, txnSourceFilter, sysSearch]);
+  }, [filteredSysTxnsBase, sysSearch]);
 
   const filteredStmtLines = useMemo(() => {
     const stmtQ = stmtSearch.toLowerCase();
@@ -4360,32 +4228,19 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
             </Collapse.Panel>
           </Collapse>
 
-          {/* Accounting result banner */}
-          {extAcctResult && (
-            <div style={{ marginBottom: 10, padding: '6px 12px', borderRadius: 6, fontSize: 12,
-              background: extAcctResult.ok ? '#f6ffed' : '#fff2f0',
-              border: `1px solid ${extAcctResult.ok ? '#b7eb8f' : '#ffccc7'}`,
-              color: extAcctResult.ok ? REDWOOD.success : REDWOOD.error }}>
-              {extAcctResult.ok ? '✓ ' : '✗ '}{extAcctResult.msg}
-            </div>
-          )}
-
+          {/* Accounting is intentionally NOT created here. Use Manage External
+              Transactions → Create Accounting, which validates accounts,
+              prevents duplicate journals, and sets references correctly. */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
             <div>
               {extTxnCreatedId && (
-                <Button
-                  icon={<FileTextOutlined />}
-                  loading={extAcctRunning}
-                  disabled={!!extAcctResult?.ok}
-                  onClick={createExtTxnAccounting}
-                  style={{ color: REDWOOD.info, borderColor: REDWOOD.info, fontSize: 12 }}
-                >
-                  {extAcctResult?.ok ? 'Accounted' : 'Create Accounting'}
-                </Button>
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  Use Manage External Transactions to create accounting for this transaction.
+                </Text>
               )}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button onClick={() => { setExtTxnOpen(false); setExtTxnCreatedId(null); setExtAcctResult(null); }}>
+              <Button onClick={() => { setExtTxnOpen(false); setExtTxnCreatedId(null); }}>
                 {extTxnCreatedId ? 'Close' : 'Cancel'}
               </Button>
               {!extTxnCreatedId && (
