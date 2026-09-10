@@ -1279,6 +1279,13 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
     if (extTxnMode === 'multiple') {
       const invalid = extTxnLines.filter(l => !l.amount);
       if (invalid.length > 0) { msgApi.error('All lines must have an amount'); return; }
+      const noOffset = extTxnLines
+        .map((l, i) => (!l.offsetAccount?.trim() ? i + 1 : null))
+        .filter((n): n is number => n !== null);
+      if (noOffset.length > 0) {
+        msgApi.error(`Offset account is required on every line (missing on line ${noOffset.join(', ')})`);
+        return;
+      }
       setExtTxnSaving(true);
       const baseRef = values.referenceText?.trim() || `STMT-${selectedStatement?.statementId}-${Date.now()}`;
       const commonHeader = {
@@ -4091,7 +4098,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                   </Form.Item>
                 </Col>
               </Row>
-              <Form.Item label="Offset Account">
+              <Form.Item label="Offset Account" required>
                 <Space.Compact style={{ width: '100%' }}>
                   <Form.Item name="offsetAccountCombination" noStyle rules={[{ required: true, message: 'Offset account is required' }]}>
                     <Input readOnly placeholder="Select account" style={{ fontFamily: 'monospace', fontSize: 11 }} />
@@ -4140,11 +4147,12 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                     ),
                   },
                   {
-                    title: 'Offset Account', width: 200,
+                    title: <span><span style={{ color: REDWOOD.error }}>* </span>Offset Account</span>, width: 200,
                     render: (_: any, record: any, idx: number) => (
                       <>
                         <Space.Compact style={{ width: '100%' }}>
                           <Input size="small" readOnly value={record.offsetAccount}
+                            status={record.offsetAccount ? undefined : 'error'}
                             style={{ fontFamily: 'monospace', fontSize: 10 }} placeholder="Select..." />
                           <Button size="small" icon={<SearchOutlined />} onClick={() => {
                             setExtLineCoaIdx(idx);
