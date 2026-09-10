@@ -4972,6 +4972,30 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
     }
   };
 
+  // Memoized option list for the Distribution Set autocomplete. Building the
+  // filtered+JSX-mapped list inline made every render re-scan distCombinations
+  // once per visible line row — a large multiplier on every keystroke.
+  const distSetOptions = useMemo(() => distCombinations.map(d => ({
+    value: d.combinationName,
+    label: (
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>{d.combinationName}</span>
+        <span style={{ fontSize: 11, color: REDWOOD.neutral300, fontFamily: 'monospace' }}>{d.glAccountDesc || ''}</span>
+      </div>
+    ),
+    combination: d,
+    searchText: `${d.combinationName} ${d.description || ''} ${d.glAccountDesc || ''}`.toLowerCase(),
+  })), [distCombinations]);
+
+  const distLovFiltered = useMemo(() => {
+    const q = distLovSearch.toLowerCase();
+    if (!q) return distCombinations;
+    return distCombinations.filter(d =>
+      d.combinationName.toLowerCase().includes(q)
+      || (d.glAccountDesc || '').toLowerCase().includes(q)
+      || (d.description || '').toLowerCase().includes(q));
+  }, [distCombinations, distLovSearch]);
+
   // ========== Distribution Tab Columns (matching Fusion Payables) ==========
   const distributionColumns: ColumnsType<InvoiceLine> = [
     {
@@ -5037,39 +5061,28 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       dataIndex: 'distributionSet',
       key: 'distributionSet',
       width: 200,
+      // Uncontrolled: commits on blur/select so typing doesn't re-render the
+      // whole page. Suggestions filter via filterOption over memoized options.
       render: (val: string, record: InvoiceLine) => (
         <AutoComplete
           size="small"
-          value={val}
+          key={`distset-${record.key}-${val ?? ''}`}
+          defaultValue={val}
           disabled={isReadOnly}
           placeholder="Type or search…"
           style={{ width: '100%' }}
-          options={distCombinations
-            .filter(d => {
-              if (!val) return true;
-              const q = val.toLowerCase();
-              return d.combinationName.toLowerCase().includes(q)
-                || (d.description || '').toLowerCase().includes(q)
-                || (d.glAccountDesc || '').toLowerCase().includes(q);
-            })
-            .map(d => ({
-              value: d.combinationName,
-              label: (
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600 }}>{d.combinationName}</span>
-                  <span style={{ fontSize: 11, color: REDWOOD.neutral300, fontFamily: 'monospace' }}>{d.glAccountDesc || ''}</span>
-                </div>
-              ),
-              combination: d,
-            }))}
-          onChange={v => updateLine(record.key, 'distributionSet', v)}
+          options={distSetOptions}
+          onBlur={(e) => {
+            const v = (e.target as HTMLInputElement).value;
+            if ((v ?? '') !== (val ?? '')) updateLine(record.key, 'distributionSet', v);
+          }}
           onSelect={(_v, opt) => {
-            const d = (opt as { combination: DistCombination }).combination;
+            const d = (opt as unknown as { combination: DistCombination }).combination;
             updateLine(record.key, 'distributionSet', d.combinationName);
             if (d.glAccountDesc) updateLine(record.key, 'distributionCombination', applyCompanySegment(d.glAccountDesc));
           }}
-          filterOption={false}
-          notFoundContent={val ? <span style={{ fontSize: 12, color: REDWOOD.neutral300 }}>No match</span> : null}
+          filterOption={(input, opt) => (opt as unknown as { searchText: string }).searchText.includes(input.toLowerCase())}
+          notFoundContent={<span style={{ fontSize: 12, color: REDWOOD.neutral300 }}>No match</span>}
         >
           <Input
             size="small"
@@ -5207,10 +5220,15 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       width: 240,
       render: (val: string, record: InvoiceLine) => (
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
+          {/* Uncontrolled: commits on blur (typing per keystroke re-rendered the
+              whole page); keyed on the committed value so header-description
+              auto-fill still re-seeds it. */}
           <Input.TextArea
             size="small"
-            value={val}
-            onChange={(e) => {
+            key={`linedesc-${record.key}-${val ?? ''}`}
+            defaultValue={val}
+            onBlur={(e) => {
+              if ((e.target.value ?? '') === (val ?? '')) return;
               setManuallyEditedDescLines((prev) => new Set(prev).add(record.key));
               updateLine(record.key, 'description', e.target.value);
             }}
@@ -5332,7 +5350,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       key: 'poNumber',
       width: 130,
       render: (val: string, record: InvoiceLine) => (
-        <Input size="small" value={val} onChange={(e) => updateLine(record.key, 'poNumber', e.target.value)} variant="borderless" placeholder="" disabled={isReadOnly} suffix={<SearchOutlined style={{ color: REDWOOD.neutral300, fontSize: 11 }} />} />
+        <Input size="small" key={`poNumber-${record.key}-${val ?? ''}`} defaultValue={val} onBlur={(e) => updateLine(record.key, 'poNumber', e.target.value)} variant="borderless" placeholder="" disabled={isReadOnly} suffix={<SearchOutlined style={{ color: REDWOOD.neutral300, fontSize: 11 }} />} />
       ),
     },
     {
@@ -5341,7 +5359,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       key: 'poLine',
       width: 80,
       render: (val: string, record: InvoiceLine) => (
-        <Input size="small" value={val} onChange={(e) => updateLine(record.key, 'poLine', e.target.value)} variant="borderless" disabled={isReadOnly} />
+        <Input size="small" key={`poLine-${record.key}-${val ?? ''}`} defaultValue={val} onBlur={(e) => updateLine(record.key, 'poLine', e.target.value)} variant="borderless" disabled={isReadOnly} />
       ),
     },
     {
@@ -5350,7 +5368,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       key: 'poSchedule',
       width: 100,
       render: (val: string, record: InvoiceLine) => (
-        <Input size="small" value={val} onChange={(e) => updateLine(record.key, 'poSchedule', e.target.value)} variant="borderless" disabled={isReadOnly} />
+        <Input size="small" key={`poSchedule-${record.key}-${val ?? ''}`} defaultValue={val} onBlur={(e) => updateLine(record.key, 'poSchedule', e.target.value)} variant="borderless" disabled={isReadOnly} />
       ),
     },
     {
@@ -5359,7 +5377,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       key: 'receiptNumber',
       width: 130,
       render: (val: string, record: InvoiceLine) => (
-        <Input size="small" value={val} onChange={(e) => updateLine(record.key, 'receiptNumber', e.target.value)} variant="borderless" disabled={isReadOnly} />
+        <Input size="small" key={`receiptNumber-${record.key}-${val ?? ''}`} defaultValue={val} onBlur={(e) => updateLine(record.key, 'receiptNumber', e.target.value)} variant="borderless" disabled={isReadOnly} />
       ),
     },
     {
@@ -5368,7 +5386,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       key: 'receiptLine',
       width: 100,
       render: (val: string, record: InvoiceLine) => (
-        <Input size="small" value={val} onChange={(e) => updateLine(record.key, 'receiptLine', e.target.value)} variant="borderless" disabled={isReadOnly} />
+        <Input size="small" key={`receiptLine-${record.key}-${val ?? ''}`} defaultValue={val} onBlur={(e) => updateLine(record.key, 'receiptLine', e.target.value)} variant="borderless" disabled={isReadOnly} />
       ),
     },
     {
@@ -5377,7 +5395,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       key: 'consumptionAdviceNumber',
       width: 190,
       render: (val: string, record: InvoiceLine) => (
-        <Input size="small" value={val} onChange={(e) => updateLine(record.key, 'consumptionAdviceNumber', e.target.value)} variant="borderless" disabled={isReadOnly} />
+        <Input size="small" key={`consumptionAdviceNumber-${record.key}-${val ?? ''}`} defaultValue={val} onBlur={(e) => updateLine(record.key, 'consumptionAdviceNumber', e.target.value)} variant="borderless" disabled={isReadOnly} />
       ),
     },
     {
@@ -5386,7 +5404,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       key: 'consumptionAdviceLine',
       width: 170,
       render: (val: string, record: InvoiceLine) => (
-        <Input size="small" value={val} onChange={(e) => updateLine(record.key, 'consumptionAdviceLine', e.target.value)} variant="borderless" disabled={isReadOnly} />
+        <Input size="small" key={`consumptionAdviceLine-${record.key}-${val ?? ''}`} defaultValue={val} onBlur={(e) => updateLine(record.key, 'consumptionAdviceLine', e.target.value)} variant="borderless" disabled={isReadOnly} />
       ),
     },
     {
@@ -5395,7 +5413,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       key: 'shipToLocation',
       width: 150,
       render: (val: string, record: InvoiceLine) => (
-        <Input size="small" value={val} onChange={(e) => updateLine(record.key, 'shipToLocation', e.target.value)} variant="borderless" disabled={isReadOnly} suffix={<SearchOutlined style={{ color: REDWOOD.neutral300, fontSize: 11 }} />} />
+        <Input size="small" key={`shipToLocation-${record.key}-${val ?? ''}`} defaultValue={val} onBlur={(e) => updateLine(record.key, 'shipToLocation', e.target.value)} variant="borderless" disabled={isReadOnly} suffix={<SearchOutlined style={{ color: REDWOOD.neutral300, fontSize: 11 }} />} />
       ),
     },
     {
@@ -5521,8 +5539,9 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
         <div>
           <Input
             size="small"
-            value={val}
-            onChange={(e) => updateLine(record.key, 'accrualAccount', e.target.value)}
+            key={`accrualAccount-${record.key}-${val ?? ''}`}
+            defaultValue={val}
+            onBlur={(e) => updateLine(record.key, 'accrualAccount', e.target.value)}
             variant="borderless"
             placeholder="e.g. 01-000-2200-0000-000"
             readOnly={isReadOnly}
@@ -8043,13 +8062,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
         ) : (
           <Table
             size="small"
-            dataSource={distCombinations.filter(d => {
-              const q = distLovSearch.toLowerCase();
-              return !q
-                || d.combinationName.toLowerCase().includes(q)
-                || (d.glAccountDesc || '').toLowerCase().includes(q)
-                || (d.description || '').toLowerCase().includes(q);
-            })}
+            dataSource={distLovFiltered}
             rowKey="combinationId"
             pagination={{ pageSize: 10, size: 'small', showTotal: t => `${t} combinations` }}
             onRow={d => ({
@@ -8285,8 +8298,8 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
                   <div>
                     <Input.TextArea
                       rows={5}
-                      value={pasteText}
-                      onChange={(e) => setPasteText(e.target.value)}
+                      defaultValue={pasteText}
+                      onBlur={(e) => setPasteText(e.target.value)}
                       placeholder={`Paste tab or comma separated data:\nItem, 1000, Office Supplies\nItem, 2500, IT Equipment\nFreight, 150, Shipping\n\nOr just amount and description:\n1000, Office Supplies\n2500, IT Equipment`}
                       style={{ fontFamily: 'monospace', fontSize: 12 }}
                     />
@@ -13014,10 +13027,13 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
         destroyOnClose
       >
         <Form.Item style={{ marginBottom: 0 }}>
+          {/* Uncontrolled (modal is destroyOnClose): committing the full setLines
+              rewrite per keystroke made typing here very slow. Blur fires before
+              OK, so the commit always lands before the modal closes. */}
           <Input.TextArea
             rows={5}
-            value={form.getFieldValue('description') || ''}
-            onChange={(e) => {
+            defaultValue={form.getFieldValue('description') || ''}
+            onBlur={(e) => {
               form.setFieldValue('description', e.target.value);
               // Also sync to non-manually-edited lines
               setLines((prev) => prev.map((line) => ({
@@ -13045,10 +13061,12 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
         width={500}
         destroyOnClose
       >
+        {/* Uncontrolled (modal is destroyOnClose): commits on blur, which fires
+            before the OK click reads lineDescModal.value. */}
         <Input.TextArea
           rows={5}
-          value={lineDescModal.value}
-          onChange={(e) => setLineDescModal((prev) => ({ ...prev, value: e.target.value }))}
+          defaultValue={lineDescModal.value}
+          onBlur={(e) => setLineDescModal((prev) => ({ ...prev, value: e.target.value }))}
           placeholder="Enter line description"
         />
       </Modal>
