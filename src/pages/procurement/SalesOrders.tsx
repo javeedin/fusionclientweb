@@ -6081,6 +6081,14 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
   const [branchSupplierSearchLoading, setBranchSupplierSearchLoading] = useState(false);
   const [selectedSupplierWithSites, setSelectedSupplierWithSites] = useState<any>(null);
   const [branchSupplierSitesModalOpen, setBranchSupplierSitesModalOpen] = useState(false);
+  // Supplier-search modal rows: memoized so typing in the (controlled) search box doesn't rebuild them per keystroke.
+  const branchSupplierRows = useMemo(() => branchSuppliers.map((s, i) => ({
+    key: i,
+    SupplierNumber: s.SupplierNumber,
+    SupplierName: s.SupplierName || s.Supplier,
+    SupplierStatus: s.SupplierStatus,
+    _source: s,
+  })), [branchSuppliers]);
   const [branchPoNeedByDate, setBranchPoNeedByDate] = useState<any>(dayjs().add(7, 'days'));
   const [orderTypeOpts, setOrderTypeOpts] = useState<any[]>([]);
   const [orderTypeLookup, setOrderTypeLookup] = useState<Map<string, any>>(new Map());
@@ -6469,6 +6477,12 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
   };
   const [itemModal, setItemModal] = useState<{ key: string; term: string; rows: any[] } | null>(null);
   const [itemFilter, setItemFilter] = useState('');
+  // Item-picker modal: filter stays controlled (drives the list), so memoize the filtered rows.
+  const itemModalRows = useMemo(() => {
+    if (!itemModal) return [] as any[];
+    const f = itemFilter.trim().toLowerCase();
+    return f ? itemModal.rows.filter(r => String(r.ItemNumber ?? '').toLowerCase().includes(f) || String(r.ItemDescription ?? '').toLowerCase().includes(f)) : itemModal.rows;
+  }, [itemModal, itemFilter]);
   const [ohLoading, setOhLoading] = useState(false);
   const searchTimer = useRef<Record<string, any>>({});
   const ccy = hdr.txnCurrency;
@@ -8313,10 +8327,12 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
     finally { setWorkBusy(null); }
   };
 
-  const totQty = lines.reduce((s, l) => s + num(l.qty), 0);
-  const totAmt = lines.reduce((s, l) => s + num(l.qty) * num(l.unitPrice), 0);
-  const lineTax = lines.reduce((s, l) => s + num(l.taxAmount), 0);
-  const totCharge = lines.reduce((s, l) => s + num(l.chargeAmount), 0);
+  const { totQty, totAmt, lineTax, totCharge } = useMemo(() => ({
+    totQty: lines.reduce((s, l) => s + num(l.qty), 0),
+    totAmt: lines.reduce((s, l) => s + num(l.qty) * num(l.unitPrice), 0),
+    lineTax: lines.reduce((s, l) => s + num(l.taxAmount), 0),
+    totCharge: lines.reduce((s, l) => s + num(l.chargeAmount), 0),
+  }), [lines]);
 
   const cols: ColumnsType<NewLine> = [
     { title: 'Line', width: 50, align: 'center', fixed: 'left', render: (_, __, i) => <Tag color="blue">{i + 1}</Tag> },
@@ -8918,7 +8934,8 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
                             {hdrEffActive?.segs.map(s => (
                               <Col xs={24} md={8} key={s.name}>
                                 <div style={{ fontSize: 12, color: REDWOOD.neutral600, marginBottom: 4 }}>{s.label}</div>
-                                <Input value={hdrEffVals[s.name] ?? ''} onChange={e => setHdrEffVals(v => ({ ...v, [s.name]: e.target.value }))} placeholder={s.name} style={{ marginBottom: 12 }} />
+                                <Input key={`hdreff-${s.name}-${hdrEffVals[s.name] ?? ''}`} defaultValue={hdrEffVals[s.name] ?? ''}
+                                  onBlur={e => { const val = e.target.value; setHdrEffVals(v => (v[s.name] ?? '') === val ? v : { ...v, [s.name]: val }); }} placeholder={s.name} style={{ marginBottom: 12 }} />
                               </Col>
                             ))}
                           </Row>
@@ -8938,11 +8955,13 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
                 <OrderSection icon={<CarOutlined />} title="Shipping & Packing Instructions" color={REDWOOD.teal}>
                   <Col xs={24} md={12}>
                     <div style={{ fontSize: 12, color: REDWOOD.neutral600, marginBottom: 4 }}>Packing Instructions</div>
-                    <Input.TextArea rows={2} value={shipPack.packing} onChange={e => setShipPack(s => ({ ...s, packing: e.target.value }))} placeholder="Packing instructions" style={{ marginBottom: 12 }} />
+                    <Input.TextArea rows={2} key={`shippack-packing-${shipPack.packing ?? ''}`} defaultValue={shipPack.packing}
+                      onBlur={e => { const val = e.target.value; setShipPack(s => s.packing === val ? s : { ...s, packing: val }); }} placeholder="Packing instructions" style={{ marginBottom: 12 }} />
                   </Col>
                   <Col xs={24} md={12}>
                     <div style={{ fontSize: 12, color: REDWOOD.neutral600, marginBottom: 4 }}>Shipping Instructions</div>
-                    <Input.TextArea rows={2} value={shipPack.shipping} onChange={e => setShipPack(s => ({ ...s, shipping: e.target.value }))} placeholder="Shipping instructions" style={{ marginBottom: 12 }} />
+                    <Input.TextArea rows={2} key={`shippack-shipping-${shipPack.shipping ?? ''}`} defaultValue={shipPack.shipping}
+                      onBlur={e => { const val = e.target.value; setShipPack(s => s.shipping === val ? s : { ...s, shipping: val }); }} placeholder="Shipping instructions" style={{ marginBottom: 12 }} />
                   </Col>
                   <Col xs={24} md={8}>
                     <div style={{ fontSize: 12, color: REDWOOD.neutral600, marginBottom: 4 }}>FOB Point</div>
@@ -9135,8 +9154,8 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
                             title: s.label, dataIndex: ['effVals', s.name], width: 150,
                             render: (_: any, l: NewLine) => {
                               const auto = s.name === effMeta?.lotSeg ? l.lot : s.name === effMeta?.costSeg ? (l.costUnit != null ? String(l.costUnit) : '') : /lot.?qty|qty/i.test(s.name) ? (l.qty != null ? String(l.qty) : '') : '';
-                              return <Input size="small" value={l.effVals?.[s.name] ?? ''} placeholder={auto ? `auto: ${auto}` : s.name}
-                                onChange={e => upd(l.key, { effVals: { ...l.effVals, [s.name]: e.target.value } })} />;
+                              return <Input size="small" key={`lineeff-${l.key}-${s.name}-${l.effVals?.[s.name] ?? ''}`} defaultValue={l.effVals?.[s.name] ?? ''} placeholder={auto ? `auto: ${auto}` : s.name}
+                                onBlur={e => { const val = e.target.value; if ((l.effVals?.[s.name] ?? '') !== val) upd(l.key, { effVals: { ...l.effVals, [s.name]: val } }); }} />;
                             },
                           })),
                         ]} />
@@ -9474,8 +9493,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
         title={<Space><SearchOutlined style={{ color: REDWOOD.primary }} /> Select item{itemModal ? <Tag color="blue">“{itemModal.term}”</Tag> : null}<Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>{itemModal?.rows.length ?? 0} matches — filter to narrow</Text></Space>}>
         <Input allowClear autoFocus prefix={<SearchOutlined />} placeholder="Filter by code or description" value={itemFilter} onChange={e => setItemFilter(e.target.value)} style={{ marginBottom: 10 }} />
         {itemModal && (() => {
-          const f = itemFilter.trim().toLowerCase();
-          const rows = f ? itemModal.rows.filter(r => String(r.ItemNumber ?? '').toLowerCase().includes(f) || String(r.ItemDescription ?? '').toLowerCase().includes(f)) : itemModal.rows;
+          const rows = itemModalRows;
           return <Table size="small" rowKey="ItemNumber" dataSource={rows} pagination={rows.length > 10 ? { pageSize: 10, size: 'small' } : false} scroll={{ y: 340 }}
             locale={{ emptyText: 'No items match the filter' }}
             onRow={rec => ({ style: { cursor: 'pointer' }, onClick: () => { const mk = itemModal.key; setItemModal(null); pickInlineItem(mk, rec.ItemNumber, rec); } })}
@@ -10020,13 +10038,7 @@ const NewOrderTab: React.FC<{ header: OrderHeader; initialDraft?: SoDraft; editO
             { title: 'Supplier Name', dataIndex: 'SupplierName', render: (v: any) => v || 'Unknown' },
             { title: 'Status', dataIndex: 'SupplierStatus', width: 80, render: (v: any) => v ? <Tag color="green">{v}</Tag> : <Tag>—</Tag> },
           ]}
-          dataSource={branchSuppliers.map((s, i) => ({
-            key: i,
-            SupplierNumber: s.SupplierNumber,
-            SupplierName: s.SupplierName || s.Supplier,
-            SupplierStatus: s.SupplierStatus,
-            _source: s,
-          }))}
+          dataSource={branchSupplierRows}
           pagination={false}
           onRow={(record) => ({
             onClick: () => {
