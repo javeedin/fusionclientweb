@@ -19,13 +19,14 @@
 --   1. Datafix: point RR_FA_BOOK_CONTROLS.LEDGER_ID at the real id
 --      from RR_LEDGERS (matched by name) where it is NULL or 1.
 --      Future FA journals then carry the right ledger from creation.
---   2. RR_POST_JOURNAL: resolve the ledger in stages —
---        a) period rows for the header's LEDGER_ID;
---        b) none found -> resolve the id from RR_LEDGERS by the
---           header's LEDGER_NAME and retry (covers journals already
---           stored with LEDGER_ID = 1);
---        c) still none -> any-ledger match (pre-138 behavior) so a
---           bad stored id degrades gracefully instead of blocking.
+--   2. RR_POST_JOURNAL: resolve the ledger NAME-FIRST —
+--        a) take the journal's LEDGER_NAME and get the real
+--           LEDGER_ID from RR_LEDGERS, then check the period under
+--           that id (covers journals stored with LEDGER_ID = 1);
+--        b) name missing or not in RR_LEDGERS -> use the header's
+--           stored LEDGER_ID;
+--        c) still no period rows -> any-ledger match (pre-138
+--           behavior) so bad data degrades gracefully.
 --      Everything outside the period check is unchanged from 138.
 -- ============================================================
 
@@ -153,34 +154,26 @@ BEGIN
     END IF;
 
     -- ── 4b. Period is Open for this ledger? ───────────────────────────────────
-    -- Stage a: rows for the header's LEDGER_ID.
-    -- Stage b: none found -> resolve the id from RR_LEDGERS by LEDGER_NAME and
-    --          retry (journals created with a placeholder id, e.g. 1).
-    -- Stage c: still none -> any-ledger match, the pre-138 behavior.
+    -- Ledger resolution is NAME-FIRST: take the journal's LEDGER_NAME, get the
+    -- real LEDGER_ID from RR_LEDGERS, and check the period under that id.
+    -- The header's stored LEDGER_ID is only a fallback (name missing or not in
+    -- RR_LEDGERS); last resort is the any-ledger match (pre-138 behavior).
     IF v_period_name IS NOT NULL
        AND REGEXP_LIKE(v_period_name, '^[A-Z][a-z]{2}-[0-9]{2}$')
     THEN
-        check_period(v_ledger_id);
-
-        IF v_period_rows = 0 AND v_ledger_name IS NOT NULL THEN
-            DECLARE
-                v_resolved_id NUMBER;
+        IF v_ledger_name IS NOT NULL THEN
             BEGIN
                 SELECT ledger_id
-                INTO   v_resolved_id
+                INTO   v_ledger_id
                 FROM   rr_ledgers
                 WHERE  UPPER(ledger_name) = UPPER(v_ledger_name)
                 AND    ROWNUM = 1;
-
-                IF v_resolved_id IS NOT NULL AND
-                   (v_ledger_id IS NULL OR v_resolved_id != v_ledger_id) THEN
-                    v_ledger_id := v_resolved_id;
-                    check_period(v_ledger_id);
-                END IF;
             EXCEPTION
-                WHEN NO_DATA_FOUND THEN NULL;
+                WHEN NO_DATA_FOUND THEN NULL;   -- keep the header's stored id
             END;
         END IF;
+
+        check_period(v_ledger_id);
 
         IF v_period_rows = 0 AND v_ledger_id IS NOT NULL THEN
             check_period(NULL);   -- last resort: any ledger
