@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Layout, Card, Typography, Breadcrumb, Tabs, Form, Input, Select,
   DatePicker, Button, Table, Tag, Row, Col, Space, Divider,
@@ -876,8 +876,64 @@ const RegisterDetail: React.FC<{
 
   const isClosed   = register.status !== 'ACTIVE';
   const noBalance     = register.balance <= 0;
-  const totalSuspense = transactions.reduce((s, t) => s + (t.suspenseAmount || 0), 0);
+  const totalSuspense = useMemo(
+    () => transactions.reduce((s, t) => s + (t.suspenseAmount || 0), 0),
+    [transactions],
+  );
   const balanceWithSuspense = register.balance - totalSuspense;
+
+  // ── Memoized transaction search filter + reference grouping ────
+  const filteredTxns = useMemo(() => {
+    const q = txnSearch.trim().toLowerCase();
+    return q
+      ? transactions.filter(t =>
+          (t.referenceNo             ?? '').toLowerCase().includes(q) ||
+          (t.transactionType         ?? '').toLowerCase().includes(q) ||
+          (t.expenseType             ?? '').toLowerCase().includes(q) ||
+          (t.comments                ?? '').toLowerCase().includes(q) ||
+          (t.employeeName            ?? '').toLowerCase().includes(q) ||
+          (t.createdBy               ?? '').toLowerCase().includes(q) ||
+          (t.postingStatus           ?? '').toLowerCase().includes(q) ||
+          (t.transactionDate         ?? '').toLowerCase().includes(q) ||
+          (t.accountingPeriod        ?? '').toLowerCase().includes(q) ||
+          (t.currency                ?? '').toLowerCase().includes(q) ||
+          (t.chargeAccountDesc       ?? '').toLowerCase().includes(q) ||
+          (t.accountingDate          ?? '').toLowerCase().includes(q) ||
+          (t.receiptStatus           ?? '').toLowerCase().includes(q) ||
+          String(t.transactionId     ?? '').includes(q) ||
+          String(t.lineNumber        ?? '').includes(q) ||
+          String(t.bankTxnId         ?? '').includes(q) ||
+          String(t.debitAmount       ?? '').includes(q) ||
+          String(t.creditAmount      ?? '').includes(q) ||
+          String(t.suspenseAmount    ?? '').includes(q) ||
+          String(t.originalSuspenseAmount ?? '').includes(q) ||
+          String(t.runningBalance    ?? '').includes(q)
+        )
+      : transactions;
+  }, [transactions, txnSearch]);
+
+  const groupedRows = useMemo(() => {
+    const seenRefs = new Set<string>();
+    let grpIdx = 0;
+    const rows: TxnRow[] = [];
+    for (const txn of filteredTxns) {
+      if (!txn.referenceNo) { rows.push(txn); continue; }
+      if (seenRefs.has(txn.referenceNo)) continue;
+      seenRefs.add(txn.referenceNo);
+      const lines = filteredTxns.filter(t => t.referenceNo === txn.referenceNo);
+      if (lines.length === 1) { rows.push(lines[0]); continue; }
+      rows.push({
+        ...lines[0],
+        transactionId: -(++grpIdx),
+        __group: true,
+        debitAmount:    lines.reduce((s, l) => s + (l.debitAmount    || 0), 0),
+        creditAmount:   lines.reduce((s, l) => s + (l.creditAmount   || 0), 0),
+        suspenseAmount: lines.reduce((s, l) => s + (l.suspenseAmount || 0), 0),
+        children: lines.map(l => ({ ...l, __childOf: txn.referenceNo! })),
+      });
+    }
+    return rows;
+  }, [filteredTxns]);
 
   // ── Resolve charge account combination + description for table ─
   useEffect(() => {
@@ -3117,31 +3173,7 @@ const RegisterDetail: React.FC<{
       {/* Action buttons */}
       {(() => {
         const q = txnSearch.trim().toLowerCase();
-        const filteredTxns = q
-          ? transactions.filter(t =>
-              (t.referenceNo             ?? '').toLowerCase().includes(q) ||
-              (t.transactionType         ?? '').toLowerCase().includes(q) ||
-              (t.expenseType             ?? '').toLowerCase().includes(q) ||
-              (t.comments                ?? '').toLowerCase().includes(q) ||
-              (t.employeeName            ?? '').toLowerCase().includes(q) ||
-              (t.createdBy               ?? '').toLowerCase().includes(q) ||
-              (t.postingStatus           ?? '').toLowerCase().includes(q) ||
-              (t.transactionDate         ?? '').toLowerCase().includes(q) ||
-              (t.accountingPeriod        ?? '').toLowerCase().includes(q) ||
-              (t.currency                ?? '').toLowerCase().includes(q) ||
-              (t.chargeAccountDesc       ?? '').toLowerCase().includes(q) ||
-              (t.accountingDate          ?? '').toLowerCase().includes(q) ||
-              (t.receiptStatus           ?? '').toLowerCase().includes(q) ||
-              String(t.transactionId     ?? '').includes(q) ||
-              String(t.lineNumber        ?? '').includes(q) ||
-              String(t.bankTxnId         ?? '').includes(q) ||
-              String(t.debitAmount       ?? '').includes(q) ||
-              String(t.creditAmount      ?? '').includes(q) ||
-              String(t.suspenseAmount    ?? '').includes(q) ||
-              String(t.originalSuspenseAmount ?? '').includes(q) ||
-              String(t.runningBalance    ?? '').includes(q)
-            )
-          : transactions;
+        // filteredTxns / groupedRows are memoized at the top of the component
       const _content = (<>
       {/* ── Toolbar ── */}
       <div style={{
@@ -3286,27 +3318,8 @@ const RegisterDetail: React.FC<{
         </Space>
       </div>
 
-      {/* Transactions table — grouped by reference */}
+      {/* Transactions table — grouped by reference (groupedRows memoized above) */}
       {(() => {
-        const seenRefs = new Set<string>();
-        let grpIdx = 0;
-        const groupedRows: TxnRow[] = [];
-        for (const txn of filteredTxns) {
-          if (!txn.referenceNo) { groupedRows.push(txn); continue; }
-          if (seenRefs.has(txn.referenceNo)) continue;
-          seenRefs.add(txn.referenceNo);
-          const lines = filteredTxns.filter(t => t.referenceNo === txn.referenceNo);
-          if (lines.length === 1) { groupedRows.push(lines[0]); continue; }
-          groupedRows.push({
-            ...lines[0],
-            transactionId: -(++grpIdx),
-            __group: true,
-            debitAmount:    lines.reduce((s, l) => s + (l.debitAmount    || 0), 0),
-            creditAmount:   lines.reduce((s, l) => s + (l.creditAmount   || 0), 0),
-            suspenseAmount: lines.reduce((s, l) => s + (l.suspenseAmount || 0), 0),
-            children: lines.map(l => ({ ...l, __childOf: txn.referenceNo! })),
-          });
-        }
         return (
           <Table<TxnRow>
             dataSource={groupedRows}
@@ -4069,41 +4082,47 @@ const RegisterDetail: React.FC<{
                       )}
                     />
 
-                    {/* Amount */}
+                    {/* Amount — uncontrolled; committed on blur to avoid per-keystroke re-renders */}
                     <InputNumber
                       size="small"
                       style={{ width: '100%' }}
                       precision={2}
                       min={0}
                       placeholder="0.00"
-                      value={line.amount ?? undefined}
-                      onChange={v => updateLine(line.key, { amount: v as number | null })}
+                      defaultValue={line.amount ?? undefined}
+                      onBlur={e => {
+                        const raw = e.target.value.replace(/,/g, '').trim();
+                        const num = raw === '' ? null : Number(raw);
+                        updateLine(line.key, { amount: num == null || Number.isNaN(num) ? null : num });
+                      }}
                     />
 
-                    {/* Paid To */}
+                    {/* Paid To — uncontrolled; committed on blur */}
                     <Input
                       size="small"
                       placeholder="Paid to"
-                      value={line.paidTo}
-                      onChange={e => updateLine(line.key, { paidTo: e.target.value })}
+                      defaultValue={line.paidTo}
+                      onBlur={e => updateLine(line.key, { paidTo: e.target.value })}
                     />
 
-                    {/* Description */}
+                    {/* Description — uncontrolled; committed on blur */}
                     <Input
                       size="small"
                       placeholder="Description"
-                      value={line.description}
-                      onChange={e => updateLine(line.key, { description: e.target.value })}
+                      defaultValue={line.description}
+                      onBlur={e => updateLine(line.key, { description: e.target.value })}
                     />
 
                     {/* Account (code + desc stacked) */}
                     <div>
                       <Space.Compact size="small" style={{ width: '100%' }}>
+                        {/* uncontrolled + keyed: re-seeds when Expense Type select or COA browser fills the account */}
                         <Input
+                          key={`exp-acct-${line.key}-${line.chargeAccountDesc ?? ''}`}
                           size="small"
                           placeholder="Auto-filled"
-                          value={line.chargeAccountDesc}
-                          onChange={e => updateLine(line.key, { chargeAccountDesc: e.target.value })}
+                          defaultValue={line.chargeAccountDesc}
+                          onBlur={e => updateLine(line.key, { chargeAccountDesc: e.target.value })}
                           style={{ width: 'calc(100% - 28px)' }}
                         />
                         <Tooltip title="Browse accounts">
@@ -4366,20 +4385,27 @@ const RegisterDetail: React.FC<{
                       </>
                     )}
                   />
+                  {/* Amount / Paid to / Description — uncontrolled; committed on blur to avoid per-keystroke re-renders */}
                   <InputNumber size="small" style={{ width: '100%' }} precision={2} min={0} placeholder="0.00"
-                    value={line.amount ?? undefined}
-                    onChange={v => updateConvertLine(line.key, { amount: v as number | null })}
+                    defaultValue={line.amount ?? undefined}
+                    onBlur={e => {
+                      const raw = e.target.value.replace(/,/g, '').trim();
+                      const num = raw === '' ? null : Number(raw);
+                      updateConvertLine(line.key, { amount: num == null || Number.isNaN(num) ? null : num });
+                    }}
                   />
-                  <Input size="small" placeholder="Paid to" value={line.paidTo}
-                    onChange={e => updateConvertLine(line.key, { paidTo: e.target.value })}
+                  <Input size="small" placeholder="Paid to" defaultValue={line.paidTo}
+                    onBlur={e => updateConvertLine(line.key, { paidTo: e.target.value })}
                   />
-                  <Input size="small" placeholder="Description" value={line.description}
-                    onChange={e => updateConvertLine(line.key, { description: e.target.value })}
+                  <Input size="small" placeholder="Description" defaultValue={line.description}
+                    onBlur={e => updateConvertLine(line.key, { description: e.target.value })}
                   />
                   <div>
                     <Space.Compact size="small" style={{ width: '100%' }}>
-                      <Input size="small" placeholder="Auto-filled" value={line.chargeAccountDesc}
-                        onChange={e => updateConvertLine(line.key, { chargeAccountDesc: e.target.value })}
+                      {/* uncontrolled + keyed: re-seeds when Expense Type select or COA browser fills the account */}
+                      <Input key={`cv-acct-${line.key}-${line.chargeAccountDesc ?? ''}`}
+                        size="small" placeholder="Auto-filled" defaultValue={line.chargeAccountDesc}
+                        onBlur={e => updateConvertLine(line.key, { chargeAccountDesc: e.target.value })}
                         style={{ width: 'calc(100% - 28px)' }}
                       />
                       <Tooltip title="Browse accounts">
@@ -5028,11 +5054,12 @@ const RegisterDetail: React.FC<{
             {!reverseBankLoading && reverseScenario !== 'bank_void' && (
               <div style={{ marginBottom: 16 }}>
                 <Text style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>Reason / Comments</Text>
+                {/* uncontrolled; committed on blur — modal is destroyOnClose and reverseComments is reset on open */}
                 <Input.TextArea
                   rows={2}
                   placeholder="e.g. Wrong amount entered — reversing"
-                  value={reverseComments}
-                  onChange={e => setReverseComments(e.target.value)}
+                  defaultValue={reverseComments}
+                  onBlur={e => setReverseComments(e.target.value)}
                 />
               </div>
             )}
