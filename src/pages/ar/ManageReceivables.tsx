@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Layout, Card, Form, Select, Input, Button, Space, Typography, Table, Tag,
   Row, Col, Breadcrumb, Tooltip, DatePicker, message, Tabs, Divider, InputNumber,
@@ -429,12 +429,12 @@ const ManageReceivables: React.FC = () => {
   const [lovSelected,   setLovSelected]   = useState<CustomerOption | null>(null);
   const lovFetched = useRef(false);
 
-  const lovRows = lovSearch.trim()
-    ? lovAllRows.filter(c => {
-        const q = lovSearch.trim().toUpperCase();
-        return c.accountName.toUpperCase().includes(q) || c.accountNumber.toUpperCase().includes(q);
-      })
-    : lovAllRows;
+  const lovRows = useMemo(() => {
+    if (!lovSearch.trim()) return lovAllRows;
+    const q = lovSearch.trim().toUpperCase();
+    return lovAllRows.filter(c =>
+      c.accountName.toUpperCase().includes(q) || c.accountNumber.toUpperCase().includes(q));
+  }, [lovSearch, lovAllRows]);
 
   const fetchAllCustomers = () => {
     if (lovFetched.current) return;
@@ -521,6 +521,19 @@ const ManageReceivables: React.FC = () => {
   const [distRows,    setDistRows]    = useState<DistributionRow[]>([]);
   const [distTxnId,   setDistTxnId]   = useState<number>(0);
   const [distSearch,  setDistSearch]  = useState('');
+
+  // Filtered rows for the Distributions modal (memoized — avoids re-filtering per keystroke elsewhere)
+  const filteredDistRows = useMemo(() => {
+    if (!distSearch.trim()) return distRows;
+    const q = distSearch.toLowerCase();
+    return distRows.filter(r =>
+      r.accountClass.toLowerCase().includes(q) ||
+      r.accountCombination.toLowerCase().includes(q) ||
+      r.accountCombinationDesc.toLowerCase().includes(q) ||
+      r.comments.toLowerCase().includes(q) ||
+      String(r.lineNumber ?? '').includes(q)
+    );
+  }, [distRows, distSearch]);
 
   const openDistributions = (txnId: number) => {
     setDistTxnId(txnId);
@@ -1028,6 +1041,35 @@ const ManageReceivables: React.FC = () => {
 
   // Grid-level quick filter for search results
   const [gridFilter, setGridFilter] = useState('');
+
+  // Filtered search-results grid rows (memoized — avoids re-filtering on every keystroke elsewhere)
+  const filteredSearchRows = useMemo(() => {
+    const q = gridFilter.trim().toLowerCase();
+    if (!q) return searchRows;
+    return searchRows.filter(r => {
+      const amt = r.enteredAmount ?? 0;
+      const amtStr = fmt(amt);                       // "1,234.56"
+      const amtRaw = String(amt);                    // "1234.56"
+      return (
+        (r.transactionNumber    || '').toLowerCase().includes(q) ||
+        (r.billToCustomerName   || '').toLowerCase().includes(q) ||
+        (r.billToCustomerNumber || '').toLowerCase().includes(q) ||
+        (r.transactionSource    || '').toLowerCase().includes(q) ||
+        (r.crossReference       || '').toLowerCase().includes(q) ||
+        (r.purchaseOrder        || '').toLowerCase().includes(q) ||
+        (r.transactionClass     || '').toLowerCase().includes(q) ||
+        (r.transactionType      || '').toLowerCase().includes(q) ||
+        (r.invoiceCurrencyCode  || '').toLowerCase().includes(q) ||
+        (r.invoiceStatus        || '').toLowerCase().includes(q) ||
+        (r.syncStatus           || '').toLowerCase().includes(q) ||
+        (r.businessUnit         || '').toLowerCase().includes(q) ||
+        (r.transactionDate      || '').toLowerCase().includes(q) ||
+        (r.accountingDate       || '').toLowerCase().includes(q) ||
+        amtStr.includes(q) ||
+        amtRaw.includes(q)
+      );
+    });
+  }, [gridFilter, searchRows]);
 
   // ── Load business units on mount ───────────────────────────────────────────
   useEffect(() => {
@@ -1574,10 +1616,18 @@ const ManageReceivables: React.FC = () => {
       </Row>
     );
 
+    // Uncontrolled (blur-commit) to avoid re-rendering every open tab per keystroke.
+    // key re-seeds the input when the committed value changes externally (invoice load, LOV auto-fill).
     const inp = (f: keyof ARInvoiceDraft, placeholder = '') => (
-      <Input size="small" style={{ fontSize: 12 }} value={draft[f] as string}
+      <Input size="small" style={{ fontSize: 12 }}
+        key={`${String(f)}-${tabKey}-${(draft[f] as string) ?? ''}`}
+        defaultValue={draft[f] as string}
         placeholder={placeholder} readOnly={isLocked}
-        onChange={e => !isLocked && updateDraft(tabKey, { [f]: e.target.value } as any)} />
+        onBlur={e => {
+          if (isLocked) return;
+          if ((e.target.value ?? '') === ((draft[f] as string) ?? '')) return;
+          updateDraft(tabKey, { [f]: e.target.value } as any);
+        }} />
     );
 
     const sel = (f: keyof ARInvoiceDraft, options: string[], placeholder = '') => (
@@ -1600,11 +1650,13 @@ const ManageReceivables: React.FC = () => {
     const lineColumns: ColumnsType<ARInvoiceLine> = [
       { title: 'Line', dataIndex: 'lineNumber', width: 50, render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
       { title: 'Item', dataIndex: 'item', width: 130,
-        render: (v, r) => <Input size="small" style={{ fontSize: 12 }} value={v} readOnly={isLocked}
-          onChange={e => !isLocked && updateLine(tabKey, r.key, { item: e.target.value })} /> },
+        render: (v, r) => <Input size="small" style={{ fontSize: 12 }} key={`item-${r.key}-${v ?? ''}`}
+          defaultValue={v} readOnly={isLocked}
+          onBlur={e => !isLocked && (e.target.value ?? '') !== (v ?? '') && updateLine(tabKey, r.key, { item: e.target.value })} /> },
       { title: <span><span style={{ color: REDWOOD.primary }}>*</span> Description</span>, dataIndex: 'description', width: 180,
-        render: (v, r) => <Input size="small" style={{ fontSize: 12 }} value={v} readOnly={isLocked}
-          onChange={e => !isLocked && updateLine(tabKey, r.key, { description: e.target.value })} /> },
+        render: (v, r) => <Input size="small" style={{ fontSize: 12 }} key={`description-${r.key}-${v ?? ''}`}
+          defaultValue={v} readOnly={isLocked}
+          onBlur={e => !isLocked && (e.target.value ?? '') !== (v ?? '') && updateLine(tabKey, r.key, { description: e.target.value })} /> },
       { title: 'Memo Line', dataIndex: 'memoLine', width: 150,
         render: (v, r) => (
           <Select size="small" style={{ width: '100%', fontSize: 12 }} value={v || undefined}
@@ -1613,14 +1665,29 @@ const ManageReceivables: React.FC = () => {
             options={memoLines.map(m => ({ value: m, label: m }))} />
         ) },
       { title: 'UOM', dataIndex: 'uom', width: 80,
-        render: (v, r) => <Input size="small" style={{ fontSize: 12 }} value={v} readOnly={isLocked}
-          onChange={e => !isLocked && updateLine(tabKey, r.key, { uom: e.target.value })} /> },
+        render: (v, r) => <Input size="small" style={{ fontSize: 12 }} key={`uom-${r.key}-${v ?? ''}`}
+          defaultValue={v} readOnly={isLocked}
+          onBlur={e => !isLocked && (e.target.value ?? '') !== (v ?? '') && updateLine(tabKey, r.key, { uom: e.target.value })} /> },
       { title: <span><span style={{ color: REDWOOD.primary }}>*</span> Quantity</span>, dataIndex: 'quantity', width: 90,
-        render: (v, r) => <InputNumber size="small" style={{ width: '100%', fontSize: 12 }} value={v}
-          disabled={isLocked} onChange={val => !isLocked && updateLine(tabKey, r.key, { quantity: val })} /> },
+        render: (v, r) => <InputNumber size="small" style={{ width: '100%', fontSize: 12 }}
+          key={`quantity-${r.key}-${v ?? ''}`} defaultValue={v} disabled={isLocked}
+          onBlur={e => {
+            if (isLocked) return;
+            const raw = (e.target as HTMLInputElement).value.replace(/,/g, '').trim();
+            const val = raw === '' ? null : Number(raw);
+            if (val !== null && Number.isNaN(val)) return;
+            if ((val ?? null) !== (v ?? null)) updateLine(tabKey, r.key, { quantity: val });
+          }} /> },
       { title: <span><span style={{ color: REDWOOD.primary }}>*</span> Unit Price</span>, dataIndex: 'unitPrice', width: 110,
-        render: (v, r) => <InputNumber size="small" style={{ width: '100%', fontSize: 12 }} value={v}
-          precision={2} disabled={isLocked} onChange={val => !isLocked && updateLine(tabKey, r.key, { unitPrice: val })} /> },
+        render: (v, r) => <InputNumber size="small" style={{ width: '100%', fontSize: 12 }}
+          key={`unitPrice-${r.key}-${v ?? ''}`} defaultValue={v} precision={2} disabled={isLocked}
+          onBlur={e => {
+            if (isLocked) return;
+            const raw = (e.target as HTMLInputElement).value.replace(/,/g, '').trim();
+            const val = raw === '' ? null : Number(raw);
+            if (val !== null && Number.isNaN(val)) return;
+            if ((val ?? null) !== (v ?? null)) updateLine(tabKey, r.key, { unitPrice: val });
+          }} /> },
       { title: 'Amount', dataIndex: 'amount', width: 110, align: 'right',
         render: v => <Text style={{ fontSize: 12, fontFamily: 'monospace' }}>{fmt(v || 0)}</Text> },
       { title: 'Tax Classification', dataIndex: 'taxClassification', width: 150,
@@ -1631,8 +1698,9 @@ const ManageReceivables: React.FC = () => {
             options={taxCodes.map(t => ({ value: t, label: t }))} />
         ) },
       { title: 'Txn Business Category', dataIndex: 'transactionBusinessCategory', width: 160,
-        render: (v, r) => <Input size="small" style={{ fontSize: 12 }} value={v} readOnly={isLocked}
-          onChange={e => !isLocked && updateLine(tabKey, r.key, { transactionBusinessCategory: e.target.value })} /> },
+        render: (v, r) => <Input size="small" style={{ fontSize: 12 }} key={`txnBizCat-${r.key}-${v ?? ''}`}
+          defaultValue={v} readOnly={isLocked}
+          onBlur={e => !isLocked && (e.target.value ?? '') !== (v ?? '') && updateLine(tabKey, r.key, { transactionBusinessCategory: e.target.value })} /> },
       ...(!isLocked ? [{ title: '', key: 'del', width: 40,
         render: (_: any, r: ARInvoiceLine) => <Button size="small" danger icon={<DeleteOutlined />}
           onClick={() => removeLine(tabKey, r.key)} /> }] : []),
@@ -1967,16 +2035,22 @@ const ManageReceivables: React.FC = () => {
                           {field('Generate Bill',              sel('generateBill', ['Yes', 'No']))}
                           {field('Special Instructions',
                             <Input.TextArea size="small" style={{ fontSize: 12 }} rows={2}
-                              value={draft.specialInstructions}
-                              onChange={e => updateDraft(tabKey, { specialInstructions: e.target.value })} />)}
+                              key={`specialInstructions-${tabKey}-${draft.specialInstructions ?? ''}`}
+                              defaultValue={draft.specialInstructions}
+                              onBlur={e => (e.target.value ?? '') !== (draft.specialInstructions ?? '') &&
+                                updateDraft(tabKey, { specialInstructions: e.target.value })} />)}
                           {field('Comments',
                             <Input.TextArea size="small" style={{ fontSize: 12 }} rows={2}
-                              value={draft.comments}
-                              onChange={e => updateDraft(tabKey, { comments: e.target.value })} />)}
+                              key={`comments-${tabKey}-${draft.comments ?? ''}`}
+                              defaultValue={draft.comments}
+                              onBlur={e => (e.target.value ?? '') !== (draft.comments ?? '') &&
+                                updateDraft(tabKey, { comments: e.target.value })} />)}
                           {field('Structured Payment Reference',
                             <Input.TextArea size="small" style={{ fontSize: 12 }} rows={2}
-                              value={draft.structuredPaymentReference}
-                              onChange={e => updateDraft(tabKey, { structuredPaymentReference: e.target.value })} />)}
+                              key={`structuredPaymentReference-${tabKey}-${draft.structuredPaymentReference ?? ''}`}
+                              defaultValue={draft.structuredPaymentReference}
+                              onBlur={e => (e.target.value ?? '') !== (draft.structuredPaymentReference ?? '') &&
+                                updateDraft(tabKey, { structuredPaymentReference: e.target.value })} />)}
                           {field('PO Number', inp('poNumber'))}
                         </Col>
                         <Col span={8}>
@@ -2864,32 +2938,7 @@ const ManageReceivables: React.FC = () => {
 
                   {/* Results */}
                   {(() => {
-                    const q = gridFilter.trim().toLowerCase();
-                    const filtered = q
-                      ? searchRows.filter(r => {
-                          const amt = r.enteredAmount ?? 0;
-                          const amtStr = fmt(amt);                       // "1,234.56"
-                          const amtRaw = String(amt);                    // "1234.56"
-                          return (
-                            (r.transactionNumber    || '').toLowerCase().includes(q) ||
-                            (r.billToCustomerName   || '').toLowerCase().includes(q) ||
-                            (r.billToCustomerNumber || '').toLowerCase().includes(q) ||
-                            (r.transactionSource    || '').toLowerCase().includes(q) ||
-                            (r.crossReference       || '').toLowerCase().includes(q) ||
-                            (r.purchaseOrder        || '').toLowerCase().includes(q) ||
-                            (r.transactionClass     || '').toLowerCase().includes(q) ||
-                            (r.transactionType      || '').toLowerCase().includes(q) ||
-                            (r.invoiceCurrencyCode  || '').toLowerCase().includes(q) ||
-                            (r.invoiceStatus        || '').toLowerCase().includes(q) ||
-                            (r.syncStatus           || '').toLowerCase().includes(q) ||
-                            (r.businessUnit         || '').toLowerCase().includes(q) ||
-                            (r.transactionDate      || '').toLowerCase().includes(q) ||
-                            (r.accountingDate       || '').toLowerCase().includes(q) ||
-                            amtStr.includes(q) ||
-                            amtRaw.includes(q)
-                          );
-                        })
-                      : searchRows;
+                    const filtered = filteredSearchRows; // memoized at component level
                     return (
                       <Card size="small" style={{ borderRadius: 8 }}
                         title={
@@ -3353,13 +3402,19 @@ const ManageReceivables: React.FC = () => {
                   render: (v: number | null, r: SplitRow) => (
                     <InputNumber
                       size="small"
-                      value={v}
+                      key={`splitamt-${r.id}-${v ?? ''}`}
+                      defaultValue={v ?? undefined}
                       min={0.01}
                       precision={2}
                       style={{ width: '100%' }}
                       formatter={val => val !== undefined && val !== null ? String(val).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
                       parser={(val) => val ? parseFloat(val.replace(/,/g, '')) as any : null}
-                      onChange={val => updateSplitRow(r.id, 'amount', val)}
+                      onBlur={e => {
+                        const raw = (e.target as HTMLInputElement).value.replace(/,/g, '').trim();
+                        const val = raw === '' ? null : Number(raw);
+                        if (val !== null && Number.isNaN(val)) return;
+                        if ((val ?? null) !== (v ?? null)) updateSplitRow(r.id, 'amount', val);
+                      }}
                     />
                   ),
                 },
@@ -3431,17 +3486,7 @@ const ManageReceivables: React.FC = () => {
           style={{ marginBottom: 10, width: 480 }}
         />
         <Table<DistributionRow>
-          dataSource={(() => {
-            if (!distSearch.trim()) return distRows;
-            const q = distSearch.toLowerCase();
-            return distRows.filter(r =>
-              r.accountClass.toLowerCase().includes(q) ||
-              r.accountCombination.toLowerCase().includes(q) ||
-              r.accountCombinationDesc.toLowerCase().includes(q) ||
-              r.comments.toLowerCase().includes(q) ||
-              String(r.lineNumber ?? '').includes(q)
-            );
-          })()}
+          dataSource={filteredDistRows}
           rowKey="distributionId"
           loading={distLoading}
           size="small"
