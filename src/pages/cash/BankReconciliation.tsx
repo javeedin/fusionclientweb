@@ -1070,8 +1070,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
     setExtAssetDesc('');
     setExtOffsetDesc('');
     setExtTxnCreatedId(null);
-    setExtAcctRunning(false);
-    setExtAcctResult(null);
     const autoDir = (firstLine?.transactionCode === 'CR' ? 'CR' : 'DR') as 'DR' | 'CR';
     // CR = Money In = positive, DR = Money Out = negative
     const applySign = (abs: number) => autoDir === 'CR' ? Math.abs(abs) : -Math.abs(abs);
@@ -1186,8 +1184,6 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
     setExtAssetDesc('');
     setExtOffsetDesc('');
     setExtTxnCreatedId(null);
-    setExtAcctRunning(false);
-    setExtAcctResult(null);
 
     const dir: 'DR' | 'CR' = difference >= 0 ? 'DR' : 'CR';
     setExtTxnDirection(dir);
