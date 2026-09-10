@@ -1,5 +1,5 @@
 import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Resizable } from 'react-resizable';
 import 'react-resizable/css/styles.css';
@@ -847,14 +847,16 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
     return Math.round(enteredAmount * (journalData.conversionRate || 1) * 100) / 100;
   };
 
-  // Filter lines based on search
-  const filteredLines = lineSearchText
-    ? lines.filter(line =>
-        line.account.toLowerCase().includes(lineSearchText.toLowerCase()) ||
-        line.accountDescription.toLowerCase().includes(lineSearchText.toLowerCase()) ||
-        line.description.toLowerCase().includes(lineSearchText.toLowerCase())
-      )
-    : lines;
+  // Filter lines based on search — memoized so unrelated re-renders skip the scan
+  const filteredLines = useMemo(() => {
+    if (!lineSearchText) return lines;
+    const q = lineSearchText.toLowerCase();
+    return lines.filter(line =>
+      line.account.toLowerCase().includes(q) ||
+      line.accountDescription.toLowerCase().includes(q) ||
+      line.description.toLowerCase().includes(q)
+    );
+  }, [lines, lineSearchText]);
 
   // Add new journal
   const handleAddJournal = () => {
@@ -1117,8 +1119,8 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
     setEditingLineKey(null);
   };
 
-  // Calculate totals
-  const lineTotals = lines.reduce(
+  // Calculate totals — memoized
+  const lineTotals = useMemo(() => lines.reduce(
     (acc, line) => ({
       enteredDr: acc.enteredDr + (line.enteredDr || 0),
       enteredCr: acc.enteredCr + (line.enteredCr || 0),
@@ -1126,7 +1128,7 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
       accountedCr: acc.accountedCr + (line.accountedCr || 0),
     }),
     { enteredDr: 0, enteredCr: 0, accountedDr: 0, accountedCr: 0 }
-  );
+  ), [lines]);
 
   // Add new line
   const handleAddLine = () => {
@@ -2132,9 +2134,14 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
           align: 'right',
           onHeaderCell: () => ({ width: colWidths.enteredDr, onResize: handleColResize('enteredDr') } as any),
           render: (value, record) => (
+            // Uncontrolled: commits on blur so digits don't re-render the whole page
             <InputNumber
-              value={value}
-              onChange={(val) => updateLine(record.key, 'enteredDr', val)}
+              key={`dr-${record.key}-${value ?? ''}`}
+              defaultValue={value}
+              onBlur={(e) => {
+                const v = parseFloat(String(e.target.value).replace(/,/g, ''));
+                updateLine(record.key, 'enteredDr', Number.isFinite(v) ? v : null);
+              }}
               size="small"
               style={{ width: '100%' }}
               min={0}
@@ -2152,8 +2159,12 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
           onHeaderCell: () => ({ width: colWidths.enteredCr, onResize: handleColResize('enteredCr') } as any),
           render: (value, record) => (
             <InputNumber
-              value={value}
-              onChange={(val) => updateLine(record.key, 'enteredCr', val)}
+              key={`cr-${record.key}-${value ?? ''}`}
+              defaultValue={value}
+              onBlur={(e) => {
+                const v = parseFloat(String(e.target.value).replace(/,/g, ''));
+                updateLine(record.key, 'enteredCr', Number.isFinite(v) ? v : null);
+              }}
               size="small"
               style={{ width: '100%' }}
               min={0}
@@ -2275,9 +2286,12 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
 
                     <Col span={8}><Text style={{ fontSize: 13 }}>Description</Text></Col>
                     <Col span={16}>
+                      {/* Uncontrolled on purpose: committing per keystroke re-renders
+                          the whole 4k-line page (slow typing). State commits on blur. */}
                       <Input.TextArea
-                        value={batchData.description}
-                        onChange={(e) => {
+                        key={`batch-desc-${batchData.description}`}
+                        defaultValue={batchData.description}
+                        onBlur={(e) => {
                           const v = e.target.value;
                           setBatchData(prev => ({ ...prev, description: v }));
                           setJournalData(prev => ({ ...prev, description: v }));
@@ -2478,9 +2492,12 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
 
                     <Col span={10}><Text style={{ fontSize: 13 }}>Description</Text></Col>
                     <Col span={14}>
+                      {/* Uncontrolled: commits on blur; keyed on the committed value so
+                          external updates (load, batch-description mirror) re-seed it. */}
                       <Input.TextArea
-                        value={journalData.description}
-                        onChange={(e) => setJournalData({ ...journalData, description: e.target.value })}
+                        key={`journal-desc-${journalData.description}`}
+                        defaultValue={journalData.description}
+                        onBlur={(e) => setJournalData(prev => ({ ...prev, description: e.target.value }))}
                         size="small"
                         rows={2}
                         style={{ width: '100%' }}
@@ -2711,8 +2728,9 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
                     <Col span={12}><Text style={{ fontSize: 13 }}>Reference</Text></Col>
                     <Col span={12}>
                       <Input
-                        value={journalData.reference}
-                        onChange={(e) => setJournalData({ ...journalData, reference: e.target.value })}
+                        key={`journal-ref-${journalData.reference}`}
+                        defaultValue={journalData.reference}
+                        onBlur={(e) => setJournalData(prev => ({ ...prev, reference: e.target.value }))}
                         size="small"
                         style={{ width: '100%' }}
                       />
@@ -3823,11 +3841,13 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
           width={520}
           destroyOnClose
         >
+          {/* Uncontrolled (modal is destroyOnClose, so it re-seeds on open):
+              typing stays in the DOM; blur fires before OK, committing the value. */}
           <TextArea
             autoFocus
             rows={5}
-            value={descEditValue}
-            onChange={(e) => setDescEditValue(e.target.value)}
+            defaultValue={descEditValue}
+            onBlur={(e) => setDescEditValue(e.target.value)}
             placeholder="Enter line description..."
             maxLength={4000}
             showCount
