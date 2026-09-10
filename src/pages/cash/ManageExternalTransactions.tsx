@@ -927,10 +927,12 @@ const ExternalTxnForm: React.FC<{
 
   // Once a BU is selected, restrict to that BU's banks — show NONE if it has
   // none associated (don't fall back to the full list). Show all only when no
-  // BU is selected.
-  const filteredBankAccounts = selectedBu
-    ? (buBankMap[selectedBu] || []).slice().sort().map(n => ({ label: n, value: n }))
-    : bankAccounts;
+  // BU is selected. Memoized: this runs in the render body of a large form.
+  const filteredBankAccounts = useMemo(() => (
+    selectedBu
+      ? (buBankMap[selectedBu] || []).slice().sort().map(n => ({ label: n, value: n }))
+      : bankAccounts
+  ), [selectedBu, buBankMap, bankAccounts]);
 
   const updateExtLine = (idx: number, field: string, value: any) =>
     setExtTxnLines(prev => prev.map((l, i) => i === idx ? { ...l, [field]: value } : l));
@@ -2073,15 +2075,22 @@ const ExternalTxnForm: React.FC<{
                 Inverse Rate (AED→{watchedCurrency || 'FCY'}){isForeignCurrency && <span style={{ color: '#ff4d4f', marginLeft: 2 }}>*</span>}
               </div>
               <div className="ext-val">
+                {/* Uncontrolled on purpose: a controlled input here re-renders the
+                    whole ExtTxnForm on every keystroke (slow typing). State is
+                    committed on blur; the key remounts the input when the committed
+                    value changes externally (BMS apply, AED auto-rate, rate typing). */}
                 <InputNumber
                   variant="borderless" precision={10} min={0}
                   placeholder="e.g. 0.2724"
                   disabled={(isEdit && !editingEnabled) || !bankSelected || (saved && !editingEnabled)}
-                  value={inverseRateVal}
+                  key={`inverse-rate-${inverseRateVal ?? ''}`}
+                  defaultValue={inverseRateVal}
                   style={{ width: '100%' }}
-                  onChange={v => {
+                  onBlur={e => {
+                    const parsed = parseFloat(String(e.target.value).replace(/,/g, ''));
+                    const v = Number.isFinite(parsed) ? parsed : undefined;
                     skipInverseSync.current = true;
-                    setInverseRateVal(v ?? undefined);
+                    setInverseRateVal(v);
                     if (v && v > 0) form.setFieldValue('bankConversionRate', Math.round((1 / v) * 10000000000) / 10000000000);
                     else form.setFieldValue('bankConversionRate', undefined);
                     // Clear flag after React has flushed the watchedRate effect
@@ -2241,13 +2250,18 @@ const ExternalTxnForm: React.FC<{
                   title: <span style={{ fontSize: 11, color: REDWOOD.neutral600 }}>Description</span>,
                   width: 200,
                   render: (_: any, record: ExtTxnLine, idx: number) => (
+                    // Uncontrolled on purpose: a controlled input here re-renders
+                    // the whole ExtTxnForm on every keystroke (slow typing).
+                    // State is committed on blur, which fires before any button click.
                     <Input.TextArea
-                      size="small" value={record.description}
+                      size="small"
+                      key={`line-desc-${record.key}-${record.description ?? ''}`}
+                      defaultValue={record.description}
                       disabled={(isEdit && !editingEnabled) || !bankSelected || (saved && !editingEnabled)}
                       placeholder="Optional"
                       autoSize={{ minRows: 1, maxRows: 5 }}
                       style={{ resize: 'none', fontSize: 12 }}
-                      onChange={(e) => updateExtLine(idx, 'description', e.target.value)}
+                      onBlur={(e) => updateExtLine(idx, 'description', e.target.value)}
                     />
                   ),
                 },
@@ -2256,14 +2270,20 @@ const ExternalTxnForm: React.FC<{
                   width: 140,
                   align: 'right' as const,
                   render: (_: any, record: ExtTxnLine, idx: number) => (
+                    // Uncontrolled on purpose: a controlled input here re-renders
+                    // the whole ExtTxnForm on every keystroke (slow typing).
+                    // State is committed on blur; the key remounts the input when the
+                    // committed value changes externally (e.g. direction sign flip).
                     <InputNumber
                       size="small" style={{ width: '100%' }} precision={2}
-                      value={record.amount}
+                      key={`line-amount-${record.key}-${record.amount ?? ''}`}
+                      defaultValue={record.amount}
                       disabled={(isEdit && !editingEnabled) || !bankSelected || (saved && !editingEnabled)}
                       placeholder={txnDirection === 'DR' ? '+ve' : '-ve'}
-                      onChange={(v) => {
-                        if (v === null || v === undefined) { updateExtLine(idx, 'amount', v); return; }
-                        const signed = txnDirection === 'DR' ? Math.abs(Number(v)) : -Math.abs(Number(v));
+                      onBlur={(e) => {
+                        const v = parseFloat(String(e.target.value).replace(/,/g, ''));
+                        if (!Number.isFinite(v)) { updateExtLine(idx, 'amount', undefined); return; }
+                        const signed = txnDirection === 'DR' ? Math.abs(v) : -Math.abs(v);
                         updateExtLine(idx, 'amount', signed);
                       }}
                     />
@@ -2973,10 +2993,12 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
 
   // Bank accounts filtered by selected BU. Once a BU is selected, show only its
   // banks — NONE if it has none associated (don't fall back to all). Show all
-  // only when no BU is selected.
-  const filteredBankAccounts = selectedBU
-    ? (buBankMap[selectedBU] || []).slice().sort().map(n => ({ label: n, value: n }))
-    : allBankAccounts;
+  // only when no BU is selected. Memoized: this runs in the page render body.
+  const filteredBankAccounts = useMemo(() => (
+    selectedBU
+      ? (buBankMap[selectedBU] || []).slice().sort().map(n => ({ label: n, value: n }))
+      : allBankAccounts
+  ), [selectedBU, buBankMap, allBankAccounts]);
 
   // ── Account combinations (for description lookup in Create Accounting) ──────
   const [acctCombinations, setAcctCombinations] = useState<import('../../services/distCombinations.service').DistCombination[]>([]);
@@ -3048,6 +3070,28 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
   const [accountingSearchTerm, setAccountingSearchTerm] = useState('');
   const [accountingPageNum, setAccountingPageNum] = useState(1);
   const [accountingPageSize, setAccountingPageSize] = useState(10);
+
+  // Memoized filter + KPI stats for the "Show Accounting for All Trx" modal.
+  // These used to run inline in JSX (a 14-field text filter plus six extra
+  // .filter().length passes) on every keystroke of the modal search box.
+  const accountingStats = useMemo(() => {
+    const q = accountingSearchTerm.trim().toLowerCase();
+    const filtered = !q ? accountingAllData : accountingAllData.filter(r =>
+      [r.transactionId, r.transactionNumber, r.transactionDate, r.debitAccount, r.creditAccount,
+       r.debitAccountDesc, r.creditAccountDesc, r.glBatchId, r.glStatus, r.reference1, r.reference2,
+       r.reference3, r.reference4, r.reference5]
+      .some(v => String(v ?? '').toLowerCase().includes(q))
+    );
+    return {
+      filtered,
+      withAccounting:  filtered.filter(r => r.hasAccounting).length,
+      noAccounting:    filtered.filter(r => !r.hasAccounting).length,
+      balanced:        filtered.filter(r => r.hasAccounting && r.isBalanced).length,
+      unbalanced:      filtered.filter(r => r.hasAccounting && !r.isBalanced).length,
+      missingAccounts: filtered.filter(r => r.hasMissingAccounts).length,
+      amountMismatch:  filtered.filter(r => r.hasAmountMismatch).length,
+    };
+  }, [accountingAllData, accountingSearchTerm]);
 
   const modulePrefix = module === 'ap' ? '/ap' : '/cash';
 
@@ -4851,6 +4895,27 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
   const [createdByFilter,   setCreatedByFilter]   = useState<string>('');
   const [knownUsers,        setKnownUsers]        = useState<string[]>([]);
 
+  // Memoized results-grid filter: recon/accounting/created-by stage filters plus
+  // a 16-field text search. This used to run inline in JSX on every keystroke of
+  // the grid search box; memoizing keeps typing responsive.
+  const filteredTransactions = useMemo(() => {
+    let base = transactions;
+    if (reconStatusFilter === 'REC') base = base.filter(t => t.status === 'REC');
+    if (reconStatusFilter === 'UNR') base = base.filter(t => t.status !== 'REC');
+    if (acctStatusFilter === 'POSTED')     base = base.filter(t => t.accountingFlag === 'Y');
+    if (acctStatusFilter === 'NOT_POSTED') base = base.filter(t => t.accountingFlag !== 'Y');
+    if (createdByFilter) base = base.filter(t => t.createdBy === createdByFilter);
+    const q = gridSearch.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter(r =>
+      [r.externalTransactionId, r.transactionId, r.bankAccountName, r.businessUnitName,
+       r.referenceText, r.description, r.status, r.source, r.transactionType,
+       r.currencyCode, r.assetAccountCombination, r.offsetAccountCombination,
+       r.transactionDate, r.payeeName, r.checkNumber, r.reconReference]
+      .some(v => String(v ?? '').toLowerCase().includes(q))
+    );
+  }, [transactions, reconStatusFilter, acctStatusFilter, createdByFilter, gridSearch]);
+
   // Set created-by filter to logged user once auth context resolves
   useEffect(() => {
     if (currentUser && currentUser !== 'SYSTEM' && createdByFilter === '') {
@@ -4990,23 +5055,9 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
 
       {/* Results */}
       {hasSearched && (() => {
-        const q = gridSearch.trim().toLowerCase();
-        const filtered = (() => {
-          let base = transactions;
-          if (reconStatusFilter === 'REC') base = base.filter(t => t.status === 'REC');
-          if (reconStatusFilter === 'UNR') base = base.filter(t => t.status !== 'REC');
-          if (acctStatusFilter === 'POSTED')     base = base.filter(t => t.accountingFlag === 'Y');
-          if (acctStatusFilter === 'NOT_POSTED') base = base.filter(t => t.accountingFlag !== 'Y');
-          if (createdByFilter) base = base.filter(t => t.createdBy === createdByFilter);
-          if (!q) return base;
-          return base.filter(r =>
-            [r.externalTransactionId, r.transactionId, r.bankAccountName, r.businessUnitName,
-             r.referenceText, r.description, r.status, r.source, r.transactionType,
-             r.currencyCode, r.assetAccountCombination, r.offsetAccountCombination,
-             r.transactionDate, r.payeeName, r.checkNumber, r.reconReference]
-            .some(v => String(v ?? '').toLowerCase().includes(q))
-          );
-        })();
+        // Filtering is memoized (filteredTransactions) so typing in the grid
+        // search box doesn't re-run the 5-stage filter + 16-field text search.
+        const filtered = filteredTransactions;
         return (
           <Card style={{ borderRadius: 8, border: `1px solid ${REDWOOD.neutral200}` }}
             styles={{ body: { padding: 0 } }}
@@ -5591,21 +5642,9 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
             {accountingAllData.length === 0 ? (
               <Empty description="No accounting records found" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             ) : (() => {
-              // Filter data based on search term
-              const q = accountingSearchTerm.trim().toLowerCase();
-              const filtered = !q ? accountingAllData : accountingAllData.filter(r =>
-                [r.transactionId, r.transactionNumber, r.transactionDate, r.debitAccount, r.creditAccount,
-                 r.debitAccountDesc, r.creditAccountDesc, r.glBatchId, r.glStatus, r.reference1, r.reference2,
-                 r.reference3, r.reference4, r.reference5]
-                .some(v => String(v ?? '').toLowerCase().includes(q))
-              );
-
-              const withAccounting = filtered.filter(r => r.hasAccounting).length;
-              const noAccounting = filtered.filter(r => !r.hasAccounting).length;
-              const balanced = filtered.filter(r => r.hasAccounting && r.isBalanced).length;
-              const unbalanced = filtered.filter(r => r.hasAccounting && !r.isBalanced).length;
-              const missingAccounts = filtered.filter(r => r.hasMissingAccounts).length;
-              const amountMismatch = filtered.filter(r => r.hasAmountMismatch).length;
+              // Filter + KPI stats are memoized (accountingStats) so typing in
+              // the search box doesn't re-run seven passes over the data.
+              const { filtered, withAccounting, noAccounting, balanced, unbalanced, missingAccounts, amountMismatch } = accountingStats;
 
               return (
                 <>
