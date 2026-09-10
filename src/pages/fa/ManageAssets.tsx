@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
 import {
@@ -240,7 +240,8 @@ const AssetTabContent: React.FC<{
   };
 
   // Periods already posted for this asset (from deprn tab data)
-  const postedPeriods = new Set(deprn.map(r => normPeriod(r.periodName)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const postedPeriods = useMemo(() => new Set(deprn.map(r => normPeriod(r.periodName))), [deprn]);
   const isPosted = (period: string) => postedPeriods.has(normPeriod(period));
 
   const handleCreateDeprn = async () => {
@@ -330,10 +331,17 @@ const AssetTabContent: React.FC<{
   };
 
   // Derived unique option lists for filter dropdowns
-  const fyOptions     = Array.from(new Set(deprn.map(r => r.fiscalYear).filter(Boolean))).sort((a, b) => b.localeCompare(a));
-  const periodOptions = Array.from(new Set(deprn.map(r => r.periodName).filter(Boolean))).sort((a, b) => b.localeCompare(a));
+  const fyOptions     = useMemo(() => Array.from(new Set(deprn.map(r => r.fiscalYear).filter(Boolean))).sort((a, b) => b.localeCompare(a)), [deprn]);
+  const periodOptions = useMemo(() => Array.from(new Set(deprn.map(r => r.periodName).filter(Boolean))).sort((a, b) => b.localeCompare(a)), [deprn]);
 
-  const filteredDeprn = deprn
+  // Period options narrowed to the selected FY (falls back to all periods)
+  const fyPeriodOptions = useMemo(() => (
+    deprnFY
+      ? Array.from(new Set(deprn.filter(r => r.fiscalYear === deprnFY).map(r => r.periodName).filter(Boolean))).sort((a, b) => b.localeCompare(a))
+      : periodOptions
+  ), [deprn, deprnFY, periodOptions]);
+
+  const filteredDeprn = useMemo(() => deprn
     .filter(r =>
       (!deprnFY     || r.fiscalYear  === deprnFY) &&
       (!deprnPeriod || r.periodName  === deprnPeriod)
@@ -342,7 +350,7 @@ const AssetTabContent: React.FC<{
       const fyDiff = (a.fiscalYear || '').localeCompare(b.fiscalYear || '');
       if (fyDiff !== 0) return fyDiff;
       return (Number(a.periodNum) || 0) - (Number(b.periodNum) || 0);
-    });
+    }), [deprn, deprnFY, deprnPeriod]);
 
   const exportDeprnToExcel = () => {
     const data = filteredDeprn.map(r => ({
@@ -1007,10 +1015,10 @@ const AssetTabContent: React.FC<{
 
   const openAdjustDeprn = (record: DeprnRecord) => { setAdjustValue(''); setAdjustRecord(record); };
 
-  const handleSaveAdjust = async () => {
+  const handleSaveAdjust = async (valueOverride?: string) => {
     if (!adjustRecord) return;
     const book = books[0]?.bookTypeCode || asset.bookTypeCode || '';
-    const adj  = Number(adjustValue);
+    const adj  = Number(valueOverride ?? adjustValue);
     if (!book) { message.error('No book found for this asset'); return; }
     if (!adj || isNaN(adj)) { message.warning('Enter a non-zero adjustment amount'); return; }
     setAdjustSaving(true);
@@ -1688,10 +1696,7 @@ const AssetTabContent: React.FC<{
                 style={{ width: 140 }} value={deprnPeriod || undefined}
                 onChange={(v) => setDeprnPeriod(v || '')}
               >
-                {(deprnFY
-                  ? Array.from(new Set(deprn.filter(r => r.fiscalYear === deprnFY).map(r => r.periodName).filter(Boolean))).sort((a,b) => b.localeCompare(a))
-                  : periodOptions
-                ).map(p => <Option key={p} value={p}>{p}</Option>)}
+                {fyPeriodOptions.map(p => <Option key={p} value={p}>{p}</Option>)}
               </Select>
               {(deprnFY || deprnPeriod) && (
                 <Button size="small" onClick={() => { setDeprnFY(''); setDeprnPeriod(''); }}>
@@ -1843,7 +1848,7 @@ const AssetTabContent: React.FC<{
                         <Button disabled={adjustSaving} onClick={() => setAdjustRecord(null)}>Cancel</Button>
                         <Button type="primary" loading={adjustSaving} disabled={!adj}
                           style={{ background: '#CA7700', borderColor: '#CA7700' }}
-                          onClick={handleSaveAdjust}>
+                          onClick={() => handleSaveAdjust()}>
                           Apply Adjustment
                         </Button>
                       </Space>
@@ -1867,9 +1872,13 @@ const AssetTabContent: React.FC<{
                     size="large"
                     autoFocus
                     placeholder="e.g. 500 or -250"
-                    value={adjustValue}
-                    onChange={(e) => setAdjustValue(e.target.value)}
-                    onPressEnter={() => { if (adj) handleSaveAdjust(); }}
+                    defaultValue={adjustValue}
+                    onBlur={(e) => setAdjustValue(e.target.value)}
+                    onPressEnter={(e) => {
+                      const v = (e.target as HTMLInputElement).value;
+                      setAdjustValue(v);
+                      if (Number(v)) handleSaveAdjust(v);
+                    }}
                     prefix={<DollarOutlined style={{ color: '#CA7700' }} />}
                   />
                   <table style={{ width: '100%', marginTop: 16, fontSize: 12, borderCollapse: 'collapse' }}>
@@ -1955,8 +1964,8 @@ const AssetTabContent: React.FC<{
                     </div>
                     <div style={{ flex: 1, minWidth: 160 }}>
                       <div style={{ fontSize: 12, marginBottom: 4 }}><Text strong>Amount</Text></div>
-                      <Input type="number" size="middle" placeholder="e.g. 50000" value={costAdjAmount}
-                        onChange={e => setCostAdjAmount(e.target.value)} prefix={<DollarOutlined style={{ color: '#722ed1' }} />} />
+                      <Input type="number" size="middle" placeholder="e.g. 50000" defaultValue={costAdjAmount}
+                        onBlur={e => setCostAdjAmount(e.target.value)} prefix={<DollarOutlined style={{ color: '#722ed1' }} />} />
                     </div>
                     <div>
                       <div style={{ fontSize: 12, marginBottom: 4 }}><Text strong>Date</Text></div>
@@ -2073,17 +2082,23 @@ const AssetTabContent: React.FC<{
                           <>
                             <div>
                               <div style={{ fontSize: 12, marginBottom: 4 }}><Text strong>Proceeds of Sale</Text></div>
-                              <InputNumber value={retireProceeds} onChange={v => setRetireProceeds(v as number)} min={0} style={{ width: 150 }} prefix="AED" />
+                              <InputNumber defaultValue={retireProceeds ?? undefined} onBlur={e => {
+                                const v = parseFloat(String(e.target.value).replace(/,/g, ''));
+                                setRetireProceeds(Number.isFinite(v) ? v : null);
+                              }} min={0} style={{ width: 150 }} prefix="AED" />
                             </div>
                             <div style={{ minWidth: 160 }}>
                               <div style={{ fontSize: 12, marginBottom: 4 }}><Text strong>Sold To</Text></div>
-                              <Input value={retireSoldTo} onChange={e => setRetireSoldTo(e.target.value)} placeholder="Buyer name" />
+                              <Input defaultValue={retireSoldTo} onBlur={e => setRetireSoldTo(e.target.value)} placeholder="Buyer name" />
                             </div>
                           </>
                         )}
                         <div>
                           <div style={{ fontSize: 12, marginBottom: 4 }}><Text strong>Cost of Removal</Text></div>
-                          <InputNumber value={retireRemoval} onChange={v => setRetireRemoval(v as number)} min={0} style={{ width: 150 }} prefix="AED" />
+                          <InputNumber defaultValue={retireRemoval ?? undefined} onBlur={e => {
+                            const v = parseFloat(String(e.target.value).replace(/,/g, ''));
+                            setRetireRemoval(Number.isFinite(v) ? v : null);
+                          }} min={0} style={{ width: 150 }} prefix="AED" />
                         </div>
                       </div>
                       {/* Accounting preview */}
@@ -2099,10 +2114,14 @@ const AssetTabContent: React.FC<{
                                   <div><Text strong style={{ color: FA_COLOR }}>{l.lineType}</Text></div>
                                   <div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                                      <Input size="small" value={l.accountCombination}
+                                      <Input size="small"
+                                        key={`retire-line-acct-${idx}-${l.accountCombination ?? ''}`}
+                                        defaultValue={l.accountCombination}
                                         placeholder="01-00-00-…"
                                         status={!l.accountCombination ? 'error' : ''}
-                                        onChange={e => setRetireLineAccount(idx, e.target.value)}
+                                        onBlur={e => {
+                                          if ((e.target.value ?? '') !== (l.accountCombination ?? '')) setRetireLineAccount(idx, e.target.value);
+                                        }}
                                         style={{ fontFamily: 'monospace', fontSize: 11, flex: 1 }} />
                                       <Tooltip title="Edit account segments">
                                         <Button
@@ -2701,8 +2720,11 @@ const AssetTabContent: React.FC<{
               {attrFields.map(f => (
                 <Descriptions.Item key={f.key} label={f.label}>
                   <Input
-                    value={attrValues[f.key] ?? ''}
-                    onChange={e => handleAttrChange(f.key, e.target.value)}
+                    key={`attr-${f.key}-${attrValues[f.key] ?? ''}`}
+                    defaultValue={attrValues[f.key] ?? ''}
+                    onBlur={e => {
+                      if ((e.target.value ?? '') !== (attrValues[f.key] ?? '')) handleAttrChange(f.key, e.target.value);
+                    }}
                     placeholder={`Enter ${f.label}`}
                     allowClear
                     style={{ maxWidth: 320 }}
@@ -2885,16 +2907,18 @@ const AssetTabContent: React.FC<{
   // the LATEST posted period; NBV = Cost − Deprn Reserve. Falls back to the
   // freshly-fetched book, then the search record. Recomputes on every refresh
   // (and right after an adjustment, since the deprn grid reloads).
-  const dynMaxPc = deprn.length ? Math.max(...deprn.map(d => Number(d.periodCounter) || 0)) : null;
-  const dynReserve = dynMaxPc != null
-    ? deprn.filter(d => (Number(d.periodCounter) || 0) === dynMaxPc)
-           .reduce((s, d) => s + (parseFloat(d.deprnReserve) || 0), 0)
-    : (books[0]?.deprnReserve != null ? parseFloat(String(books[0].deprnReserve)) : (parseFloat(asset.deprnReserve) || 0));
-  const dynCost = books[0]?.cost != null ? parseFloat(String(books[0].cost)) : (parseFloat(asset.cost) || 0);
-  const dynNbv  = dynCost - dynReserve;
-  const dynReservePeriod = dynMaxPc != null
-    ? (deprn.find(d => (Number(d.periodCounter) || 0) === dynMaxPc)?.periodName || '')
-    : '';
+  const { dynReserve, dynCost, dynNbv, dynReservePeriod } = useMemo(() => {
+    const dynMaxPc = deprn.length ? Math.max(...deprn.map(d => Number(d.periodCounter) || 0)) : null;
+    const reserve = dynMaxPc != null
+      ? deprn.filter(d => (Number(d.periodCounter) || 0) === dynMaxPc)
+             .reduce((s, d) => s + (parseFloat(d.deprnReserve) || 0), 0)
+      : (books[0]?.deprnReserve != null ? parseFloat(String(books[0].deprnReserve)) : (parseFloat(asset.deprnReserve) || 0));
+    const cost = books[0]?.cost != null ? parseFloat(String(books[0].cost)) : (parseFloat(asset.cost) || 0);
+    const period = dynMaxPc != null
+      ? (deprn.find(d => (Number(d.periodCounter) || 0) === dynMaxPc)?.periodName || '')
+      : '';
+    return { dynReserve: reserve, dynCost: cost, dynNbv: cost - reserve, dynReservePeriod: period };
+  }, [deprn, books, asset]);
 
   const valuesApiContent = (
     <div style={{ maxWidth: 560, fontSize: 12 }}>
@@ -3889,7 +3913,7 @@ const ManageAssets: React.FC = () => {
   const [gridSearch,  setGridSearch]  = useState('');
   const [costFilter,  setCostFilter]  = useState(true);
 
-  const displayedRows = rows.filter(r => {
+  const displayedRows = useMemo(() => rows.filter(r => {
     if (costFilter && (parseFloat(r.cost) || 0) <= 0) return false;
     if (gridSearch) {
       const q = gridSearch.toLowerCase();
@@ -3904,10 +3928,10 @@ const ManageAssets: React.FC = () => {
       );
     }
     return true;
-  });
+  }), [rows, costFilter, gridSearch]);
 
-  const totalCost = displayedRows.reduce((s, r) => s + (parseFloat(r.cost) || 0), 0);
-  const totalNbv  = displayedRows.reduce((s, r) => s + (parseFloat(r.nbv)  || 0), 0);
+  const totalCost = useMemo(() => displayedRows.reduce((s, r) => s + (parseFloat(r.cost) || 0), 0), [displayedRows]);
+  const totalNbv  = useMemo(() => displayedRows.reduce((s, r) => s + (parseFloat(r.nbv)  || 0), 0), [displayedRows]);
 
   // Export assets grid to Excel
   const exportAssetsToExcel = () => {
