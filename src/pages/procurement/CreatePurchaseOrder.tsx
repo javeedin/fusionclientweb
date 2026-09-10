@@ -1,5 +1,5 @@
 import { buildApexUrl, buildCurrencyUrl, getFusionAuthHeaders } from '../../config/api.helper';
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
@@ -183,8 +183,10 @@ const InfoTile: React.FC<{ label: string; value: React.ReactNode; icon?: React.R
 );
 
 /* ─── Inline editable field ─────────────────────────── */
+// Uncontrolled: commits on blur (blur fires before button clicks). Keyed on the
+// committed value so external changes (async header load, defaulting) re-seed it.
 const InlineEdit: React.FC<{ value: string; onChange: (v: string) => void; placeholder?: string }> = ({ value, onChange, placeholder }) => (
-  <Input size="small" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder ?? '—'}
+  <Input size="small" key={`inline-${value ?? ''}`} defaultValue={value} onBlur={e => onChange(e.target.value)} placeholder={placeholder ?? '—'}
     variant="borderless"
     style={{ padding: 0, fontSize: 13, color: value ? C.text : C.textLight, width: '100%' }} />
 );
@@ -907,8 +909,10 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
   const [poNumDraft, setPoNumDraft]     = useState('');
 
   const startEditPoNum = () => { setPoNumDraft(header?.poNumber ?? ''); setEditingPoNum(true); };
-  const commitPoNum = () => {
-    const v = poNumDraft.trim();
+  // Optional override: Enter commits the input's live DOM value (no blur has
+  // fired yet, so poNumDraft state may be stale for the uncontrolled input).
+  const commitPoNum = (raw?: string) => {
+    const v = (raw ?? poNumDraft).trim();
     if (!v) { message.warning('Order number cannot be empty'); return; }
     patch({ poNumber: v });
     headerForm.setFieldValue('poNumber', v);
@@ -1069,9 +1073,11 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const subtotal   = lines.reduce((s, l) => s + l.lineTotal, 0);
-  const totalTax   = lines.reduce((s, l) => s + l.taxAmount, 0);
-  const grandTotal = lines.reduce((s, l) => s + l.netTotal,  0);
+  const { subtotal, totalTax, grandTotal } = useMemo(() => ({
+    subtotal:   lines.reduce((s, l) => s + l.lineTotal, 0),
+    totalTax:   lines.reduce((s, l) => s + l.taxAmount, 0),
+    grandTotal: lines.reduce((s, l) => s + l.netTotal,  0),
+  }), [lines]);
 
   // Get base currency from the selected procurement BU (ledgerCurrency)
   const baseCurrency = React.useMemo(() => {
@@ -1148,22 +1154,26 @@ const CreatePurchaseOrder: React.FC<{ onExit?: () => void; initialPo?: any; edit
 
   /* ─── Apportion engine (always in AED) ────────────── */
   const totalV = subtotal;
-  const totalQ = lines.reduce((s, l) => s + l.qty, 0);
-  const acqResults = lines.map(line => {
-    const chargeAmounts: Record<string, number> = {};   // AED accounted amounts
-    acqCharges.forEach(c => {
-      const accounted = getAccounted(c);
-      if      (c.apportionBasis === 'manual') chargeAmounts[c.key] = c.manualAmounts[line.key] ?? 0;
-      else if (c.apportionBasis === 'equal')  chargeAmounts[c.key] = lines.length > 0 ? accounted / lines.length : 0;
-      else if (c.apportionBasis === 'value')  chargeAmounts[c.key] = totalV > 0 ? (line.lineTotal / totalV) * accounted : 0;
-      else                                    chargeAmounts[c.key] = totalQ > 0 ? (line.qty      / totalQ) * accounted : 0;
+  const acqResults = useMemo(() => {
+    const totalQ = lines.reduce((s, l) => s + l.qty, 0);
+    return lines.map(line => {
+      const chargeAmounts: Record<string, number> = {};   // AED accounted amounts
+      acqCharges.forEach(c => {
+        const accounted = getAccounted(c);
+        if      (c.apportionBasis === 'manual') chargeAmounts[c.key] = c.manualAmounts[line.key] ?? 0;
+        else if (c.apportionBasis === 'equal')  chargeAmounts[c.key] = lines.length > 0 ? accounted / lines.length : 0;
+        else if (c.apportionBasis === 'value')  chargeAmounts[c.key] = totalV > 0 ? (line.lineTotal / totalV) * accounted : 0;
+        else                                    chargeAmounts[c.key] = totalQ > 0 ? (line.qty      / totalQ) * accounted : 0;
+      });
+      const totalCharges    = Object.values(chargeAmounts).reduce((s, v) => s + v, 0);
+      const landedCost      = line.lineTotal + totalCharges;
+      const landedUnitPrice = line.qty > 0 ? landedCost / line.qty : 0;
+      const pctChange       = line.price > 0 ? ((landedUnitPrice - line.price) / line.price) * 100 : 0;
+      return { ...line, chargeAmounts, totalCharges, landedCost, landedUnitPrice, pctChange };
     });
-    const totalCharges    = Object.values(chargeAmounts).reduce((s, v) => s + v, 0);
-    const landedCost      = line.lineTotal + totalCharges;
-    const landedUnitPrice = line.qty > 0 ? landedCost / line.qty : 0;
-    const pctChange       = line.price > 0 ? ((landedUnitPrice - line.price) / line.price) * 100 : 0;
-    return { ...line, chargeAmounts, totalCharges, landedCost, landedUnitPrice, pctChange };
-  });
+    // getAccounted reads acqFxRates; totalV derives from lines.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, acqCharges, acqFxRates]);
 
   // Build one Fusion PO line body (with its schedule + distribution). Used for
   // the whole-PO create and for adding a single line to an existing draft.
@@ -2542,13 +2552,25 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
     }
   };
 
-  const existingItemNumbers = new Set(lines.map(l => l.itemNumber));
-  const filteredItems = items.filter(item => {
+  const existingItemNumbers = useMemo(() => new Set(lines.map(l => l.itemNumber)), [lines]);
+  const filteredItems = useMemo(() => items.filter(item => {
     if (!searchTerm) return true;
     const t = searchTerm.toLowerCase();
     return String(item.item_number ?? '').toLowerCase().includes(t) ||
       String(item.description ?? '').toLowerCase().includes(t);
-  });
+  }), [items, searchTerm]);
+
+  // Org On Hand tab filter — memoized so typing elsewhere doesn't re-filter all rows.
+  const orgQohDisplayRows = useMemo(() => {
+    const f = orgQohFilter.toLowerCase();
+    if (!f) return orgQohRows;
+    return orgQohRows.filter(r =>
+      String(r.ItemNumber ?? '').toLowerCase().includes(f) ||
+      String(r.ItemDescription ?? '').toLowerCase().includes(f) ||
+      String(r.SubinventoryCode ?? '').toLowerCase().includes(f) ||
+      String(r.Locator ?? '').toLowerCase().includes(f)
+    );
+  }, [orgQohRows, orgQohFilter]);
 
   const handleAddItems = () => {
     const toAdd = items.filter(item =>
@@ -2684,8 +2706,8 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
     { title: 'Ordered', dataIndex: 'lineTotal', width: 110, align: 'right' as const,
       render: v => <Text style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(v)}</Text> },
     { title: 'PO Charge Account', dataIndex: 'chargeAccount', width: 200,
-      render: (v, r) => <Input size="small" value={v} placeholder="e.g. 001-2050000-VLA-000"
-        onChange={e => handleLineChange(r.key, 'chargeAccount', e.target.value)} /> },
+      render: (v, r) => <Input size="small" key={`chargeAccount-${r.key}-${v ?? ''}`} defaultValue={v} placeholder="e.g. 001-2050000-VLA-000"
+        onBlur={e => handleLineChange(r.key, 'chargeAccount', e.target.value)} /> },
   ];
 
   /* ─── Summary box component ─────────────────────── */
@@ -3183,13 +3205,13 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                             <Input
                               autoFocus
                               size="small"
-                              value={poNumDraft}
-                              onChange={e => setPoNumDraft(e.target.value)}
-                              onPressEnter={commitPoNum}
+                              defaultValue={poNumDraft}
+                              onBlur={e => setPoNumDraft(e.target.value)}
+                              onPressEnter={e => commitPoNum((e.target as HTMLInputElement).value)}
                               placeholder="Paste / type order number"
                               style={{ width: 240, fontFamily: 'monospace' }}
                             />
-                            <Tooltip title="Apply"><Button size="small" type="primary" icon={<CheckOutlined />} onClick={commitPoNum} /></Tooltip>
+                            <Tooltip title="Apply"><Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => commitPoNum()} /></Tooltip>
                             <Tooltip title="Cancel"><Button size="small" icon={<CloseOutlined />} onClick={() => setEditingPoNum(false)} /></Tooltip>
                           </Space.Compact>
                         ) : (
@@ -3685,22 +3707,12 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                             <div style={{ padding: 28, textAlign: 'center', color: C.textLight }}>
                               Click "Fetch Org On Hand" to load all balances for the selected organization.
                             </div>
-                          ) : (() => {
-                            const f = orgQohFilter.toLowerCase();
-                            const displayRows = f
-                              ? orgQohRows.filter(r =>
-                                  String(r.ItemNumber ?? '').toLowerCase().includes(f) ||
-                                  String(r.ItemDescription ?? '').toLowerCase().includes(f) ||
-                                  String(r.SubinventoryCode ?? '').toLowerCase().includes(f) ||
-                                  String(r.Locator ?? '').toLowerCase().includes(f)
-                                )
-                              : orgQohRows;
-                            return (
+                          ) : (
                               <Table
                                 size="small"
                                 bordered
                                 rowKey={(_, i) => String(i)}
-                                dataSource={displayRows}
+                                dataSource={orgQohDisplayRows}
                                 pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `${t} records` }}
                                 scroll={{ x: 1000 }}
                                 rowClassName={(_, i) => i % 2 !== 0 ? 'po-row-alt' : ''}
@@ -3748,8 +3760,7 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                                   },
                                 ]}
                               />
-                            );
-                          })()}
+                          )}
                         </div>
                       ),
                     },
@@ -3800,8 +3811,8 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                                   {
                                     title: 'Description', dataIndex: 'description',
                                     render: (v, r: AcqCharge) => (
-                                      <Input size="small" value={v} placeholder="Optional description"
-                                        onChange={e => updateAcqCharge(r.key, 'description', e.target.value)} />
+                                      <Input size="small" key={`acqDesc-${r.key}-${v ?? ''}`} defaultValue={v} placeholder="Optional description"
+                                        onBlur={e => updateAcqCharge(r.key, 'description', e.target.value)} />
                                     ),
                                   },
                                   {
@@ -4351,11 +4362,14 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
                         <Text style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>
                           Paste Data (tab- or comma-separated: ItemNumber, Qty, Price)
                         </Text>
+                        {/* Uncontrolled: commits on blur (fires before the Parse button click);
+                            keyed on the committed value so clearing/resetting re-seeds it. */}
                         <Input.TextArea
+                          key={`pasteText-${pasteText}`}
                           rows={6}
                           placeholder={'ITEM-001\t10\t150.00\nITEM-002\t5\t89.50\nITEM-003\t20\t200.00'}
-                          value={pasteText}
-                          onChange={e => setPasteText(e.target.value)}
+                          defaultValue={pasteText}
+                          onBlur={e => setPasteText(e.target.value)}
                           style={{ fontFamily: 'monospace', fontSize: 12 }}
                         />
                         <Button
@@ -4543,29 +4557,34 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
               <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
                 Approver Email(s) <Text type="danger">*</Text>
               </Text>
+              {/* Uncontrolled: commits on blur (fires before the Send button click);
+                  keyed so the post-send reset re-seeds the input. */}
               <Input
+                key={`approverEmail-${approverEmail}`}
                 placeholder="approver@company.com  (separate multiple with commas)"
-                value={approverEmail}
-                onChange={e => setApproverEmail(e.target.value)}
+                defaultValue={approverEmail}
+                onBlur={e => setApproverEmail(e.target.value)}
                 prefix={<MailOutlined style={{ color: C.textLight }} />}
               />
             </div>
             <div>
               <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>CC (optional)</Text>
               <Input
+                key={`approvalCc-${approvalCc}`}
                 placeholder="cc1@company.com, cc2@company.com"
-                value={approvalCc}
-                onChange={e => setApprovalCc(e.target.value)}
+                defaultValue={approvalCc}
+                onBlur={e => setApprovalCc(e.target.value)}
                 prefix={<MailOutlined style={{ color: C.textLight }} />}
               />
             </div>
             <div>
               <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>Note to Approver (optional)</Text>
               <Input.TextArea
+                key={`approvalNote-${approvalNote}`}
                 rows={3}
                 placeholder="Add any context or notes for the approver…"
-                value={approvalNote}
-                onChange={e => setApprovalNote(e.target.value)}
+                defaultValue={approvalNote}
+                onBlur={e => setApprovalNote(e.target.value)}
               />
             </div>
             <div style={{
@@ -4825,12 +4844,14 @@ ${JSON.stringify({ name: actionName, parameters: [] }, null, 2)}`}
           <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div>
               <Text strong style={{ fontSize: 12 }}>Resource</Text>
-              <Input value={customActionResource} onChange={e => setCustomActionResource(e.target.value)}
+              {/* Uncontrolled: commits on blur (fires before the Run action click);
+                  keyed so the on-open reset re-seeds the inputs. */}
+              <Input key={`customActionResource-${customActionResource}`} defaultValue={customActionResource} onBlur={e => setCustomActionResource(e.target.value)}
                 placeholder="purchaseOrders" style={{ fontFamily: 'monospace', marginTop: 4 }} />
             </div>
             <div>
               <Text strong style={{ fontSize: 12 }}>Action name</Text>
-              <Input value={customActionName} onChange={e => setCustomActionName(e.target.value)}
+              <Input key={`customActionName-${customActionName}`} defaultValue={customActionName} onBlur={e => setCustomActionName(e.target.value)}
                 placeholder="e.g. cancelDocument" style={{ fontFamily: 'monospace', marginTop: 4 }} />
             </div>
             {customActionName.trim() && poHeaderId && (
