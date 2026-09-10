@@ -482,8 +482,11 @@ const AssetTabContent: React.FC<{
 
     setDbgSteps(prev => { const n = [...prev]; n[idx] = { ...n[idx], loading: true, response: null }; return n; });
     try {
-      const fetchOpts: RequestInit = { method: step.method, headers: { 'Content-Type': 'application/json', Accept: 'application/json' } };
-      if (step.body && typeof step.body === 'object') fetchOpts.body = JSON.stringify(step.body);
+      // Content-Type only when a body is sent — ORDS rejects an empty body
+      // declared as application/json ("Expected one of: <<{,[,... but got: <<EOF>>")
+      const hasBody = step.body && typeof step.body === 'object';
+      const fetchOpts: RequestInit = { method: step.method, headers: hasBody ? { 'Content-Type': 'application/json', Accept: 'application/json' } : { Accept: 'application/json' } };
+      if (hasBody) fetchOpts.body = JSON.stringify(step.body);
       const res = await fetch(step.url, fetchOpts);
       const data = await res.json();
       setDbgSteps(prev => { const n = [...prev]; n[idx] = { ...n[idx], loading: false, response: data }; return n; });
@@ -777,8 +780,11 @@ const AssetTabContent: React.FC<{
     const step  = steps[idx];
     setDeprnDbgSteps(prev => { const n = [...prev]; n[idx] = { ...n[idx], loading: true, response: null }; return n; });
     try {
-      const opts: RequestInit = { method: step.method, headers: { 'Content-Type': 'application/json', Accept: 'application/json' } };
-      if (step.body && typeof step.body === 'object') opts.body = JSON.stringify(step.body);
+      // Content-Type only when a body is sent — ORDS rejects an empty body
+      // declared as application/json ("Expected one of: <<{,[,... but got: <<EOF>>")
+      const hasBody = step.body && typeof step.body === 'object';
+      const opts: RequestInit = { method: step.method, headers: hasBody ? { 'Content-Type': 'application/json', Accept: 'application/json' } : { Accept: 'application/json' } };
+      if (hasBody) opts.body = JSON.stringify(step.body);
       const res  = await fetch(step.url, opts);
       const data = await res.json();
       setDeprnDbgSteps(prev => { const n = [...prev]; n[idx] = { ...n[idx], loading: false, response: data }; return n; });
