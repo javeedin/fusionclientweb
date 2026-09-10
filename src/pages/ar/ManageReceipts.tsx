@@ -1,5 +1,5 @@
 import { buildApexUrl, buildCurrencyUrl } from '../../config/api.helper';
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Layout, Card, Form, Select, Input, Button, Space, Typography, Table, Tag,
   Row, Col, Breadcrumb, Tooltip, DatePicker, message, Tabs, Divider,
@@ -608,6 +608,34 @@ const ManageReceipts: React.FC = () => {
   const [instPickerApiOpen,   setInstPickerApiOpen]   = useState(false);
   const [deletingAppId,       setDeletingAppId]       = useState<number | null>(null);
 
+  // Memoized per-tab picker derivations (filter + selected totals). Hoisted to component
+  // level because renderReceiptPanel is a plain function (hooks not allowed inside it).
+  const instPickerDerived = useMemo(() => {
+    const out: Record<string, { pickerRows: InstPickerRow[]; totalApply: number; totalAdj: number }> = {};
+    for (const tk of Object.keys(instPickerRows)) {
+      const allRows      = instPickerRows[tk] ?? [];
+      const searchQ      = (instPickerSearch[tk] ?? '').toLowerCase();
+      const selectedKeys = instPickerSel[tk] ?? [];
+      const pickerRows   = searchQ
+        ? allRows.filter(r =>
+            r.transactionNumber.toLowerCase().includes(searchQ) ||
+            r.transactionDate.includes(searchQ) ||
+            r.dueDate.includes(searchQ) ||
+            r.currency.toLowerCase().includes(searchQ) ||
+            String(r.sequenceNumber).includes(searchQ) ||
+            String(r.balanceDue).includes(searchQ) ||
+            String(r.originalAmount).includes(searchQ))
+        : allRows;
+      const selRows = allRows.filter(r => selectedKeys.includes(r.key));
+      out[tk] = {
+        pickerRows,
+        totalApply: selRows.reduce((s, r) => s + (r.applyAmount ?? r.balanceDue), 0),
+        totalAdj:   selRows.reduce((s, r) => s + (r.adjustmentAmount ?? 0), 0),
+      };
+    }
+    return out;
+  }, [instPickerRows, instPickerSearch, instPickerSel]);
+
   // ── Adj Split dialog ─────────────────────────────────────────────────────
   interface RecvActivity { name: string; type: string; accountCombination: string; }
   const [recvActivities,        setRecvActivities]        = useState<RecvActivity[]>([]);
@@ -963,12 +991,13 @@ const ManageReceipts: React.FC = () => {
     setLovVisible(false);
   };
 
-  const lovRows = lovSearch.trim()
-    ? lovAllRows.filter(c => {
-        const q = lovSearch.trim().toUpperCase();
-        return c.accountName.toUpperCase().includes(q) || c.accountNumber.toUpperCase().includes(q);
-      })
-    : lovAllRows;
+  // Memoized: previously this customer-master filter ran on EVERY render, even with the modal closed
+  const lovRows = useMemo(() => {
+    if (!lovSearch.trim()) return lovAllRows;
+    const q = lovSearch.trim().toUpperCase();
+    return lovAllRows.filter(c =>
+      c.accountName.toUpperCase().includes(q) || c.accountNumber.toUpperCase().includes(q));
+  }, [lovSearch, lovAllRows]);
 
   const fetchAllCustomers = () => {
     if (lovFetched.current) return;
@@ -3214,10 +3243,19 @@ const ManageReceipts: React.FC = () => {
 
     const fieldDisabled = isLocked || !isEditing;
 
+    // Uncontrolled: commits on blur so typing doesn't re-render the whole page.
+    // key re-seeds the input when the committed value changes externally
+    // (async load into tab drafts, auto-fill); typing never remounts.
     const inp = (f: keyof ReceiptDraft, placeholder = '') => (
-      <Input size="small" style={{ fontSize: 12 }} value={draft[f] as string}
+      <Input size="small" style={{ fontSize: 12 }}
+        key={`${String(f)}-${tabKey}-${(draft[f] as string) ?? ''}`}
+        defaultValue={draft[f] as string}
         placeholder={placeholder} readOnly={fieldDisabled}
-        onChange={e => !fieldDisabled && updateDraft(tabKey, { [f]: e.target.value } as any)} />
+        onBlur={e => {
+          if (fieldDisabled) return;
+          const v = e.target.value;
+          if ((v ?? '') !== ((draft[f] as string) ?? '')) updateDraft(tabKey, { [f]: v } as any);
+        }} />
     );
 
     const sel = (f: keyof ReceiptDraft, options: string[]) => (
@@ -3235,18 +3273,29 @@ const ManageReceipts: React.FC = () => {
         onChange={d => updateDraft(tabKey, { [f]: d ? d.format('YYYY-MM-DD') : '' } as any)} />
     );
 
+    // Shared blur-commit for the uncontrolled numeric draft fields below
+    const commitNum = (f: keyof ReceiptDraft) => (e: React.FocusEvent<HTMLInputElement>) => {
+      if (fieldDisabled) return;
+      const raw = (e.target as HTMLInputElement).value;
+      const n = raw === '' ? null : parseFloat(raw.replace(/,/g, ''));
+      const v = n === null || Number.isNaN(n) ? null : n;
+      if (v !== ((draft[f] as number | null) ?? null)) updateDraft(tabKey, { [f]: v } as any);
+    };
+
     const num = (f: keyof ReceiptDraft) => (
       <InputNumber size="small" style={{ width: '100%', fontSize: 12 }}
-        value={draft[f] as number} precision={2} disabled={fieldDisabled}
-        onChange={v => updateDraft(tabKey, { [f]: v } as any)} />
+        key={`${String(f)}-${tabKey}-${(draft[f] as number) ?? ''}`}
+        defaultValue={draft[f] as number} precision={2} disabled={fieldDisabled}
+        onBlur={commitNum(f)} />
     );
 
     const amtNum = (f: keyof ReceiptDraft) => (
       <InputNumber size="small" style={{ width: '100%', fontSize: 13, fontWeight: 600, fontFamily: 'monospace' }}
-        value={draft[f] as number} precision={2} disabled={fieldDisabled}
+        key={`${String(f)}-${tabKey}-${(draft[f] as number) ?? ''}`}
+        defaultValue={draft[f] as number} precision={2} disabled={fieldDisabled}
         formatter={v => v !== undefined && v !== null && v !== '' ? Number(v).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
         parser={v => parseFloat((v ?? '').replace(/,/g, '')) || 0}
-        onChange={v => updateDraft(tabKey, { [f]: v } as any)} />
+        onBlur={commitNum(f)} />
     );
 
     const roVal = (v: React.ReactNode, mono = false) => (
@@ -3295,11 +3344,16 @@ const ManageReceipts: React.FC = () => {
         return (
           <Space.Compact style={{ width: '100%' }}>
             <Input size="small"
-              value={draft.customerName}
+              key={`misc-cust-${tabKey}-${draft.customerName ?? ''}`}
+              defaultValue={draft.customerName}
               placeholder="Type customer name…"
               disabled={fieldDisabled}
               style={{ fontSize: 12 }}
-              onChange={e => updateDraft(tabKey, { customerName: e.target.value, customerAccountNumber: '' })}
+              onBlur={e => {
+                if (fieldDisabled) return;
+                const v = e.target.value;
+                if ((v ?? '') !== (draft.customerName ?? '')) updateDraft(tabKey, { customerName: v, customerAccountNumber: '' });
+              }}
             />
             <Tooltip title="Search customer">
               <Button size="small" icon={<SearchOutlined />} disabled={fieldDisabled}
@@ -3449,16 +3503,19 @@ const ManageReceipts: React.FC = () => {
       { title: 'Apply Amount', dataIndex: 'applicationAmount', width: 130, align: 'right',
         render: (v, r) => r._pending && isEditing
           ? <InputNumber size="small" style={{ width: '100%' }} precision={2} min={0}
-              value={v}
+              key={`pend-apply-${r._pendingKey}-${v ?? ''}`}
+              defaultValue={v}
               formatter={val => val !== undefined && val !== null ? Number(val).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
               parser={val => parseFloat((val ?? '').replace(/,/g, '')) || 0}
-              onChange={val => {
-                if (r._pendingKey) {
-                  setPendingApplications(prev => ({
-                    ...prev,
-                    [tabKey]: (prev[tabKey] ?? []).map(p => p.key === r._pendingKey ? { ...p, applyAmount: val ?? 0 } : p),
-                  }));
-                }
+              onBlur={e => {
+                if (!r._pendingKey) return;
+                const n = parseFloat(((e.target as HTMLInputElement).value ?? '').replace(/,/g, ''));
+                const val = Number.isNaN(n) ? 0 : Math.max(0, n);
+                if (val === (v ?? 0)) return;
+                setPendingApplications(prev => ({
+                  ...prev,
+                  [tabKey]: (prev[tabKey] ?? []).map(p => p.key === r._pendingKey ? { ...p, applyAmount: val } : p),
+                }));
               }} />
           : <Text style={{ fontSize: 12, fontFamily: 'monospace', fontWeight: 600, color: v > 0 ? REDWOOD.success : undefined }}>{fmt(v || 0)}</Text> },
       { title: 'Adj Amount', key: 'adjAmount', width: 150, align: 'right',
@@ -3470,13 +3527,19 @@ const ManageReceipts: React.FC = () => {
             return (
               <Space size={4} style={{ width: '100%', justifyContent: 'flex-end' }}>
                 <InputNumber size="small" style={{ flex: 1, minWidth: 80 }} precision={2}
-                  placeholder="±0.00" value={r._adjAmount || undefined}
+                  key={`pend-adj-${r._pendingKey}-${r._adjAmount ?? ''}`}
+                  placeholder="±0.00" defaultValue={r._adjAmount || undefined}
                   formatter={val => val !== undefined && val !== null && val !== '' ? Number(val).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
                   parser={val => { const s = (val ?? '').replace(/,/g, ''); const n = parseFloat(s); return isNaN(n) ? (s === '-' ? '-' as any : 0) : n; }}
-                  onChange={val => setPendingApplications(prev => {
-                    const rows = prev[tabKey] ?? [];
-                    return { ...prev, [tabKey]: rows.map(p => p.key === r._pendingKey ? { ...p, adjustmentAmount: val ?? 0, adjSplits: undefined } : p) };
-                  })} />
+                  onBlur={e => {
+                    const n = parseFloat(((e.target as HTMLInputElement).value ?? '').replace(/,/g, ''));
+                    const val = Number.isNaN(n) ? 0 : n;
+                    if (val === (r._adjAmount ?? 0)) return;
+                    setPendingApplications(prev => {
+                      const rows = prev[tabKey] ?? [];
+                      return { ...prev, [tabKey]: rows.map(p => p.key === r._pendingKey ? { ...p, adjustmentAmount: val, adjSplits: undefined } : p) };
+                    });
+                  }} />
                 {(r._adjAmount ?? 0) !== 0 && (
                   <Tooltip title={hasSplits ? `${splits.length} splits — click to edit` : 'Split adjustment into multiple activities'}>
                     <Button size="small" type={hasSplits ? 'primary' : 'text'}
@@ -3946,11 +4009,18 @@ const ManageReceipts: React.FC = () => {
                                           onClick={() => { if (!fieldDisabled) { setMiscAcctTabKey(tabKey); setMiscAcctField(`crLine:${l.key}`); setMiscAcctVisible(true); } }}
                                         />
                                         <InputNumber size="small" min={0.01} precision={2}
-                                          value={l.amount ?? undefined}
+                                          key={`cramt-${l.key}-${l.amount ?? ''}`}
+                                          defaultValue={l.amount ?? undefined}
                                           placeholder="Amount"
                                           disabled={fieldDisabled}
                                           style={{ width: 110, fontSize: 11 }}
-                                          onChange={(v) => setLines(crLines.map(x => x.key === l.key ? { ...x, amount: v ?? null } : x))}
+                                          onBlur={e => {
+                                            if (fieldDisabled) return;
+                                            const raw = (e.target as HTMLInputElement).value;
+                                            const n = raw === '' ? null : parseFloat(raw.replace(/,/g, ''));
+                                            const v = n === null || Number.isNaN(n) ? null : n;
+                                            if (v !== (l.amount ?? null)) setLines(crLines.map(x => x.key === l.key ? { ...x, amount: v } : x));
+                                          }}
                                         />
                                         <Button size="small" danger icon={<DeleteOutlined />}
                                           disabled={fieldDisabled || crLines.length === 1}
@@ -4069,8 +4139,13 @@ const ManageReceipts: React.FC = () => {
                         {field('Rec. Specialist',   inp('receivablesSpecialist'))}
                         {field('Comments',
                           <Input.TextArea size="small" style={{ fontSize: 12 }} autoSize={{ minRows: 2 }}
-                            value={draft.comments} readOnly={fieldDisabled}
-                            onChange={e => !fieldDisabled && updateDraft(tabKey, { comments: e.target.value })} />
+                            key={`comments-${tabKey}-${draft.comments ?? ''}`}
+                            defaultValue={draft.comments} readOnly={fieldDisabled}
+                            onBlur={e => {
+                              if (fieldDisabled) return;
+                              const v = e.target.value;
+                              if ((v ?? '') !== (draft.comments ?? '')) updateDraft(tabKey, { comments: v });
+                            }} />
                         , true)}
                       </Col>
 
@@ -4357,9 +4432,14 @@ const ManageReceipts: React.FC = () => {
                 children: (
                   <div style={{ padding: '10px 8px 14px' }}>
                     <Input.TextArea autoSize={{ minRows: 3 }} style={{ fontSize: 12 }}
-                      value={draft.comments} readOnly={fieldDisabled}
+                      key={`notes-comments-${tabKey}-${draft.comments ?? ''}`}
+                      defaultValue={draft.comments} readOnly={fieldDisabled}
                       placeholder="Enter comments…"
-                      onChange={e => !fieldDisabled && updateDraft(tabKey, { comments: e.target.value })} />
+                      onBlur={e => {
+                        if (fieldDisabled) return;
+                        const v = e.target.value;
+                        if ((v ?? '') !== (draft.comments ?? '')) updateDraft(tabKey, { comments: v });
+                      }} />
                   </div>
                 ),
               },
@@ -4501,22 +4581,9 @@ const ManageReceipts: React.FC = () => {
             const pickerSaving   = instPickerSaving[tabKey]  ?? false;
             const selectedKeys   = instPickerSel[tabKey]    ?? [];
             const searchQ        = (instPickerSearch[tabKey] ?? '').toLowerCase();
-            const pickerRows     = searchQ
-              ? allPickerRows.filter(r =>
-                  r.transactionNumber.toLowerCase().includes(searchQ) ||
-                  r.transactionDate.includes(searchQ) ||
-                  r.dueDate.includes(searchQ) ||
-                  r.currency.toLowerCase().includes(searchQ) ||
-                  String(r.sequenceNumber).includes(searchQ) ||
-                  String(r.balanceDue).includes(searchQ) ||
-                  String(r.originalAmount).includes(searchQ))
-              : allPickerRows;
-            const totalApply = allPickerRows
-              .filter(r => selectedKeys.includes(r.key))
-              .reduce((s, r) => s + (r.applyAmount ?? r.balanceDue), 0);
-            const totalAdj = allPickerRows
-              .filter(r => selectedKeys.includes(r.key))
-              .reduce((s, r) => s + (r.adjustmentAmount ?? 0), 0);
+            // Filter + selected totals are memoized at component level (instPickerDerived)
+            const { pickerRows, totalApply, totalAdj } =
+              instPickerDerived[tabKey] ?? { pickerRows: allPickerRows, totalApply: 0, totalAdj: 0 };
             const receiptAmt  = draft.amount ?? 0;
             const remaining   = receiptAmt - totalApply;
 
@@ -4558,18 +4625,30 @@ const ManageReceipts: React.FC = () => {
               { title: 'Apply Amount', dataIndex: 'applyAmount', width: 120, align: 'right',
                 render: (v, rec) => (
                   <InputNumber size="small" style={{ width: '100%' }} precision={2} min={0} max={rec.balanceDue}
-                    placeholder={Number(rec.balanceDue).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} value={v}
+                    key={`pick-apply-${rec.key}-${v ?? ''}`}
+                    placeholder={Number(rec.balanceDue).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} defaultValue={v}
                     formatter={val => val !== undefined && val !== null && val !== '' ? Number(val).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
                     parser={val => parseFloat((val ?? '').replace(/,/g, '')) || 0}
-                    onChange={val => updateRow(rec.key, { applyAmount: val })} />
+                    onBlur={e => {
+                      const raw = (e.target as HTMLInputElement).value;
+                      const n = raw === '' ? null : parseFloat(raw.replace(/,/g, ''));
+                      const val = n === null || Number.isNaN(n) ? null : Math.min(Math.max(0, n), rec.balanceDue);
+                      if (val !== (v ?? null)) updateRow(rec.key, { applyAmount: val });
+                    }} />
                 )},
               { title: 'Adjustment Amt', dataIndex: 'adjustmentAmount', width: 130, align: 'right',
                 render: (v, rec) => (
                   <InputNumber size="small" style={{ width: '100%' }} precision={2}
-                    placeholder="±0.00" value={v}
+                    key={`pick-adj-${rec.key}-${v ?? ''}`}
+                    placeholder="±0.00" defaultValue={v}
                     formatter={val => val !== undefined && val !== null && val !== '' ? Number(val).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
                     parser={val => parseFloat((val ?? '').replace(/,/g, '')) || 0}
-                    onChange={val => updateRow(rec.key, { adjustmentAmount: val })} />
+                    onBlur={e => {
+                      const raw = (e.target as HTMLInputElement).value;
+                      const n = raw === '' ? null : parseFloat(raw.replace(/,/g, ''));
+                      const val = n === null || Number.isNaN(n) ? null : n;
+                      if (val !== (v ?? null)) updateRow(rec.key, { adjustmentAmount: val });
+                    }} />
                 )},
               { title: 'Balance After', width: 140, align: 'right',
                 render: (_v, rec) => {
@@ -4594,8 +4673,12 @@ const ManageReceipts: React.FC = () => {
                 }},
               { title: 'Adj Reason', dataIndex: 'adjustmentReason', width: 140,
                 render: (v, rec) => (
-                  <Input size="small" placeholder="Reason…" value={v}
-                    onChange={e => updateRow(rec.key, { adjustmentReason: e.target.value })} />
+                  <Input size="small" placeholder="Reason…"
+                    key={`pick-reason-${rec.key}-${v ?? ''}`}
+                    defaultValue={v}
+                    onBlur={e => {
+                      if ((e.target.value ?? '') !== (v ?? '')) updateRow(rec.key, { adjustmentReason: e.target.value });
+                    }} />
                 )},
               { title: 'Installment ID', dataIndex: 'installmentId', width: 100, align: 'right',
                 render: v => <Text style={{ fontSize: 11, fontFamily: 'monospace', color: REDWOOD.neutral600 }}>{v || '—'}</Text> },
@@ -4989,12 +5072,16 @@ const ManageReceipts: React.FC = () => {
                                 <td style={{ padding: '6px 8px', color: REDWOOD.neutral600 }}>{idx + 1}</td>
                                 <td style={{ padding: '6px 4px' }}>
                                   <InputNumber size="small" style={{ width: '100%' }} precision={2} min={0}
-                                    value={sp.amount}
+                                    key={`split-amt-${sp.id}-${sp.amount ?? ''}`}
+                                    defaultValue={sp.amount}
                                     disabled={isReadOnly}
                                     formatter={v => v !== undefined && v !== null ? Number(v).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}
                                     parser={v => parseFloat((v ?? '').replace(/,/g, '')) || 0}
-                                    onChange={val => {
-                                      const newAmt = val ?? 0;
+                                    onBlur={e => {
+                                      if (isReadOnly) return;
+                                      const n = parseFloat(((e.target as HTMLInputElement).value ?? '').replace(/,/g, ''));
+                                      const newAmt = Number.isNaN(n) ? 0 : Math.max(0, n);
+                                      if (newAmt === (sp.amount ?? 0)) return;
                                       setAdjSplitModal(m => {
                                         if (!m) return m;
                                         const updated = m.splits.map(s => s.id === sp.id ? { ...s, amount: newAmt } : s);
@@ -5069,9 +5156,14 @@ const ManageReceipts: React.FC = () => {
                                   )}
                                 </td>
                                 <td style={{ padding: '6px 4px' }}>
-                                  <Input size="small" placeholder="Reason…" value={sp.reason}
+                                  <Input size="small" placeholder="Reason…"
+                                    key={`split-reason-${sp.id}-${sp.reason ?? ''}`}
+                                    defaultValue={sp.reason}
                                     disabled={isReadOnly}
-                                    onChange={e => updateSplit(sp.id, { reason: e.target.value })} />
+                                    onBlur={e => {
+                                      if (isReadOnly) return;
+                                      if ((e.target.value ?? '') !== (sp.reason ?? '')) updateSplit(sp.id, { reason: e.target.value });
+                                    }} />
                                 </td>
                                 <td style={{ padding: '6px 4px' }}>
                                   {splits.length > 1 && !isReadOnly && (
@@ -5355,15 +5447,17 @@ const ManageReceipts: React.FC = () => {
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
-  const q = gridFilter.trim().toLowerCase();
-  const filteredRows = q
-    ? searchRows.filter(r =>
-        [r.receiptNumber, r.customerName, r.customerAccountNumber, r.receiptMethod,
-         r.state, r.status, r.remittanceBankName, r.businessUnit, r.currency,
-         r.receiptDate, String(r.amount ?? 0), fmt(r.amount ?? 0), r.syncStatus]
-          .some(v => (v || '').toLowerCase().includes(q))
-      )
-    : searchRows;
+  // Memoized: the grid filter no longer re-scans every row on unrelated re-renders
+  const filteredRows = useMemo(() => {
+    const q = gridFilter.trim().toLowerCase();
+    if (!q) return searchRows;
+    return searchRows.filter(r =>
+      [r.receiptNumber, r.customerName, r.customerAccountNumber, r.receiptMethod,
+       r.state, r.status, r.remittanceBankName, r.businessUnit, r.currency,
+       r.receiptDate, String(r.amount ?? 0), fmt(r.amount ?? 0), r.syncStatus]
+        .some(v => (v || '').toLowerCase().includes(q))
+    );
+  }, [gridFilter, searchRows]);
 
   return (
     <Layout style={{ minHeight: '100vh', background: REDWOOD.neutral100 }}>
