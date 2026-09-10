@@ -1,5 +1,5 @@
 import { buildApexUrl } from '../../config/api.helper';
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input, Select,
@@ -2918,13 +2918,13 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
     txnSourceFilter === 'BANK_TRANSFER' ? sysColumnsBankTransfer :
     sysColumnsAll;
 
-  const filteredSysTxnsBase = (() => {
-    const base = txnSourceFilter === 'ALL' ? sysTxns : sysTxns.filter((t) => t.source === txnSourceFilter);
-    return base;
-  })();
-
-  const sysQ = sysSearch.toLowerCase();
-  const filteredSysTxns = sysQ
+  // Memoized: these full-array scans must not re-run on unrelated state
+  // changes (e.g. typing in a dialog input re-rendering this component).
+  const filteredSysTxns = useMemo(() => {
+    const filteredSysTxnsBase =
+      txnSourceFilter === 'ALL' ? sysTxns : sysTxns.filter((t) => t.source === txnSourceFilter);
+    const sysQ = sysSearch.toLowerCase();
+    return sysQ
     ? filteredSysTxnsBase.filter(t =>
         (t.txnNumber            || '').toLowerCase().includes(sysQ) ||
         (t.reference            || '').toLowerCase().includes(sysQ) ||
@@ -2956,9 +2956,10 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
         (t.createdBy            || '').toLowerCase().includes(sysQ)
       )
     : filteredSysTxnsBase;
+  }, [sysTxns, txnSourceFilter, sysSearch]);
 
-  const stmtQ = stmtSearch.toLowerCase();
-  const filteredStmtLines = (() => {
+  const filteredStmtLines = useMemo(() => {
+    const stmtQ = stmtSearch.toLowerCase();
     let base = stmtLines;
     if (stmtReconFilter === 'RECONCILED')   base = base.filter(l => l.reconStatus === 'RECONCILED');
     if (stmtReconFilter === 'UNRECONCILED') base = base.filter(l => l.reconStatus !== 'RECONCILED');
@@ -2982,7 +2983,7 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
       (l.statementNumber    || '').toLowerCase().includes(stmtQ) ||
       (l.externalTxnRef     || '').toLowerCase().includes(stmtQ)
     );
-  })();
+  }, [stmtLines, stmtReconFilter, stmtSearch]);
 
   // Keep `difference` state in sync with current selections
   const _stmtSel = sumSelected(stmtLines, selectedStmtKeys);
@@ -4266,8 +4267,11 @@ const UnreconciledTab: React.FC<UnreconciledTabProps> = ({ bankAccounts, busines
                   {
                     title: 'Description',
                     render: (_: any, record: any, idx: number) => (
-                      <Input size="small" value={record.description}
-                        onChange={(e) => updateExtLine(idx, 'description', e.target.value)}
+                      // Uncontrolled on purpose: a controlled input here re-renders
+                      // the whole UnreconciledTab on every keystroke (slow typing).
+                      // State is committed on blur, which fires before any button click.
+                      <Input size="small" key={record.key} defaultValue={record.description}
+                        onBlur={(e) => updateExtLine(idx, 'description', e.target.value)}
                       />
                     ),
                   },
