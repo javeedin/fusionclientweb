@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Empty, Input, Modal, Popconfirm, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
 import {
   CaretRightOutlined, DeleteOutlined, FileExcelOutlined, PrinterOutlined,
-  ReloadOutlined, CodeOutlined, ClockCircleOutlined,
+  ReloadOutlined, CodeOutlined, ClockCircleOutlined, SaveOutlined,
 } from '@ant-design/icons';
 import { saveAs } from 'file-saver';
 import { APEX_DB_CONFIG } from '../../config/api.config';
@@ -38,7 +38,7 @@ export async function saveAiReport(payload: {
   try { return JSON.parse(text); } catch { return { success: false, error: text.slice(0, 300) }; }
 }
 
-async function exportResultExcel(report: SavedReport, result: RunResult) {
+async function exportResultExcel(report: { name: string; category: string }, result: RunResult) {
   const blob = await buildExcel({
     filename: `${report.name.replace(/[^\w -]/g, '_')}.xlsx`,
     title: report.name,
@@ -48,7 +48,7 @@ async function exportResultExcel(report: SavedReport, result: RunResult) {
   saveAs(blob, `${report.name.replace(/[^\w -]/g, '_')}.xlsx`);
 }
 
-function exportResultPdf(report: SavedReport, result: RunResult) {
+function exportResultPdf(report: { name: string; category: string }, result: RunResult) {
   const esc = (v: unknown) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const w = window.open('', '_blank', 'width=1000,height=700');
   if (!w) { message.error('Popup blocked — allow popups to print'); return; }
@@ -302,5 +302,177 @@ export const SaveReportModal: React.FC<{
         </div>
       </Space>
     </Modal>
+  );
+};
+
+// ── Tables List / SQL Workbench (APEX SQL Commands style) ───────────────────
+interface DbColumn { name: string; dataType: string; nullable: string; comment?: string }
+interface DbObject { name: string; type: string; comment?: string; columns: DbColumn[] }
+
+export const SqlWorkbenchPane: React.FC<{ userName: string }> = ({ userName }) => {
+  const [objects, setObjects] = useState<DbObject[]>([]);
+  const [objLoading, setObjLoading] = useState(false);
+  const [objFilter, setObjFilter] = useState('');
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [sql, setSql] = useState('');
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<RunResult | null>(null);
+  const [runError, setRunError] = useState('');
+  const [rowFilter, setRowFilter] = useState('');
+  const [saveOpen, setSaveOpen] = useState(false);
+
+  const loadObjects = useCallback(async () => {
+    setObjLoading(true);
+    try {
+      const res = await fetch(`${BASE}/ai/objects`, { cache: 'no-store', headers: { Accept: 'application/json' } });
+      const data = await res.json();
+      setObjects(Array.isArray(data.objects) ? data.objects : []);
+    } catch { message.error('Failed to load tables (is GET ai/objects deployed?)'); }
+    finally { setObjLoading(false); }
+  }, []);
+  useEffect(() => { loadObjects(); }, [loadObjects]);
+
+  const runSql = async () => {
+    if (!sql.trim()) { message.warning('Type a SELECT statement first'); return; }
+    setRunning(true); setResult(null); setRunError(''); setRowFilter('');
+    try {
+      const res = await fetch(`${BASE}/ai/executequery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ sql: sql.trim(), maxRows: 500, appUser: userName || 'SQL_WORKBENCH' }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setResult({ columns: data.columns || [], rows: data.rows || [], rowCount: data.rowCount ?? 0, truncated: !!data.truncated, elapsedMs: data.elapsedMs ?? 0 });
+      } else setRunError(data.error || 'Query failed');
+    } catch (e) { setRunError(e instanceof Error ? e.message : String(e)); }
+    finally { setRunning(false); }
+  };
+
+  const insertTable = (name: string) => {
+    if (!sql.trim()) setSql(`SELECT * FROM ${name.toLowerCase()} FETCH FIRST 100 ROWS ONLY`);
+    setExpanded(p => ({ ...p, [name]: !p[name] }));
+  };
+
+  const q = objFilter.toUpperCase();
+  const visibleObjects = useMemo(
+    () => (q ? objects.filter(o => o.name.includes(q)) : objects),
+    [objects, q],
+  );
+
+  const filteredRows = useMemo(() => {
+    if (!result) return [];
+    const f = rowFilter.toLowerCase();
+    if (!f) return result.rows;
+    return result.rows.filter(r => r.some(v => String(v ?? '').toLowerCase().includes(f)));
+  }, [result, rowFilter]);
+
+  const resultColumns = (result?.columns || []).map((c, i) => ({
+    title: c, key: c, ellipsis: true,
+    render: (_: unknown, row: (string | number | null)[]) => {
+      const v = row[i];
+      return typeof v === 'number'
+        ? <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v.toLocaleString()}</span>
+        : <span>{v === null || v === undefined ? '—' : String(v)}</span>;
+    },
+  }));
+
+  const exportMeta = { name: 'SQL Query', category: 'Workbench' };
+
+  return (
+    <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
+      {/* left: tables + columns */}
+      <div style={{ width: 250, borderRight: '1px solid #EFEBE9', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ padding: 8, display: 'flex', gap: 6 }}>
+          <Input size="small" placeholder="Filter tables…" allowClear value={objFilter} onChange={e => setObjFilter(e.target.value)} />
+          <Tooltip title="Refresh"><Button size="small" icon={<ReloadOutlined />} onClick={loadObjects} /></Tooltip>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', fontSize: 12 }}>
+          {objLoading ? <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>
+            : !visibleObjects.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No tables" style={{ marginTop: 24 }} />
+              : visibleObjects.map(o => (
+                <div key={o.name}>
+                  <div onClick={() => insertTable(o.name)}
+                    title={o.comment || o.name}
+                    style={{ padding: '3px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: '#8B8580', fontSize: 10, width: 10 }}>{expanded[o.name] ? '▾' : '▸'}</span>
+                    <span style={{ fontFamily: 'monospace', fontSize: 11.5, color: '#3A3632', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+                    {o.type === 'VIEW' && <Tag style={{ fontSize: 8, lineHeight: '12px', padding: '0 3px', margin: 0 }}>V</Tag>}
+                  </div>
+                  {expanded[o.name] && (
+                    <div style={{ paddingLeft: 26, paddingBottom: 4 }}>
+                      {(o.columns || []).map(c => (
+                        <div key={c.name}
+                          title={`${c.dataType}${c.comment ? ` — ${c.comment}` : ''} (click to copy)`}
+                          onClick={() => { navigator.clipboard.writeText(c.name.toLowerCase()); message.success(`${c.name} copied`); }}
+                          style={{ fontFamily: 'monospace', fontSize: 10.5, color: '#6B6B6B', cursor: 'pointer', padding: '1px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.name} <span style={{ color: '#B8B2AC' }}>{c.dataType}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+        </div>
+      </div>
+
+      {/* right: SQL editor + results */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ padding: 10, borderBottom: '1px solid #EFEBE9' }}>
+          <Input.TextArea
+            value={sql}
+            onChange={e => setSql(e.target.value)}
+            onKeyDown={e => { if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); runSql(); } }}
+            placeholder="Type a SELECT statement… (click a table on the left to start; Ctrl+Enter runs)"
+            autoSize={{ minRows: 4, maxRows: 10 }}
+            style={{ fontFamily: 'monospace', fontSize: 12 }}
+          />
+          <Space style={{ marginTop: 8 }} wrap>
+            <Button size="small" type="primary" icon={<CaretRightOutlined />} loading={running}
+              onClick={runSql} style={{ background: '#C74634', borderColor: '#C74634' }}>Run</Button>
+            <Button size="small" icon={<SaveOutlined />} disabled={!sql.trim()} onClick={() => setSaveOpen(true)}>Save</Button>
+            <Button size="small" icon={<FileExcelOutlined />} disabled={!result}
+              onClick={() => result && exportResultExcel(exportMeta, { ...result, rows: filteredRows, rowCount: filteredRows.length })}>Excel</Button>
+            <Button size="small" icon={<PrinterOutlined />} disabled={!result}
+              onClick={() => result && exportResultPdf(exportMeta, { ...result, rows: filteredRows, rowCount: filteredRows.length })}>PDF</Button>
+            {result && (
+              <Input size="small" allowClear placeholder="Filter rows…" value={rowFilter}
+                onChange={e => setRowFilter(e.target.value)} style={{ width: 170 }} />
+            )}
+          </Space>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto', padding: 10 }}>
+          {running && <div style={{ textAlign: 'center', padding: 30 }}><Spin /></div>}
+          {runError && <Text type="danger" style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{runError}</Text>}
+          {result && (
+            <>
+              <div style={{ fontSize: 11, color: '#8B8580', marginBottom: 6 }}>
+                {filteredRows.length}{rowFilter ? ` of ${result.rowCount}` : ''} rows{result.truncated ? ' (capped at 500)' : ''} · {result.elapsedMs} ms
+              </div>
+              <Table
+                size="small"
+                dataSource={filteredRows}
+                columns={resultColumns}
+                rowKey={(_, i) => String(i)}
+                pagination={{ pageSize: 25, size: 'small', showTotal: t => `${t} rows` }}
+                scroll={{ x: true }}
+              />
+            </>
+          )}
+          {!running && !result && !runError && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Results appear here. SELECT-only — writes are rejected by the gateway.
+            </Text>
+          )}
+        </div>
+      </div>
+
+      <SaveReportModal
+        open={saveOpen}
+        sql={sql.trim()}
+        userName={userName}
+        onClose={() => setSaveOpen(false)}
+      />
+    </div>
   );
 };

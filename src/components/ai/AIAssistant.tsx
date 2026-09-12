@@ -5,7 +5,7 @@ import {
   DownloadOutlined, ExpandOutlined, EyeOutlined, FileExcelOutlined, FileWordOutlined, HistoryOutlined,
   PlusOutlined, PlusSquareOutlined, ReloadOutlined, SaveOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
-import { SavedReportsPane, ScheduledJobsPane, SaveReportModal } from './AiReportsTabs';
+import { SavedReportsPane, ScheduledJobsPane, SaveReportModal, SqlWorkbenchPane } from './AiReportsTabs';
 import Anthropic from '@anthropic-ai/sdk';
 import { useNavigate } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../../config/api.config';
@@ -319,7 +319,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
   const [apiOpen, setApiOpen] = useState<Record<number, boolean>>({});
   const [sqlOpen, setSqlOpen] = useState<Record<number, boolean>>({});
   // Tabs: Chatbot | Saved Reports | Scheduled Jobs
-  const [panelTab, setPanelTab] = useState<'chat' | 'reports' | 'jobs'>('chat');
+  const [panelTab, setPanelTab] = useState<'chat' | 'reports' | 'sqlwb' | 'jobs'>('chat');
   const [saveReportFor, setSaveReportFor] = useState<{ sql: string; name?: string } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [preview, setPreview] = useState<DeliveredFile | null>(null);
@@ -588,7 +588,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
 
       {/* Tab strip: Chatbot | Saved Reports | Scheduled Jobs */}
       <div style={{ display: 'flex', gap: 2, padding: '4px 8px', borderBottom: '1px solid #EFEBE9', background: '#fff', flexShrink: 0 }}>
-        {([['chat', 'Chatbot'], ['reports', 'Saved Reports'], ['jobs', 'Scheduled Jobs']] as const).map(([key, label]) => (
+        {([['chat', 'Chatbot'], ['reports', 'Saved Reports'], ['sqlwb', 'Tables List'], ['jobs', 'Scheduled Jobs']] as const).map(([key, label]) => (
           <button key={key} onClick={() => setPanelTab(key)}
             style={{
               border: 'none', cursor: 'pointer', fontSize: 12, padding: '4px 12px', borderRadius: 6,
@@ -600,6 +600,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
       </div>
 
       {panelTab === 'reports' && <div className="ai-body"><SavedReportsPane userName={userName} /></div>}
+      {panelTab === 'sqlwb' && <div className="ai-body"><SqlWorkbenchPane userName={userName} /></div>}
       {panelTab === 'jobs' && <div className="ai-body"><ScheduledJobsPane /></div>}
 
       <div className="ai-body" style={panelTab === 'chat' ? undefined : { display: 'none' }}>
