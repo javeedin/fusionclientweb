@@ -110,6 +110,7 @@ const ManageExpenses          = lazy(() => import('./pages/rm').then(m => ({ def
 const AdminModule             = lazy(() => import('./pages/admin/index'));
 const UserManagement          = lazy(() => import('./pages/admin/UserManagement'));
 const ClaudeKeySettings       = lazy(() => import('./pages/admin/ClaudeKeySettings'));
+const OrdsTokenTool           = lazy(() => import('./pages/admin/OrdsTokenTool'));
 const McpRegistry             = lazy(() => import('./pages/admin/McpRegistry'));
 const McpCallLogs             = lazy(() => import('./pages/admin/McpCallLogs'));
 const OracleFusionAI          = lazy(() => import('./pages/admin/OracleFusionAI'));
@@ -384,6 +385,7 @@ function App() {
               <Route path="admin" element={<AdminModule />} />
               <Route path="admin/users" element={<UserManagement />} />
               <Route path="admin/claude-key" element={<ClaudeKeySettings />} />
+              <Route path="admin/ords-token" element={<OrdsTokenTool />} />
               <Route path="admin/mcp-registry" element={<McpRegistry />} />
               <Route path="admin/mcp-logs" element={<McpCallLogs />} />
               <Route path="admin/oracle-fusion-ai" element={<OracleFusionAI />} />
