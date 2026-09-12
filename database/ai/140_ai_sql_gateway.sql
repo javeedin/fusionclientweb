@@ -115,8 +115,9 @@ BEGIN
     IF INSTR(v_check, ';') > 0 THEN
         fail('Only a single SQL statement is allowed'); RETURN;
     END IF;
-    -- Must be a query
-    IF NOT REGEXP_LIKE(v_check, '^\s*(SELECT|WITH)\b') THEN
+    -- Must be a query. NOTE: Oracle regex has no \b word boundary —
+    -- require whitespace or ( after the keyword instead.
+    IF NOT REGEXP_LIKE(v_check, '^\s*(SELECT|WITH)[[:space:](]') THEN
         fail('Only SELECT (or WITH ... SELECT) statements are allowed'); RETURN;
     END IF;
     -- Keyword ban (word-boundary, anywhere in the text)
