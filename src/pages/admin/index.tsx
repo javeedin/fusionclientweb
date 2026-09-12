@@ -10,6 +10,7 @@ import {
   MailOutlined,
   DatabaseOutlined,
   CloudUploadOutlined,
+  KeyOutlined,
   LinkOutlined,
   DollarOutlined,
 } from '@ant-design/icons';
@@ -85,6 +86,14 @@ const adminCards: AdminCard[] = [
     icon: <RobotOutlined />,
     color: '#722ed1',
     path: '/admin/claude-key',
+  },
+  {
+    key: 'ords-token',
+    title: 'ORDS OAuth Token',
+    description: 'Get a bearer token from the ORDS oauth/token endpoint (client credentials) for testing secured REST calls.',
+    icon: <KeyOutlined />,
+    color: '#D4A800',
+    path: '/admin/ords-token',
   },
   {
     key: 'ai-assistant',
@@ -236,74 +245,75 @@ const AdminModule: React.FC = () => {
           </div>
 
           {/* Admin Cards */}
-          <Row gutter={[24, 24]}>
+          <Row gutter={[14, 14]}>
             {adminCards.map((card) => (
-              <Col xs={24} sm={12} lg={8} key={card.key}>
-                <Card
-                  hoverable={!!card.path}
-                  onClick={() => handleCardClick(card)}
-                  style={{
-                    borderRadius: 12,
-                    border: `1px solid ${REDWOOD.neutral200}`,
-                    cursor: card.path ? 'pointer' : 'default',
-                    height: '100%',
-                    transition: 'all 0.2s ease',
-                    opacity: card.path ? 1 : 0.75,
-                  }}
-                  styles={{ body: { padding: 24 } }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-                    <Tooltip title={card.description}>
+              <Col xs={24} sm={12} md={8} xl={6} key={card.key}>
+                <Tooltip title={card.description} mouseEnterDelay={0.4}>
+                  <Card
+                    hoverable={!!card.path}
+                    onClick={() => handleCardClick(card)}
+                    style={{
+                      borderRadius: 8,
+                      border: `1px solid ${REDWOOD.neutral200}`,
+                      cursor: card.path ? 'pointer' : 'default',
+                      height: '100%',
+                      transition: 'all 0.2s ease',
+                      opacity: card.path ? 1 : 0.75,
+                    }}
+                    styles={{ body: { padding: '12px 14px' } }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                       <div style={{
-                        width: 42,
-                        height: 42,
-                        borderRadius: 12,
+                        width: 32,
+                        height: 32,
+                        borderRadius: 8,
                         background: `${card.color}15`,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         color: card.color,
-                        fontSize: 18,
+                        fontSize: 15,
                         flexShrink: 0,
-                        cursor: 'help',
-                        transition: 'all 0.2s ease',
                       }}>
                         {card.icon}
                       </div>
-                    </Tooltip>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <Text strong style={{ fontSize: 16, color: REDWOOD.neutral900 }}>
-                          {card.title}
-                        </Text>
-                        {card.badge && (
-                          <Tag
-                            style={{
-                              borderRadius: 4,
-                              fontSize: 10,
-                              padding: '0 6px',
-                              background: REDWOOD.neutral200,
-                              border: 'none',
-                              color: REDWOOD.neutral600,
-                            }}
-                          >
-                            {card.badge}
-                          </Tag>
-                        )}
-                      </div>
-                      <Text type="secondary" style={{ fontSize: 13, lineHeight: 1.5 }}>
-                        {card.description}
-                      </Text>
-                      {card.path && (
-                        <div style={{ marginTop: 12 }}>
-                          <Text style={{ color: card.color, fontSize: 13, fontWeight: 500 }}>
-                            Open &rarr;
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                          <Text strong style={{ fontSize: 13.5, color: REDWOOD.neutral900 }} ellipsis>
+                            {card.title}
                           </Text>
+                          {card.badge && (
+                            <Tag
+                              style={{
+                                borderRadius: 4,
+                                fontSize: 9,
+                                lineHeight: '16px',
+                                padding: '0 5px',
+                                background: REDWOOD.neutral200,
+                                border: 'none',
+                                color: REDWOOD.neutral600,
+                                flexShrink: 0,
+                              }}
+                            >
+                              {card.badge}
+                            </Tag>
+                          )}
                         </div>
-                      )}
+                        <div style={{
+                          fontSize: 11.5,
+                          lineHeight: 1.45,
+                          color: REDWOOD.neutral600,
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        }}>
+                          {card.description}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </Card>
+                  </Card>
+                </Tooltip>
               </Col>
             ))}
           </Row>
