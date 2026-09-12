@@ -183,34 +183,99 @@ EXCEPTION WHEN OTHERS THEN
 END RR_AI_REPORT_DELETE;
 /
 
--- ── ORDS handlers (thin wrappers) ──────────────────────────────────────────
-DECLARE
-    PROCEDURE def_post (p_pattern IN VARCHAR2, p_proc IN VARCHAR2) IS
-    BEGIN
-        BEGIN
-            ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => p_pattern);
-        EXCEPTION WHEN OTHERS THEN NULL; END;
-        ORDS.DEFINE_TEMPLATE(p_module_name => 'reerp', p_pattern => p_pattern);
-        ORDS.DEFINE_HANDLER(
-            p_module_name    => 'reerp',
-            p_pattern        => p_pattern,
-            p_method         => 'POST',
-            p_source_type    => 'plsql/block',
-            p_items_per_page => 0,
-            p_mimes_allowed  => 'application/json',
-            p_source         =>
-                'DECLARE l_status NUMBER; l_result CLOB; ' ||
-                'BEGIN ' || p_proc || '(:body_text, l_status, l_result); ' ||
-                ':status_code := l_status; RR_AI_PRINT_CLOB(l_result); ' ||
-                'EXCEPTION WHEN OTHERS THEN :status_code := 500; ' ||
-                'HTP.PRN(''{"success":false,"error":"'' || REPLACE(SQLERRM, ''"'', '''''''') || ''"}''); END;'
-        );
-    END;
+-- ── ORDS handlers (thin wrappers, explicit per endpoint) ──────────────────
 BEGIN
-    def_post('ai/reports/save',   'RR_AI_REPORT_SAVE');
-    def_post('ai/reports/run',    'RR_AI_REPORT_RUN');
-    def_post('ai/reports/delete', 'RR_AI_REPORT_DELETE');
+    BEGIN
+        ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/reports/save');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+    ORDS.DEFINE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/reports/save');
+    ORDS.DEFINE_HANDLER(
+        p_module_name    => 'reerp',
+        p_pattern        => 'ai/reports/save',
+        p_method         => 'POST',
+        p_source_type    => 'plsql/block',
+        p_items_per_page => 0,
+        p_mimes_allowed  => 'application/json',
+        p_source         => q'[
+DECLARE
+    l_status NUMBER;
+    l_result CLOB;
+BEGIN
+    RR_AI_REPORT_SAVE(:body_text, l_status, l_result);
+    :status_code := l_status;
+    RR_AI_PRINT_CLOB(l_result);
+EXCEPTION WHEN OTHERS THEN
+    :status_code := 500;
+    HTP.PRN('{"success":false,"error":"' || REPLACE(SQLERRM, '"', '''') || '"}');
+END;
+]'
+    );
+    COMMIT;
+END;
+/
 
+BEGIN
+    BEGIN
+        ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/reports/run');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+    ORDS.DEFINE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/reports/run');
+    ORDS.DEFINE_HANDLER(
+        p_module_name    => 'reerp',
+        p_pattern        => 'ai/reports/run',
+        p_method         => 'POST',
+        p_source_type    => 'plsql/block',
+        p_items_per_page => 0,
+        p_mimes_allowed  => 'application/json',
+        p_source         => q'[
+DECLARE
+    l_status NUMBER;
+    l_result CLOB;
+BEGIN
+    RR_AI_REPORT_RUN(:body_text, l_status, l_result);
+    :status_code := l_status;
+    RR_AI_PRINT_CLOB(l_result);
+EXCEPTION WHEN OTHERS THEN
+    :status_code := 500;
+    HTP.PRN('{"success":false,"error":"' || REPLACE(SQLERRM, '"', '''') || '"}');
+END;
+]'
+    );
+    COMMIT;
+END;
+/
+
+BEGIN
+    BEGIN
+        ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/reports/delete');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+    ORDS.DEFINE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/reports/delete');
+    ORDS.DEFINE_HANDLER(
+        p_module_name    => 'reerp',
+        p_pattern        => 'ai/reports/delete',
+        p_method         => 'POST',
+        p_source_type    => 'plsql/block',
+        p_items_per_page => 0,
+        p_mimes_allowed  => 'application/json',
+        p_source         => q'[
+DECLARE
+    l_status NUMBER;
+    l_result CLOB;
+BEGIN
+    RR_AI_REPORT_DELETE(:body_text, l_status, l_result);
+    :status_code := l_status;
+    RR_AI_PRINT_CLOB(l_result);
+EXCEPTION WHEN OTHERS THEN
+    :status_code := 500;
+    HTP.PRN('{"success":false,"error":"' || REPLACE(SQLERRM, '"', '''') || '"}');
+END;
+]'
+    );
+    COMMIT;
+END;
+/
+
+-- GET ai/reports/list
+BEGIN
     BEGIN
         ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/reports/list');
     EXCEPTION WHEN OTHERS THEN NULL; END;
@@ -221,10 +286,16 @@ BEGIN
         p_method         => 'GET',
         p_source_type    => 'plsql/block',
         p_items_per_page => 0,
-        p_source         =>
-            'DECLARE l_result CLOB; BEGIN RR_AI_REPORT_LIST(l_result); RR_AI_PRINT_CLOB(l_result); ' ||
-            'EXCEPTION WHEN OTHERS THEN ' ||
-            'HTP.PRN(''{"success":false,"error":"'' || REPLACE(SQLERRM, ''"'', '''''''') || ''"}''); END;'
+        p_source         => q'[
+DECLARE
+    l_result CLOB;
+BEGIN
+    RR_AI_REPORT_LIST(l_result);
+    RR_AI_PRINT_CLOB(l_result);
+EXCEPTION WHEN OTHERS THEN
+    HTP.PRN('{"success":false,"error":"' || REPLACE(SQLERRM, '"', '''') || '"}');
+END;
+]'
     );
     COMMIT;
 END;
