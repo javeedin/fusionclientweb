@@ -165,18 +165,18 @@ BEGIN
                 CASE
                     WHEN v_desc(i).col_type = 2 THEN
                         DBMS_SQL.COLUMN_VALUE(v_cur, i, v_number);
-                        IF v_number IS NULL THEN APEX_JSON.WRITE_NULL; ELSE APEX_JSON.WRITE(v_number); END IF;
+                        IF v_number IS NULL THEN APEX_JSON.WRITE(TO_CHAR(NULL)); ELSE APEX_JSON.WRITE(v_number); END IF;
                     WHEN v_desc(i).col_type = 12 THEN
                         DBMS_SQL.COLUMN_VALUE(v_cur, i, v_date);
-                        IF v_date IS NULL THEN APEX_JSON.WRITE_NULL;
+                        IF v_date IS NULL THEN APEX_JSON.WRITE(TO_CHAR(NULL));
                         ELSE APEX_JSON.WRITE(TO_CHAR(v_date, 'YYYY-MM-DD"T"HH24:MI:SS')); END IF;
                     WHEN v_desc(i).col_type IN (180, 181, 231) THEN
                         DBMS_SQL.COLUMN_VALUE(v_cur, i, v_ts);
-                        IF v_ts IS NULL THEN APEX_JSON.WRITE_NULL;
+                        IF v_ts IS NULL THEN APEX_JSON.WRITE(TO_CHAR(NULL));
                         ELSE APEX_JSON.WRITE(TO_CHAR(v_ts, 'YYYY-MM-DD"T"HH24:MI:SS')); END IF;
                     ELSE
                         DBMS_SQL.COLUMN_VALUE(v_cur, i, v_varchar);
-                        IF v_varchar IS NULL THEN APEX_JSON.WRITE_NULL; ELSE APEX_JSON.WRITE(v_varchar); END IF;
+                        IF v_varchar IS NULL THEN APEX_JSON.WRITE(TO_CHAR(NULL)); ELSE APEX_JSON.WRITE(v_varchar); END IF;
                 END CASE;
             END LOOP;
             APEX_JSON.CLOSE_ARRAY;
