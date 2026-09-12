@@ -367,8 +367,11 @@ DECLARE
 BEGIN
     RR_AI_EXECUTE_QUERY(:body_text, l_status, l_result);
     :status_code := l_status;
-    OWA_UTIL.MIME_HEADER('application/json', TRUE);
     RR_AI_PRINT_CLOB(l_result);
+EXCEPTION WHEN OTHERS THEN
+    :status_code := 500;
+    HTP.PRN('{"success":false,"code":"HANDLER","error":"' ||
+            REPLACE(REPLACE(SQLERRM, '\', ' '), '"', '''') || '"}');
 END;
 ]'
     );
@@ -394,8 +397,10 @@ DECLARE
     l_result CLOB;
 BEGIN
     RR_AI_GET_OBJECTS(:object, l_result);
-    OWA_UTIL.MIME_HEADER('application/json', TRUE);
     RR_AI_PRINT_CLOB(l_result);
+EXCEPTION WHEN OTHERS THEN
+    HTP.PRN('{"success":false,"code":"HANDLER","error":"' ||
+            REPLACE(REPLACE(SQLERRM, '\', ' '), '"', '''') || '"}');
 END;
 ]'
     );
@@ -411,6 +416,23 @@ END;
         p_access_method      => 'IN'
     );
     COMMIT;
+END;
+/
+
+-- ── Self-check: fail loudly if any RR_AI% object did not compile ───────────
+DECLARE
+    v_bad VARCHAR2(4000);
+BEGIN
+    SELECT LISTAGG(object_name, ', ') WITHIN GROUP (ORDER BY object_name)
+    INTO   v_bad
+    FROM   user_objects
+    WHERE  object_name LIKE 'RR_AI%' AND status = 'INVALID';
+    IF v_bad IS NOT NULL THEN
+        RAISE_APPLICATION_ERROR(-20140,
+            'AI gateway objects INVALID: ' || v_bad ||
+            ' — run: SELECT name, line, text FROM user_errors WHERE name LIKE ''RR_AI%''');
+    END IF;
+    DBMS_OUTPUT.PUT_LINE('AI SQL gateway installed — all RR_AI% objects VALID.');
 END;
 /
 
