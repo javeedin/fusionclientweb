@@ -203,7 +203,7 @@ const ZEBRA_BG = 'FFFBF1EF';
 const BORDER = { style: 'thin' as const, color: { argb: 'FFE0D5D2' } };
 const THIN_BORDER = { top: BORDER, left: BORDER, bottom: BORDER, right: BORDER };
 
-async function buildExcel(spec: ExcelSpec): Promise<Blob> {
+export async function buildExcel(spec: ExcelSpec): Promise<Blob> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Re-ERP AI Assistant';
   wb.created = new Date();
@@ -341,6 +341,7 @@ export interface ApiCallLog {
   rows?: number;
   ms: number;
   error?: string;
+  sql?: string;        // full SQL statement (erp_sql_query calls) — for Inspect SQL / Save Report
 }
 
 async function erpApiGet(
@@ -436,7 +437,7 @@ async function erpSqlQuery(
   const t0 = performance.now();
   const label = sql.replace(/\s+/g, ' ').slice(0, 120);
   const done = (log: Omit<ApiCallLog, 'tool' | 'method' | 'ms'>) =>
-    onLog({ tool: 'erp_sql_query', method: 'SQL', ms: Math.round(performance.now() - t0), ...log });
+    onLog({ tool: 'erp_sql_query', method: 'SQL', sql, ms: Math.round(performance.now() - t0), ...log });
   if (!sql || !sql.trim()) {
     done({ url: '(empty)', status: 'ERR', error: 'empty sql' });
     return { error: 'Empty SQL' };

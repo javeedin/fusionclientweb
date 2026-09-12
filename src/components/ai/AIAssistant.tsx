@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, Input, Modal, Popconfirm, Segmented, Select, Tag, Tooltip, Typography, message as antMessage } from 'antd';
 import {
-  ApiOutlined, BulbOutlined, CloseOutlined, CommentOutlined, CompressOutlined, DeleteOutlined, DownloadOutlined,
-  ExpandOutlined, EyeOutlined, FileExcelOutlined, FileWordOutlined, HistoryOutlined,
-  PlusOutlined, PlusSquareOutlined, ReloadOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
+  ApiOutlined, BulbOutlined, CloseOutlined, CodeOutlined, CommentOutlined, CompressOutlined, DeleteOutlined,
+  DownloadOutlined, ExpandOutlined, EyeOutlined, FileExcelOutlined, FileWordOutlined, HistoryOutlined,
+  PlusOutlined, PlusSquareOutlined, ReloadOutlined, SaveOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
+import { SavedReportsPane, ScheduledJobsPane, SaveReportModal } from './AiReportsTabs';
 import Anthropic from '@anthropic-ai/sdk';
 import { useNavigate } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../../config/api.config';
@@ -316,6 +317,10 @@ const AssistantPanel: React.FC<PanelProps> = ({
   const [draftKey, setDraftKey] = useState('');
   const [liveCalls, setLiveCalls] = useState<ApiCallLog[]>([]);
   const [apiOpen, setApiOpen] = useState<Record<number, boolean>>({});
+  const [sqlOpen, setSqlOpen] = useState<Record<number, boolean>>({});
+  // Tabs: Chatbot | Saved Reports | Scheduled Jobs
+  const [panelTab, setPanelTab] = useState<'chat' | 'reports' | 'jobs'>('chat');
+  const [saveReportFor, setSaveReportFor] = useState<{ sql: string; name?: string } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [preview, setPreview] = useState<DeliveredFile | null>(null);
   const [pendingWrite, setPendingWrite] = useState<(PendingWrite & { resolve: (ok: boolean) => void }) | null>(null);
@@ -581,7 +586,23 @@ const AssistantPanel: React.FC<PanelProps> = ({
         </Tooltip>
       </div>
 
-      <div className="ai-body">
+      {/* Tab strip: Chatbot | Saved Reports | Scheduled Jobs */}
+      <div style={{ display: 'flex', gap: 2, padding: '4px 8px', borderBottom: '1px solid #EFEBE9', background: '#fff', flexShrink: 0 }}>
+        {([['chat', 'Chatbot'], ['reports', 'Saved Reports'], ['jobs', 'Scheduled Jobs']] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setPanelTab(key)}
+            style={{
+              border: 'none', cursor: 'pointer', fontSize: 12, padding: '4px 12px', borderRadius: 6,
+              fontWeight: panelTab === key ? 700 : 500,
+              background: panelTab === key ? '#FBF1EF' : 'transparent',
+              color: panelTab === key ? '#C74634' : '#6B6B6B',
+            }}>{label}</button>
+        ))}
+      </div>
+
+      {panelTab === 'reports' && <div className="ai-body"><SavedReportsPane userName={userName} /></div>}
+      {panelTab === 'jobs' && <div className="ai-body"><ScheduledJobsPane /></div>}
+
+      <div className="ai-body" style={panelTab === 'chat' ? undefined : { display: 'none' }}>
       {fullscreen && (
         <div className="ai-sidebar">
           <div className="ai-side-head">
@@ -705,7 +726,39 @@ const AssistantPanel: React.FC<PanelProps> = ({
                   >
                     <ApiOutlined /> {m.apiCalls.length} API call{m.apiCalls.length > 1 ? 's' : ''}
                   </button>
+                  {m.role === 'assistant' && m.apiCalls.some(c => c.sql) && (
+                    <>
+                      <button
+                        className={`ai-apibtn${sqlOpen[i] ? ' open' : ''}`}
+                        onClick={() => setSqlOpen(p => ({ ...p, [i]: !p[i] }))}
+                        title="Show / hide the SQL that was run for this answer"
+                      >
+                        <CodeOutlined /> {sqlOpen[i] ? 'Hide SQL' : 'Inspect SQL'}
+                      </button>
+                      <button
+                        className="ai-apibtn"
+                        onClick={() => {
+                          const sqls = m.apiCalls!.filter(c => c.sql);
+                          setSaveReportFor({ sql: sqls[sqls.length - 1].sql!, name: cur?.title !== 'New chat' ? cur?.title : '' });
+                        }}
+                        title="Save this result's SQL as a re-runnable report"
+                      >
+                        <SaveOutlined /> Save Report
+                      </button>
+                    </>
+                  )}
                   {apiOpen[i] && <ApiCallList calls={m.apiCalls} />}
+                  {sqlOpen[i] && (
+                    <div style={{ marginTop: 4 }}>
+                      {m.apiCalls.filter(c => c.sql).map((c, j) => (
+                        <pre key={j} style={{
+                          margin: '4px 0', padding: 8, background: '#F7F5F3', border: '1px solid #EFEBE9',
+                          borderRadius: 6, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                          maxHeight: 180, overflow: 'auto',
+                        }}>{c.sql}{c.rows !== undefined ? `\n-- ${c.rows} rows · ${c.ms} ms` : ''}</pre>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -892,6 +945,14 @@ const AssistantPanel: React.FC<PanelProps> = ({
           </div>
         )}
       </Modal>
+
+      <SaveReportModal
+        open={!!saveReportFor}
+        sql={saveReportFor?.sql || ''}
+        defaultName={saveReportFor?.name}
+        userName={userName}
+        onClose={(saved) => { setSaveReportFor(null); if (saved) setPanelTab('reports'); }}
+      />
     </div>
   );
 };
