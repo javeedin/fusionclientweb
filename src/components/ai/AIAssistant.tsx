@@ -232,7 +232,8 @@ const PreviewPanel: React.FC<{
   files: DeliveredFile[];
   selected: DeliveredFile | null;
   onSelect: (f: DeliveredFile) => void;
-}> = ({ files, selected, onSelect }) => (
+  onRemove: (f: DeliveredFile) => void;
+}> = ({ files, selected, onSelect, onRemove }) => (
   <div className="ai-preview">
     <div className="ai-preview-head">
       <span style={{ fontWeight: 600, fontSize: 13 }}><EyeOutlined /> Preview</span>
@@ -240,6 +241,13 @@ const PreviewPanel: React.FC<{
         {files.map((f, i) => (
           <button key={`${f.name}${i}`} className={`ai-ptab${selected === f ? ' on' : ''}`} onClick={() => onSelect(f)} title={f.name}>
             {f.kind === 'word' ? <FileWordOutlined /> : <FileExcelOutlined />} {f.name}
+            <span
+              title={`Remove ${f.name}`}
+              onClick={(e) => { e.stopPropagation(); onRemove(f); }}
+              style={{ marginLeft: 4, opacity: .55, fontWeight: 700, padding: '0 2px' }}
+              onMouseEnter={e => { (e.target as HTMLElement).style.opacity = '1'; }}
+              onMouseLeave={e => { (e.target as HTMLElement).style.opacity = '.55'; }}
+            >×</span>
           </button>
         ))}
       </div>
@@ -277,6 +285,7 @@ interface ConvStore {
   pushMsg: (convId: string, m: ChatMsg) => void;
   createConv: () => string;
   deleteConv: (id: string) => void;
+  removeFile: (convId: string, fileName: string) => void;
 }
 
 // ── One chat window ─────────────────────────────────────────────────────────
@@ -848,7 +857,15 @@ const AssistantPanel: React.FC<PanelProps> = ({
       </div>
 
       {fullscreen && (
-        <PreviewPanel files={convFiles} selected={preview} onSelect={setPreview} />
+        <PreviewPanel
+          files={convFiles}
+          selected={preview}
+          onSelect={setPreview}
+          onRemove={(f) => {
+            if (cur) store.removeFile(cur.id, f.name);
+            if (preview?.name === f.name) setPreview(null);
+          }}
+        />
       )}
       </div>
 
@@ -1024,9 +1041,17 @@ const AIAssistant: React.FC = () => {
     setConvs(prev => prev.filter(c => c.id !== id));
   }, []);
 
+  // Remove a generated file (by name) from every message of a conversation —
+  // used by the × on the preview tabs to clean out old files.
+  const removeFile = useCallback((convId: string, fileName: string) => {
+    setConvs(prev => prev.map(c => c.id === convId
+      ? { ...c, msgs: c.msgs.map(m => m.files?.length ? { ...m, files: m.files.filter(f => f.name !== fileName) } : m) }
+      : c));
+  }, []);
+
   const store: ConvStore = useMemo(
-    () => ({ convs, pushMsg, createConv, deleteConv }),
-    [convs, pushMsg, createConv, deleteConv],
+    () => ({ convs, pushMsg, createConv, deleteConv, removeFile }),
+    [convs, pushMsg, createConv, deleteConv, removeFile],
   );
 
   const resolveKey = useCallback(async (): Promise<string> => {
