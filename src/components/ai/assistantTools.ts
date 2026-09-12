@@ -58,6 +58,25 @@ PETTY CASH
 
 Conventions: amounts are in the ledger currency (AED for BUIMERC). GL periods use Mon-YY format (e.g. Jun-26). Prefer small limits first; raise only when needed.`;
 
+// ── SQL-mode tool (added to the toolset when the assistant is in SQL mode) ──
+export const SQL_QUERY_TOOL: Anthropic.Tool = {
+  name: 'erp_sql_query',
+  description:
+    'Run ONE read-only Oracle SQL SELECT against the ERP database and return {columns, rows}. ' +
+    'Write the SQL yourself from the SCHEMA CATALOG in the system prompt — never guess a table or column that is not listed. ' +
+    'Single SELECT/WITH statement only; INSERT/UPDATE/DELETE/DDL are rejected server-side. ' +
+    'Results are capped at maxRows (default 200, max 1000). On an ORA- error, fix the SQL and retry once.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      sql: { type: 'string', description: 'One Oracle SELECT (or WITH ... SELECT) statement, no trailing semicolon' },
+      maxRows: { type: 'number', description: 'Row cap (default 200, max 1000)' },
+      reason: { type: 'string', description: 'One line: what this query answers' },
+    },
+    required: ['sql'],
+  },
+};
+
 // ── Tool definitions ────────────────────────────────────────────────────────
 export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
@@ -405,6 +424,91 @@ export interface PendingWrite {
   summary?: string;
 }
 
+// ── SQL gateway (SQL mode) ──────────────────────────────────────────────────
+// POST ai/executequery — guarded SELECT-only executor (database/ai/140_ai_sql_gateway.sql)
+async function erpSqlQuery(
+  apexBase: string,
+  sql: string,
+  maxRows: number | undefined,
+  appUser: string,
+  onLog: (log: ApiCallLog) => void,
+) {
+  const t0 = performance.now();
+  const label = sql.replace(/\s+/g, ' ').slice(0, 120);
+  const done = (log: Omit<ApiCallLog, 'tool' | 'method' | 'ms'>) =>
+    onLog({ tool: 'erp_sql_query', method: 'SQL', ms: Math.round(performance.now() - t0), ...log });
+  if (!sql || !sql.trim()) {
+    done({ url: '(empty)', status: 'ERR', error: 'empty sql' });
+    return { error: 'Empty SQL' };
+  }
+  try {
+    const res = await fetch(apexBase.replace(/\/+$/, '') + '/ai/executequery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ sql, maxRows: maxRows ?? 200, appUser }),
+    });
+    const text = await res.text();
+    let data: { success?: boolean; error?: string; rowCount?: number } & Record<string, unknown>;
+    try { data = JSON.parse(text); } catch {
+      done({ url: label, status: res.status, error: 'non-JSON response' });
+      return { error: 'Non-JSON response from SQL gateway', body: text.slice(0, 1500) };
+    }
+    if (!res.ok || data.success === false) {
+      done({ url: label, status: res.ok ? 'ERR' : res.status, error: (data.error || `HTTP ${res.status}`).slice(0, 120) });
+      return data; // includes the ORA-/rejection text so the model can self-correct
+    }
+    done({ url: label, status: res.status, rows: data.rowCount });
+    return data;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    done({ url: label, status: 'ERR', error: msg });
+    return { error: msg };
+  }
+}
+
+// ── Schema catalog (SQL mode) ───────────────────────────────────────────────
+// GET ai/objects, compacted to one line per object for the system prompt.
+// Cached in localStorage for 24h so the metadata call runs once a day.
+const LS_SCHEMA_CATALOG = 'reerp.ai.schemaCatalog';
+const SCHEMA_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface SchemaColumn { name: string; dataType: string; nullable: string; comment?: string }
+interface SchemaObject { name: string; type: string; comment?: string; columns: SchemaColumn[] }
+
+function compactType(t: string): string {
+  if (t.startsWith('NUMBER')) return 'n';
+  if (t.startsWith('DATE')) return 'd';
+  if (t.startsWith('TIMESTAMP')) return 'ts';
+  if (t.includes('CHAR')) return 's';
+  if (t.includes('CLOB')) return 'clob';
+  return t.toLowerCase();
+}
+
+export async function fetchSchemaCatalog(apexBase: string): Promise<string> {
+  try {
+    const cached = JSON.parse(localStorage.getItem(LS_SCHEMA_CATALOG) || 'null') as { ts: number; text: string } | null;
+    if (cached?.text && Date.now() - cached.ts < SCHEMA_TTL_MS) return cached.text;
+  } catch { /* rebuild below */ }
+  const res = await fetch(apexBase.replace(/\/+$/, '') + '/ai/objects', {
+    cache: 'no-store', headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(`schema catalog HTTP ${res.status}`);
+  const data = (await res.json()) as { objects?: SchemaObject[] };
+  const lines = (data.objects || []).map(o => {
+    const cols = (o.columns || [])
+      .map(c => `${c.name} ${compactType(c.dataType)}${c.comment ? ` "${c.comment.replace(/"/g, "'").slice(0, 60)}"` : ''}`)
+      .join(', ');
+    return `${o.name}(${cols})${o.comment ? ` -- ${o.comment.slice(0, 100)}` : ''}`;
+  });
+  const text = lines.join('\n');
+  try { localStorage.setItem(LS_SCHEMA_CATALOG, JSON.stringify({ ts: Date.now(), text })); } catch { /* quota */ }
+  return text;
+}
+
+export function clearSchemaCatalogCache(): void {
+  try { localStorage.removeItem(LS_SCHEMA_CATALOG); } catch { /* ignore */ }
+}
+
 async function erpApiWrite(
   apexBase: string,
   method: string,
@@ -470,6 +574,13 @@ export async function runAssistantTool(
     switch (name) {
       case 'erp_api_get':
         result = await erpApiGet(apexBase, String(input.path || ''), input.params as Record<string, string> | undefined, onLog);
+        break;
+      case 'erp_sql_query':
+        result = await erpSqlQuery(
+          apexBase, String(input.sql || ''),
+          input.maxRows === undefined ? undefined : Number(input.maxRows),
+          'AI_ASSISTANT', onLog,
+        );
         break;
       case 'erp_api_write': {
         const method = String(input.method || 'POST').toUpperCase();
@@ -539,12 +650,39 @@ export async function runAssistantTool(
 }
 
 // ── System prompt ───────────────────────────────────────────────────────────
-export function buildSystemPrompt(companyCode: string, userName: string): string {
+export type AnswerMode = 'sql' | 'api';
+
+// SQL-mode addendum: reads go through erp_sql_query using the schema catalog.
+function buildSqlModeSection(schemaCatalog: string): string {
+  return (
+    `ANSWER MODE: SQL (default)\n` +
+    `- For ALL data reads, write Oracle SQL and run it with erp_sql_query. The SCHEMA CATALOG below is the complete list of ` +
+    `tables/views and columns you may use — never reference an object or column that is not in it.\n` +
+    `- Oracle SQL rules: single SELECT (or WITH...SELECT), no trailing semicolon; today = TRUNC(SYSDATE); a date-day filter is ` +
+    `col >= TRUNC(SYSDATE) AND col < TRUNC(SYSDATE)+1; GL periods are stored as Mon-YY strings (e.g. Jun-26); alias every aggregate; ` +
+    `prefer explicit column lists; add FETCH FIRST 200 ROWS ONLY when the question implies a list.\n` +
+    `- If the gateway returns an ORA- error or a rejection, fix the SQL (check the catalog for the right name) and retry ONCE, then explain.\n` +
+    `- Use erp_api_get only when SQL cannot answer (e.g. computed endpoints like trial balance with opening balances) — say so when you do.\n` +
+    `- Writes are unchanged: erp_api_write with user approval. Never attempt INSERT/UPDATE/DELETE through erp_sql_query — it is SELECT-only and will reject them.\n\n` +
+    `SCHEMA CATALOG (object(column type "comment", ...) -- object comment; types: n=number s=varchar d=date ts=timestamp)\n` +
+    schemaCatalog + `\n`
+  );
+}
+
+export function buildSystemPrompt(
+  companyCode: string,
+  userName: string,
+  opts?: { mode?: AnswerMode; schemaCatalog?: string },
+): string {
+  const sqlMode = opts?.mode === 'sql' && !!opts?.schemaCatalog;
   return (
     `You are the Re-ERP AI Assistant, embedded in an Oracle Fusion companion ERP (company: ${companyCode || 'BUIMERC'}, user: ${userName || 'user'}). ` +
     `You answer questions about LIVE data across all modules — GL, AP, AR, Cash, Fixed Assets, Petty Cash — and produce downloadable reports.\n\n` +
+    (sqlMode ? buildSqlModeSection(opts!.schemaCatalog!) + '\n' : '') +
     `RULES\n` +
-    `- ALWAYS fetch real data with erp_api_get before answering anything about balances, journals, invoices, payments, receipts, assets or transactions. Never invent figures.\n` +
+    (sqlMode
+      ? `- ALWAYS fetch real data with erp_sql_query (preferred) or erp_api_get before answering anything about balances, journals, invoices, payments, receipts, assets or transactions. Never invent figures.\n`
+      : `- ALWAYS fetch real data with erp_api_get before answering anything about balances, journals, invoices, payments, receipts, assets or transactions. Never invent figures.\n`) +
     `- When asked for a report, export, spreadsheet or document: call create_excel_report (preferred for tables — it produces a colourful formatted workbook) or create_word_document, filled with the data you fetched. Include a totalsRow for amount columns where it makes sense. After the file downloads, summarise its contents briefly.\n` +
     `- Chain calls when needed (e.g. look up a supplier number first, then fetch its invoices).\n` +
     `- If an endpoint errors or returns nothing, say so briefly, and try a sensible alternative endpoint or filter once before giving up.\n` +

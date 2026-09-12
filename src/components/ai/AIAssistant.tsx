@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Dropdown, Input, Modal, Popconfirm, Select, Tag, Tooltip, Typography, message as antMessage } from 'antd';
+import { Button, Dropdown, Input, Modal, Popconfirm, Segmented, Select, Tag, Tooltip, Typography, message as antMessage } from 'antd';
 import {
   ApiOutlined, BulbOutlined, CloseOutlined, CommentOutlined, CompressOutlined, DeleteOutlined, DownloadOutlined,
   ExpandOutlined, EyeOutlined, FileExcelOutlined, FileWordOutlined, HistoryOutlined,
@@ -11,8 +11,9 @@ import { APEX_DB_CONFIG } from '../../config/api.config';
 import { getCurrentCompany } from '../../config/company.config';
 import { useAuth } from '../../context/AuthContext';
 import {
-  ASSISTANT_TOOLS, buildSystemPrompt, downloadDeliveredFile, runAssistantTool, wordPreviewSrcDoc,
-  type ApiCallLog, type DeliveredFile, type ExcelSpec, type PendingWrite,
+  ASSISTANT_TOOLS, SQL_QUERY_TOOL, buildSystemPrompt, downloadDeliveredFile, fetchSchemaCatalog,
+  runAssistantTool, wordPreviewSrcDoc,
+  type AnswerMode, type ApiCallLog, type DeliveredFile, type ExcelSpec, type PendingWrite,
 } from './assistantTools';
 import {
   buildRecipesPrompt, deleteTrainingRecipe, fetchAllTrainingRecipes, fetchTrainingRecipes,
@@ -304,6 +305,14 @@ const AssistantPanel: React.FC<PanelProps> = ({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  // Answer mode: 'sql' = model writes Oracle SQL run via the ai/executequery
+  // gateway (default); 'api' = the original endpoint-catalog behavior.
+  const [answerMode, setAnswerMode] = useState<AnswerMode>(() =>
+    (localStorage.getItem('reerp.ai.answerMode') === 'api' ? 'api' : 'sql'));
+  const switchAnswerMode = (m: AnswerMode) => {
+    setAnswerMode(m);
+    try { localStorage.setItem('reerp.ai.answerMode', m); } catch { /* ignore */ }
+  };
   const [draftKey, setDraftKey] = useState('');
   const [liveCalls, setLiveCalls] = useState<ApiCallLog[]>([]);
   const [apiOpen, setApiOpen] = useState<Record<number, boolean>>({});
@@ -361,9 +370,20 @@ const AssistantPanel: React.FC<PanelProps> = ({
     const calls: ApiCallLog[] = [];
     const onLog = (c: ApiCallLog) => { calls.push(c); setLiveCalls(calls.slice()); };
 
+    // SQL mode: load the schema catalog (cached 24h). If the gateway is not
+    // deployed/reachable, fall back to API mode for this message.
+    let schemaCatalog = '';
+    if (answerMode === 'sql') {
+      setStatus('Loading schema catalog…');
+      try { schemaCatalog = await fetchSchemaCatalog(APEX); }
+      catch { onLog({ tool: 'erp_sql_query', method: 'SQL', url: 'ai/objects', status: 'ERR', error: 'schema catalog unavailable — using API mode', ms: 0 }); }
+    }
+    const sqlActive = answerMode === 'sql' && !!schemaCatalog;
+
     // merge the local MCP servers' tools with the built-in ones
     const mcpMap = new Map<string, McpTool>(mcpTools.map(t => [mcpToolId(t), t]));
     const tools: Anthropic.Tool[] = [
+      ...(sqlActive ? [SQL_QUERY_TOOL] : []),
       ...ASSISTANT_TOOLS,
       ...mcpTools.map(t => ({
         name: mcpToolId(t),
@@ -373,7 +393,8 @@ const AssistantPanel: React.FC<PanelProps> = ({
           : { type: 'object', properties: {} }) as Anthropic.Tool.InputSchema,
       })),
     ];
-    let system = buildSystemPrompt(getCurrentCompany().code, userName);
+    let system = buildSystemPrompt(getCurrentCompany().code, userName,
+      sqlActive ? { mode: 'sql', schemaCatalog } : undefined);
     // learned recipes (taught from pages or in chat) — cached 60s, so a
     // recipe taught a moment ago applies to the very next message
     try {
@@ -468,7 +489,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
       setStatus('');
       setLiveCalls([]);
     }
-  }, [input, busy, apiKey, resolveKey, curId, store, model, userName, index, mcpTools, mcpSummary, navigate]);
+  }, [input, busy, apiKey, resolveKey, curId, store, model, userName, index, mcpTools, mcpSummary, navigate, answerMode]);
 
   const historyMenu = useMemo(() => ({
     items: store.convs.length
@@ -521,6 +542,16 @@ const AssistantPanel: React.FC<PanelProps> = ({
             {cur?.title && cur.title !== 'New chat' ? cur.title : 'Live data · all modules · Excel & Word exports'}
           </div>
         </div>
+        <Tooltip title={answerMode === 'sql'
+          ? 'SQL mode: the AI writes Oracle SQL from the schema catalog and runs it via the guarded ai/executequery gateway'
+          : 'API mode: the AI answers via the curated REST endpoint catalog'}>
+          <Segmented
+            size="small"
+            value={answerMode}
+            onChange={v => switchAnswerMode(v as AnswerMode)}
+            options={[{ label: 'SQL', value: 'sql' }, { label: 'API', value: 'api' }]}
+          />
+        </Tooltip>
         <Tooltip title="Open another assistant window">
           <Button size="small" type="text" icon={<PlusSquareOutlined />} onClick={onNewWindow} disabled={total >= MAX_PANELS} />
         </Tooltip>
