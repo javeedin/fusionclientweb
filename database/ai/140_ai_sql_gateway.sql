@@ -202,81 +202,29 @@ BEGIN
 END RR_AI_EXECUTE_SQL;
 /
 
--- ── 4. Body-parsing wrapper for the ORDS handler ───────────────────────────
-CREATE OR REPLACE PROCEDURE RR_AI_EXECUTE_QUERY (
-    p_body   IN  CLOB,
-    p_status OUT NUMBER,
+-- ── 3b. Chunked CLOB printer (HTP.P fails over ~32k) ───────────────────────
+CREATE OR REPLACE PROCEDURE RR_AI_PRINT_CLOB (p_clob IN CLOB) AS
+    v_len    NUMBER := DBMS_LOB.GETLENGTH(p_clob);
+    v_offset NUMBER := 1;
+    c_chunk  CONSTANT NUMBER := 8000;
+BEGIN
+    WHILE v_offset <= v_len LOOP
+        HTP.PRN(DBMS_LOB.SUBSTR(p_clob, c_chunk, v_offset));
+        v_offset := v_offset + c_chunk;
+    END LOOP;
+END RR_AI_PRINT_CLOB;
+/
+
+-- ── 3c. Metadata builder ───────────────────────────────────────────────────
+-- In a stored procedure (NOT inline in the ORDS handler): ORDS scans handler
+-- source for ":" binds, so literals like 'HH24:MI:SS' break the handler with
+-- a 555 User Defined Resource Error. Compiled PL/SQL has no such problem.
+CREATE OR REPLACE PROCEDURE RR_AI_GET_OBJECTS (
+    p_object IN  VARCHAR2,
     p_result OUT CLOB
 ) AS
-    v_sql      CLOB;
-    v_max      NUMBER;
-    v_app_user VARCHAR2(100);
-BEGIN
-    BEGIN
-        SELECT JSON_VALUE(p_body, '$.sql' RETURNING CLOB),
-               JSON_VALUE(p_body, '$.maxRows' RETURNING NUMBER),
-               JSON_VALUE(p_body, '$.appUser')
-        INTO   v_sql, v_max, v_app_user
-        FROM   dual;
-    EXCEPTION WHEN OTHERS THEN
-        p_status := 400;
-        p_result := '{"success":false,"code":"REJECTED","error":"Body must be JSON: {sql, maxRows, appUser}"}';
-        RETURN;
-    END;
-    RR_AI_EXECUTE_SQL(v_sql, v_max, NVL(v_app_user, 'AI'), p_result);
-    p_status := 200;
-END RR_AI_EXECUTE_QUERY;
-/
-
--- ── 5. ORDS handlers ───────────────────────────────────────────────────────
--- POST reerp/ai/executequery
-BEGIN
-    BEGIN
-        ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/executequery');
-    EXCEPTION WHEN OTHERS THEN NULL; END;
-    ORDS.DEFINE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/executequery');
-    ORDS.DEFINE_HANDLER(
-        p_module_name    => 'reerp',
-        p_pattern        => 'ai/executequery',
-        p_method         => 'POST',
-        p_source_type    => 'plsql/block',
-        p_items_per_page => 0,
-        p_mimes_allowed  => 'application/json',
-        p_comments       => 'AI SQL gateway — guarded SELECT-only executor',
-        p_source         => q'[
-DECLARE
-    l_status NUMBER;
-    l_result CLOB;
-BEGIN
-    RR_AI_EXECUTE_QUERY(:body_text, l_status, l_result);
-    :status_code := l_status;
-    OWA_UTIL.MIME_HEADER('application/json', TRUE);
-    HTP.P(l_result);
-END;
-]'
-    );
-    COMMIT;
-END;
-/
-
--- GET reerp/ai/objects  (optional ?object=NAME adds indexes for that object)
-BEGIN
-    BEGIN
-        ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/objects');
-    EXCEPTION WHEN OTHERS THEN NULL; END;
-    ORDS.DEFINE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/objects');
-    ORDS.DEFINE_HANDLER(
-        p_module_name    => 'reerp',
-        p_pattern        => 'ai/objects',
-        p_method         => 'GET',
-        p_source_type    => 'plsql/block',
-        p_items_per_page => 0,
-        p_comments       => 'AI SQL gateway — schema metadata (tables/views, columns, comments, indexes)',
-        p_source         => q'[
-DECLARE
-    l_object    VARCHAR2(128) := UPPER(:object);
+    l_object    VARCHAR2(128) := UPPER(TRIM(p_object));
     l_whitelist NUMBER;
-    l_first_obj BOOLEAN := TRUE;
 
     -- visible = not denied, and (no whitelist OR whitelisted)
     FUNCTION visible (p_name IN VARCHAR2) RETURN BOOLEAN IS
@@ -305,17 +253,14 @@ BEGIN
     ) LOOP
         IF l_object IS NOT NULL AND o.name != l_object THEN CONTINUE; END IF;
         IF NOT visible(o.name) THEN CONTINUE; END IF;
-        l_first_obj := FALSE;
 
         APEX_JSON.OPEN_OBJECT;
         APEX_JSON.WRITE('name', o.name);
         APEX_JSON.WRITE('type', o.obj_type);
-        BEGIN
-            FOR c IN (SELECT comments FROM user_tab_comments
-                      WHERE table_name = o.name AND comments IS NOT NULL) LOOP
-                APEX_JSON.WRITE('comment', c.comments);
-            END LOOP;
-        EXCEPTION WHEN OTHERS THEN NULL; END;
+        FOR c IN (SELECT comments FROM user_tab_comments
+                  WHERE table_name = o.name AND comments IS NOT NULL) LOOP
+            APEX_JSON.WRITE('comment', c.comments);
+        END LOOP;
 
         APEX_JSON.OPEN_ARRAY('columns');
         FOR c IN (
@@ -369,9 +314,88 @@ BEGIN
 
     APEX_JSON.CLOSE_ARRAY;
     APEX_JSON.CLOSE_OBJECT;
-    OWA_UTIL.MIME_HEADER('application/json', TRUE);
-    HTP.P(APEX_JSON.GET_CLOB_OUTPUT);
+    p_result := APEX_JSON.GET_CLOB_OUTPUT;
     APEX_JSON.FREE_OUTPUT;
+END RR_AI_GET_OBJECTS;
+/
+
+-- ── 4. Body-parsing wrapper for the ORDS handler ───────────────────────────
+CREATE OR REPLACE PROCEDURE RR_AI_EXECUTE_QUERY (
+    p_body   IN  CLOB,
+    p_status OUT NUMBER,
+    p_result OUT CLOB
+) AS
+    v_sql      CLOB;
+    v_max      NUMBER;
+    v_app_user VARCHAR2(100);
+BEGIN
+    BEGIN
+        SELECT JSON_VALUE(p_body, '$.sql' RETURNING CLOB),
+               JSON_VALUE(p_body, '$.maxRows' RETURNING NUMBER),
+               JSON_VALUE(p_body, '$.appUser')
+        INTO   v_sql, v_max, v_app_user
+        FROM   dual;
+    EXCEPTION WHEN OTHERS THEN
+        p_status := 400;
+        p_result := '{"success":false,"code":"REJECTED","error":"Body must be JSON: {sql, maxRows, appUser}"}';
+        RETURN;
+    END;
+    RR_AI_EXECUTE_SQL(v_sql, v_max, NVL(v_app_user, 'AI'), p_result);
+    p_status := 200;
+END RR_AI_EXECUTE_QUERY;
+/
+
+-- ── 5. ORDS handlers ───────────────────────────────────────────────────────
+-- POST reerp/ai/executequery
+BEGIN
+    BEGIN
+        ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/executequery');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+    ORDS.DEFINE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/executequery');
+    ORDS.DEFINE_HANDLER(
+        p_module_name    => 'reerp',
+        p_pattern        => 'ai/executequery',
+        p_method         => 'POST',
+        p_source_type    => 'plsql/block',
+        p_items_per_page => 0,
+        p_mimes_allowed  => 'application/json',
+        p_comments       => 'AI SQL gateway — guarded SELECT-only executor',
+        p_source         => q'[
+DECLARE
+    l_status NUMBER;
+    l_result CLOB;
+BEGIN
+    RR_AI_EXECUTE_QUERY(:body_text, l_status, l_result);
+    :status_code := l_status;
+    OWA_UTIL.MIME_HEADER('application/json', TRUE);
+    RR_AI_PRINT_CLOB(l_result);
+END;
+]'
+    );
+    COMMIT;
+END;
+/
+
+-- GET reerp/ai/objects  (optional ?object=NAME adds indexes for that object)
+BEGIN
+    BEGIN
+        ORDS.DELETE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/objects');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+    ORDS.DEFINE_TEMPLATE(p_module_name => 'reerp', p_pattern => 'ai/objects');
+    ORDS.DEFINE_HANDLER(
+        p_module_name    => 'reerp',
+        p_pattern        => 'ai/objects',
+        p_method         => 'GET',
+        p_source_type    => 'plsql/block',
+        p_items_per_page => 0,
+        p_comments       => 'AI SQL gateway — schema metadata (tables/views, columns, comments, indexes)',
+        p_source         => q'[
+DECLARE
+    l_result CLOB;
+BEGIN
+    RR_AI_GET_OBJECTS(:object, l_result);
+    OWA_UTIL.MIME_HEADER('application/json', TRUE);
+    RR_AI_PRINT_CLOB(l_result);
 END;
 ]'
     );
