@@ -279,7 +279,8 @@ export const SaveReportModal: React.FC<{
 
   return (
     <Modal title="Save as Report" open={open} onOk={save} confirmLoading={saving}
-      onCancel={() => onClose(false)} okText="Save report" width={480}>
+      onCancel={() => onClose(false)} okText="Save report" width={480}
+      zIndex={2100} /* the assistant panel sits at z-index 1001-1200 — stay above it */>
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
         <div>
           <Text strong style={{ fontSize: 12 }}>Name</Text>
