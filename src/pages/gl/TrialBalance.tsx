@@ -394,6 +394,7 @@ const TrialBalance: React.FC = () => {
     rrFetch:      { label: 'GET RR Trial Balance',    url: '', method: 'GET',  status: null, ok: null, durationMs: null, running: false, body: '' },
     linesSummary: { label: 'GET Lines Summary',       url: '', method: 'GET',  status: null, ok: null, durationMs: null, running: false, body: '' },
     rrDynamic:    { label: 'GET RR Dynamic TB',        url: '', method: 'GET',  status: null, ok: null, durationMs: null, running: false, body: '' },
+    companies:    { label: 'GET Companies (COA value set)', url: '', method: 'GET', status: null, ok: null, durationMs: null, running: false, body: '' },
   });
 
   // Lines Summary state
@@ -1375,10 +1376,18 @@ const TrialBalance: React.FC = () => {
   useEffect(() => {
     fetchLedgers();
     fetchPeriods();
-    // Fetch all companies from COA value set
+    // Fetch all companies from COA value set (tracked in the API panel)
     const VALUES_API = buildApexUrl('valuesets/getvalues');
-    fetch(`${VALUES_API}/BUIMERC_FIN_GLB_COA_CO`)
-      .then(r => r.ok ? r.json() : null)
+    const companiesUrl = `${VALUES_API}/BUIMERC_FIN_GLB_COA_CO`;
+    const t0 = trackCall('companies', 'GET Companies (COA value set)', companiesUrl);
+    fetch(companiesUrl)
+      .then(async r => {
+        const text = await r.text();
+        let pretty = text;
+        try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { /* keep raw */ }
+        resolveCall('companies', t0, r.status, r.ok, pretty.slice(0, 2000));
+        return r.ok ? JSON.parse(text) : null;
+      })
       .then(data => {
         if (!data) return;
         const items: any[] = data.items || [];
@@ -1391,7 +1400,7 @@ const TrialBalance: React.FC = () => {
           })
         );
       })
-      .catch(() => {});
+      .catch(e => resolveCall('companies', t0, 0, false, e instanceof Error ? e.message : String(e)));
   }, []);
 
   // Re-fetch periods when ledger changes
