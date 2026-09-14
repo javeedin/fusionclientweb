@@ -452,6 +452,18 @@ const TrialBalance: React.FC = () => {
   // ── All companies from COA value set ────────────────────────
   const [allCompanies, setAllCompanies] = useState<{ value: string; label: string }[]>([]);
 
+  // Companies limited to the current tab's ledger: intersect the labeled COA
+  // value-set list with the company codes present in the tab's data. Codes in
+  // the data but missing from the value set stay selectable (plain label);
+  // until the tab has data, fall back to the full value-set list.
+  const companyOptionsFor = useCallback((codes: string[]): { value: string; label: string }[] => {
+    const base = allCompanies.length > 0 ? allCompanies : codes.map(c => ({ value: c, label: c }));
+    if (!codes.length) return base;
+    const inLedger = base.filter(o => codes.includes(o.value));
+    const missing = codes.filter(c => !base.some(o => o.value === c)).map(c => ({ value: c, label: c }));
+    return [...inLedger, ...missing];
+  }, [allCompanies]);
+
   // ── TB Drill-down: Journal Lines modal ───────────────────
   interface JournalLine {
     line_id: number;
@@ -2011,7 +2023,7 @@ const TrialBalance: React.FC = () => {
               style={{ width: '100%' }}
               showSearch
               optionFilterProp="label"
-              options={(allCompanies.length > 0 ? allCompanies : tab.companies.map(c => ({ value: c, label: c }))).map(o => ({
+              options={companyOptionsFor(tab.companies).map(o => ({
                 value: o.value,
                 label: (
                   <span><BankOutlined style={{ marginRight: 6, color: REDWOOD.info }} />{o.label}</span>
@@ -5467,7 +5479,7 @@ const TrialBalance: React.FC = () => {
             <Select placeholder="All Companies" allowClear showSearch optionFilterProp="label" style={{ width: '100%' }}
               value={tab.selectedCompany}
               onChange={v => updateTabFilter(tab.key, 'selectedCompany', v ?? null)}
-              options={allCompanies.length > 0 ? allCompanies : tab.companies.map(c => ({ value: c, label: c }))}
+              options={companyOptionsFor(tab.companies)}
             />
           </Col>
           <Col span={6}>
@@ -6158,10 +6170,7 @@ const TrialBalance: React.FC = () => {
               style={{ width: 160 }}
               value={reYearCompany ?? undefined}
               onChange={(v: string | undefined) => { setReYearCompany(v ?? null); setReYearRows([]); }}
-              options={allCompanies.length > 0
-                ? allCompanies
-                : [...new Set(tab.rrData.map(r => r.company).filter(Boolean))].sort().map(c => ({ label: c, value: c }))
-              }
+              options={companyOptionsFor([...new Set(tab.rrData.map(r => r.company).filter(Boolean))].sort())}
             />
           </Col>
           <Col>
@@ -6696,10 +6705,7 @@ const TrialBalance: React.FC = () => {
               style={{ width: 160 }}
               value={reYearCompany ?? undefined}
               onChange={(v: string | undefined) => { setReYearCompany(v ?? null); setReYearRows([]); }}
-              options={allCompanies.length > 0
-                ? allCompanies
-                : [...new Set(tab.rrData.map(r => r.company).filter(Boolean))].sort().map(c => ({ label: c, value: c }))
-              }
+              options={companyOptionsFor([...new Set(tab.rrData.map(r => r.company).filter(Boolean))].sort())}
             />
           </Col>
           <Col>
@@ -7107,11 +7113,8 @@ const TrialBalance: React.FC = () => {
         ytd_entered_opening: 0, ytd_entered_debit: 0, ytd_entered_credit: 0, entered_closing: 0 }
     );
 
-    // Use the outer allCompanies state (loaded from COA value set with descriptions);
-    // fall back to codes-only from tab data if the value set hasn't loaded yet.
-    const ytdCompanyOptions = allCompanies.length > 0
-      ? allCompanies
-      : [...new Set(tab.rrData.map(r => r.company).filter(Boolean))].sort().map(c => ({ value: c, label: c }));
+    // Labeled COA value-set list filtered to companies present in this tab's data.
+    const ytdCompanyOptions = companyOptionsFor([...new Set(tab.rrData.map(r => r.company).filter(Boolean))].sort());
 
     const columns = [
       {
