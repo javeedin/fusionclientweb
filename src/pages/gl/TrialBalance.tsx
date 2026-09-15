@@ -328,7 +328,9 @@ const TrialBalance: React.FC = () => {
   const [reYearRows,      setReYearRows]      = useState<{
     year: number; lastPeriod: string;
     revenue: number; expenses: number; netPL: number;
-    reBalance: number; openingRE: number; closingRE: number;
+    reBalance: number;    // RE account cumulative balance at year end
+    reMovement: number;   // postings to the RE account during the year (this year's Δ)
+    openingRE: number; closingRE: number;
   }[]>([]);
   const [reYearLoading,   setReYearLoading]   = useState(false);
   const [reYearProgress,  setReYearProgress]  = useState('');
@@ -5791,8 +5793,12 @@ const TrialBalance: React.FC = () => {
     const yearRange: number[] = [];
     for (let y = reYearFrom; y <= reYearTo; y++) yearRange.push(y);
 
-    const rows: { year: number; lastPeriod: string; revenue: number; expenses: number; netPL: number; reBalance: number; openingRE: number; closingRE: number }[] = [];
+    const rows: { year: number; lastPeriod: string; revenue: number; expenses: number; netPL: number; reBalance: number; reMovement: number; openingRE: number; closingRE: number }[] = [];
     let prevClosingRE: number | null = null;  // null = not yet known (will seed from GL)
+    // RE account cumulative balance at the PREVIOUS year end — the account is a
+    // BS account so its closing carries forward; a year's own postings are the
+    // difference between two year-end balances, never the balance itself
+    let prevReAcctCum: number | null = null;
 
     for (let i = 0; i < yearRange.length; i++) {
       const year = yearRange[i];
@@ -5805,7 +5811,7 @@ const TrialBalance: React.FC = () => {
 
       if (yearPeriods.length === 0) {
         const openingRE = prevClosingRE ?? 0;
-        rows.push({ year, lastPeriod: '—', revenue: 0, expenses: 0, netPL: 0, reBalance: 0, openingRE, closingRE: openingRE });
+        rows.push({ year, lastPeriod: '—', revenue: 0, expenses: 0, netPL: 0, reBalance: prevReAcctCum ?? 0, reMovement: 0, openingRE, closingRE: openingRE });
         continue;
       }
 
@@ -5825,15 +5831,20 @@ const TrialBalance: React.FC = () => {
         const expenses = items.filter(r => r.account_type === 'E').reduce((s, r) => s + (r.closing || 0), 0);
         const netPL    = revenue + expenses;  // as-is: negative = profit (Cr revenue dominates)
         const reAcct   = items.filter(r => r.account === RE_ACCOUNT).reduce((s, r) => s + (r.closing || 0), 0);
+        // This year's direct postings to the RE account = Δ of its cumulative
+        // year-end balances. The first year has no prior baseline: its balance
+        // is folded into the opening seed, so its movement counts as 0.
+        const reMovement: number = prevReAcctCum === null ? 0 : reAcct - prevReAcctCum;
         // Seed: first year openingRE = RE account GL balance (before this year's P&L)
         // Subsequent years: openingRE = previous year's closingRE (chained rollforward)
         const openingRE: number  = prevClosingRE ?? (reAcct - netPL);
-        const closingRE: number  = openingRE + netPL;
+        const closingRE: number  = openingRE + netPL + reMovement;
         prevClosingRE = closingRE;
-        rows.push({ year, lastPeriod: lastPeriod.period_name_id, revenue, expenses, netPL, reBalance: reAcct, openingRE, closingRE });
+        prevReAcctCum = reAcct;
+        rows.push({ year, lastPeriod: lastPeriod.period_name_id, revenue, expenses, netPL, reBalance: reAcct, reMovement, openingRE, closingRE });
       } catch (_err) {
         const openingRE = prevClosingRE ?? 0;
-        rows.push({ year, lastPeriod: lastPeriod.period_name_id, revenue: 0, expenses: 0, netPL: 0, reBalance: 0, openingRE, closingRE: openingRE });
+        rows.push({ year, lastPeriod: lastPeriod.period_name_id, revenue: 0, expenses: 0, netPL: 0, reBalance: prevReAcctCum ?? 0, reMovement: 0, openingRE, closingRE: openingRE });
       }
     }
 
@@ -5861,6 +5872,7 @@ const TrialBalance: React.FC = () => {
         expenses:     r.expenses,
         netPL:        r.netPL,
         reBalance:    r.reBalance,
+        reMovement:   r.reMovement,
         openingRe:    r.openingRE,
         closingRe:    r.closingRE,
         cumulativeRE: r.closingRE,
@@ -5959,11 +5971,11 @@ const TrialBalance: React.FC = () => {
     // ── Sheet 4: Multi-Year (if calculated) ───────────────────
     if (reYearRows.length > 0) {
       const yearData = [
-        ['Year', 'Last Period', 'Opening RE', 'Revenue', 'Expenses', 'Net P&L', `RE Acct (${RE_ACCOUNT})`, 'Closing RE'],
-        ...reYearRows.map(r => [r.year, r.lastPeriod, r.openingRE, r.revenue, r.expenses, r.netPL, r.reBalance, r.closingRE]),
+        ['Year', 'Last Period', 'Opening RE', 'Revenue', 'Expenses', 'Net P&L', `RE Acct Mvt (${RE_ACCOUNT})`, `RE Acct Balance (${RE_ACCOUNT})`, 'Closing RE'],
+        ...reYearRows.map(r => [r.year, r.lastPeriod, r.openingRE, r.revenue, r.expenses, r.netPL, r.reMovement, r.reBalance, r.closingRE]),
       ];
       const wsYears = XLSX.utils.aoa_to_sheet(yearData);
-      wsYears['!cols'] = [{ wch: 8 }, { wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 18 }];
+      wsYears['!cols'] = [{ wch: 8 }, { wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 18 }];
       XLSX.utils.book_append_sheet(wb, wsYears, 'Multi-Year');
     }
 
@@ -6217,6 +6229,7 @@ const TrialBalance: React.FC = () => {
           const totalRevenue  = reYearRows.reduce((s, r) => s + r.revenue,  0);
           const totalExpenses = reYearRows.reduce((s, r) => s + r.expenses, 0);
           const totalNetPL    = reYearRows.reduce((s, r) => s + r.netPL,    0);
+          const totalReMvt    = reYearRows.reduce((s, r) => s + (r.reMovement || 0), 0);
           const lastRow       = reYearRows[reYearRows.length - 1];
 
           const allYears = reYearRows.map(r => r.year);
@@ -6283,7 +6296,7 @@ const TrialBalance: React.FC = () => {
                       if (idx === -1) return prev;
                       for (let i = idx; i < updated.length; i++) {
                         const opening = i === idx ? newOpening : updated[i - 1].closingRE;
-                        updated[i] = { ...updated[i], openingRE: opening, closingRE: opening + updated[i].netPL };
+                        updated[i] = { ...updated[i], openingRE: opening, closingRE: opening + updated[i].netPL + (updated[i].reMovement || 0) };
                       }
                       return updated;
                     });
@@ -6335,13 +6348,19 @@ const TrialBalance: React.FC = () => {
               ),
             },
             {
-              title: `RE Acct (${RE_ACCOUNT})`,
-              dataIndex: 'reBalance',
-              key: 'reBalance',
+              title: (
+                <Tooltip title={`Direct postings to the RE account during the year (Δ of its year-end balances). The cumulative balance never repeats across years — it is counted once, in the year it was posted.`}>
+                  <span>RE Acct ({RE_ACCOUNT})<br /><span style={{ fontSize: 10, fontWeight: 400, color: '#8c8c8c' }}>year movement</span></span>
+                </Tooltip>
+              ),
+              dataIndex: 'reMovement',
+              key: 'reMovement',
               align: 'right' as const,
               width: 160,
-              render: (v: number) => (
-                <Text style={{ fontFamily: 'monospace', color: '#722ed1' }}>{fmtRaw(v)}</Text>
+              render: (v: number, r: { reBalance: number }) => (
+                <Tooltip title={`Cumulative RE account balance at year end: ${fmtRaw(r.reBalance)}`}>
+                  <Text style={{ fontFamily: 'monospace', color: v ? '#722ed1' : '#bfbfbf' }}>{fmtRaw(v)}</Text>
+                </Tooltip>
               ),
             },
             {
@@ -6360,7 +6379,8 @@ const TrialBalance: React.FC = () => {
             <>
             <div style={{ fontSize: 11, color: REDWOOD.textSecondary, marginBottom: 8, background: '#e6f7ff', border: '1px solid #91d5ff', borderRadius: 6, padding: '6px 12px' }}>
               <strong>Opening RE</strong> = RE account GL balance (seeded from first year) → carried forward each year.&nbsp;
-              <strong>Closing RE = Opening RE + Net P&amp;L.</strong>&nbsp;
+              <strong>Closing RE = Opening RE + Net P&amp;L + RE account postings in the year.</strong>&nbsp;
+              The RE Acct column shows the year&apos;s own movement (posted once, never repeated).&nbsp;
               Negative = credit balance (normal for equity).
             </div>
             <Table
@@ -6388,7 +6408,9 @@ const TrialBalance: React.FC = () => {
                     <Table.Summary.Cell index={6} align="right">
                       <Text strong style={{ fontFamily: 'monospace', color: totalNetPL <= 0 ? '#237804' : REDWOOD.primary }}>{fmtRaw(totalNetPL)}</Text>
                     </Table.Summary.Cell>
-                    <Table.Summary.Cell index={7} />
+                    <Table.Summary.Cell index={7} align="right">
+                      <Text strong style={{ fontFamily: 'monospace', color: '#722ed1' }}>{fmtRaw(totalReMvt)}</Text>
+                    </Table.Summary.Cell>
                     <Table.Summary.Cell index={8} align="right">
                       <Text strong style={{ fontFamily: 'monospace', color: '#722ed1' }}>
                         {lastRow ? fmtRaw(lastRow.closingRE) : '0.00'}
@@ -6752,6 +6774,7 @@ const TrialBalance: React.FC = () => {
           const totalRevenue  = reYearRows.reduce((s, r) => s + r.revenue,  0);
           const totalExpenses = reYearRows.reduce((s, r) => s + r.expenses, 0);
           const totalNetPL    = reYearRows.reduce((s, r) => s + r.netPL,    0);
+          const totalReMvt    = reYearRows.reduce((s, r) => s + (r.reMovement || 0), 0);
           const lastRow       = reYearRows[reYearRows.length - 1];
 
           const allYears = reYearRows.map(r => r.year);
@@ -6818,7 +6841,7 @@ const TrialBalance: React.FC = () => {
                       if (idx === -1) return prev;
                       for (let i = idx; i < updated.length; i++) {
                         const opening = i === idx ? newOpening : updated[i - 1].closingRE;
-                        updated[i] = { ...updated[i], openingRE: opening, closingRE: opening + updated[i].netPL };
+                        updated[i] = { ...updated[i], openingRE: opening, closingRE: opening + updated[i].netPL + (updated[i].reMovement || 0) };
                       }
                       return updated;
                     });
@@ -6870,13 +6893,19 @@ const TrialBalance: React.FC = () => {
               ),
             },
             {
-              title: `RE Acct (${RE_ACCOUNT})`,
-              dataIndex: 'reBalance',
-              key: 'reBalance',
+              title: (
+                <Tooltip title={`Direct postings to the RE account during the year (Δ of its year-end balances). The cumulative balance never repeats across years — it is counted once, in the year it was posted.`}>
+                  <span>RE Acct ({RE_ACCOUNT})<br /><span style={{ fontSize: 10, fontWeight: 400, color: '#8c8c8c' }}>year movement</span></span>
+                </Tooltip>
+              ),
+              dataIndex: 'reMovement',
+              key: 'reMovement',
               align: 'right' as const,
               width: 160,
-              render: (v: number) => (
-                <Text style={{ fontFamily: 'monospace', color: '#722ed1' }}>{fmtRaw(v)}</Text>
+              render: (v: number, r: { reBalance: number }) => (
+                <Tooltip title={`Cumulative RE account balance at year end: ${fmtRaw(r.reBalance)}`}>
+                  <Text style={{ fontFamily: 'monospace', color: v ? '#722ed1' : '#bfbfbf' }}>{fmtRaw(v)}</Text>
+                </Tooltip>
               ),
             },
             {
@@ -6895,7 +6924,8 @@ const TrialBalance: React.FC = () => {
             <>
             <div style={{ fontSize: 11, color: REDWOOD.textSecondary, marginBottom: 8, background: '#e6f7ff', border: '1px solid #91d5ff', borderRadius: 6, padding: '6px 12px' }}>
               <strong>Opening RE</strong> = RE account GL balance (seeded from first year) → carried forward each year.&nbsp;
-              <strong>Closing RE = Opening RE + Net P&amp;L.</strong>&nbsp;
+              <strong>Closing RE = Opening RE + Net P&amp;L + RE account postings in the year.</strong>&nbsp;
+              The RE Acct column shows the year&apos;s own movement (posted once, never repeated).&nbsp;
               Negative = credit balance (normal for equity).
             </div>
             <Table
@@ -6923,7 +6953,9 @@ const TrialBalance: React.FC = () => {
                     <Table.Summary.Cell index={6} align="right">
                       <Text strong style={{ fontFamily: 'monospace', color: totalNetPL <= 0 ? '#237804' : REDWOOD.primary }}>{fmtRaw(totalNetPL)}</Text>
                     </Table.Summary.Cell>
-                    <Table.Summary.Cell index={7} />
+                    <Table.Summary.Cell index={7} align="right">
+                      <Text strong style={{ fontFamily: 'monospace', color: '#722ed1' }}>{fmtRaw(totalReMvt)}</Text>
+                    </Table.Summary.Cell>
                     <Table.Summary.Cell index={8} align="right">
                       <Text strong style={{ fontFamily: 'monospace', color: '#722ed1' }}>
                         {lastRow ? fmtRaw(lastRow.closingRE) : '0.00'}
