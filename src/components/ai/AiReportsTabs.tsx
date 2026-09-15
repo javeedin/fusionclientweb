@@ -365,6 +365,15 @@ export const SqlWorkbenchPane: React.FC<{
   const [rowFilter, setRowFilter] = useState('');
   const [saveOpen, setSaveOpen] = useState(false);
   const [leftW, setLeftW] = useState(() => lsNum('reerp.ai.wbLeftW', 250));
+  // last editor size the user dragged to (native textarea resize grip)
+  const [edSize] = useState(() => {
+    try {
+      return {
+        w: localStorage.getItem('reerp.ai.wbEdW') || '100%',
+        h: localStorage.getItem('reerp.ai.wbEdH') || '',
+      };
+    } catch { return { w: '100%', h: '' }; }
+  });
 
   const loadObjects = useCallback(async (force = false) => {
     if (!force && objectsCache) { setObjects(objectsCache); return; }
@@ -479,9 +488,24 @@ export const SqlWorkbenchPane: React.FC<{
             value={sql}
             onChange={e => setSql(e.target.value)}
             onKeyDown={e => { if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); runSql(); } }}
-            placeholder="Type a SELECT statement… (click a table on the left to start; Ctrl+Enter runs)"
-            autoSize={{ minRows: 4, maxRows: 10 }}
-            style={{ fontFamily: 'monospace', fontSize: 12, width: '100%' }}
+            onMouseUp={e => {
+              // the browser writes the dragged size to the element's inline
+              // style — remember it so the editor reopens at the same size
+              const el = e.target as HTMLTextAreaElement;
+              if (el.tagName === 'TEXTAREA') {
+                try {
+                  if (el.style.width) localStorage.setItem('reerp.ai.wbEdW', el.style.width);
+                  if (el.style.height) localStorage.setItem('reerp.ai.wbEdH', el.style.height);
+                } catch { /* ignore */ }
+              }
+            }}
+            placeholder="Type a SELECT statement… (click a table on the left to start; drag the corner to resize; Ctrl+Enter runs)"
+            rows={5}
+            style={{
+              fontFamily: 'monospace', fontSize: 12, resize: 'both',
+              minHeight: 90, maxWidth: '100%', minWidth: 320,
+              width: edSize.w, height: edSize.h || undefined,
+            }}
           />
           <Space style={{ marginTop: 8 }} wrap>
             <Button size="small" type="primary" icon={<CaretRightOutlined />} loading={running}
