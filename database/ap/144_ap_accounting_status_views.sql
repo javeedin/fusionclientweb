@@ -17,10 +17,35 @@
 
 
 -- ------------------------------------------------------------
--- 1. Invoice accounting status
+-- 1. Invoice accounting status  (+ derived payment status)
+--    Payment status sources:
+--      RR_AP_PAYMENTS_RELATED_INVOICES — payments applied to the
+--        invoice (amount in invoice currency + discount taken)
+--      RR_AP_APPLIED_PREPAYMENTS        — applied prepayments
+--    PAYMENT_STATUS_CALC compares the settled total against the
+--    invoice amount: UNPAID / PARTIALLY PAID / FULLY PAID.
+--    The stored PAID_STATUS / AMOUNT_PAID columns are kept too.
 -- ------------------------------------------------------------
 CREATE OR REPLACE VIEW RR_V_AP_INVOICE_ACCT_STATUS AS
-WITH gl AS (
+WITH pay AS (
+    SELECT
+        INVOICE_ID,
+        COUNT(DISTINCT CHECK_ID)                       AS PAYMENTS_APPLIED,
+        MAX(CHECK_ID)                                  AS LAST_CHECK_ID,
+        SUM(NVL(AMOUNT_PAID_INVOICE_CURRENCY, 0)
+          + NVL(DISCOUNT_TAKEN, 0))                    AS AMOUNT_PAID_CALC
+    FROM RR_AP_PAYMENTS_RELATED_INVOICES
+    GROUP BY INVOICE_ID
+),
+prep AS (
+    SELECT
+        INVOICE_ID,
+        SUM(NVL(APPLIED_AMOUNT, 0))                    AS PREPAY_APPLIED_AMOUNT
+    FROM RR_AP_APPLIED_PREPAYMENTS
+    WHERE STATUS = 'Applied'
+    GROUP BY INVOICE_ID
+),
+gl AS (
     SELECT
         l.REFERENCE2                                   AS INVOICE_ID_CHAR,
         COUNT(DISTINCT l.JE_HEADER_ID)                 AS JOURNAL_COUNT,
@@ -56,7 +81,22 @@ SELECT
     i.ACCOUNTING_DATE,
     i.VALIDATION_STATUS,
     i.PAID_STATUS,
-    -- accounting status derived from the matched GL lines
+    -- ── payment status ────────────────────────────────────────
+    NVL(pp.PAYMENTS_APPLIED, 0)                        AS PAYMENTS_APPLIED,
+    pp.LAST_CHECK_ID,
+    NVL(pp.AMOUNT_PAID_CALC, 0)                        AS AMOUNT_PAID_CALC,
+    NVL(pr.PREPAY_APPLIED_AMOUNT, 0)                   AS PREPAY_APPLIED_AMOUNT,
+    NVL(pp.AMOUNT_PAID_CALC, 0)
+      + NVL(pr.PREPAY_APPLIED_AMOUNT, 0)               AS TOTAL_SETTLED,
+    CASE
+        WHEN NVL(pp.AMOUNT_PAID_CALC, 0) + NVL(pr.PREPAY_APPLIED_AMOUNT, 0) = 0
+             THEN 'UNPAID'
+        WHEN ABS(NVL(pp.AMOUNT_PAID_CALC, 0) + NVL(pr.PREPAY_APPLIED_AMOUNT, 0))
+             >= ABS(NVL(i.INVOICE_AMOUNT, 0)) - 0.01
+             THEN 'FULLY PAID'
+        ELSE 'PARTIALLY PAID'
+    END                                                AS PAYMENT_STATUS_CALC,
+    -- ── accounting status derived from the matched GL lines ──
     CASE
         WHEN NVL(g.CANCELLATION_LINES, 0) > 0 THEN 'CANCEL ACCOUNTED'
         WHEN NVL(g.CREATION_LINES, 0)     > 0 THEN 'ACCOUNTED'
@@ -70,10 +110,18 @@ SELECT
     NVL(g.GL_ACCOUNTED_DR, 0)                          AS GL_ACCOUNTED_DR,
     NVL(g.GL_ACCOUNTED_CR, 0)                          AS GL_ACCOUNTED_CR
 FROM RR_AP_INVOICES_ALL i
+LEFT JOIN pay pp ON pp.INVOICE_ID = i.INVOICE_ID
+LEFT JOIN prep pr ON pr.INVOICE_ID = i.INVOICE_ID
 LEFT JOIN gl g ON g.INVOICE_ID_CHAR = TO_CHAR(i.INVOICE_ID)
 ;
 
-COMMENT ON TABLE  RR_V_AP_INVOICE_ACCT_STATUS IS 'Accounting status per AP invoice: GL lines matched on REFERENCE2 = invoice_id with REFERENCE5 = AP-INVOICE-* / AP-PREPAYMENT-APPLICATION. GL_STATUS: ACCOUNTED / CANCEL ACCOUNTED / NOT ACCOUNTED';
+COMMENT ON TABLE  RR_V_AP_INVOICE_ACCT_STATUS IS 'Accounting + payment status per AP invoice: GL lines matched on REFERENCE2 = invoice_id with REFERENCE5 = AP-INVOICE-* / AP-PREPAYMENT-APPLICATION. GL_STATUS: ACCOUNTED / CANCEL ACCOUNTED / NOT ACCOUNTED. PAYMENT_STATUS_CALC (live, from payment applications + applied prepayments): UNPAID / PARTIALLY PAID / FULLY PAID';
+COMMENT ON COLUMN RR_V_AP_INVOICE_ACCT_STATUS.PAYMENT_STATUS_CALC   IS 'Derived live: UNPAID (nothing settled), PARTIALLY PAID, FULLY PAID (settled >= invoice amount, 1 cent tolerance). Settled = payment applications in invoice currency + discount taken + applied prepayments';
+COMMENT ON COLUMN RR_V_AP_INVOICE_ACCT_STATUS.AMOUNT_PAID_CALC      IS 'Sum of payment applications from RR_AP_PAYMENTS_RELATED_INVOICES (invoice currency, incl. discount taken)';
+COMMENT ON COLUMN RR_V_AP_INVOICE_ACCT_STATUS.PREPAY_APPLIED_AMOUNT IS 'Sum of applied prepayments from RR_AP_APPLIED_PREPAYMENTS (status Applied)';
+COMMENT ON COLUMN RR_V_AP_INVOICE_ACCT_STATUS.TOTAL_SETTLED         IS 'AMOUNT_PAID_CALC + PREPAY_APPLIED_AMOUNT — compare with INVOICE_AMOUNT';
+COMMENT ON COLUMN RR_V_AP_INVOICE_ACCT_STATUS.PAYMENTS_APPLIED      IS 'Distinct payments (CHECK_ID) applied to this invoice';
+COMMENT ON COLUMN RR_V_AP_INVOICE_ACCT_STATUS.PAID_STATUS           IS 'Stored status from the invoices table (sync-driven) — PAYMENT_STATUS_CALC is the live derivation';
 COMMENT ON COLUMN RR_V_AP_INVOICE_ACCT_STATUS.GL_STATUS           IS 'ACCOUNTED = creation journal exists; CANCEL ACCOUNTED = cancellation journal exists; NOT ACCOUNTED = no GL lines';
 COMMENT ON COLUMN RR_V_AP_INVOICE_ACCT_STATUS.PREPAY_APPLIED      IS 'Y when AP-PREPAYMENT-APPLICATION journal lines exist for this invoice';
 COMMENT ON COLUMN RR_V_AP_INVOICE_ACCT_STATUS.JOURNAL_COUNT       IS 'Distinct GL journal headers referencing this invoice';
@@ -168,5 +216,11 @@ SELECT gl_status, COUNT(*) AS payments
 FROM   rr_v_ap_payment_acct_status
 GROUP  BY gl_status;
 
--- 3d. Spot-check one invoice (replace the id)
+-- 3d. Payment status distribution (derived vs stored)
+SELECT payment_status_calc, paid_status, COUNT(*) AS invoices
+FROM   rr_v_ap_invoice_acct_status
+GROUP  BY payment_status_calc, paid_status
+ORDER  BY payment_status_calc, paid_status;
+
+-- 3e. Spot-check one invoice (replace the id)
 -- SELECT * FROM rr_v_ap_invoice_acct_status WHERE invoice_id = 12345;
