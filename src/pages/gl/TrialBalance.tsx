@@ -24,7 +24,6 @@ import {
   AutoComplete,
   message,
   Switch,
-  Popconfirm,
   Descriptions,
   Dropdown,
   Drawer,
@@ -37,7 +36,6 @@ import {
   HomeOutlined,
   TableOutlined,
   ReloadOutlined,
-  DeleteOutlined,
   PlusOutlined,
   CloseOutlined,
   FilterOutlined,
@@ -5936,23 +5934,6 @@ const TrialBalance: React.FC = () => {
     }
   };
 
-  const deleteSavedRE = async (id: number) => {
-    const url = `${APEX_DB_CONFIG.baseUrl}/${APEX_DB_CONFIG.endpoints.retainedEarnings}/${id}`;
-    try {
-      const res = await fetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
-      const text = await res.text();
-      let d: any = {}; try { d = JSON.parse(text); } catch { d = { raw: text }; }
-      if (res.ok && d.status === 'ok') {
-        message.success('Saved row deleted');
-        setReSavedRows(prev => prev.filter(r => r.id !== id));
-      } else {
-        message.error(`Delete failed (HTTP ${res.status}): ${d.message || text.slice(0, 150)}`);
-      }
-    } catch (e: any) {
-      message.error(`Delete error: ${e.message}`);
-    }
-  };
-
   // ── Render: Retained Earnings calculator popup ───────────────
 
   // ── Export Retained Earnings to Excel ─────────────────────────
@@ -6148,12 +6129,8 @@ const TrialBalance: React.FC = () => {
               render: (v: number) => mono(v, '#722ed1', true) },
             { title: 'Saved / Updated', dataIndex: 'updated_date', key: 'updated_date', width: 140,
               render: (v: string) => <Text style={{ fontSize: 10.5, color: REDWOOD.textSecondary }}>{v || '—'}</Text> },
-            { title: '', key: 'del', width: 44,
-              render: (_: any, r: { id: number }) => (
-                <Popconfirm title="Delete this saved row?" onConfirm={() => deleteSavedRE(r.id)}>
-                  <DeleteOutlined style={{ color: REDWOOD.primary, cursor: 'pointer' }} />
-                </Popconfirm>
-              ) },
+            // no delete column: RR_GL_RETAINED_EARNINGS has a no-delete
+            // trigger — rows are corrected by re-saving the rollforward
           ];
           return (
             <>
