@@ -1760,7 +1760,7 @@ const TrialBalance: React.FC = () => {
       await exportRrTBToExcel({
         ledger:   selectedLedger || 'All',
         company:  tab.selectedCompany  || 'All',
-        period:   tab.periodName.replace(/^ReERP:\s*/, ''),
+        period:   tab.periodName.replace(/^(?:ReERP|Dynamic):\s*/, ''),
         currency: tab.selectedCurrency || 'All',
         rows:     tableRows,
         totals,

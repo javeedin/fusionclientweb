@@ -39,6 +39,11 @@ const TYPE_LABEL: Record<string, string> = {
 
 const NUM_FMT = '#,##0.00;[Red](#,##0.00)';
 
+// Excel forbids : \ / ? * [ ] in worksheet names and caps them at 31 chars
+// (tab names like "Dynamic: Apr-26 · SB" carry a colon)
+const safeSheetName = (name: string) =>
+  (name.replace(/[:\\/?*[\]]/g, '-').trim().slice(0, 31).trim()) || 'Sheet1';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -342,7 +347,7 @@ export async function exportFusionTBToExcel(opts: {
 }) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'ReERP'; wb.created = new Date();
-  const ws = wb.addWorksheet(`Fusion TB ${opts.period}`.slice(0, 31));
+  const ws = wb.addWorksheet(safeSheetName(`Fusion TB ${opts.period}`));
   writeFusionSheet(ws, opts, opts.rows, opts.totals, opts.segments, opts.segKeys);
   await saveWorkbook(wb, `Fusion_TrialBalance_${opts.period.replace(/[^a-zA-Z0-9-]/g, '_')}.xlsx`);
 }
@@ -354,7 +359,7 @@ export async function exportRrTBToExcel(opts: {
 }) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'ReERP'; wb.created = new Date();
-  const ws = wb.addWorksheet(`RR TB ${opts.period}`.slice(0, 31));
+  const ws = wb.addWorksheet(safeSheetName(`RR TB ${opts.period}`));
   writeRrSheet(ws, opts, opts.rows, opts.totals);
   await saveWorkbook(wb, `RR_TrialBalance_${opts.period.replace(/[^a-zA-Z0-9-]/g, '_')}.xlsx`);
 }
