@@ -78,7 +78,7 @@ import { APEX_DB_CONFIG } from '../../config/api.config';
 import { Divider, Popover } from 'antd';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import { exportRrTBToExcel, exportFusionTBToExcel, exportBothTBToExcel } from '../../utils/tbExcelExport';
+import { exportRrTBToExcel, exportFusionTBToExcel, exportBothTBToExcel, exportYtdTBToExcel } from '../../utils/tbExcelExport';
 import AccountSelector from '../../components/AccountSelector';
 import { searchCombinations, createCombination, type DistCombination } from '../../services/distCombinations.service';
 // antd 6 SummaryCellProps omits style — use this cast helper where needed
@@ -7764,84 +7764,25 @@ const TrialBalance: React.FC = () => {
               size="small"
               disabled={tableRows.length === 0}
               style={{ color: REDWOOD.success, borderColor: REDWOOD.success }}
-              onClick={() => {
-                const exportDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-                const exportTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+              onClick={async () => {
+                // styled ExcelJS export — the raw SheetJS path had no real
+                // formatting (community build ignores its style objects)
                 const period = tab.periodName.replace(/^YTD:\s*/, '');
-                const company = tab.selectedCompany || 'All Companies';
-                const currency = tab.selectedCurrency || 'All Currencies';
-
-                const ws = XLSX.utils.aoa_to_sheet([]);
-                const hasEntered = tab.showEntered;
-                const colCount = hasEntered ? 11 : 7;
-                const lastCol = String.fromCharCode(64 + colCount);
-
-                const headerRows: (string | number | null)[][] = [
-                  ['YTD Trial Balance'],
-                  [],
-                  ['Ledger',      tab.ledgerName, '', 'Period',    period],
-                  ['Company',     company,         '', 'Currency',  currency],
-                  ['Export Date', `${exportDate} ${exportTime}`, '', 'Accounts', tableRows.length],
-                  [],
-                  hasEntered
-                    ? ['Type', 'Account', 'Description', 'YTD Opening', 'YTD Debit', 'YTD Credit', 'YTD Closing', 'Ent. YTD Opening', 'Ent. YTD Debit', 'Ent. YTD Credit', 'Ent. Closing']
-                    : ['Type', 'Account', 'Description', 'YTD Opening', 'YTD Debit', 'YTD Credit', 'YTD Closing'],
-                ];
-                XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
-
-                const dataRows = tableRows.map(r => hasEntered
-                  ? [r.account_type, r.account, r.account_desc, r.ytd_opening, r.ytd_debit, r.ytd_credit, r.closing, r.ytd_entered_opening, r.ytd_entered_debit, r.ytd_entered_credit, r.entered_closing]
-                  : [r.account_type, r.account, r.account_desc, r.ytd_opening, r.ytd_debit, r.ytd_credit, r.closing]
-                );
-                XLSX.utils.sheet_add_aoa(ws, dataRows, { origin: `A${headerRows.length + 1}` });
-
-                const dataStart = headerRows.length + 1;
-                const dataEnd   = dataStart + tableRows.length - 1;
-
-                const numCols = hasEntered ? ['D','E','F','G','H','I','J','K'] : ['D','E','F','G'];
-                const totalRow: (string | object)[] = ['', 'TOTAL', ''];
-                numCols.forEach((_, i) => {
-                  const col = String.fromCharCode(68 + i);
-                  totalRow.push({ f: `SUM(${col}${dataStart}:${col}${dataEnd})` });
-                });
-                XLSX.utils.sheet_add_aoa(ws, [totalRow], { origin: `A${dataEnd + 1}` });
-
-                // Title style
-                ws['A1'] = { v: 'YTD Trial Balance', t: 's', s: { font: { bold: true, sz: 14 } } };
-                ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: colCount - 1 } }];
-
-                // Header label bold
-                ['A3','A4','A5','D3','D4','D5'].forEach(addr => {
-                  if (ws[addr]) ws[addr].s = { font: { bold: true }, fill: { fgColor: { rgb: 'F0F4FF' } } };
-                });
-
-                // Column heading row
-                const headingRow = headerRows.length;
-                for (let c = 0; c < colCount; c++) {
-                  const addr = `${String.fromCharCode(65 + c)}${headingRow}`;
-                  if (ws[addr]) ws[addr].s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1F4E79' } }, alignment: { horizontal: c < 3 ? 'left' : 'right' } };
+                message.loading({ content: 'Building Excel…', key: 'xl', duration: 0 });
+                try {
+                  await exportYtdTBToExcel({
+                    ledger:   tab.ledgerName,
+                    company:  tab.selectedCompany  || 'All',
+                    period,
+                    currency: tab.selectedCurrency || 'All',
+                    rows:     tableRows,
+                    totals,
+                    includeEntered: tab.showEntered,
+                  });
+                  message.success({ content: 'Excel exported', key: 'xl' });
+                } catch (e: any) {
+                  message.error({ content: `Export failed: ${e.message}`, key: 'xl' });
                 }
-
-                // Data rows: number format + alternate shading
-                for (let row = dataStart; row <= dataEnd + 1; row++) {
-                  numCols.forEach(col => { const a = `${col}${row}`; if (ws[a]) ws[a].z = '#,##0.00'; });
-                  if ((row - dataStart) % 2 === 1)
-                    for (let c = 0; c < colCount; c++) { const a = `${String.fromCharCode(65 + c)}${row}`; if (ws[a]) ws[a].s = { ...(ws[a].s || {}), fill: { fgColor: { rgb: 'F7F9FC' } } }; }
-                }
-
-                // Totals row
-                for (let c = 0; c < colCount; c++) {
-                  const a = `${String.fromCharCode(65 + c)}${dataEnd + 1}`;
-                  if (ws[a]) ws[a].s = { font: { bold: true }, fill: { fgColor: { rgb: 'E8F0FE' } }, ...(c >= 3 ? { z: '#,##0.00', alignment: { horizontal: 'right' } } : {}) };
-                }
-
-                ws['!cols'] = [{ wch: 8 }, { wch: 14 }, { wch: 28 }, ...Array(colCount - 3).fill({ wch: 18 })];
-                ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: dataEnd + 1, c: colCount - 1 } });
-
-                const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, 'YTD TB');
-                const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-                saveAs(new Blob([buf], { type: 'application/octet-stream' }), `YTD_TB_${tab.ledgerName}_${period}_${tab.selectedCompany || 'All'}.xlsx`);
               }}
             >
               Excel

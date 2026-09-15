@@ -340,6 +340,71 @@ function writeRrSheet(
   );
 }
 
+// ── YTD variant: same Redwood styling, YTD column set ───────────────────────
+export interface YtdTBRow {
+  account: string; account_desc: string; account_type: string;
+  ytd_opening: number; ytd_debit: number; ytd_credit: number; closing: number;
+  ytd_entered_opening: number; ytd_entered_debit: number; ytd_entered_credit: number; entered_closing: number;
+}
+export interface YtdTBTotals {
+  ytd_opening: number; ytd_debit: number; ytd_credit: number; closing: number;
+  ytd_entered_opening: number; ytd_entered_debit: number; ytd_entered_credit: number; entered_closing: number;
+}
+
+function writeYtdSheet(
+  ws:     ExcelJS.Worksheet,
+  info:   { ledger: string; company: string; period: string; currency: string },
+  rows:   YtdTBRow[],
+  totals: YtdTBTotals,
+  includeEntered: boolean = true,
+) {
+  const HEADERS  = [
+    'Type', 'Account', 'Description',
+    'YTD Opening', 'YTD Debit', 'YTD Credit', 'Closing',
+    ...(includeEntered ? ['Ent YTD Opening', 'Ent YTD Debit', 'Ent YTD Credit', 'Ent Closing'] : []),
+  ];
+  const NUM_COL  = 4;
+  const NUM_COLS = HEADERS.length;
+
+  const COL_WIDTHS = [12, 14, 42, ...Array(NUM_COLS - 3).fill(18)];
+  COL_WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+  writeHeader(ws, NUM_COLS, 'REERP YTD TRIAL BALANCE', info);
+  writeColHeaders(ws, 10, HEADERS, NUM_COL);
+
+  rows.forEach((r, idx) => {
+    const bgArgb = (P as any)[r.account_type] || (idx % 2 === 0 ? P.WHITE : P.EVEN);
+    const row = ws.addRow([
+      TYPE_LABEL[r.account_type] || r.account_type,
+      r.account,
+      r.account_desc || '',
+      r.ytd_opening || 0, r.ytd_debit || 0, r.ytd_credit || 0, r.closing || 0,
+      ...(includeEntered
+        ? [r.ytd_entered_opening || 0, r.ytd_entered_debit || 0, r.ytd_entered_credit || 0, r.entered_closing || 0]
+        : []),
+    ]);
+    row.height = 16;
+    row.eachCell({ includeEmpty: true }, (cell, c) => {
+      cell.fill   = solid(bgArgb);
+      cell.border = hairBottom;
+      if      (c === 1) { cell.font = { size: 9, italic: true, color: { argb: P.GREY }, name: 'Calibri' }; }
+      else if (c === 2) { cell.font = { size: 10, bold: true, name: 'Calibri' }; }
+      else if (c === 3) { cell.font = { size: 10, name: 'Calibri' }; cell.alignment = { indent: 1, wrapText: false }; }
+      else { cell.numFmt = NUM_FMT; cell.alignment = { horizontal: 'right' }; cell.font = { size: 10, name: 'Calibri' }; }
+    });
+  });
+
+  writeTotalsRow(ws,
+    ['', '', 'TOTAL',
+     totals.ytd_opening, totals.ytd_debit, totals.ytd_credit, totals.closing,
+     ...(includeEntered
+       ? [totals.ytd_entered_opening || 0, totals.ytd_entered_debit || 0, totals.ytd_entered_credit || 0, totals.entered_closing || 0]
+       : []),
+    ],
+    NUM_COL,
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Public exports
 // ─────────────────────────────────────────────────────────────────────────────
@@ -368,6 +433,22 @@ export async function exportRrTBToExcel(opts: {
   const ws = wb.addWorksheet(safeSheetName(`RR TB ${opts.period}`));
   writeRrSheet(ws, opts, opts.rows, opts.totals, opts.includeEntered ?? true);
   await saveWorkbook(wb, `RR_TrialBalance_${opts.period.replace(/[^a-zA-Z0-9-]/g, '_')}.xlsx`);
+}
+
+/** Single-sheet: ReERP YTD Trial Balance */
+export async function exportYtdTBToExcel(opts: {
+  ledger: string; company: string; period: string; currency: string;
+  rows: YtdTBRow[]; totals: YtdTBTotals;
+  includeEntered?: boolean;   // false = omit the Entered currency columns
+}) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'ReERP'; wb.created = new Date();
+  const ws = wb.addWorksheet(safeSheetName(`YTD TB ${opts.period}`));
+  writeYtdSheet(ws, opts, opts.rows, opts.totals, opts.includeEntered ?? true);
+  await saveWorkbook(
+    wb,
+    `YTD_TrialBalance_${opts.ledger.replace(/[^a-zA-Z0-9-]/g, '_')}_${opts.period.replace(/[^a-zA-Z0-9-]/g, '_')}_${opts.company.replace(/[^a-zA-Z0-9-]/g, '_')}.xlsx`,
+  );
 }
 
 /** Two-sheet workbook: Sheet 1 = Fusion TB, Sheet 2 = ReERP TB */
