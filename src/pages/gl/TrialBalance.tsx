@@ -893,21 +893,23 @@ const TrialBalance: React.FC = () => {
             const reClosing = reItems.reduce((s, r) => s + (r.opening || 0), 0);
             const hasExisting = items.some(i => i.account === reItems[0].account);
             if (hasExisting) {
-              // Update existing row — opening and closing both = prev year closing
-              items = items.map(i =>
-                i.account === reItems[0].account
-                  ? {
-                      ...i,
-                      account_desc:        'Retained Earnings',
-                      opening:              reClosing,
-                      closing:              reClosing,
-                      entered_opening:      reClosing,
-                      entered_closing:      reClosing,
-                      ytd_opening:          reClosing,
-                      ytd_entered_opening:  reClosing,
-                    }
-                  : i
-              );
+              // Update existing row — B/F becomes the opening, and the year's
+              // own GL postings to the RE account stay in the closing
+              items = items.map(i => {
+                if (i.account !== reItems[0].account) return i;
+                const mvt    = (i.closing || 0) - (i.opening || 0);
+                const entMvt = (i.entered_closing || 0) - (i.entered_opening || 0);
+                return {
+                  ...i,
+                  account_desc:        'Retained Earnings',
+                  opening:              reClosing,
+                  closing:              reClosing + mvt,
+                  entered_opening:      reClosing,
+                  entered_closing:      reClosing + entMvt,
+                  ytd_opening:          reClosing,
+                  ytd_entered_opening:  reClosing,
+                };
+              });
             } else {
               // No existing row — inject as B/F row
               const merged: RrTBRecord[] = reItems.map(r => ({
@@ -7629,11 +7631,14 @@ const TrialBalance: React.FC = () => {
                     const hasExisting = t.rrData.some(r => r.account === reAccount);
                     let newData: RrTBRecord[];
                     if (hasExisting) {
-                      newData = t.rrData.map(r =>
-                        r.account === reAccount
-                          ? { ...r, account_desc: 'Retained Earnings', opening: reClosing, closing: reClosing, entered_opening: reClosing, entered_closing: reClosing, ytd_opening: reClosing, ytd_entered_opening: reClosing }
-                          : r
-                      );
+                      // B/F becomes the opening; the year's own GL postings
+                      // to the RE account stay in the closing
+                      newData = t.rrData.map(r => {
+                        if (r.account !== reAccount) return r;
+                        const mvt    = (r.closing || 0) - (r.opening || 0);
+                        const entMvt = (r.entered_closing || 0) - (r.entered_opening || 0);
+                        return { ...r, account_desc: 'Retained Earnings', opening: reClosing, closing: reClosing + mvt, entered_opening: reClosing, entered_closing: reClosing + entMvt, ytd_opening: reClosing, ytd_entered_opening: reClosing };
+                      });
                     } else {
                       newData = [...t.rrData.filter(r => r.account_desc !== 'Retained Earnings'), ...mergedItems];
                     }
