@@ -13,8 +13,8 @@ import { APEX_DB_CONFIG } from '../../config/api.config';
 import { getCurrentCompany } from '../../config/company.config';
 import { useAuth } from '../../context/AuthContext';
 import {
-  ASSISTANT_TOOLS, SQL_QUERY_TOOL, buildSystemPrompt, downloadDeliveredFile, fetchSchemaCatalog,
-  runAssistantTool, wordPreviewSrcDoc,
+  ASSISTANT_TOOLS, SQL_QUERY_TOOL, buildSystemPrompt, clearSchemaCatalogCache, downloadDeliveredFile,
+  fetchSchemaCatalog, runAssistantTool, wordPreviewSrcDoc,
   type AnswerMode, type ApiCallLog, type DeliveredFile, type ExcelSpec, type PendingWrite,
 } from './assistantTools';
 import {
@@ -397,6 +397,16 @@ const AssistantPanel: React.FC<PanelProps> = ({
     setAnswerMode(m);
     try { localStorage.setItem('reerp.ai.answerMode', m); } catch { /* ignore */ }
   };
+  // "Don't use cache": checked (default) = rebuild the schema catalog fresh on
+  // every message; unchecked = allow the 1-hour catalog cache. Query DATA is
+  // never cached either way — every answer runs live SQL/API calls.
+  const [noCache, setNoCache] = useState(() => {
+    try { return localStorage.getItem('reerp.ai.noCache') !== '0'; } catch { return true; }
+  });
+  const toggleNoCache = (v: boolean) => {
+    setNoCache(v);
+    try { localStorage.setItem('reerp.ai.noCache', v ? '1' : '0'); } catch { /* ignore */ }
+  };
   const [draftKey, setDraftKey] = useState('');
   const [liveCalls, setLiveCalls] = useState<ApiCallLog[]>([]);
   const [apiOpen, setApiOpen] = useState<Record<number, boolean>>({});
@@ -494,7 +504,12 @@ const AssistantPanel: React.FC<PanelProps> = ({
     };
 
     const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
-    const apiMsgs: Anthropic.MessageParam[] = localHist.map(m => ({ role: m.role, content: msgContent(m) }));
+    // Send only the recent tail of long conversations: old tool results are
+    // stale data the model may otherwise re-quote instead of re-querying
+    const HISTORY_LIMIT = 24;
+    let histWindow = localHist.slice(-HISTORY_LIMIT);
+    while (histWindow.length && histWindow[0].role !== 'user') histWindow = histWindow.slice(1);
+    const apiMsgs: Anthropic.MessageParam[] = histWindow.map(m => ({ role: m.role, content: msgContent(m) }));
     const delivered: DeliveredFile[] = [];
     const calls: ApiCallLog[] = [];
     const onLog = (c: ApiCallLog) => { calls.push(c); setLiveCalls(calls.slice()); };
@@ -504,7 +519,10 @@ const AssistantPanel: React.FC<PanelProps> = ({
     let schemaCatalog = '';
     if (answerMode === 'sql') {
       setStatus('Loading schema catalog…');
-      try { schemaCatalog = await fetchSchemaCatalog(APEX); }
+      try {
+        if (noCache) clearSchemaCatalogCache();   // always fetch fresh metadata
+        schemaCatalog = await fetchSchemaCatalog(APEX);
+      }
       catch { onLog({ tool: 'erp_sql_query', method: 'SQL', url: 'ai/objects', status: 'ERR', error: 'schema catalog unavailable — using API mode', ms: 0 }); }
     }
     const sqlActive = answerMode === 'sql' && !!schemaCatalog;
@@ -618,7 +636,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
       setStatus('');
       setLiveCalls([]);
     }
-  }, [attachments, busy, apiKey, resolveKey, curId, store, model, userName, index, mcpTools, mcpSummary, navigate, answerMode]);
+  }, [attachments, busy, apiKey, resolveKey, curId, store, model, userName, index, mcpTools, mcpSummary, navigate, answerMode, noCache]);
 
   const historyMenu = useMemo(() => ({
     items: store.convs.length
@@ -671,6 +689,20 @@ const AssistantPanel: React.FC<PanelProps> = ({
             {cur?.title && cur.title !== 'New chat' ? cur.title : 'Live data · all modules · Excel & Word exports'}
           </div>
         </div>
+        <Tooltip title="Checked: rebuild the table catalog fresh on every question — no cached metadata. Query data is always fetched live either way. Untick to allow a 1-hour catalog cache (slightly faster).">
+          <label style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11,
+            color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', userSelect: 'none',
+          }}>
+            <input
+              type="checkbox"
+              checked={noCache}
+              onChange={e => toggleNoCache(e.target.checked)}
+              style={{ accentColor: '#fff', cursor: 'pointer', margin: 0 }}
+            />
+            No cache
+          </label>
+        </Tooltip>
         <Tooltip title={answerMode === 'sql'
           ? 'SQL mode: the AI writes Oracle SQL from the schema catalog and runs it via the guarded ai/executequery gateway'
           : 'API mode: the AI answers via the curated REST endpoint catalog'}>

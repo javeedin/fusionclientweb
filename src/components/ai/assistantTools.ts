@@ -445,6 +445,7 @@ async function erpSqlQuery(
   try {
     const res = await fetch(apexBase.replace(/\/+$/, '') + '/ai/executequery', {
       method: 'POST',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ sql, maxRows: maxRows ?? 200, appUser }),
     });
@@ -455,6 +456,10 @@ async function erpSqlQuery(
       return { error: 'Non-JSON response from SQL gateway', body: text.slice(0, 1500) };
     }
     if (!res.ok || data.success === false) {
+      // Unknown table/column usually means the cached schema catalog is stale
+      // (DB changed since it was built) — drop it so the next message rebuilds
+      const err = String(data.error || '');
+      if (err.includes('ORA-00904') || err.includes('ORA-00942')) clearSchemaCatalogCache();
       done({ url: label, status: res.ok ? 'ERR' : res.status, error: (data.error || `HTTP ${res.status}`).slice(0, 120) });
       return data; // includes the ORA-/rejection text so the model can self-correct
     }
@@ -469,9 +474,10 @@ async function erpSqlQuery(
 
 // ── Schema catalog (SQL mode) ───────────────────────────────────────────────
 // GET ai/objects, compacted to one line per object for the system prompt.
-// Cached in localStorage for 24h so the metadata call runs once a day.
+// Cached in localStorage for 1h (metadata only — query DATA is never cached);
+// cleared early when a query fails with unknown table/column.
 const LS_SCHEMA_CATALOG = 'reerp.ai.schemaCatalog';
-const SCHEMA_TTL_MS = 24 * 60 * 60 * 1000;
+const SCHEMA_TTL_MS = 60 * 60 * 1000;
 
 interface SchemaColumn { name: string; dataType: string; nullable: string; comment?: string }
 interface SchemaObject { name: string; type: string; comment?: string; columns: SchemaColumn[] }
@@ -662,7 +668,10 @@ function buildSqlModeSection(schemaCatalog: string): string {
     `- Oracle SQL rules: single SELECT (or WITH...SELECT), no trailing semicolon; today = TRUNC(SYSDATE); a date-day filter is ` +
     `col >= TRUNC(SYSDATE) AND col < TRUNC(SYSDATE)+1; GL periods are stored as Mon-YY strings (e.g. Jun-26); alias every aggregate; ` +
     `prefer explicit column lists; add FETCH FIRST 200 ROWS ONLY when the question implies a list.\n` +
-    `- If the gateway returns an ORA- error or a rejection, fix the SQL (check the catalog for the right name) and retry ONCE, then explain.\n` +
+    `- If the gateway returns an ORA- error or a rejection, fix the SQL (check the catalog for the right name) and retry ONCE. If it still fails, ` +
+    `report the exact error and the SQL you tried — NEVER answer with estimated, remembered or invented figures.\n` +
+    `- FRESHNESS: every data question gets a FRESH erp_sql_query in this turn. Numbers appearing earlier in this conversation are stale — ` +
+    `never re-quote them as current; re-run the query even if the same question was asked before.\n` +
     `- Use erp_api_get only when SQL cannot answer (e.g. computed endpoints like trial balance with opening balances) — say so when you do.\n` +
     `- Writes are unchanged: erp_api_write with user approval. Never attempt INSERT/UPDATE/DELETE through erp_sql_query — it is SELECT-only and will reject them.\n\n` +
     `SCHEMA CATALOG (object(column type "comment", ...) -- object comment; types: n=number s=varchar d=date ts=timestamp)\n` +
