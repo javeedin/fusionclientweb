@@ -407,6 +407,23 @@ const AssistantPanel: React.FC<PanelProps> = ({
     setNoCache(v);
     try { localStorage.setItem('reerp.ai.noCache', v ? '1' : '0'); } catch { /* ignore */ }
   };
+  // Manual metadata refresh: re-reads all tables/columns/comments from
+  // ai/objects right now, so the bot's next SQL uses the latest schema
+  const [metaRefreshing, setMetaRefreshing] = useState(false);
+  const refreshMetadata = async () => {
+    if (metaRefreshing) return;
+    setMetaRefreshing(true);
+    try {
+      clearSchemaCatalogCache();
+      const text = await fetchSchemaCatalog(APEX);
+      const count = text.split('\n').filter(Boolean).length;
+      antMessage.success(`Table metadata refreshed — ${count} tables/views loaded for the bot`);
+    } catch (e) {
+      antMessage.error(`Metadata refresh failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMetaRefreshing(false);
+    }
+  };
   const [draftKey, setDraftKey] = useState('');
   const [liveCalls, setLiveCalls] = useState<ApiCallLog[]>([]);
   const [apiOpen, setApiOpen] = useState<Record<number, boolean>>({});
@@ -702,6 +719,10 @@ const AssistantPanel: React.FC<PanelProps> = ({
             />
             No cache
           </label>
+        </Tooltip>
+        <Tooltip title="Refresh table metadata now — re-reads every table, column and comment from the database so the bot's SQL uses the latest schema">
+          <Button size="small" type="text" icon={<ReloadOutlined spin={metaRefreshing} />}
+            onClick={refreshMetadata} />
         </Tooltip>
         <Tooltip title={answerMode === 'sql'
           ? 'SQL mode: the AI writes Oracle SQL from the schema catalog and runs it via the guarded ai/executequery gateway'
