@@ -198,6 +198,10 @@ interface RrTBRecord {
   ytd_entered_opening: number;
   ytd_entered_debit: number;
   ytd_entered_credit: number;
+  // Only on the injected/merged Retained Earnings B/F row: the year-end
+  // CLOSED RE from the saved rollforward (incl. net P&L) — shown in a
+  // tooltip; the TB row itself excludes current-year P&L by design
+  re_year_end_closing?: number;
 }
 
 interface TabData {
@@ -889,6 +893,8 @@ const TrialBalance: React.FC = () => {
             // Replace ytd_opening of the existing RE account row in TB with the
             // saved row's OPENING (the B/F balance for this same TB year)
             const reClosing = reItems.reduce((s, r) => s + (r.opening || 0), 0);
+            // year-end CLOSED RE (incl. P&L) — for the explanatory tooltip only
+            const reYearEnd = reItems.reduce((s, r) => s + (r.closing || 0), 0);
             const hasExisting = items.some(i => i.account === reItems[0].account);
             if (hasExisting) {
               // Update existing row — B/F becomes the opening, and the year's
@@ -906,6 +912,7 @@ const TrialBalance: React.FC = () => {
                   entered_closing:      reClosing + entMvt,
                   ytd_opening:          reClosing,
                   ytd_entered_opening:  reClosing,
+                  re_year_end_closing:  reYearEnd,
                 };
               });
             } else {
@@ -913,6 +920,7 @@ const TrialBalance: React.FC = () => {
               const merged: RrTBRecord[] = reItems.map(r => ({
                 ...r,
                 account_desc:       'Retained Earnings',
+                re_year_end_closing: reYearEnd,
                 opening:             reClosing,
                 debit:               0,
                 credit:              0,
@@ -7245,6 +7253,7 @@ const TrialBalance: React.FC = () => {
       account: string; account_desc: string; account_type: string;
       ytd_opening: number; ytd_debit: number; ytd_credit: number; closing: number;
       ytd_entered_opening: number; ytd_entered_debit: number; ytd_entered_credit: number; entered_closing: number;
+      re_year_end_closing?: number;
     };
     const grouped = new Map<string, YtdGroupRow>();
     rows.forEach(r => {
@@ -7257,6 +7266,7 @@ const TrialBalance: React.FC = () => {
         });
       }
       const g = grouped.get(k)!;
+      if (r.re_year_end_closing !== undefined) g.re_year_end_closing = r.re_year_end_closing;
       g.ytd_opening         += r.ytd_opening         || 0;
       g.ytd_debit           += r.ytd_debit           || 0;
       g.ytd_credit          += r.ytd_credit          || 0;
@@ -7368,17 +7378,43 @@ const TrialBalance: React.FC = () => {
       {
         title: 'Description', dataIndex: 'account_desc', key: 'account_desc',
         width: 180, ellipsis: true,
-        render: (v: string) => v === 'Retained Earnings'
+        render: (v: string, rec: YtdGroupRow) => v === 'Retained Earnings'
           ? (
-            <Space size={6}>
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 18, height: 18, borderRadius: '50%',
-                background: '#13c2c2', color: '#fff',
-                fontSize: 10, fontWeight: 700, flexShrink: 0,
-              }}>M</span>
-              <Text style={{ fontSize: 12 }}>Retained Earnings B/F</Text>
-            </Space>
+            <Tooltip
+              overlayStyle={{ maxWidth: 420 }}
+              title={
+                <div style={{ fontSize: 12 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>Retained Earnings B/F</div>
+                  <div>
+                    This row shows the brought-forward balance plus this year&apos;s direct
+                    postings to the RE account. It deliberately <b>excludes the current
+                    year&apos;s P&amp;L</b> — the profit is still sitting in the revenue and
+                    expense rows of this trial balance; including it here would count it
+                    twice and unbalance the TB.
+                  </div>
+                  {rec.re_year_end_closing !== undefined && (
+                    <div style={{ marginTop: 6 }}>
+                      Year-end closed RE (incl. P&amp;L):{' '}
+                      <b style={{ fontFamily: 'monospace' }}>
+                        {rec.re_year_end_closing.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </b>
+                      {' '}— this becomes next year&apos;s opening.
+                    </div>
+                  )}
+                </div>
+              }
+            >
+              <Space size={6} style={{ cursor: 'help' }}>
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 18, height: 18, borderRadius: '50%',
+                  background: '#13c2c2', color: '#fff',
+                  fontSize: 10, fontWeight: 700, flexShrink: 0,
+                }}>M</span>
+                <Text style={{ fontSize: 12 }}>Retained Earnings B/F</Text>
+                <ExclamationCircleOutlined style={{ fontSize: 11, color: '#13c2c2' }} />
+              </Space>
+            </Tooltip>
           )
           : <Text style={{ fontSize: 12 }}>{v || '—'}</Text>,
       },
@@ -7583,9 +7619,11 @@ const TrialBalance: React.FC = () => {
                     return;
                   }
                   // Transform RE rows: the saved OPENING_RE is the B/F balance for this TB year
+                  const reYearEnd = reItems.reduce((s, r) => s + (r.closing || 0), 0);
                   const mergedItems: RrTBRecord[] = reItems.map(r => ({
                     ...r,
                     account_desc:        'Retained Earnings',
+                    re_year_end_closing: reYearEnd,
                     opening:              r.opening,
                     debit:                0,
                     credit:               0,
@@ -7614,7 +7652,7 @@ const TrialBalance: React.FC = () => {
                         if (r.account !== reAccount) return r;
                         const mvt    = (r.closing || 0) - (r.opening || 0);
                         const entMvt = (r.entered_closing || 0) - (r.entered_opening || 0);
-                        return { ...r, account_desc: 'Retained Earnings', opening: reClosing, closing: reClosing + mvt, entered_opening: reClosing, entered_closing: reClosing + entMvt, ytd_opening: reClosing, ytd_entered_opening: reClosing };
+                        return { ...r, account_desc: 'Retained Earnings', opening: reClosing, closing: reClosing + mvt, entered_opening: reClosing, entered_closing: reClosing + entMvt, ytd_opening: reClosing, ytd_entered_opening: reClosing, re_year_end_closing: reYearEnd };
                       });
                     } else {
                       newData = [...t.rrData.filter(r => r.account_desc !== 'Retained Earnings'), ...mergedItems];
