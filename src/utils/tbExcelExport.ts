@@ -289,17 +289,18 @@ function writeRrSheet(
   info:   { ledger: string; company: string; period: string; currency: string },
   rows:   RrTBRow[],
   totals: RrTBTotals,
+  includeEntered: boolean = true,
 ) {
   const HEADERS  = [
     'Type', 'Account', 'Description',
     'Acc Opening', 'Acc Debit', 'Acc Credit', 'Acc Closing',
-    'Ent Opening', 'Ent Debit', 'Ent Credit', 'Ent Closing',
+    ...(includeEntered ? ['Ent Opening', 'Ent Debit', 'Ent Credit', 'Ent Closing'] : []),
     'YTD Net',
   ];
   const NUM_COL  = 4;
   const NUM_COLS = HEADERS.length;
 
-  const COL_WIDTHS = [12, 14, 42, 18, 18, 18, 18, 18, 18, 18, 18, 18];
+  const COL_WIDTHS = [12, 14, 42, ...Array(NUM_COLS - 3).fill(18)];
   COL_WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
 
   writeHeader(ws, NUM_COLS, 'REERP TRIAL BALANCE', info);
@@ -312,7 +313,9 @@ function writeRrSheet(
       r.account,
       r.account_desc || '',
       r.opening, r.debit, r.credit, r.closing,
-      r.entered_opening || 0, r.entered_debit || 0, r.entered_credit || 0, r.entered_closing || 0,
+      ...(includeEntered
+        ? [r.entered_opening || 0, r.entered_debit || 0, r.entered_credit || 0, r.entered_closing || 0]
+        : []),
       r.ytd_net,
     ]);
     row.height = 16;
@@ -329,7 +332,9 @@ function writeRrSheet(
   writeTotalsRow(ws,
     ['', '', 'TOTAL',
      totals.opening, totals.debit, totals.credit, totals.closing,
-     totals.entered_opening || 0, totals.entered_debit || 0, totals.entered_credit || 0, totals.entered_closing || 0,
+     ...(includeEntered
+       ? [totals.entered_opening || 0, totals.entered_debit || 0, totals.entered_credit || 0, totals.entered_closing || 0]
+       : []),
      totals.ytd_net],
     NUM_COL,
   );
@@ -356,11 +361,12 @@ export async function exportFusionTBToExcel(opts: {
 export async function exportRrTBToExcel(opts: {
   ledger: string; company: string; period: string; currency: string;
   rows: RrTBRow[]; totals: RrTBTotals;
+  includeEntered?: boolean;   // false = omit the Entered currency columns
 }) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'ReERP'; wb.created = new Date();
   const ws = wb.addWorksheet(safeSheetName(`RR TB ${opts.period}`));
-  writeRrSheet(ws, opts, opts.rows, opts.totals);
+  writeRrSheet(ws, opts, opts.rows, opts.totals, opts.includeEntered ?? true);
   await saveWorkbook(wb, `RR_TrialBalance_${opts.period.replace(/[^a-zA-Z0-9-]/g, '_')}.xlsx`);
 }
 
@@ -369,6 +375,7 @@ export async function exportBothTBToExcel(opts: {
   ledger: string; company: string; period: string; currency: string;
   fusionRows: FusionTBRow[]; fusionTotals: FusionTBTotals;
   rrRows: RrTBRow[]; rrTotals: RrTBTotals;
+  includeEntered?: boolean;   // false = omit the Entered currency columns
 }) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'ReERP'; wb.created = new Date();
@@ -377,7 +384,7 @@ export async function exportBothTBToExcel(opts: {
   writeFusionSheet(ws1, opts, opts.fusionRows, opts.fusionTotals, [], []);
 
   const ws2 = wb.addWorksheet('ReERP TB');
-  writeRrSheet(ws2, opts, opts.rrRows, opts.rrTotals);
+  writeRrSheet(ws2, opts, opts.rrRows, opts.rrTotals, opts.includeEntered ?? true);
 
   await saveWorkbook(
     wb,

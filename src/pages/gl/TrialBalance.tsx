@@ -1764,6 +1764,7 @@ const TrialBalance: React.FC = () => {
         currency: tab.selectedCurrency || 'All',
         rows:     tableRows,
         totals,
+        includeEntered: tab.showEntered,   // export mirrors the Entered toggle
       });
       message.success({ content: 'Excel exported', key: 'xl' });
     } catch (e: any) {
@@ -1853,6 +1854,7 @@ const TrialBalance: React.FC = () => {
         fusionTotals,
         rrRows,
         rrTotals,
+        includeEntered: rrTab.showEntered,   // export mirrors the Entered toggle
       });
       message.success({ content: 'Combined Excel exported', key: 'xl' });
     } catch (e: any) {
