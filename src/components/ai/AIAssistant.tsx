@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, Input, Modal, Popconfirm, Segmented, Select, Tag, Tooltip, Typography, message as antMessage } from 'antd';
 import {
-  ApiOutlined, BulbOutlined, CloseOutlined, CodeOutlined, CompressOutlined, DeleteOutlined,
+  ApiOutlined, BulbOutlined, CaretRightOutlined, CloseOutlined, CodeOutlined, CompressOutlined, DeleteOutlined,
   DoubleLeftOutlined, DoubleRightOutlined, DownloadOutlined, ExpandOutlined, ExportOutlined, EyeOutlined,
   FileExcelOutlined, FileWordOutlined, HistoryOutlined,
   PlusOutlined, PlusSquareOutlined, ReloadOutlined, SaveOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
@@ -341,8 +341,8 @@ const AssistantPanel: React.FC<PanelProps> = ({
   // Tables List stays mounted after the first visit so the metadata fetch,
   // the typed SQL and any results survive tab switches (no refresh per visit)
   const [sqlwbVisited, setSqlwbVisited] = useState(false);
-  // SQL pushed from a chat answer into the Tables List editor
-  const [pendingSql, setPendingSql] = useState<{ sql: string; seq: number } | null>(null);
+  // SQL pushed from a chat answer into the Tables List editor (run=true executes it too)
+  const [pendingSql, setPendingSql] = useState<{ sql: string; seq: number; run?: boolean } | null>(null);
   // Resizable/collapsible chat sections (widths persisted per browser)
   const [sidebarW, setSidebarW] = useState(() => lsNum('reerp.ai.sidebarW', 250));
   const [previewW, setPreviewW] = useState(() => lsNum('reerp.ai.previewW', 480));
@@ -353,8 +353,8 @@ const AssistantPanel: React.FC<PanelProps> = ({
     setPreviewCollapsed(v);
     try { localStorage.setItem('reerp.ai.previewCollapsed', v ? '1' : '0'); } catch { /* ignore */ }
   };
-  const openInSqlEditor = (sqlText: string) => {
-    setPendingSql({ sql: sqlText, seq: Date.now() });
+  const openInSqlEditor = (sqlText: string, run = false) => {
+    setPendingSql({ sql: sqlText, seq: Date.now(), run });
     setSqlwbVisited(true);
     setPanelTab('sqlwb');
   };
@@ -795,6 +795,16 @@ const AssistantPanel: React.FC<PanelProps> = ({
                         title="Save this result's SQL as a re-runnable report"
                       >
                         <SaveOutlined /> Save Report
+                      </button>
+                      <button
+                        className="ai-apibtn"
+                        onClick={() => {
+                          const sqls = m.apiCalls!.filter(c => c.sql);
+                          openInSqlEditor(sqls[sqls.length - 1].sql!, true);
+                        }}
+                        title="Open this SQL in the Tables List editor and run it now"
+                      >
+                        <CaretRightOutlined /> Run SQL
                       </button>
                       <button
                         className="ai-apibtn"

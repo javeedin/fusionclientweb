@@ -350,9 +350,10 @@ let objectsCache: DbObject[] | null = null;
 
 export const SqlWorkbenchPane: React.FC<{
   userName: string;
-  // SQL pushed from the chat tab's "Copy to SQL Editor" button — seq changes on
-  // every push so the same statement can be sent twice in a row.
-  pendingSql?: { sql: string; seq: number } | null;
+  // SQL pushed from the chat tab's "Run SQL" / "Copy to SQL Editor" buttons —
+  // seq changes on every push so the same statement can be sent twice in a
+  // row; run=true also executes it immediately.
+  pendingSql?: { sql: string; seq: number; run?: boolean } | null;
 }> = ({ userName, pendingSql }) => {
   const [objects, setObjects] = useState<DbObject[]>(objectsCache || []);
   const [objLoading, setObjLoading] = useState(false);
@@ -389,16 +390,15 @@ export const SqlWorkbenchPane: React.FC<{
   }, []);
   useEffect(() => { if (!objectsCache) void loadObjects(true); }, [loadObjects]);
 
-  useEffect(() => { if (pendingSql?.sql) setSql(pendingSql.sql); }, [pendingSql]);
-
-  const runSql = async () => {
-    if (!sql.trim()) { message.warning('Type a SELECT statement first'); return; }
+  const runSql = async (text?: string) => {
+    const stmt = (text ?? sql).trim();
+    if (!stmt) { message.warning('Type a SELECT statement first'); return; }
     setRunning(true); setResult(null); setRunError(''); setRowFilter('');
     try {
       const res = await fetch(`${BASE}/ai/executequery`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ sql: sql.trim(), maxRows: 500, appUser: userName || 'SQL_WORKBENCH' }),
+        body: JSON.stringify({ sql: stmt, maxRows: 500, appUser: userName || 'SQL_WORKBENCH' }),
       });
       const data = await res.json();
       if (data.success) {
@@ -407,6 +407,14 @@ export const SqlWorkbenchPane: React.FC<{
     } catch (e) { setRunError(e instanceof Error ? e.message : String(e)); }
     finally { setRunning(false); }
   };
+
+  // Apply SQL pushed from the chat tab; run it immediately when asked to
+  useEffect(() => {
+    if (!pendingSql?.sql) return;
+    setSql(pendingSql.sql);
+    if (pendingSql.run) void runSql(pendingSql.sql);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSql]);
 
   const insertTable = (name: string) => {
     if (!sql.trim()) setSql(`SELECT * FROM ${name.toLowerCase()} FETCH FIRST 100 ROWS ONLY`);
@@ -509,7 +517,7 @@ export const SqlWorkbenchPane: React.FC<{
           />
           <Space style={{ marginTop: 8 }} wrap>
             <Button size="small" type="primary" icon={<CaretRightOutlined />} loading={running}
-              onClick={runSql} style={{ background: '#C74634', borderColor: '#C74634' }}>Run</Button>
+              onClick={() => runSql()} style={{ background: '#C74634', borderColor: '#C74634' }}>Run</Button>
             <Button size="small" icon={<SaveOutlined />} disabled={!sql.trim()} onClick={() => setSaveOpen(true)}>Save</Button>
             <Button size="small" icon={<FileExcelOutlined />} disabled={!result}
               onClick={() => result && exportResultExcel(exportMeta, { ...result, rows: filteredRows, rowCount: filteredRows.length })}>Excel</Button>
