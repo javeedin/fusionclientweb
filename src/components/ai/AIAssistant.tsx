@@ -3,7 +3,7 @@ import { Button, Dropdown, Input, Modal, Popconfirm, Segmented, Select, Tag, Too
 import {
   ApiOutlined, BulbOutlined, CaretRightOutlined, CloseOutlined, CodeOutlined, CompressOutlined, DeleteOutlined,
   DoubleLeftOutlined, DoubleRightOutlined, DownloadOutlined, ExpandOutlined, ExportOutlined, EyeOutlined,
-  FileExcelOutlined, FileWordOutlined, HistoryOutlined,
+  FileExcelOutlined, FileWordOutlined, HistoryOutlined, PaperClipOutlined,
   PlusOutlined, PlusSquareOutlined, ReloadOutlined, SaveOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { DragHandle, lsNum, SavedReportsPane, ScheduledJobsPane, SaveReportModal, SqlWorkbenchPane } from './AiReportsTabs';
@@ -52,7 +52,42 @@ const MODEL_OPTIONS = [
   { value: 'claude-opus-5', label: 'Claude Opus 5 (best, most expensive)' },
 ];
 
-interface ChatMsg { role: 'user' | 'assistant'; text: string; files?: DeliveredFile[]; apiCalls?: ApiCallLog[] }
+// A file the user attached / pasted into the compose box. Images and PDFs
+// carry base64 in data (sent to the model as vision/document blocks); text
+// files carry their plain text.
+interface ChatAttachment { name: string; mediaType: string; kind: 'image' | 'pdf' | 'text'; data: string }
+
+interface ChatMsg { role: 'user' | 'assistant'; text: string; files?: DeliveredFile[]; apiCalls?: ApiCallLog[]; attachments?: ChatAttachment[] }
+
+const ATTACH_IMG_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const ATTACH_TEXT_EXT = /\.(txt|csv|tsv|json|sql|md|log|xml|html?|js|ts|yaml|yml)$/i;
+
+const readAttachment = (file: File, warn: (m: string) => void): Promise<ChatAttachment | null> =>
+  new Promise(resolve => {
+    const fail = (why: string) => { warn(`${file.name || 'pasted file'}: ${why}`); resolve(null); };
+    const b64 = (r: FileReader) => String(r.result || '').split(',')[1] || '';
+    if (ATTACH_IMG_TYPES.includes(file.type)) {
+      if (file.size > 4.5 * 1024 * 1024) return fail('image is larger than 4.5 MB — resize it and retry');
+      const r = new FileReader();
+      r.onload = () => resolve({ name: file.name || 'pasted-image.png', mediaType: file.type, kind: 'image', data: b64(r) });
+      r.onerror = () => fail('could not read the file');
+      r.readAsDataURL(file);
+    } else if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+      if (file.size > 8 * 1024 * 1024) return fail('PDF is larger than 8 MB');
+      const r = new FileReader();
+      r.onload = () => resolve({ name: file.name, mediaType: 'application/pdf', kind: 'pdf', data: b64(r) });
+      r.onerror = () => fail('could not read the file');
+      r.readAsDataURL(file);
+    } else if (file.type.startsWith('text/') || file.type === 'application/json' || ATTACH_TEXT_EXT.test(file.name)) {
+      const r = new FileReader();
+      r.onload = () => {
+        const t = String(r.result || '');
+        resolve({ name: file.name, mediaType: 'text/plain', kind: 'text', data: t.length > 120000 ? `${t.slice(0, 120000)}\n…(truncated)` : t });
+      };
+      r.onerror = () => fail('could not read the file');
+      r.readAsText(file);
+    } else fail('unsupported type — attach images, PDF, or text/CSV/JSON/SQL files');
+  });
 
 // A tool exposed by one of the local MCP servers (via the Electron bridge)
 interface McpTool {
@@ -96,19 +131,33 @@ const persistFile = (f: DeliveredFile): DeliveredFile => ({
   wordTitle: f.wordTitle,
 });
 
+// Attachments persist without their base64 payload (images/PDFs would blow
+// the localStorage quota) — after a reload the chip still names the file
+const persistAttachment = (a: ChatAttachment): ChatAttachment => ({
+  ...a, data: a.kind === 'text' ? a.data.slice(0, 20000) : '',
+});
+
 const saveConvs = (convs: Conversation[]) => {
   const trimmed = convs.slice(0, 20);
   try {
     localStorage.setItem(LS_CONVS, JSON.stringify(trimmed.map(c => ({
       ...c,
-      msgs: c.msgs.map(m => ({ ...m, files: (m.files || []).map(persistFile) })),
+      msgs: c.msgs.map(m => ({
+        ...m,
+        files: (m.files || []).map(persistFile),
+        attachments: m.attachments?.map(persistAttachment),
+      })),
     }))));
     return;
   } catch { /* quota exceeded — retry without file payloads */ }
   try {
     localStorage.setItem(LS_CONVS, JSON.stringify(trimmed.map(c => ({
       ...c,
-      msgs: c.msgs.map(m => ({ ...m, files: (m.files || []).map(f => ({ name: f.name, url: '', kind: f.kind })) })),
+      msgs: c.msgs.map(m => ({
+        ...m,
+        files: (m.files || []).map(f => ({ name: f.name, url: '', kind: f.kind })),
+        attachments: m.attachments?.map(a => ({ ...a, data: '' })),
+      })),
     }))));
   } catch { /* give up silently */ }
 };
@@ -319,7 +368,24 @@ const AssistantPanel: React.FC<PanelProps> = ({
   resolveKey, userName, mcpTools, mcpSummary, onClose, onNewWindow,
 }) => {
   const [curId, setCurId] = useState(initialConvId);
-  const [input, setInput] = useState('');
+  // The compose box is uncontrolled (read via ref on send) so typing never
+  // re-renders this large panel — same keystroke-perf recipe as the pages.
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const setComposeText = (v: string) => {
+    const ta = inputRef.current;
+    if (ta) { ta.value = v; ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 110) + 'px'; ta.focus(); }
+  };
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const addFiles = async (list: FileList | File[]) => {
+    for (const f of Array.from(list)) {
+      const a = await readAttachment(f, m => antMessage.warning(m));
+      if (a) setAttachments(prev => {
+        if (prev.length >= 6) { antMessage.warning('Maximum 6 attachments per message'); return prev; }
+        return [...prev, a];
+      });
+    }
+  };
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -387,8 +453,9 @@ const AssistantPanel: React.FC<PanelProps> = ({
   }, [msgs, busy]);
 
   const send = useCallback(async (textArg?: string) => {
-    const text = (textArg ?? input).trim();
-    if (!text || busy) return;
+    const text = (textArg ?? inputRef.current?.value ?? '').trim();
+    const atts = attachments;
+    if ((!text && !atts.length) || busy) return;
     const key = apiKey || await resolveKey();
     if (!key) { setShowSettings(true); antMessage.warning('Add your Anthropic API key first'); return; }
 
@@ -399,15 +466,35 @@ const AssistantPanel: React.FC<PanelProps> = ({
     }
     if (index === 0) lsSet(LS_CUR, convId);
 
-    setInput('');
+    if (textArg === undefined && inputRef.current) { inputRef.current.value = ''; inputRef.current.style.height = 'auto'; }
+    setAttachments([]);
     // keep an in-flight transcript so parallel panels never clobber each other
-    const localHist: ChatMsg[] = [...(store.convs.find(c => c.id === convId)?.msgs ?? []), { role: 'user', text }];
-    store.pushMsg(convId, { role: 'user', text });
+    const userMsg: ChatMsg = { role: 'user', text, attachments: atts.length ? atts : undefined };
+    const localHist: ChatMsg[] = [...(store.convs.find(c => c.id === convId)?.msgs ?? []), userMsg];
+    store.pushMsg(convId, userMsg);
     setBusy(true);
     setLiveCalls([]);
 
+    // attachments become real API blocks: images as vision blocks, PDFs as
+    // document blocks, text files inlined — so the model can read them
+    const msgContent = (m: ChatMsg): Anthropic.MessageParam['content'] => {
+      if (m.role !== 'user' || !m.attachments?.length) return m.text || '…';
+      const blocks: Anthropic.ContentBlockParam[] = [];
+      for (const a of m.attachments) {
+        if (!a.data) blocks.push({ type: 'text', text: `[Attachment ${a.name} — content no longer available after app reload]` });
+        else if (a.kind === 'image') blocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: a.mediaType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp', data: a.data },
+        });
+        else if (a.kind === 'pdf') blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.data } });
+        else blocks.push({ type: 'text', text: `[Attached file: ${a.name}]\n${a.data}` });
+      }
+      blocks.push({ type: 'text', text: m.text || 'See the attached file(s).' });
+      return blocks;
+    };
+
     const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
-    const apiMsgs: Anthropic.MessageParam[] = localHist.map(m => ({ role: m.role, content: m.text || '…' }));
+    const apiMsgs: Anthropic.MessageParam[] = localHist.map(m => ({ role: m.role, content: msgContent(m) }));
     const delivered: DeliveredFile[] = [];
     const calls: ApiCallLog[] = [];
     const onLog = (c: ApiCallLog) => { calls.push(c); setLiveCalls(calls.slice()); };
@@ -531,7 +618,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
       setStatus('');
       setLiveCalls([]);
     }
-  }, [input, busy, apiKey, resolveKey, curId, store, model, userName, index, mcpTools, mcpSummary, navigate, answerMode]);
+  }, [attachments, busy, apiKey, resolveKey, curId, store, model, userName, index, mcpTools, mcpSummary, navigate, answerMode]);
 
   const historyMenu = useMemo(() => ({
     items: store.convs.length
@@ -748,6 +835,16 @@ const AssistantPanel: React.FC<PanelProps> = ({
               {m.role === 'user'
                 ? m.text.split('\n').map((l, j) => <div key={j}>{l}</div>)
                 : <div dangerouslySetInnerHTML={{ __html: mdToHtml(m.text) }} />}
+              {m.role === 'user' && !!m.attachments?.length && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                  {m.attachments.map((a, j) => a.kind === 'image' && a.data
+                    ? <img key={j} src={`data:${a.mediaType};base64,${a.data}`} alt={a.name} title={a.name}
+                        style={{ maxWidth: 200, maxHeight: 150, borderRadius: 8, border: '1px solid rgba(255,255,255,.45)' }} />
+                    : <span key={j} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(255,255,255,.18)', borderRadius: 6, padding: '2px 8px', fontSize: 11.5 }}>
+                        <PaperClipOutlined /> {a.name}
+                      </span>)}
+                </div>
+              )}
               {!!m.files?.length && (
                 <div>
                   {m.files.map(f => (
@@ -899,14 +996,43 @@ const AssistantPanel: React.FC<PanelProps> = ({
         </div>
       )}
 
-      <div className="ai-compose">
+      {!!attachments.length && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '6px 12px 0', background: '#fff', borderTop: '1px solid #EFEAE8' }}>
+          {attachments.map((a, i) => (
+            <span key={`${a.name}${i}`} className="ai-file" style={{ margin: 0 }}>
+              {a.kind === 'image' && a.data
+                ? <img src={`data:${a.mediaType};base64,${a.data}`} alt={a.name} style={{ height: 26, borderRadius: 4 }} />
+                : <PaperClipOutlined />}
+              <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+              <span style={{ cursor: 'pointer', fontWeight: 700, padding: '0 2px' }} title="Remove"
+                onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))}>×</span>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="ai-compose" style={attachments.length ? { borderTop: 'none' } : undefined}>
+        <input
+          ref={fileInputRef} type="file" multiple hidden
+          accept="image/*,.pdf,.txt,.csv,.tsv,.json,.sql,.md,.log,.xml"
+          onChange={e => { if (e.target.files?.length) void addFiles(e.target.files); e.target.value = ''; }}
+        />
+        <Tooltip title="Attach files — images, PDF, text/CSV (or paste a screenshot straight into the box)">
+          <Button type="text" icon={<PaperClipOutlined />} onClick={() => fileInputRef.current?.click()}
+            style={{ color: '#8B8580', flexShrink: 0 }} />
+        </Tooltip>
         <textarea
           rows={1}
-          placeholder="Ask about journals, invoices, balances… or request an Excel report"
-          value={input}
+          ref={inputRef}
+          placeholder="Ask about journals, invoices, balances… paste a screenshot or attach a file"
           onChange={e => {
-            setInput(e.target.value);
             const ta = e.target; ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 110) + 'px';
+          }}
+          onPaste={e => {
+            const pasted = Array.from(e.clipboardData?.items || [])
+              .filter(it => it.kind === 'file')
+              .map(it => it.getAsFile())
+              .filter((f): f is File => !!f);
+            if (pasted.length) { e.preventDefault(); void addFiles(pasted); }
           }}
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -994,7 +1120,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
         width={560}
         footer={teachOpen && [
           <Button key="use" type="primary" onClick={() => {
-            setInput(`Use the "${teachOpen.recipeName}" recipe: `);
+            setComposeText(`Use the "${teachOpen.recipeName}" recipe: `);
             setTeachOpen(null);
           }}>Use in chat</Button>,
           <Button key="toggle" onClick={async () => {
