@@ -876,27 +876,21 @@ const TrialBalance: React.FC = () => {
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       let items: RrTBRecord[] = (data.items || []) as RrTBRecord[];
 
-      // Auto-fetch RE opening: previous year's closing (period_year - 1, period_number=12)
+      // Auto-fetch RE opening: the TB year's OWN saved row — its OPENING_RE
+      // already carries last year's closing as the brought-forward figure,
+      // so we query the current year, not year - 1
       try {
-        const prevYear = record.period_year - 1;
-        const prevLastPeriod = periods.find(
-          p => p.ledger_name === record.ledger_name
-            && p.period_year === prevYear
-            && p.period_number === 12
-        );
         const reUrl = `${APEX_DB_CONFIG.baseUrl}/${APEX_DB_CONFIG.endpoints.rrTrialBalanceStandardRE}`
           + `?ledger_name=${encodeURIComponent(record.ledger_name)}`
-          + (prevLastPeriod
-            ? `&period_name=${encodeURIComponent(prevLastPeriod.period_name_id)}`
-            : `&period_year=${prevYear}`);
+          + `&period_year=${record.period_year}`;
         const reRes = await fetch(reUrl, { headers: { Accept: 'application/json' } });
         if (reRes.ok) {
           const reData = await reRes.json();
           const reItems: RrTBRecord[] = (reData.items || []) as RrTBRecord[];
           if (reItems.length > 0) {
             // Replace ytd_opening of the existing RE account row in TB with the
-            // closing from standardRE (previous year's closing = this year's opening B/F)
-            const reClosing = reItems.reduce((s, r) => s + (r.closing || 0), 0);
+            // saved row's OPENING (the B/F balance for this same TB year)
+            const reClosing = reItems.reduce((s, r) => s + (r.opening || 0), 0);
             const hasExisting = items.some(i => i.account === reItems[0].account);
             if (hasExisting) {
               // Update existing row — opening and closing both = prev year closing
@@ -7593,18 +7587,12 @@ const TrialBalance: React.FC = () => {
                 const periodInfo = periods.find(p => p.period_name_id === periodId && p.ledger_name === tab.ledgerName);
                 const currentYear = periodInfo?.period_year;
                 if (!currentYear) { message.warning('Could not determine year for this tab'); return; }
-                // RE opening = closing of previous year's last period (Mar of year-1)
-                const prevYear = currentYear - 1;
-                const lastPeriod = periods.find(p =>
-                  p.ledger_name === tab.ledgerName &&
-                  p.period_year === prevYear &&
-                  p.period_number === 12
-                );
+                // RE opening = OPENING_RE of the TB year's own saved row
+                // (that column already holds last year's closing = B/F)
                 const reUrl = `${APEX_DB_CONFIG.baseUrl}/${APEX_DB_CONFIG.endpoints.rrTrialBalanceStandardRE}`
                   + `?ledger_name=${encodeURIComponent(tab.ledgerName)}`
-                  + (lastPeriod ? `&period_name=${encodeURIComponent(lastPeriod.period_name_id)}` : `&period_year=${prevYear}`);
+                  + `&period_year=${currentYear}`;
                 setReLastUrl(prev => ({ ...prev, [tab.key]: reUrl }));
-                if (!lastPeriod) { message.warning(`No closing period found for year ${prevYear} — will try period_year filter`); }
                 setReFetchingTabKey(tab.key);
                 try {
                   const res = await fetch(reUrl, { headers: { Accept: 'application/json' } });
@@ -7612,29 +7600,29 @@ const TrialBalance: React.FC = () => {
                   const data = await res.json();
                   const reItems: RrTBRecord[] = data.items || [];
                   if (reItems.length === 0) {
-                    message.info(`No saved RE data found for year ${prevYear} (${lastPeriod?.period_name_id ?? '—'})`);
+                    message.info(`No saved RE data found for year ${currentYear} — calculate and save the rollforward first`);
                     return;
                   }
-                  // Transform RE rows: closing becomes the B/F opening balance for current period
+                  // Transform RE rows: the saved OPENING_RE is the B/F balance for this TB year
                   const mergedItems: RrTBRecord[] = reItems.map(r => ({
                     ...r,
                     account_desc:        'Retained Earnings',
-                    opening:              r.closing,
+                    opening:              r.opening,
                     debit:                0,
                     credit:               0,
-                    closing:              r.closing,
-                    entered_opening:      r.closing,
+                    closing:              r.opening,
+                    entered_opening:      r.opening,
                     entered_debit:        0,
                     entered_credit:       0,
-                    entered_closing:      r.closing,
-                    ytd_opening:          r.closing,
+                    entered_closing:      r.opening,
+                    ytd_opening:          r.opening,
                     ytd_debit:            0,
                     ytd_credit:           0,
-                    ytd_entered_opening:  r.closing,
+                    ytd_entered_opening:  r.opening,
                     ytd_entered_debit:    0,
                     ytd_entered_credit:   0,
                   }));
-                  const reClosing = mergedItems.reduce((s, r) => s + (r.closing || 0), 0);
+                  const reClosing = mergedItems.reduce((s, r) => s + (r.opening || 0), 0);
                   const reAccount = mergedItems[0]?.account;
                   setTabs(prev => prev.map(t => {
                     if (t.key !== tab.key) return t;
@@ -7651,7 +7639,7 @@ const TrialBalance: React.FC = () => {
                     }
                     return { ...t, rrData: newData };
                   }));
-                  message.success(`RE opening balance loaded from ${lastPeriod?.period_name_id ?? prevYear} — ${reClosing.toLocaleString('en-US', { minimumFractionDigits: 2 })} set as YTD Opening`);
+                  message.success(`RE opening balance loaded from year ${currentYear}'s saved row — ${reClosing.toLocaleString('en-US', { minimumFractionDigits: 2 })} set as YTD Opening`);
                 } catch (e: any) {
                   message.error(`Fetch RE failed: ${e.message}`);
                 } finally {
@@ -7668,11 +7656,9 @@ const TrialBalance: React.FC = () => {
               const periodId = tab.periodName.replace(/^YTD:\s*/, '').split('·')[0].trim();
               const periodInfo = periods.find(p => p.period_name_id === periodId && p.ledger_name === tab.ledgerName);
               const currentYear = periodInfo?.period_year;
-              const prevYear = currentYear ? currentYear - 1 : null;
-              const lastPeriod = prevYear ? periods.find(p => p.ledger_name === tab.ledgerName && p.period_year === prevYear && p.period_number === 12) : null;
               const previewUrl = `${APEX_DB_CONFIG.baseUrl}/${APEX_DB_CONFIG.endpoints.rrTrialBalanceStandardRE}`
                 + `?ledger_name=${encodeURIComponent(tab.ledgerName)}`
-                + (lastPeriod ? `&period_name=${encodeURIComponent(lastPeriod.period_name_id)}` : prevYear ? `&period_year=${prevYear}` : '');
+                + (currentYear ? `&period_year=${currentYear}` : '');
               const displayUrl = reLastUrl[tab.key] || previewUrl;
               return (
                 <Tooltip
