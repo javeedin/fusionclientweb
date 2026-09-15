@@ -5380,7 +5380,7 @@ const TrialBalance: React.FC = () => {
           },
         ],
       },
-      {
+      ...(tab.showEntered ? [{
         title: <span style={{ color: '#52c41a' }}>Entered</span>,
         children: [
           {
@@ -5408,7 +5408,7 @@ const TrialBalance: React.FC = () => {
             render: fmtNet,
           },
         ],
-      },
+      }] : []),
       {
         title: 'YTD Net', dataIndex: 'ytd_net', key: 'ytd_net',
         align: 'right' as const, width: 130,
@@ -5439,12 +5439,12 @@ const TrialBalance: React.FC = () => {
                 <Text strong style={{ fontFamily: 'monospace', fontSize: 11, color: '#1677ff' }}>{fmt(v)}</Text>
               </SummaryCell>
             ))}
-            {entValues.map((v, i) => (
+            {tab.showEntered && entValues.map((v, i) => (
               <SummaryCell key={`ent-${i}`} index={i + 7} style={{ textAlign: 'right', background: bg }}>
                 <Text strong style={{ fontFamily: 'monospace', fontSize: 11, color: '#52c41a' }}>{fmt(v)}</Text>
               </SummaryCell>
             ))}
-            <SummaryCell index={11} style={{ textAlign: 'right', background: bg }}>
+            <SummaryCell index={tab.showEntered ? 11 : 7} style={{ textAlign: 'right', background: bg }}>
               <Text strong style={{ fontFamily: 'monospace', fontSize: 11 }}>{fmt(totals.ytd_net)}</Text>
             </SummaryCell>
           </Table.Summary.Row>
@@ -5547,6 +5547,15 @@ const TrialBalance: React.FC = () => {
             >
               Reconcile
             </Button>
+            <Tooltip title="Show / hide the Entered (transaction currency) columns">
+              <Switch
+                size="small"
+                checked={tab.showEntered}
+                onChange={v => updateTabEntered(tab.key, v)}
+                checkedChildren="Entered ✓"
+                unCheckedChildren="Entered"
+              />
+            </Tooltip>
           </Col>
         </Row>
 
@@ -5567,7 +5576,7 @@ const TrialBalance: React.FC = () => {
           rowKey="account"
           size="small"
           pagination={false}
-          scroll={{ x: 1600 }}
+          scroll={{ x: tab.showEntered ? 1600 : 1100 }}
           summary={summaryRow}
           onRow={(r: any) => ({ style: { background: accountTypeColor[r.account_type] || '#fff' } })}
         />
