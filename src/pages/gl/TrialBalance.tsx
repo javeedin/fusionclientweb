@@ -3371,8 +3371,15 @@ const TrialBalance: React.FC = () => {
       ? revalSelectedRows.filter(k => selectableRowKeys.includes(k))
       : selectableRowKeys;
 
-    // Active rows only (for totals + preview) — intersect with selection
-    const activeComboRows = comboRows.filter(r => isComboPosted(r.combo) || effectiveSelected.includes(r.rowKey));
+    // Active rows (totals + preview + save payload): ONLY the user's selected,
+    // non-posted, non-excluded rows that have a new rate entered. Posted rows
+    // must never re-enter the calculation — with no rate they compute a
+    // phantom "loss" of their whole accounted balance.
+    const activeComboRows = comboRows.filter(r =>
+      !isComboPosted(r.combo)
+      && !r.excluded
+      && r.newRate !== 0
+      && effectiveSelected.includes(r.rowKey));
 
     // Currency-aggregated rows — used for save payload (ccy_rows)
     interface CcyRow {
