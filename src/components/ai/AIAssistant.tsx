@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, Input, Modal, Popconfirm, Segmented, Select, Tag, Tooltip, Typography, message as antMessage } from 'antd';
 import {
-  ApiOutlined, BulbOutlined, CloseOutlined, CodeOutlined, CommentOutlined, CompressOutlined, DeleteOutlined,
-  DownloadOutlined, ExpandOutlined, EyeOutlined, FileExcelOutlined, FileWordOutlined, HistoryOutlined,
+  ApiOutlined, BulbOutlined, CloseOutlined, CodeOutlined, CompressOutlined, DeleteOutlined,
+  DoubleLeftOutlined, DoubleRightOutlined, DownloadOutlined, ExpandOutlined, ExportOutlined, EyeOutlined,
+  FileExcelOutlined, FileWordOutlined, HistoryOutlined,
   PlusOutlined, PlusSquareOutlined, ReloadOutlined, SaveOutlined, SendOutlined, SettingOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
-import { SavedReportsPane, ScheduledJobsPane, SaveReportModal, SqlWorkbenchPane } from './AiReportsTabs';
+import { DragHandle, lsNum, SavedReportsPane, ScheduledJobsPane, SaveReportModal, SqlWorkbenchPane } from './AiReportsTabs';
 import Anthropic from '@anthropic-ai/sdk';
 import { useNavigate } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../../config/api.config';
@@ -233,9 +234,16 @@ const PreviewPanel: React.FC<{
   selected: DeliveredFile | null;
   onSelect: (f: DeliveredFile) => void;
   onRemove: (f: DeliveredFile) => void;
-}> = ({ files, selected, onSelect, onRemove }) => (
-  <div className="ai-preview">
+  width?: number;
+  onCollapse?: () => void;
+}> = ({ files, selected, onSelect, onRemove, width, onCollapse }) => (
+  <div className="ai-preview" style={width ? { width, minWidth: 0 } : undefined}>
     <div className="ai-preview-head">
+      {onCollapse && (
+        <Tooltip title="Collapse preview">
+          <Button size="small" type="text" icon={<DoubleRightOutlined />} onClick={onCollapse} style={{ color: '#8B8580' }} />
+        </Tooltip>
+      )}
       <span style={{ fontWeight: 600, fontSize: 13 }}><EyeOutlined /> Preview</span>
       <div className="ai-preview-tabs">
         {files.map((f, i) => (
@@ -330,6 +338,26 @@ const AssistantPanel: React.FC<PanelProps> = ({
   // Tabs: Chatbot | Saved Reports | Scheduled Jobs
   const [panelTab, setPanelTab] = useState<'chat' | 'reports' | 'sqlwb' | 'jobs'>('chat');
   const [saveReportFor, setSaveReportFor] = useState<{ sql: string; name?: string } | null>(null);
+  // Tables List stays mounted after the first visit so the metadata fetch,
+  // the typed SQL and any results survive tab switches (no refresh per visit)
+  const [sqlwbVisited, setSqlwbVisited] = useState(false);
+  // SQL pushed from a chat answer into the Tables List editor
+  const [pendingSql, setPendingSql] = useState<{ sql: string; seq: number } | null>(null);
+  // Resizable/collapsible chat sections (widths persisted per browser)
+  const [sidebarW, setSidebarW] = useState(() => lsNum('reerp.ai.sidebarW', 250));
+  const [previewW, setPreviewW] = useState(() => lsNum('reerp.ai.previewW', 480));
+  const [previewCollapsed, setPreviewCollapsed] = useState(() => {
+    try { return localStorage.getItem('reerp.ai.previewCollapsed') === '1'; } catch { return false; }
+  });
+  const setPreviewCollapsedPersist = (v: boolean) => {
+    setPreviewCollapsed(v);
+    try { localStorage.setItem('reerp.ai.previewCollapsed', v ? '1' : '0'); } catch { /* ignore */ }
+  };
+  const openInSqlEditor = (sqlText: string) => {
+    setPendingSql({ sql: sqlText, seq: Date.now() });
+    setSqlwbVisited(true);
+    setPanelTab('sqlwb');
+  };
   const [fullscreen, setFullscreen] = useState(false);
   const [preview, setPreview] = useState<DeliveredFile | null>(null);
   const [pendingWrite, setPendingWrite] = useState<(PendingWrite & { resolve: (ok: boolean) => void }) | null>(null);
@@ -598,7 +626,7 @@ const AssistantPanel: React.FC<PanelProps> = ({
       {/* Tab strip: Chatbot | Saved Reports | Scheduled Jobs */}
       <div style={{ display: 'flex', gap: 2, padding: '4px 8px', borderBottom: '1px solid #EFEBE9', background: '#fff', flexShrink: 0 }}>
         {([['chat', 'Chatbot'], ['reports', 'Saved Reports'], ['sqlwb', 'Tables List'], ['jobs', 'Scheduled Jobs']] as const).map(([key, label]) => (
-          <button key={key} onClick={() => setPanelTab(key)}
+          <button key={key} onClick={() => { setPanelTab(key); if (key === 'sqlwb') setSqlwbVisited(true); }}
             style={{
               border: 'none', cursor: 'pointer', fontSize: 12, padding: '4px 12px', borderRadius: 6,
               fontWeight: panelTab === key ? 700 : 500,
@@ -609,12 +637,19 @@ const AssistantPanel: React.FC<PanelProps> = ({
       </div>
 
       {panelTab === 'reports' && <div className="ai-body"><SavedReportsPane userName={userName} /></div>}
-      {panelTab === 'sqlwb' && <div className="ai-body"><SqlWorkbenchPane userName={userName} /></div>}
+      {/* Tables List: mounted on first visit, then only hidden — switching back
+          never re-fetches the table metadata or loses the typed SQL/results */}
+      {sqlwbVisited && (
+        <div className="ai-body" style={panelTab === 'sqlwb' ? undefined : { display: 'none' }}>
+          <SqlWorkbenchPane userName={userName} pendingSql={pendingSql} />
+        </div>
+      )}
       {panelTab === 'jobs' && <div className="ai-body"><ScheduledJobsPane /></div>}
 
       <div className="ai-body" style={panelTab === 'chat' ? undefined : { display: 'none' }}>
       {fullscreen && (
-        <div className="ai-sidebar">
+        <>
+        <div className="ai-sidebar" style={{ width: sidebarW }}>
           <div className="ai-side-head">
             <span>Chats</span>
             <Tooltip title="New chat">
@@ -683,6 +718,12 @@ const AssistantPanel: React.FC<PanelProps> = ({
             ))}
           </div>
         </div>
+        <DragHandle onDrag={dx => setSidebarW(w => {
+          const nw = Math.min(420, Math.max(160, w + dx));
+          try { localStorage.setItem('reerp.ai.sidebarW', String(nw)); } catch { /* ignore */ }
+          return nw;
+        })} />
+        </>
       )}
 
       <div className="ai-main">
@@ -754,6 +795,16 @@ const AssistantPanel: React.FC<PanelProps> = ({
                         title="Save this result's SQL as a re-runnable report"
                       >
                         <SaveOutlined /> Save Report
+                      </button>
+                      <button
+                        className="ai-apibtn"
+                        onClick={() => {
+                          const sqls = m.apiCalls!.filter(c => c.sql);
+                          openInSqlEditor(sqls[sqls.length - 1].sql!);
+                        }}
+                        title="Open this SQL in the Tables List editor to tweak and re-run"
+                      >
+                        <ExportOutlined /> Copy to SQL Editor
                       </button>
                     </>
                   )}
@@ -856,16 +907,31 @@ const AssistantPanel: React.FC<PanelProps> = ({
       </div>
       </div>
 
-      {fullscreen && (
-        <PreviewPanel
-          files={convFiles}
-          selected={preview}
-          onSelect={setPreview}
-          onRemove={(f) => {
-            if (cur) store.removeFile(cur.id, f.name);
-            if (preview?.name === f.name) setPreview(null);
-          }}
-        />
+      {fullscreen && !previewCollapsed && (
+        <>
+          <DragHandle onDrag={dx => setPreviewW(w => {
+            const nw = Math.min(1100, Math.max(280, w - dx));
+            try { localStorage.setItem('reerp.ai.previewW', String(nw)); } catch { /* ignore */ }
+            return nw;
+          })} />
+          <PreviewPanel
+            files={convFiles}
+            selected={preview}
+            onSelect={setPreview}
+            onRemove={(f) => {
+              if (cur) store.removeFile(cur.id, f.name);
+              if (preview?.name === f.name) setPreview(null);
+            }}
+            width={previewW}
+            onCollapse={() => setPreviewCollapsedPersist(true)}
+          />
+        </>
+      )}
+      {fullscreen && previewCollapsed && (
+        <div className="ai-preview-rail" title="Expand preview" onClick={() => setPreviewCollapsedPersist(false)}>
+          <DoubleLeftOutlined />
+          <span className="rail-label">Preview{convFiles.length ? ` (${convFiles.length})` : ''}</span>
+        </div>
       )}
       </div>
 
@@ -1102,6 +1168,12 @@ const AIAssistant: React.FC = () => {
         .ai-panel.ai-full{inset:12px;right:12px;bottom:12px;width:auto;height:auto;max-width:none}
         .ai-body{flex:1;min-height:0;display:flex;flex-direction:row}
         .ai-main{flex:1;min-width:0;display:flex;flex-direction:column}
+        .ai-drag{background:transparent;transition:background .12s}
+        .ai-drag:hover,.ai-drag:active{background:#E4D2CD}
+        .ai-preview-rail{width:28px;flex-shrink:0;border-left:1px solid #EFEAE8;background:#F7F4F3;display:flex;
+          flex-direction:column;align-items:center;padding-top:12px;gap:10px;cursor:pointer;color:#8B8580;font-size:12px}
+        .ai-preview-rail:hover{color:#C74634;background:#FBF1EF}
+        .ai-preview-rail .rail-label{writing-mode:vertical-rl;font-size:11px;letter-spacing:1px;font-weight:600}
         .ai-sidebar{width:250px;flex-shrink:0;border-right:1px solid #EFEAE8;background:#F7F4F3;display:flex;flex-direction:column}
         .ai-side-head{padding:8px 12px;font-weight:600;font-size:12px;color:#6B6B6B;display:flex;align-items:center;justify-content:space-between}
         .ai-side-head .ant-btn{color:#6B6B6B}

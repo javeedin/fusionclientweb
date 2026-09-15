@@ -11,6 +11,33 @@ import { buildExcel } from './assistantTools';
 const { Text } = Typography;
 const BASE = APEX_DB_CONFIG.baseUrl;
 
+// Persisted numeric setting (panel widths) — 0/garbage falls back to the default
+export const lsNum = (k: string, d: number): number => {
+  try { const v = Number(localStorage.getItem(k)); return Number.isFinite(v) && v > 0 ? v : d; } catch { return d; }
+};
+
+// Vertical drag handle that lets the user resize adjacent flex sections
+export const DragHandle: React.FC<{ onDrag: (dx: number) => void }> = ({ onDrag }) => (
+  <div
+    className="ai-drag"
+    style={{ width: 5, alignSelf: 'stretch', flexShrink: 0, cursor: 'col-resize', zIndex: 5 }}
+    onMouseDown={e => {
+      e.preventDefault();
+      let lastX = e.clientX;
+      const prevSelect = document.body.style.userSelect;
+      document.body.style.userSelect = 'none';
+      const move = (ev: MouseEvent) => { onDrag(ev.clientX - lastX); lastX = ev.clientX; };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        document.body.style.userSelect = prevSelect;
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    }}
+  />
+);
+
 export interface SavedReport {
   reportId: number;
   name: string;
@@ -82,6 +109,7 @@ export const SavedReportsPane: React.FC<{ userName: string }> = ({ userName }) =
   const [result, setResult] = useState<RunResult | null>(null);
   const [runError, setRunError] = useState('');
   const [sqlOpen, setSqlOpen] = useState(false);
+  const [leftW, setLeftW] = useState(() => lsNum('reerp.ai.reportsLeftW', 250));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -144,9 +172,9 @@ export const SavedReportsPane: React.FC<{ userName: string }> = ({ userName }) =
   }));
 
   return (
-    <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
+    <div style={{ display: 'flex', flex: 1, minWidth: 0, height: '100%', minHeight: 0 }}>
       {/* left: report list */}
-      <div style={{ width: 250, borderRight: '1px solid #EFEBE9', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ width: leftW, flexShrink: 0, borderRight: '1px solid #EFEBE9', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{ padding: 8, display: 'flex', gap: 6 }}>
           <Input size="small" placeholder="Filter reports…" allowClear value={filter} onChange={e => setFilter(e.target.value)} />
           <Tooltip title="Refresh"><Button size="small" icon={<ReloadOutlined />} onClick={load} /></Tooltip>
@@ -177,6 +205,12 @@ export const SavedReportsPane: React.FC<{ userName: string }> = ({ userName }) =
               ))}
         </div>
       </div>
+
+      <DragHandle onDrag={dx => setLeftW(w => {
+        const nw = Math.min(500, Math.max(160, w + dx));
+        try { localStorage.setItem('reerp.ai.reportsLeftW', String(nw)); } catch { /* ignore */ }
+        return nw;
+      })} />
 
       {/* right: detail + results */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -241,7 +275,7 @@ export const SavedReportsPane: React.FC<{ userName: string }> = ({ userName }) =
 
 // ── Scheduled Jobs pane (placeholder — jobs engine is the next build) ───────
 export const ScheduledJobsPane: React.FC = () => (
-  <div style={{ padding: 30, textAlign: 'center' }}>
+  <div style={{ flex: 1, minWidth: 0, padding: 30, textAlign: 'center' }}>
     <ClockCircleOutlined style={{ fontSize: 34, color: '#C7C7C7' }} />
     <div style={{ fontWeight: 700, margin: '10px 0 4px', color: '#3A3632' }}>Scheduled Jobs</div>
     <Text type="secondary" style={{ fontSize: 12.5, display: 'block', maxWidth: 420, margin: '0 auto' }}>
@@ -310,8 +344,17 @@ export const SaveReportModal: React.FC<{
 interface DbColumn { name: string; dataType: string; nullable: string; comment?: string }
 interface DbObject { name: string; type: string; comment?: string; columns: DbColumn[] }
 
-export const SqlWorkbenchPane: React.FC<{ userName: string }> = ({ userName }) => {
-  const [objects, setObjects] = useState<DbObject[]>([]);
+// Table metadata is fetched once per app load and kept here; only the
+// Refresh button in the pane forces a re-fetch of ai/objects.
+let objectsCache: DbObject[] | null = null;
+
+export const SqlWorkbenchPane: React.FC<{
+  userName: string;
+  // SQL pushed from the chat tab's "Copy to SQL Editor" button — seq changes on
+  // every push so the same statement can be sent twice in a row.
+  pendingSql?: { sql: string; seq: number } | null;
+}> = ({ userName, pendingSql }) => {
+  const [objects, setObjects] = useState<DbObject[]>(objectsCache || []);
   const [objLoading, setObjLoading] = useState(false);
   const [objFilter, setObjFilter] = useState('');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -321,17 +364,23 @@ export const SqlWorkbenchPane: React.FC<{ userName: string }> = ({ userName }) =
   const [runError, setRunError] = useState('');
   const [rowFilter, setRowFilter] = useState('');
   const [saveOpen, setSaveOpen] = useState(false);
+  const [leftW, setLeftW] = useState(() => lsNum('reerp.ai.wbLeftW', 250));
 
-  const loadObjects = useCallback(async () => {
+  const loadObjects = useCallback(async (force = false) => {
+    if (!force && objectsCache) { setObjects(objectsCache); return; }
     setObjLoading(true);
     try {
       const res = await fetch(`${BASE}/ai/objects`, { cache: 'no-store', headers: { Accept: 'application/json' } });
       const data = await res.json();
-      setObjects(Array.isArray(data.objects) ? data.objects : []);
+      const list: DbObject[] = Array.isArray(data.objects) ? data.objects : [];
+      objectsCache = list;
+      setObjects(list);
     } catch { message.error('Failed to load tables (is GET ai/objects deployed?)'); }
     finally { setObjLoading(false); }
   }, []);
-  useEffect(() => { loadObjects(); }, [loadObjects]);
+  useEffect(() => { if (!objectsCache) void loadObjects(true); }, [loadObjects]);
+
+  useEffect(() => { if (pendingSql?.sql) setSql(pendingSql.sql); }, [pendingSql]);
 
   const runSql = async () => {
     if (!sql.trim()) { message.warning('Type a SELECT statement first'); return; }
@@ -381,12 +430,12 @@ export const SqlWorkbenchPane: React.FC<{ userName: string }> = ({ userName }) =
   const exportMeta = { name: 'SQL Query', category: 'Workbench' };
 
   return (
-    <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
+    <div style={{ display: 'flex', flex: 1, minWidth: 0, height: '100%', minHeight: 0 }}>
       {/* left: tables + columns */}
-      <div style={{ width: 250, borderRight: '1px solid #EFEBE9', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ width: leftW, flexShrink: 0, borderRight: '1px solid #EFEBE9', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{ padding: 8, display: 'flex', gap: 6 }}>
           <Input size="small" placeholder="Filter tables…" allowClear value={objFilter} onChange={e => setObjFilter(e.target.value)} />
-          <Tooltip title="Refresh"><Button size="small" icon={<ReloadOutlined />} onClick={loadObjects} /></Tooltip>
+          <Tooltip title="Re-fetch table list"><Button size="small" icon={<ReloadOutlined />} loading={objLoading} onClick={() => loadObjects(true)} /></Tooltip>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', fontSize: 12 }}>
           {objLoading ? <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>
@@ -417,6 +466,12 @@ export const SqlWorkbenchPane: React.FC<{ userName: string }> = ({ userName }) =
         </div>
       </div>
 
+      <DragHandle onDrag={dx => setLeftW(w => {
+        const nw = Math.min(500, Math.max(160, w + dx));
+        try { localStorage.setItem('reerp.ai.wbLeftW', String(nw)); } catch { /* ignore */ }
+        return nw;
+      })} />
+
       {/* right: SQL editor + results */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{ padding: 10, borderBottom: '1px solid #EFEBE9' }}>
@@ -426,7 +481,7 @@ export const SqlWorkbenchPane: React.FC<{ userName: string }> = ({ userName }) =
             onKeyDown={e => { if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); runSql(); } }}
             placeholder="Type a SELECT statement… (click a table on the left to start; Ctrl+Enter runs)"
             autoSize={{ minRows: 4, maxRows: 10 }}
-            style={{ fontFamily: 'monospace', fontSize: 12 }}
+            style={{ fontFamily: 'monospace', fontSize: 12, width: '100%' }}
           />
           <Space style={{ marginTop: 8 }} wrap>
             <Button size="small" type="primary" icon={<CaretRightOutlined />} loading={running}
