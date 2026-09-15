@@ -24,6 +24,7 @@ import {
   AutoComplete,
   message,
   Switch,
+  Popconfirm,
   Descriptions,
   Dropdown,
   Drawer,
@@ -36,6 +37,7 @@ import {
   HomeOutlined,
   TableOutlined,
   ReloadOutlined,
+  DeleteOutlined,
   PlusOutlined,
   CloseOutlined,
   FilterOutlined,
@@ -335,6 +337,19 @@ const TrialBalance: React.FC = () => {
   const [reYearLoading,   setReYearLoading]   = useState(false);
   const [reYearProgress,  setReYearProgress]  = useState('');
   const [reYearError,     setReYearError]     = useState<string | null>(null);
+  // RE section view: calculate vs retrieve saved rows from RR_GL_RETAINED_EARNINGS
+  const [reViewTab,       setReViewTab]       = useState<'calc' | 'saved'>('calc');
+  const [reSavedRows,     setReSavedRows]     = useState<{
+    id: number; ledger_name: string; year: number; last_period?: string;
+    company?: string | null; re_account?: string;
+    revenue?: number; expenses?: number; net_pl?: number;
+    re_balance?: number; cumulative_re?: number;
+    created_date?: string; updated_date?: string;
+  }[]>([]);
+  const [reSavedLoading,  setReSavedLoading]  = useState(false);
+  const [reSavedError,    setReSavedError]    = useState<string | null>(null);
+  const [reSavedUrl,      setReSavedUrl]      = useState('');
+  const [reSavedCompany,  setReSavedCompany]  = useState<string | null>(null);
   const [reYearSelected,  setReYearSelected]  = useState<number[]>([]);   // years checked to save
   const [reSaving,        setReSaving]        = useState(false);
   const [reApiDebug,      setReApiDebug]      = useState<{ url: string; body: string; response: string; status: number | null } | null>(null);
@@ -5905,6 +5920,43 @@ const TrialBalance: React.FC = () => {
     }
   };
 
+  // ── Retrieve saved RE rows (GET gl/retained-earnings) ────────
+  const fetchSavedRE = async () => {
+    if (!reCalcTab) return;
+    setReSavedLoading(true);
+    setReSavedError(null);
+    const url = `${APEX_DB_CONFIG.baseUrl}/${APEX_DB_CONFIG.endpoints.retainedEarnings}`
+      + `?ledger_name=${encodeURIComponent(reCalcTab.ledgerName)}`;
+    setReSavedUrl(url);
+    try {
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      setReSavedRows(Array.isArray(d.items) ? d.items : []);
+    } catch (e: any) {
+      setReSavedError(`Failed to load saved retained earnings: ${e.message}`);
+    } finally {
+      setReSavedLoading(false);
+    }
+  };
+
+  const deleteSavedRE = async (id: number) => {
+    const url = `${APEX_DB_CONFIG.baseUrl}/${APEX_DB_CONFIG.endpoints.retainedEarnings}/${id}`;
+    try {
+      const res = await fetch(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
+      const text = await res.text();
+      let d: any = {}; try { d = JSON.parse(text); } catch { d = { raw: text }; }
+      if (res.ok && d.status === 'ok') {
+        message.success('Saved row deleted');
+        setReSavedRows(prev => prev.filter(r => r.id !== id));
+      } else {
+        message.error(`Delete failed (HTTP ${res.status}): ${d.message || text.slice(0, 150)}`);
+      }
+    } catch (e: any) {
+      message.error(`Delete error: ${e.message}`);
+    }
+  };
+
   // ── Render: Retained Earnings calculator popup ───────────────
 
   // ── Export Retained Earnings to Excel ─────────────────────────
@@ -6047,6 +6099,117 @@ const TrialBalance: React.FC = () => {
 
     return (
       <div style={{ padding: '16px 24px', overflowY: 'auto', height: 'calc(100vh - 180px)' }}>
+        {/* Sub-tabs: Calculate RE | Retrieve Retained Earnings */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 14, borderBottom: '2px solid #efdbff' }}>
+          {([['calc', 'Calculate RE'], ['saved', 'Retrieve Retained Earnings']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => {
+                setReViewTab(key);
+                if (key === 'saved' && reSavedRows.length === 0 && !reSavedLoading) fetchSavedRE();
+              }}
+              style={{
+                border: 'none', cursor: 'pointer', fontSize: 12.5, padding: '6px 16px',
+                borderRadius: '8px 8px 0 0',
+                fontWeight: reViewTab === key ? 700 : 500,
+                background: reViewTab === key ? '#722ed1' : '#f9f0ff',
+                color: reViewTab === key ? '#fff' : '#722ed1',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {reViewTab === 'saved' && (() => {
+          const companies = [...new Set(reSavedRows.map(r => r.company || '').filter(Boolean))].sort();
+          const visible = reSavedRows
+            .filter(r => r.ledger_name === tab.ledgerName)
+            .filter(r => !reSavedCompany || (r.company || '') === reSavedCompany)
+            .sort((a, b) => (a.company || '').localeCompare(b.company || '') || a.year - b.year);
+          const num = (v: unknown) => (typeof v === 'number' ? v : Number(v) || 0);
+          const mono = (v: unknown, color: string, bold = false) => (
+            <Text style={{ fontFamily: 'monospace', fontSize: 11.5, color, fontWeight: bold ? 700 : 400 }}>{fmtRaw(num(v))}</Text>
+          );
+          const savedCols = [
+            { title: 'Year', dataIndex: 'year', key: 'year', width: 70,
+              render: (v: number) => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+            { title: 'Last Period', dataIndex: 'last_period', key: 'last_period', width: 100,
+              render: (v: string) => <Text style={{ fontSize: 11.5 }}>{v || '—'}</Text> },
+            { title: 'Company', dataIndex: 'company', key: 'company', width: 90,
+              render: (v: string) => v ? <Tag color="purple" style={{ fontSize: 10 }}>{v}</Tag> : <Tag style={{ fontSize: 10 }}>All</Tag> },
+            { title: 'RE Account', dataIndex: 're_account', key: 're_account', width: 100,
+              render: (v: string) => <Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{v || '—'}</Text> },
+            { title: 'Revenue', dataIndex: 'revenue', key: 'revenue', align: 'right' as const, width: 140,
+              render: (v: number) => mono(v, '#237804') },
+            { title: 'Expenses', dataIndex: 'expenses', key: 'expenses', align: 'right' as const, width: 140,
+              render: (v: number) => mono(v, REDWOOD.primary) },
+            { title: 'Net P&L', dataIndex: 'net_pl', key: 'net_pl', align: 'right' as const, width: 140,
+              render: (v: number) => mono(v, num(v) <= 0 ? '#237804' : REDWOOD.primary) },
+            { title: `RE Acct Balance`, dataIndex: 're_balance', key: 're_balance', align: 'right' as const, width: 140,
+              render: (v: number) => mono(v, '#722ed1') },
+            { title: 'Closing RE', dataIndex: 'cumulative_re', key: 'cumulative_re', align: 'right' as const, width: 150,
+              render: (v: number) => mono(v, '#722ed1', true) },
+            { title: 'Saved / Updated', dataIndex: 'updated_date', key: 'updated_date', width: 140,
+              render: (v: string) => <Text style={{ fontSize: 10.5, color: REDWOOD.textSecondary }}>{v || '—'}</Text> },
+            { title: '', key: 'del', width: 44,
+              render: (_: any, r: { id: number }) => (
+                <Popconfirm title="Delete this saved row?" onConfirm={() => deleteSavedRE(r.id)}>
+                  <DeleteOutlined style={{ color: REDWOOD.primary, cursor: 'pointer' }} />
+                </Popconfirm>
+              ) },
+          ];
+          return (
+            <>
+              <Row gutter={8} align="middle" style={{ marginBottom: 10, rowGap: 8 }}>
+                <Col>
+                  <Tag icon={<BankOutlined />} color="geekblue" style={{ fontSize: 12, padding: '2px 8px' }}>{tab.ledgerName}</Tag>
+                </Col>
+                <Col>
+                  <Select
+                    size="small" allowClear placeholder="All companies" style={{ width: 150 }}
+                    value={reSavedCompany ?? undefined}
+                    onChange={(v: string | undefined) => setReSavedCompany(v ?? null)}
+                    options={companies.map(c => ({ value: c, label: c }))}
+                  />
+                </Col>
+                <Col>
+                  <Button size="small" icon={<ReloadOutlined />} loading={reSavedLoading} onClick={fetchSavedRE}>
+                    Refresh
+                  </Button>
+                </Col>
+                <Col>
+                  <Text style={{ fontSize: 11, color: REDWOOD.textSecondary }}>{visible.length} saved row(s)</Text>
+                </Col>
+                {reSavedUrl && (
+                  <Col flex="1" style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fafafa',
+                      border: '1px solid #e8e8e8', borderRadius: 4, padding: '2px 8px' }}>
+                      <Tag color="green" style={{ margin: 0, fontSize: 10 }}>GET</Tag>
+                      <code style={{ flex: 1, fontSize: 10.5, color: '#595959', overflow: 'hidden',
+                        textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reSavedUrl}</code>
+                      <CopyOutlined style={{ cursor: 'pointer', color: '#8c8c8c', flexShrink: 0 }}
+                        onClick={() => { navigator.clipboard.writeText(reSavedUrl); message.success('URL copied'); }} />
+                    </div>
+                  </Col>
+                )}
+              </Row>
+              {reSavedError && <Alert type="error" showIcon message={reSavedError} style={{ marginBottom: 10 }} />}
+              <Table
+                dataSource={visible.map(r => ({ ...r, key: r.id }))}
+                columns={savedCols}
+                size="small"
+                bordered
+                loading={reSavedLoading}
+                pagination={false}
+                scroll={{ x: 1200 }}
+                locale={{ emptyText: 'No saved retained earnings for this ledger yet — calculate and Save first.' }}
+              />
+            </>
+          );
+        })()}
+
+        {reViewTab === 'calc' && (<>
         {/* Summary cards */}
         <Row gutter={12} style={{ marginBottom: 20 }}>
           <Col span={6}>
@@ -6510,6 +6673,7 @@ const TrialBalance: React.FC = () => {
             </>
           );
         })()}
+        </>)}
       </div>
     );
   };
