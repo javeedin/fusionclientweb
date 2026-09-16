@@ -216,17 +216,15 @@ const AssetTabContent: React.FC<{
 
   const openDeprnPreview = () => {
     const b0 = books[0];
-    // Depreciation starts the month AFTER the date placed in service (following-month
-    // prorate convention): an asset placed 30-Sep-2022 first depreciates in Oct-2022, so the
-    // placed-in-service month must never be depreciated. We derive this from the DPIS rather
-    // than the backend deprnStartDate/prorateDate because those fields come back equal to the
-    // DPIS for these assets. Fall back to the backend start dates only when DPIS is missing.
-    const dpis = asset.datePlacedInService;
-    const startSource = dpis
-      ? dayjs(dpis).add(1, 'month').startOf('month').format('YYYY-MM-DD')
-      : (b0?.deprnStartDate || b0?.prorateDate || '');
-    setDeprnFromDate(startSource ? dayjs(startSource) : null);
-    setDeprnToDate(dayjs());
+    // From = the date the asset starts depreciating: the date placed in service
+    // (day-prorate convention — a mid-month DPIS charges only the remaining days
+    // of that month). Fall back to the book's deprn start / prorate date.
+    const dpis = asset.datePlacedInService || b0?.deprnStartDate || b0?.prorateDate || '';
+    const from = dpis ? dayjs(dpis) : null;
+    const lifeMonths = Number(b0?.lifeInMonths) || 0;
+    setDeprnFromDate(from);
+    // To = last day of the asset's life (From + life in months − 1 day)
+    setDeprnToDate(from && lifeMonths > 0 ? from.add(lifeMonths, 'month').subtract(1, 'day') : dayjs());
     setDeprnRows([]);
     setSelectedPeriods(new Set());
     setPostResults([]);
@@ -284,8 +282,11 @@ const AssetTabContent: React.FC<{
     if (lifeMonths <= 0 || cost <= 0 || !deprnFromDate) { setDeprnRows([]); return; }
 
     const startDate = deprnFromDate.startOf('month');
-    let totalLifeDays = 0;
-    for (let i = 0; i < lifeMonths; i++) totalLifeDays += startDate.add(i, 'month').daysInMonth();
+    const from = deprnFromDate.startOf('day');
+    const to   = deprnToDate.startOf('day');
+    // life window in exact days from the actual From date (not month-snapped),
+    // so depreciating the full life lands on exactly cost − salvage
+    const totalLifeDays = from.add(lifeMonths, 'month').diff(from, 'day');
     const dailyRate = (cost - salvage) / totalLifeDays;
 
     const rows: DeprnRow[] = [];
@@ -294,8 +295,6 @@ const AssetTabContent: React.FC<{
     const end = deprnToDate.startOf('month');
     // charge only the days inside the From/To window — partial first/last
     // months get a prorated amount, not the full month
-    const from = deprnFromDate.startOf('day');
-    const to   = deprnToDate.startOf('day');
 
     while (cur.isBefore(end) || cur.isSame(end, 'month')) {
       const monthStart = cur.startOf('month');
