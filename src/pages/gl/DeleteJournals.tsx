@@ -2,7 +2,7 @@ import { buildApexUrl } from '../../config/api.helper';
 import React, { useMemo, useState } from 'react';
 import {
   Layout, Card, Row, Col, Input, Button, Space, Tabs, message, Modal, Divider,
-  Form, InputNumber, Statistic, Typography, Alert, Empty, Table, Tag, Popconfirm, Spin,
+  Form, InputNumber, Statistic, Typography, Alert, Empty, Table, Tag, Popconfirm, Spin, Checkbox,
 } from 'antd';
 import {
   DeleteOutlined, ClearOutlined, ExclamationCircleOutlined, CheckCircleOutlined,
@@ -31,7 +31,7 @@ const REDWOOD = {
 
 interface DeletionResult {
   id: number | string;
-  type: 'sla' | 'journal';
+  type: 'sla' | 'journal' | 'exttxn';
   status: 'pending' | 'success' | 'error';
   message?: string;
   startTime?: number;
@@ -77,6 +77,20 @@ const fmtAmt = (n: number) =>
   n === 0 ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const isPostedStatus = (s: string) => s === 'P' || /post/i.test(s);
 
+// External transactions linked to journal lines: REFERENCE5 = 'BANK_EXTERNAL_TRANSACTIONS'
+// carries the EXTERNAL_TRANSACTION_ID in REFERENCE2 (glPosting convention).
+const EXT_TXN_REF5 = 'BANK_EXTERNAL_TRANSACTIONS';
+const extTxnIdsOf = (lines: Rec[]): string[] => {
+  const ids = new Set<string>();
+  lines.forEach(l => {
+    const r5 = String(l.REFERENCE5 ?? '').toUpperCase();
+    const r2 = String(l.REFERENCE2 ?? '').trim();
+    if (r5 === EXT_TXN_REF5 && /^\d+$/.test(r2)) ids.add(r2);
+  });
+  return Array.from(ids);
+};
+const extTxnDeleteUrl = (id: string) => `${APEX_BASE}/cash/externaltransactions/${id}?force=Y`;
+
 const DeleteJournals: React.FC = () => {
   const [form] = Form.useForm();
   const [activeTab, setActiveTab] = useState('sla');
@@ -97,6 +111,9 @@ const DeleteJournals: React.FC = () => {
   const [prevLoading, setPrevLoading] = useState(false);
   const [prevSqls, setPrevSqls] = useState<string[]>([]);
   const [prevSqlOpen, setPrevSqlOpen] = useState(false);
+  // external transactions referenced by the batch's journal lines
+  const [prevExt, setPrevExt] = useState<QSection>({});
+  const [delExtToo, setDelExtToo] = useState(false);
 
   const openPreview = async (batchId: number) => {
     if (!batchId || batchId <= 0) {
@@ -104,7 +121,8 @@ const DeleteJournals: React.FC = () => {
       return;
     }
     setPreview({ batchId });
-    setPrevBatch({}); setPrevHeaders({}); setPrevLines({});
+    setPrevBatch({}); setPrevHeaders({}); setPrevLines({}); setPrevExt({});
+    setDelExtToo(false);
     setPrevSqlOpen(false);
     setPrevLoading(true);
     // batches keyed by JE_BATCH_ID; headers/lines reference it as BATCH_ID
@@ -120,6 +138,22 @@ const DeleteJournals: React.FC = () => {
     setPrevBatch(toSection(settled[0]));
     setPrevHeaders(toSection(settled[1]));
     setPrevLines(toSection(settled[2]));
+
+    // if any line references a bank external transaction, load those rows too
+    const linesQR = settled[2].status === 'fulfilled' ? settled[2].value : null;
+    const extIdList = linesQR ? extTxnIdsOf(linesQR.rows.map((_, i) => recOf(linesQR, i))) : [];
+    if (extIdList.length) {
+      const extSql =
+        `SELECT external_transaction_id, transaction_date, transaction_type, bank_account_name, ` +
+        `amount, currency_code, status, accounting_flag, description ` +
+        `FROM rr_external_cash_transactions WHERE external_transaction_id IN (${extIdList.join(', ')})`;
+      setPrevSqls([...sqls, extSql]);
+      try {
+        setPrevExt({ res: await runSql(extSql) });
+      } catch (e) {
+        setPrevExt({ err: e instanceof Error ? e.message : String(e) });
+      }
+    }
     setPrevLoading(false);
   };
 
@@ -144,6 +178,46 @@ const DeleteJournals: React.FC = () => {
       (a, l) => ({ dr: a.dr + num(l.ACCOUNTED_DR), cr: a.cr + num(l.ACCOUNTED_CR) }),
       { dr: 0, cr: 0 }),
     [lineRecs]);
+  // external transactions linked via line references
+  const extIds = useMemo(() => extTxnIdsOf(lineRecs), [lineRecs]);
+  const extRecs = useMemo(
+    () => (prevExt.res ? prevExt.res.rows.map((_, i) => recOf(prevExt.res!, i)) : []), [prevExt]);
+
+  // delete linked external transactions via the direct webservice
+  // DELETE cash/externaltransactions/{id}?force=Y — server re-checks that no
+  // GL journal line still references the id before deleting an accounted txn
+  const performDeleteExtTxns = async (ids: string[]): Promise<number> => {
+    let okCount = 0;
+    for (const id of ids) {
+      const startTime = Date.now();
+      const result: DeletionResult = { id, type: 'exttxn', status: 'pending', startTime };
+      try {
+        const res = await fetch(extTxnDeleteUrl(id), {
+          method: 'DELETE',
+          headers: { Accept: 'application/json' },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.status === 'success') {
+          okCount += 1;
+          result.status = 'success';
+          result.message = `External transaction ${id} deleted`;
+          message.success(result.message);
+        } else {
+          result.status = 'error';
+          result.message = data?.message || data?.error || `HTTP ${res.status}`;
+          message.error(`External transaction ${id}: ${result.message}`);
+        }
+      } catch (e: any) {
+        result.status = 'error';
+        result.message = e.message || 'Network error';
+        message.error(`External transaction ${id}: ${result.message}`);
+      } finally {
+        result.endTime = Date.now();
+        setResults(prev => [...prev, result]);
+      }
+    }
+    return okCount;
+  };
 
   const journalLineCols = [
     { title: '#', key: 'n', width: 44, align: 'center' as const,
@@ -456,8 +530,8 @@ const DeleteJournals: React.FC = () => {
       key: 'type',
       width: 80,
       render: (type: string) => (
-        <Tag color={type === 'sla' ? 'blue' : 'cyan'}>
-          {type.toUpperCase()}
+        <Tag color={type === 'sla' ? 'blue' : type === 'exttxn' ? 'purple' : 'cyan'}>
+          {type === 'exttxn' ? 'EXT TXN' : type.toUpperCase()}
         </Tag>
       ),
     },
@@ -831,6 +905,18 @@ const DeleteJournals: React.FC = () => {
                   </Text>
                 </Card>
               </Col>
+              <Col xs={24} md={12}>
+                <Card size="small" style={{ background: REDWOOD.surface }}>
+                  <Text strong style={{ display: 'block', marginBottom: 8 }}>Delete Linked External Transaction</Text>
+                  <Text code style={{ display: 'block', marginBottom: 8 }}>DELETE /cash/externaltransactions/{'{id}'}?force=Y</Text>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                    force=Y allows an accounted transaction only when no GL line still references it (script 147)
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    URL: {APEX_BASE}/cash/externaltransactions/{'{id}'}?force=Y
+                  </Text>
+                </Card>
+              </Col>
             </Row>
           </Card>
         </Spin>
@@ -845,14 +931,28 @@ const DeleteJournals: React.FC = () => {
             <Button key="sql" icon={<BugOutlined />} onClick={() => setPrevSqlOpen(s => !s)}>
               {prevSqlOpen ? 'Hide SQL' : 'Show SQL'}
             </Button>,
+            extIds.length > 0 && (
+              <Checkbox
+                key="extchk"
+                checked={delExtToo}
+                onChange={e => setDelExtToo(e.target.checked)}
+                style={{ marginRight: 8 }}
+              >
+                Also delete {extIds.length} external transaction{extIds.length > 1 ? 's' : ''}
+              </Checkbox>
+            ),
             <Popconfirm
               key="del"
-              title={`Permanently delete batch ${preview?.batchId} with ${prevHeaders.res?.rows.length ?? 0} header(s) and ${prevLines.res?.rows.length ?? 0} line(s)?`}
+              title={
+                `Permanently delete batch ${preview?.batchId} with ${prevHeaders.res?.rows.length ?? 0} header(s) and ${prevLines.res?.rows.length ?? 0} line(s)` +
+                (delExtToo && extIds.length ? `, then delete external transaction${extIds.length > 1 ? 's' : ''} ${extIds.join(', ')}?` : '?')
+              }
               okText="Delete"
               okType="danger"
               onConfirm={async () => {
                 if (!preview) return;
                 const ok = await performDeleteJournal(preview.batchId);
+                if (ok && delExtToo && extIds.length) await performDeleteExtTxns(extIds);
                 if (ok) setPreview(null);
               }}
             >
@@ -1022,6 +1122,78 @@ const DeleteJournals: React.FC = () => {
                   </Card>
                 );
               })()}
+
+              {/* ── External transactions referenced by the journal lines ── */}
+              {extIds.length > 0 && (
+                <Card
+                  size="small"
+                  style={{ marginBottom: 12, borderRadius: 10, border: `1px solid ${REDWOOD.info}` }}
+                  title={
+                    <Space size={6}>
+                      <Text strong style={{ fontSize: 12.5, color: REDWOOD.info }}>
+                        Linked External Transactions ({extIds.length})
+                      </Text>
+                      <Tag color="purple" style={{ fontSize: 9 }}>{EXT_TXN_REF5}</Tag>
+                    </Space>
+                  }
+                >
+                  {prevExt.err && (
+                    <Alert type="error" showIcon style={{ marginBottom: 8 }}
+                      message="Could not load external transaction details" description={prevExt.err} />
+                  )}
+                  {extRecs.length > 0 && (
+                    <Table
+                      size="small"
+                      dataSource={extRecs}
+                      rowKey={(r) => String(r.EXTERNAL_TRANSACTION_ID ?? '')}
+                      pagination={false}
+                      scroll={{ x: 900 }}
+                      columns={[
+                        { title: 'Txn ID', key: 'id', width: 110,
+                          render: (_: unknown, r: Rec) => <span style={{ fontFamily: 'monospace', fontSize: 11.5, fontWeight: 600 }}>{pick(r, ['EXTERNAL_TRANSACTION_ID'])}</span> },
+                        { title: 'Date', key: 'dt', width: 100,
+                          render: (_: unknown, r: Rec) => <span style={{ fontSize: 11.5 }}>{pick(r, ['TRANSACTION_DATE'])}</span> },
+                        { title: 'Type', key: 'ty', width: 110,
+                          render: (_: unknown, r: Rec) => <span style={{ fontSize: 11.5 }}>{pick(r, ['TRANSACTION_TYPE']) || '—'}</span> },
+                        { title: 'Bank Account', key: 'ba', ellipsis: true,
+                          render: (_: unknown, r: Rec) => <span style={{ fontSize: 11.5 }}>{pick(r, ['BANK_ACCOUNT_NAME']) || '—'}</span> },
+                        { title: 'Amount', key: 'amt', width: 110, align: 'right' as const,
+                          render: (_: unknown, r: Rec) => <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5, fontWeight: 600 }}>{fmtAmt(num(r.AMOUNT)) || '0.00'}</span> },
+                        { title: 'Ccy', key: 'ccy', width: 52, align: 'center' as const,
+                          render: (_: unknown, r: Rec) => <Tag style={{ fontSize: 10, margin: 0 }}>{pick(r, ['CURRENCY_CODE']) || '—'}</Tag> },
+                        { title: 'Status', key: 'st', width: 100,
+                          render: (_: unknown, r: Rec) => <span style={{ fontSize: 11 }}>{pick(r, ['STATUS']) || '—'}</span> },
+                        { title: 'Accounted', key: 'acc', width: 90, align: 'center' as const,
+                          render: (_: unknown, r: Rec) => pick(r, ['ACCOUNTING_FLAG']) === 'Y'
+                            ? <Tag color="green" style={{ fontSize: 10, margin: 0 }}>Yes</Tag>
+                            : <Tag style={{ fontSize: 10, margin: 0 }}>No</Tag> },
+                        { title: 'Description', key: 'de', ellipsis: true,
+                          render: (_: unknown, r: Rec) => <span style={{ fontSize: 11 }}>{pick(r, ['DESCRIPTION']) || '—'}</span> },
+                      ]}
+                    />
+                  )}
+                  {/* exact delete calls, so the ids can be verified before deleting */}
+                  <div style={{ marginTop: 10 }}>
+                    <Text strong style={{ fontSize: 11.5, display: 'block', marginBottom: 4 }}>
+                      Delete call{extIds.length > 1 ? 's' : ''} that will run (after the batch is deleted, if the option below is ticked):
+                    </Text>
+                    {extIds.map(id => (
+                      <pre key={id} style={{
+                        margin: '3px 0', padding: '6px 8px', borderRadius: 6, fontSize: 11,
+                        whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                        background: delExtToo ? '#FFF1F0' : '#F7F5F3',
+                        border: `1px solid ${delExtToo ? '#FFA39E' : '#EFEBE9'}`,
+                      }}>
+                        DELETE {extTxnDeleteUrl(id)}
+                      </pre>
+                    ))}
+                    <Text type="secondary" style={{ fontSize: 10.5 }}>
+                      force=Y lets the server delete an accounted transaction, but only after it re-verifies that
+                      no GL journal line still references the id (requires DB script 147).
+                    </Text>
+                  </div>
+                </Card>
+              )}
             </div>
           )}
         </Modal>
