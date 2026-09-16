@@ -208,11 +208,18 @@ const CheckAccounting: React.FC = () => {
           cal.get(fy)!.push(String(row[0]));
         });
         setCalendar(cal);
-        const years = [...cal.keys()].sort((a, b) => b - a);
-        // default: fiscal year containing today's Mon-RR period, else latest
-        const nowPeriod = new Date().toLocaleDateString('en-GB', { month: 'short' }) + '-' +
-          String(new Date().getFullYear()).slice(2);
-        const yr = years.find(y => cal.get(y)!.includes(nowPeriod)) ?? years[0] ?? null;
+        // default: the fiscal year containing TODAY's period (Mon-YY built from
+        // fixed month names — toLocaleDateString gives "Sept" in some locales
+        // and never matched, which used to fall through to the last year, 2034)
+        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const now = new Date();
+        const nowPeriod = `${MONTHS[now.getMonth()]}-${String(now.getFullYear() % 100).padStart(2, '0')}`;
+        const yearsAsc = [...cal.keys()].sort((a, b) => a - b);
+        const yr = yearsAsc.find(y => cal.get(y)!.includes(nowPeriod))
+          // fallback: never a far-future year — the closest fiscal year at or
+          // just after the current calendar year
+          ?? yearsAsc.filter(y => y <= now.getFullYear() + 1).pop()
+          ?? yearsAsc[0] ?? null;
         setYear(yr);
       } catch (e) {
         message.error(`Could not load the fiscal calendar: ${e instanceof Error ? e.message : e}`);
