@@ -126,6 +126,7 @@ const LibreChatPage           = lazy(() => import('./pages/librechat/LibreChatPa
 const ClaudeCliTerminal       = lazy(() => import('./pages/claude/ClaudeCliTerminal'));
 const ClaudeChat              = lazy(() => import('./pages/claude/ClaudeChat'));
 const DashboardDesigner       = lazy(() => import('./pages/dashboards/DashboardDesigner'));
+const CheckAccounting         = lazy(() => import('./pages/dashboards/CheckAccounting'));
 const CashModule              = lazy(() => import('./pages/cash/CashModule'));
 const ManageBankTransfers     = lazy(() => import('./pages/cash/ManageBankTransfers'));
 const AccountingDebugPage     = lazy(() => import('./pages/cash/AccountingDebugPage'));
@@ -404,6 +405,8 @@ function App() {
               <Route path="claude-chat" element={<ClaudeChat />} />
               {/* Dashboard Designer — company-shared dashboards over REST data */}
               <Route path="dashboard-designer" element={<DashboardDesigner />} />
+              {/* Check Accounting — cross-module accounting status via the SQL gateway */}
+              <Route path="check-accounting" element={<CheckAccounting />} />
               {/* Petty Cash */}
               <Route path="pc/registers" element={<PettyCash />} />
               {/* Cash Management */}

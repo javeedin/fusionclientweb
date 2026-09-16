@@ -53,6 +53,7 @@ const MODULES = [
   { id: 'claude-cli', label: 'Claude Code CLI', icon: <ThunderboltOutlined />, path: '/claude-cli',   color: REDWOOD.primary,   desc: 'Subscription Claude · ERP MCP Tools' },
   { id: 'claude-chat', label: 'Claude Chat',    icon: <RobotOutlined />,       path: '/claude-chat',  color: REDWOOD.teal,      desc: 'Subscription Claude · Chat UI · ERP Data' },
   { id: 'dashdesign', label: 'Dashboard Designer', icon: <DashboardOutlined />,  path: '/dashboard-designer', color: REDWOOD.info, desc: 'Design · Share · Live Widgets' },
+  { id: 'chkacct', label: 'Check Accounting',   icon: <AuditOutlined />,       path: '/check-accounting', color: REDWOOD.primary, desc: 'Accounting status · All modules · AI' },
 ];
 
 const QUICK_ACTIONS = [
@@ -69,6 +70,7 @@ const QUICK_ACTIONS = [
   { label: 'Investment Holdings',   path: '/pms/investment-holdings',    color: REDWOOD.teal,    icon: <FundOutlined />              },
   { label: 'Petty Cash Registers',  path: '/pc/registers',               color: REDWOOD.orange,  icon: <WalletOutlined />            },
   { label: 'Sync Oracle Data',      path: '/sync',                       color: REDWOOD.primary, icon: <SyncOutlined />              },
+  { label: 'Check Accounting',      path: '/check-accounting',           color: REDWOOD.primary, icon: <AuditOutlined />             },
 ];
 
 // ── Sub-components ─────────────────────────────────────────────────────────
