@@ -50,8 +50,15 @@ const runSql = async (sql: string): Promise<QR> => {
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ sql, maxRows: 1000, appUser: 'DELETE_JOURNALS' }),
   });
-  const data = await res.json();
-  if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
+  // surface the server's real error text (ORA-xxxxx / ORDS message), not just the status
+  const text = await res.text();
+  let data: any = null;
+  try { data = JSON.parse(text); } catch { /* non-JSON error page */ }
+  if (!res.ok || data?.success === false || !data) {
+    const detail = data?.error || data?.message
+      || (text ? text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) : '');
+    throw new Error(detail ? `HTTP ${res.status} — ${detail}` : `HTTP ${res.status}`);
+  }
   return { columns: data.columns || [], rows: data.rows || [] };
 };
 
