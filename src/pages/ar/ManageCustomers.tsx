@@ -177,8 +177,8 @@ const ManageCustomers: React.FC = () => {
     const key = `party-${party.partyId}`;
     if (tabs.find(t => t.key === key)) { setActiveKey(key); return; }
     const detailUrl   = `${BASE}/ar/parties/${party.partyId}`;
-    // accounts load via the SQL gateway — this is what the API tooltip shows
-    const accountsUrl = `POST ${BASE}/ai/executequery — SELECT a.* FROM rr_raw_ar_hz_cust_accounts_bip a WHERE a.cust_account_id IN (SELECT p.cust_account_id FROM rr_raw_ar_hz_parties_dm p WHERE p.party_id = ${party.partyId}) ORDER BY a.account_number`;
+    // filled with the real SQL once loadAccounts has discovered the columns
+    const accountsUrl = `POST ${BASE}/ai/executequery — (link columns discovered on load)`;
     setTabs(prev => [...prev, {
       key, party,
       detail: null, detailLoading: false, detailUrl,
@@ -186,7 +186,7 @@ const ManageCustomers: React.FC = () => {
     }]);
     setActiveKey(key);
     loadDetail(key, party.partyId);
-    loadAccounts(key, party.partyId);
+    loadAccounts(key, party);
   }, [tabs]);
 
   // ── Load party detail ─────────────────────────────────────────────────────
@@ -208,19 +208,16 @@ const ManageCustomers: React.FC = () => {
 
   // ── Load party accounts ───────────────────────────────────────────────────
 
-  // Direct SQL through the guarded gateway (same path as the AI assistant):
-  // the accounts live in RR_RAW_AR_HZ_CUST_ACCOUNTS_BIP keyed by PARTY_ID
-  const loadAccounts = useCallback(async (tabKey: string, partyId: number) => {
+  // Direct SQL through the guarded gateway (same path as the AI assistant).
+  // The party -> account linkage differs per environment, so first read the
+  // REAL columns of both tables from user_tab_columns, then match on every
+  // link that exists (PARTY_ID, CUST_ACCOUNT_ID via the parties extract,
+  // party number, account-name) OR'd together — no guessed identifiers.
+  const loadAccounts = useCallback(async (tabKey: string, party: PartyRow) => {
     if (loadedRef.current.has(`acct-${tabKey}`)) return;
     loadedRef.current.add(`acct-${tabKey}`);
     setTabs(prev => prev.map(t => t.key === tabKey ? { ...t, accountsLoading: true, accountsError: '' } : t));
-    try {
-      // connect party -> account via CUST_ACCOUNT_ID (the parties extract
-      // carries it; the accounts table's PARTY_ID is not reliably populated)
-      const sql =
-        `SELECT a.* FROM rr_raw_ar_hz_cust_accounts_bip a ` +
-        `WHERE a.cust_account_id IN (SELECT p.cust_account_id FROM rr_raw_ar_hz_parties_dm p WHERE p.party_id = ${Number(partyId)}) ` +
-        `ORDER BY a.account_number`;
+    const gw = async (sql: string) => {
       const res = await fetch(`${BASE}/ai/executequery`, {
         method: 'POST',
         cache: 'no-store',
@@ -229,10 +226,33 @@ const ManageCustomers: React.FC = () => {
       });
       const data = await res.json();
       if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
-      const cols: string[] = data.columns || [];
-      const items: Record<string, any>[] = (data.rows || []).map((r: (string | number | null)[]) => {
+      return { columns: (data.columns || []) as string[], rows: (data.rows || []) as (string | number | null)[][] };
+    };
+    const escQ = (s: string) => String(s || '').replace(/'/g, "''");
+    try {
+      const meta = await gw(
+        `SELECT table_name, column_name FROM user_tab_columns WHERE table_name IN ('RR_RAW_AR_HZ_CUST_ACCOUNTS_BIP', 'RR_RAW_AR_HZ_PARTIES_DM')`);
+      const acctCols = new Set(meta.rows.filter(r => r[0] === 'RR_RAW_AR_HZ_CUST_ACCOUNTS_BIP').map(r => String(r[1])));
+      const partyCols = new Set(meta.rows.filter(r => r[0] === 'RR_RAW_AR_HZ_PARTIES_DM').map(r => String(r[1])));
+
+      const pid = Number(party.partyId);
+      const links: string[] = [];
+      if (acctCols.has('PARTY_ID')) links.push(`a.party_id = ${pid}`);
+      if (acctCols.has('CUST_ACCOUNT_ID') && partyCols.has('CUST_ACCOUNT_ID'))
+        links.push(`a.cust_account_id IN (SELECT p.cust_account_id FROM rr_raw_ar_hz_parties_dm p WHERE p.party_id = ${pid})`);
+      if (acctCols.has('PARTY_NUMBER') && party.partyNumber)
+        links.push(`a.party_number = '${escQ(party.partyNumber)}'`);
+      if (acctCols.has('ACCOUNT_NAME') && party.partyName)
+        links.push(`UPPER(a.account_name) = UPPER('${escQ(party.partyName)}')`);
+      if (links.length === 0) throw new Error('No usable link column found between the party and accounts tables');
+
+      const sql = `SELECT a.* FROM rr_raw_ar_hz_cust_accounts_bip a WHERE ${links.join(' OR ')} ORDER BY a.account_number`;
+      setTabs(prev => prev.map(t => t.key === tabKey ? { ...t, accountsUrl: `POST ${BASE}/ai/executequery — ${sql}` } : t));
+
+      const data = await gw(sql);
+      const items: Record<string, any>[] = data.rows.map(r => {
         const o: Record<string, any> = {};
-        cols.forEach((c, i) => { o[c.toLowerCase()] = r[i]; });
+        data.columns.forEach((c, i) => { o[c.toLowerCase()] = r[i]; });
         return o;
       });
       setTabs(prev => prev.map(t => t.key === tabKey ? { ...t, accountsLoading: false, accounts: items, accountsLoaded: true } : t));
@@ -420,7 +440,7 @@ const ManageCustomers: React.FC = () => {
                   onClick={() => { navigator.clipboard.writeText(tab.accountsUrl); message.success('Copied'); }} />
               </Tooltip>
               <Button size="small" icon={<ReloadOutlined />}
-                onClick={() => { loadedRef.current.delete(`acct-${tab.key}`); loadAccounts(tab.key, p.partyId); }}>
+                onClick={() => { loadedRef.current.delete(`acct-${tab.key}`); loadAccounts(tab.key, p); }}>
                 Reload
               </Button>
             </Space>
