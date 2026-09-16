@@ -1,16 +1,19 @@
 /**
  * Check Accounting — cross-module accounting status dashboard.
  *
- * Reads the RR_V_*_ACCT_STATUS views through the same guarded SQL gateway
- * the AI assistant uses (POST ai/executequery), filtered by GL period.
- * Cards show ACCOUNTED vs NOT ACCOUNTED per module; clicking a card lists
- * the documents that are still missing accounting. The Ask AI button opens
- * the assistant to enquire about accounting in natural language.
+ * Pick a fiscal Year, then a Period (or all periods of the year). The
+ * summary grid shows, period by period and transaction type by type,
+ * how many documents exist and how many are accounted vs not — built
+ * from the RR_V_*_ACCT_STATUS views through the same guarded SQL
+ * gateway the AI assistant uses (POST ai/executequery). Clicking a
+ * summary row drills to the documents; the transaction number links to
+ * the full record and on to the module page.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Col, Descriptions, Input, Modal, Row, Select, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
+import { Alert, Button, Card, Descriptions, Input, Modal, Select, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
 import {
-  ApiOutlined, AuditOutlined, CopyOutlined, FileExcelOutlined, LinkOutlined, ReloadOutlined, RobotOutlined,
+  ApiOutlined, AuditOutlined, CheckOutlined, CloseOutlined, CopyOutlined,
+  FileExcelOutlined, LinkOutlined, ReloadOutlined, RobotOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
@@ -20,6 +23,7 @@ import { useAuth } from '../../context/AuthContext';
 
 const { Text, Title } = Typography;
 const BASE = APEX_DB_CONFIG.baseUrl;
+const GATEWAY_URL = `${BASE}/ai/executequery`;
 
 const C = {
   primary: '#C74634', success: '#1D7B4D', info: '#0572CE', purple: '#722ed1',
@@ -28,79 +32,120 @@ const C = {
 
 interface QueryResult { columns: string[]; rows: (string | number | null)[][] }
 
-const GATEWAY_URL = `${BASE}/ai/executequery`;
-
-// GL period month filter — period names are Mon-YY (e.g. Aug-26)
-const periodMonth = (p: string) => `TO_DATE('01-${p}','DD-Mon-RR')`;
-const safePeriod  = (p: string) => /^[A-Za-z]{3}-\d{2}$/.test(p);
+const isIdColumn = (name: string) => /(^|_)id$/i.test(name);
+const esc = (s: string) => s.replace(/'/g, "''");
+const inList = (periods: string[]) => periods.map(p => `'${esc(p)}'`).join(', ');
+// period names are Mon-YY; documents map to a period by their date's month
+const PERIOD_EXPR = (dateCol: string) => `TO_CHAR(${dateCol}, 'Mon-RR')`;
 
 interface ModuleDef {
   key: string;
   label: string;
-  color: string;
-  desc: string;
-  view: string;                 // status view backing this module
-  idColumn: string;             // primary id column in the detail result (drill key)
-  pageLabel: string;            // where "Open in ..." navigates
+  view: string;
+  idColumn: string;
+  pageLabel: string;
   pagePath: (row: Record<string, string | number | null>) => string;
-  summarySql: (period: string | null) => string;
-  detailSql:  (period: string | null) => string;
+  /** UNION-able summary part: module, period, txn_type, total, accounted, not_accounted */
+  summarySql: (periods: string[]) => string;
+  /** document list for one (period, txn type): id, txn_number, party, currency, amount, gl_status */
+  detailSql: (period: string, txnType: string) => string;
 }
 
-const isIdColumn = (name: string) => /(^|_)id$/i.test(name);
+const docSummary = (label: string, view: string, dateCol: string, typeExpr: string, periods: string[]) =>
+  `SELECT '${label}' AS module, ${PERIOD_EXPR(dateCol)} AS period, ${typeExpr} AS txn_type, ` +
+  `COUNT(*) AS total, ` +
+  `SUM(CASE WHEN gl_status <> 'NOT ACCOUNTED' THEN 1 ELSE 0 END) AS accounted, ` +
+  `SUM(CASE WHEN gl_status = 'NOT ACCOUNTED' THEN 1 ELSE 0 END) AS not_accounted ` +
+  `FROM ${view} WHERE ${PERIOD_EXPR(dateCol)} IN (${inList(periods)}) ` +
+  `GROUP BY ${PERIOD_EXPR(dateCol)}, ${typeExpr}`;
 
-const dateFilter = (col: string, period: string | null) =>
-  period ? ` AND TRUNC(${col},'MM') = ${periodMonth(period)}` : '';
+const docDetail = (view: string, dateCol: string, typeExpr: string,
+  idCol: string, numCol: string, partyCol: string, ccyCol: string, amtCol: string,
+  period: string, txnType: string) =>
+  `SELECT ${idCol} AS id, ${numCol} AS txn_number, ${partyCol} AS party, ${ccyCol} AS currency, ${amtCol} AS amount, gl_status ` +
+  `FROM ${view} WHERE ${PERIOD_EXPR(dateCol)} = '${esc(period)}' AND ${typeExpr} = '${esc(txnType)}' ` +
+  `ORDER BY 2 FETCH FIRST 1000 ROWS ONLY`;
+
+// FA depreciation is per (asset, period): an asset counts as accounted for a
+// period when an FA_DEPRECIATION journal in that period carries its number
+const faDeprnJoin = (period: string) =>
+  `LEFT JOIN (SELECT DISTINCT l.reference1 AS acc FROM rr_gl_je_lines_all l ` +
+  `JOIN rr_gl_je_headers h ON h.je_header_id = l.je_header_id ` +
+  `WHERE l.reference5 = 'FA_DEPRECIATION' AND h.period_name = '${esc(period)}') d ` +
+  `ON d.acc = TO_CHAR(a.asset_number)`;
 
 const MODULES: ModuleDef[] = [
   {
-    key: 'AP_INV', label: 'AP Invoices', color: C.orange, desc: 'RR_V_AP_INVOICE_ACCT_STATUS',
+    key: 'AP_INV', label: 'AP Invoices',
     view: 'rr_v_ap_invoice_acct_status', idColumn: 'INVOICE_ID',
     pageLabel: 'Manage AP Invoices', pagePath: () => '/ap/manage-invoices',
-    summarySql: p => `SELECT gl_status, COUNT(*) FROM rr_v_ap_invoice_acct_status WHERE 1=1${dateFilter('accounting_date', p)} GROUP BY gl_status`,
-    detailSql:  p => `SELECT invoice_id, invoice_number, supplier, business_unit, invoice_currency, invoice_amount, accounting_date, validation_status, payment_status_calc FROM rr_v_ap_invoice_acct_status WHERE gl_status = 'NOT ACCOUNTED'${dateFilter('accounting_date', p)} ORDER BY accounting_date DESC FETCH FIRST 500 ROWS ONLY`,
+    summarySql: p => docSummary('AP Invoices', 'rr_v_ap_invoice_acct_status', 'accounting_date', `NVL(invoice_type, 'Standard')`, p),
+    detailSql: (p, t) => docDetail('rr_v_ap_invoice_acct_status', 'accounting_date', `NVL(invoice_type, 'Standard')`,
+      'invoice_id', 'invoice_number', 'supplier', 'invoice_currency', 'invoice_amount', p, t),
   },
   {
-    key: 'AP_PAY', label: 'AP Payments', color: C.orange, desc: 'RR_V_AP_PAYMENT_ACCT_STATUS',
+    key: 'AP_PAY', label: 'AP Payments',
     view: 'rr_v_ap_payment_acct_status', idColumn: 'CHECK_ID',
     pageLabel: 'AP Payments', pagePath: () => '/ap/payments',
-    summarySql: p => `SELECT gl_status, COUNT(*) FROM rr_v_ap_payment_acct_status WHERE 1=1${dateFilter('accounting_date', p)} GROUP BY gl_status`,
-    detailSql:  p => `SELECT check_id, payment_number, payee, business_unit, payment_currency, payment_amount, payment_date, accounting_date, payment_status FROM rr_v_ap_payment_acct_status WHERE gl_status = 'NOT ACCOUNTED'${dateFilter('accounting_date', p)} ORDER BY payment_date DESC FETCH FIRST 500 ROWS ONLY`,
+    summarySql: p => docSummary('AP Payments', 'rr_v_ap_payment_acct_status', 'accounting_date',
+      `CASE WHEN maturity_date IS NOT NULL THEN 'PDC Payment' ELSE 'Payment' END`, p),
+    detailSql: (p, t) => docDetail('rr_v_ap_payment_acct_status', 'accounting_date',
+      `CASE WHEN maturity_date IS NOT NULL THEN 'PDC Payment' ELSE 'Payment' END`,
+      'check_id', 'payment_number', 'payee', 'payment_currency', 'payment_amount', p, t),
   },
   {
-    key: 'EXT_TXN', label: 'External Transactions', color: C.info, desc: 'RR_V_EXT_TXN_ACCT_STATUS',
+    key: 'EXT_TXN', label: 'External Transactions',
     view: 'rr_v_ext_txn_acct_status', idColumn: 'EXTERNAL_TRANSACTION_ID',
     pageLabel: 'Manage External Transactions', pagePath: () => '/cash/external-transactions',
-    summarySql: p => `SELECT gl_status, COUNT(*) FROM rr_v_ext_txn_acct_status WHERE 1=1${dateFilter('transaction_date', p)} GROUP BY gl_status`,
-    detailSql:  p => `SELECT external_transaction_id, transaction_date, amount, currency_code, transaction_type, bank_account_name, business_unit_name, description FROM rr_v_ext_txn_acct_status WHERE gl_status = 'NOT ACCOUNTED'${dateFilter('transaction_date', p)} ORDER BY transaction_date DESC FETCH FIRST 500 ROWS ONLY`,
+    summarySql: p => docSummary('External Transactions', 'rr_v_ext_txn_acct_status', 'transaction_date', `NVL(transaction_type, 'External')`, p),
+    detailSql: (p, t) => docDetail('rr_v_ext_txn_acct_status', 'transaction_date', `NVL(transaction_type, 'External')`,
+      'external_transaction_id', 'external_transaction_id', 'bank_account_name', 'currency_code', 'amount', p, t),
   },
   {
-    key: 'FA', label: 'Fixed Assets', color: C.purple, desc: 'RR_V_FA_ASSET_ACCT_STATUS (additions; deprn for period)',
+    key: 'FA', label: 'Fixed Assets',
     view: 'rr_v_fa_asset_acct_status', idColumn: 'ASSET_ID',
     pageLabel: 'Manage Assets',
     pagePath: row => row.ASSET_NUMBER != null ? `/fa/assets?assetNumber=${row.ASSET_NUMBER}` : '/fa/assets',
-    summarySql: p => p
-      ? `SELECT 'ADDN ' || addition_status, COUNT(*) FROM rr_v_fa_asset_acct_status GROUP BY addition_status UNION ALL SELECT CASE WHEN last_deprn_period = '${p}' THEN 'DEPRN ACCOUNTED' ELSE 'DEPRN NOT ACCOUNTED' END, COUNT(*) FROM rr_v_fa_asset_acct_status GROUP BY CASE WHEN last_deprn_period = '${p}' THEN 'DEPRN ACCOUNTED' ELSE 'DEPRN NOT ACCOUNTED' END`
-      : `SELECT 'ADDN ' || addition_status, COUNT(*) FROM rr_v_fa_asset_acct_status GROUP BY addition_status UNION ALL SELECT 'DEPRN ' || deprn_status, COUNT(*) FROM rr_v_fa_asset_acct_status GROUP BY deprn_status`,
-    detailSql:  p => p
-      ? `SELECT asset_id, asset_number, description, addition_status, deprn_status, last_deprn_period, deprn_periods_accounted, retirement_status FROM rr_v_fa_asset_acct_status WHERE addition_status = 'NOT ACCOUNTED' OR NVL(last_deprn_period,'-') <> '${p}' ORDER BY asset_number FETCH FIRST 500 ROWS ONLY`
-      : `SELECT asset_id, asset_number, description, addition_status, deprn_status, last_deprn_period, deprn_periods_accounted, retirement_status FROM rr_v_fa_asset_acct_status WHERE addition_status = 'NOT ACCOUNTED' OR deprn_status = 'NOT ACCOUNTED' ORDER BY asset_number FETCH FIRST 500 ROWS ONLY`,
+    summarySql: periods => periods.map(p =>
+      `SELECT 'Fixed Assets' AS module, '${esc(p)}' AS period, 'Depreciation' AS txn_type, ` +
+      `COUNT(*) AS total, ` +
+      `SUM(CASE WHEN d.acc IS NOT NULL THEN 1 ELSE 0 END) AS accounted, ` +
+      `SUM(CASE WHEN d.acc IS NULL THEN 1 ELSE 0 END) AS not_accounted ` +
+      `FROM rr_v_fa_asset_acct_status a ${faDeprnJoin(p)}`
+    ).join(' UNION ALL '),
+    detailSql: p =>
+      `SELECT a.asset_id AS id, TO_CHAR(a.asset_number) AS txn_number, a.description AS party, ` +
+      `NULL AS currency, NULL AS amount, ` +
+      `CASE WHEN d.acc IS NOT NULL THEN 'ACCOUNTED' ELSE 'NOT ACCOUNTED' END AS gl_status ` +
+      `FROM rr_v_fa_asset_acct_status a ${faDeprnJoin(p)} ` +
+      `ORDER BY 2 FETCH FIRST 1000 ROWS ONLY`,
   },
   {
-    key: 'AR_INV', label: 'AR Invoices', color: C.success, desc: 'RR_V_AR_INVOICE_ACCT_STATUS',
+    key: 'AR_INV', label: 'AR Invoices',
     view: 'rr_v_ar_invoice_acct_status', idColumn: 'CUSTOMER_TRANSACTION_ID',
     pageLabel: 'AR Invoices', pagePath: () => '/ar/manage-invoices',
-    summarySql: p => `SELECT gl_status, COUNT(*) FROM rr_v_ar_invoice_acct_status WHERE 1=1${dateFilter('accounting_date', p)} GROUP BY gl_status`,
-    detailSql:  p => `SELECT customer_transaction_id, transaction_number, bill_to_customer_name, business_unit, invoice_currency_code, entered_amount, invoice_balance_amount, accounting_date, payment_status_calc FROM rr_v_ar_invoice_acct_status WHERE gl_status = 'NOT ACCOUNTED'${dateFilter('accounting_date', p)} ORDER BY accounting_date DESC FETCH FIRST 500 ROWS ONLY`,
+    summarySql: p => docSummary('AR Invoices', 'rr_v_ar_invoice_acct_status', 'accounting_date', `NVL(transaction_type, 'Invoice')`, p),
+    detailSql: (p, t) => docDetail('rr_v_ar_invoice_acct_status', 'accounting_date', `NVL(transaction_type, 'Invoice')`,
+      'customer_transaction_id', 'transaction_number', 'bill_to_customer_name', 'invoice_currency_code', 'entered_amount', p, t),
   },
   {
-    key: 'AR_RCPT', label: 'AR Receipts', color: C.success, desc: 'RR_V_AR_RECEIPT_ACCT_STATUS',
+    key: 'AR_RCPT', label: 'AR Receipts',
     view: 'rr_v_ar_receipt_acct_status', idColumn: 'STANDARD_RECEIPT_ID',
     pageLabel: 'AR Receipts', pagePath: () => '/ar/manage-receipts',
-    summarySql: p => `SELECT gl_status, COUNT(*) FROM rr_v_ar_receipt_acct_status WHERE 1=1${dateFilter('accounting_date', p)} GROUP BY gl_status`,
-    detailSql:  p => `SELECT standard_receipt_id, receipt_number, customer_name, business_unit, currency, amount, unapplied_amount, receipt_date, application_status FROM rr_v_ar_receipt_acct_status WHERE gl_status = 'NOT ACCOUNTED'${dateFilter('accounting_date', p)} ORDER BY receipt_date DESC FETCH FIRST 500 ROWS ONLY`,
+    summarySql: p => docSummary('AR Receipts', 'rr_v_ar_receipt_acct_status', 'accounting_date', `NVL(receipt_type, 'Receipt')`, p),
+    detailSql: (p, t) => docDetail('rr_v_ar_receipt_acct_status', 'accounting_date', `NVL(receipt_type, 'Receipt')`,
+      'standard_receipt_id', 'receipt_number', 'customer_name', 'currency', 'amount', p, t),
   },
 ];
+
+interface SummaryRow {
+  key: string; moduleKey: string; module: string; year: number;
+  period: string; txnType: string; total: number; accounted: number; notAccounted: number;
+}
+interface DetailRow {
+  key: string; id: string; txnNumber: string; party: string;
+  currency: string; amount: number | null; accounted: boolean;
+}
 
 const CheckAccounting: React.FC = () => {
   const navigate = useNavigate();
@@ -108,18 +153,25 @@ const CheckAccounting: React.FC = () => {
   const userName = (user as { name?: string; email?: string })?.name
     ?? (user as { email?: string })?.email?.split('@')[0] ?? 'user';
 
-  const [periods, setPeriods] = useState<string[]>([]);
-  const [period, setPeriod] = useState<string | null>(null);   // null = all periods
-  const [summary, setSummary] = useState<Record<string, Record<string, number>>>({});
+  // fiscal calendar: year -> ordered period names
+  const [calendar, setCalendar] = useState<Map<number, string[]>>(new Map());
+  const [year, setYear] = useState<number | null>(null);
+  const [period, setPeriod] = useState<string | null>(null);   // null = all periods of the year
+
+  const [summary, setSummary] = useState<SummaryRow[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState('');
-  const [detailKey, setDetailKey] = useState<string | null>(null);
-  const [detail, setDetail] = useState<QueryResult | null>(null);
+  const [sumSearch, setSumSearch] = useState('');
+
+  const [detailFor, setDetailFor] = useState<SummaryRow | null>(null);
+  const [detailRows, setDetailRows] = useState<DetailRow[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detSearch, setDetSearch] = useState('');
+
   const [sqlLog, setSqlLog] = useState<{ label: string; sql: string; ms: number; rows: number }[]>([]);
   const [sqlOpen, setSqlOpen] = useState(false);
-  const [rowSearch, setRowSearch] = useState('');
-  // drill-down: full record from the status view + link to the module page
+
+  // record modal (from the transaction-number link)
   const [drill, setDrill] = useState<{ module: ModuleDef; id: string } | null>(null);
   const [drillData, setDrillData] = useState<QueryResult | null>(null);
   const [drillLoading, setDrillLoading] = useState(false);
@@ -143,69 +195,98 @@ const CheckAccounting: React.FC = () => {
     return { columns: data.columns || [], rows: data.rows || [] };
   }, [userName]);
 
-  // Period list from the fiscal calendar (newest first)
+  // Load the fiscal calendar once; default to the current-date's year
   useEffect(() => {
     (async () => {
       try {
-        const r = await runQuery('GL periods',
-          `SELECT DISTINCT period_name, MAX(TO_NUMBER(fiscal_year)) fy, MAX(TO_NUMBER(fiscal_period)) fp FROM rr_v_gl_fiscal_periods WHERE TO_CHAR(application) = 'GL' AND TO_CHAR(adj_flag) = 'N' GROUP BY period_name ORDER BY 2 DESC, 3 DESC`);
-        const list = r.rows.map(row => String(row[0])).filter(Boolean);
-        setPeriods(list);
+        const r = await runQuery('GL fiscal calendar',
+          `SELECT period_name, MAX(TO_NUMBER(fiscal_year)) AS fy, MAX(TO_NUMBER(fiscal_period)) AS fp FROM rr_v_gl_fiscal_periods WHERE TO_CHAR(application) = 'GL' AND TO_CHAR(adj_flag) = 'N' GROUP BY period_name ORDER BY 2, 3`);
+        const cal = new Map<number, string[]>();
+        r.rows.forEach(row => {
+          const fy = Number(row[1]);
+          if (!cal.has(fy)) cal.set(fy, []);
+          cal.get(fy)!.push(String(row[0]));
+        });
+        setCalendar(cal);
+        const years = [...cal.keys()].sort((a, b) => b - a);
+        // default: fiscal year containing today's Mon-RR period, else latest
+        const nowPeriod = new Date().toLocaleDateString('en-GB', { month: 'short' }) + '-' +
+          String(new Date().getFullYear()).slice(2);
+        const yr = years.find(y => cal.get(y)!.includes(nowPeriod)) ?? years[0] ?? null;
+        setYear(yr);
       } catch (e) {
-        message.error(`Could not load GL periods: ${e instanceof Error ? e.message : e}`);
+        message.error(`Could not load the fiscal calendar: ${e instanceof Error ? e.message : e}`);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadSummary = useCallback(async (p: string | null) => {
-    if (p && !safePeriod(p)) return;
+  const yearPeriods = useMemo(() => (year != null ? calendar.get(year) ?? [] : []), [calendar, year]);
+  const selectedPeriods = useMemo(
+    () => (period ? [period] : yearPeriods),
+    [period, yearPeriods],
+  );
+
+  const loadSummary = useCallback(async () => {
+    if (year == null || selectedPeriods.length === 0) return;
     setSummaryLoading(true);
     setSummaryError('');
-    setDetailKey(null);
-    setDetail(null);
-    const next: Record<string, Record<string, number>> = {};
+    setDetailFor(null);
+    setDetailRows([]);
     try {
-      await Promise.all(MODULES.map(async m => {
-        const r = await runQuery(`${m.label} summary`, m.summarySql(p));
-        const statuses: Record<string, number> = {};
-        r.rows.forEach(row => { statuses[String(row[0])] = Number(row[1]) || 0; });
-        next[m.key] = statuses;
-      }));
-      setSummary(next);
+      const sql = MODULES.map(m => m.summarySql(selectedPeriods)).join(' UNION ALL ');
+      const r = await runQuery(`Summary ${year}${period ? ` · ${period}` : ' · all periods'}`, sql);
+      const rows: SummaryRow[] = r.rows.map((row, i) => {
+        const moduleLabel = String(row[0]);
+        const def = MODULES.find(m => m.label === moduleLabel);
+        return {
+          key: `s${i}`, moduleKey: def?.key ?? '', module: moduleLabel, year,
+          period: String(row[1]), txnType: String(row[2]),
+          total: Number(row[3]) || 0, accounted: Number(row[4]) || 0, notAccounted: Number(row[5]) || 0,
+        };
+      });
+      const order = new Map(MODULES.map((m, i) => [m.label, i]));
+      const pOrder = new Map(yearPeriods.map((p, i) => [p, i]));
+      rows.sort((a, b) =>
+        (order.get(a.module)! - order.get(b.module)!)
+        || ((pOrder.get(a.period) ?? 99) - (pOrder.get(b.period) ?? 99))
+        || a.txnType.localeCompare(b.txnType));
+      setSummary(rows);
     } catch (e) {
       setSummaryError(e instanceof Error ? e.message : String(e));
     } finally {
       setSummaryLoading(false);
     }
-  }, [runQuery]);
+  }, [year, period, selectedPeriods, yearPeriods, runQuery]);
 
-  useEffect(() => { loadSummary(period); }, [period, loadSummary]);
+  useEffect(() => { loadSummary(); }, [loadSummary]);
 
-  const openDetail = async (m: ModuleDef) => {
-    setDetailKey(m.key);
-    setDetail(null);
-    setRowSearch('');
+  const openDetail = async (row: SummaryRow) => {
+    const def = MODULES.find(m => m.key === row.moduleKey);
+    if (!def) return;
+    setDetailFor(row);
+    setDetailRows([]);
+    setDetSearch('');
     setDetailLoading(true);
     try {
-      setDetail(await runQuery(`${m.label} — pending detail`, m.detailSql(period)));
+      const r = await runQuery(`${row.module} · ${row.period} · ${row.txnType} — documents`,
+        def.detailSql(row.period, row.txnType));
+      setDetailRows(r.rows.map((d, i) => ({
+        key: `d${i}`,
+        id: d[0] == null ? '' : String(d[0]),
+        txnNumber: d[1] == null ? '—' : String(d[1]),
+        party: d[2] == null ? '—' : String(d[2]),
+        currency: d[3] == null ? '' : String(d[3]),
+        amount: typeof d[4] === 'number' ? d[4] : null,
+        accounted: String(d[5]) !== 'NOT ACCOUNTED',
+      })));
     } catch (e) {
       message.error(`Detail failed: ${e instanceof Error ? e.message : e}`);
-      setDetailKey(null);
+      setDetailFor(null);
     } finally {
       setDetailLoading(false);
     }
   };
-
-  const detailModule = MODULES.find(m => m.key === detailKey) || null;
-
-  // client-side search across all columns of the detail grid
-  const filteredDetailRows = useMemo(() => {
-    if (!detail) return [];
-    const f = rowSearch.trim().toLowerCase();
-    if (!f) return detail.rows;
-    return detail.rows.filter(r => r.some(v => String(v ?? '').toLowerCase().includes(f)));
-  }, [detail, rowSearch]);
 
   const openDrill = useCallback(async (m: ModuleDef, idText: string) => {
     const idNum = idText.replace(/[^0-9]/g, '');
@@ -224,44 +305,6 @@ const CheckAccounting: React.FC = () => {
     }
   }, [runQuery]);
 
-  const detailColumns = useMemo(() => (detail?.columns || []).map((c, i) => ({
-    title: c.replace(/_/g, ' '),
-    key: c,
-    ellipsis: true,
-    render: (_: unknown, row: (string | number | null)[]) => {
-      const v = row[i];
-      if (v === null || v === undefined) return <span style={{ fontSize: 12 }}>—</span>;
-      // ids are identifiers, never amounts — show raw, no thousand separators
-      if (isIdColumn(c)) {
-        const text = String(v);
-        return detailModule && c === detailModule.idColumn
-          ? (
-            <a onClick={() => openDrill(detailModule, text)}
-              style={{ fontFamily: 'monospace', fontSize: 12 }}
-              title="Drill into this transaction">
-              {text}
-            </a>
-          )
-          : <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{text}</span>;
-      }
-      return typeof v === 'number'
-        ? <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
-        : <span style={{ fontSize: 12 }}>{String(v)}</span>;
-    },
-  })), [detail, detailModule, openDrill]);
-
-  const exportDetailExcel = () => {
-    if (!detail || !detailModule) return;
-    const ws = XLSX.utils.aoa_to_sheet([detail.columns, ...filteredDetailRows]);
-    ws['!cols'] = detail.columns.map(() => ({ wch: 18 }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Pending Accounting');
-    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    saveAs(new Blob([buf], { type: 'application/octet-stream' }),
-      `Pending_Accounting_${detailModule.label.replace(/\s+/g, '_')}_${period || 'All'}.xlsx`);
-  };
-
-  // drill record as { COLUMN: value } for the modal + page link
   const drillRecord = useMemo(() => {
     if (!drillData?.rows.length) return null;
     const rec: Record<string, string | number | null> = {};
@@ -269,28 +312,106 @@ const CheckAccounting: React.FC = () => {
     return rec;
   }, [drillData]);
 
+  // filters
+  const visibleSummary = useMemo(() => {
+    const f = sumSearch.trim().toLowerCase();
+    if (!f) return summary;
+    return summary.filter(r =>
+      [r.module, r.period, r.txnType, String(r.total), String(r.notAccounted)].some(v => v.toLowerCase().includes(f)));
+  }, [summary, sumSearch]);
+
+  const visibleDetail = useMemo(() => {
+    const f = detSearch.trim().toLowerCase();
+    if (!f) return detailRows;
+    return detailRows.filter(r =>
+      [r.txnNumber, r.party, r.currency, String(r.amount ?? ''), r.accounted ? 'yes accounted' : 'x not accounted']
+        .some(v => v.toLowerCase().includes(f)));
+  }, [detailRows, detSearch]);
+
+  const detailDef = detailFor ? MODULES.find(m => m.key === detailFor.moduleKey) ?? null : null;
+
+  const exportExcel = (name: string, header: string[], rows: (string | number | null)[][]) => {
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    ws['!cols'] = header.map(() => ({ wch: 18 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Check Accounting');
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    saveAs(new Blob([buf], { type: 'application/octet-stream' }), `${name}.xlsx`);
+  };
+
+  const summaryColumns = [
+    { title: 'Module', dataIndex: 'module', key: 'module', width: 170,
+      render: (v: string) => <Text strong style={{ fontSize: 12.5 }}>{v}</Text> },
+    { title: 'Year', dataIndex: 'year', key: 'year', width: 70,
+      render: (v: number) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</span> },
+    { title: 'Period', dataIndex: 'period', key: 'period', width: 90,
+      render: (v: string) => <Tag color="geekblue" style={{ fontSize: 11 }}>{v}</Tag> },
+    { title: 'Transaction Type', dataIndex: 'txnType', key: 'txnType', width: 170,
+      render: (v: string) => <span style={{ fontSize: 12 }}>{v}</span> },
+    { title: 'Total Transactions', dataIndex: 'total', key: 'total', align: 'right' as const, width: 130,
+      render: (v: number) => <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{v.toLocaleString()}</span> },
+    { title: 'Accounted', dataIndex: 'accounted', key: 'accounted', align: 'right' as const, width: 110,
+      render: (v: number) => <span style={{ color: C.success, fontVariantNumeric: 'tabular-nums' }}>{v.toLocaleString()}</span> },
+    { title: 'Not Accounted', dataIndex: 'notAccounted', key: 'notAccounted', align: 'right' as const, width: 120,
+      render: (v: number) => v > 0
+        ? <Tag color="red" style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{v.toLocaleString()}</Tag>
+        : <span style={{ color: C.text2 }}>0</span> },
+  ];
+
+  const detailColumns = detailFor && detailDef ? [
+    { title: 'Module', key: 'm', width: 150, render: () => <Text strong style={{ fontSize: 12 }}>{detailFor.module}</Text> },
+    { title: 'Year', key: 'y', width: 60, render: () => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{detailFor.year}</span> },
+    { title: 'Period', key: 'p', width: 80, render: () => <Tag color="geekblue" style={{ fontSize: 11 }}>{detailFor.period}</Tag> },
+    { title: 'Transaction Type', key: 't', width: 150, render: () => <span style={{ fontSize: 12 }}>{detailFor.txnType}</span> },
+    { title: 'Transaction Number', dataIndex: 'txnNumber', key: 'txnNumber', width: 170,
+      render: (v: string, r: DetailRow) => (
+        <a onClick={() => openDrill(detailDef, r.id)} title="Open the full record"
+          style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</a>
+      ) },
+    { title: 'Party / Description', dataIndex: 'party', key: 'party', ellipsis: true,
+      render: (v: string) => <span style={{ fontSize: 12 }}>{v}</span> },
+    { title: 'Amount', key: 'amt', align: 'right' as const, width: 140,
+      render: (_: unknown, r: DetailRow) => r.amount == null ? <span style={{ color: C.text2 }}>—</span>
+        : <span style={{ fontVariantNumeric: 'tabular-nums' }}>{r.currency ? `${r.currency} ` : ''}{r.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span> },
+    { title: 'Accounted', key: 'acc', align: 'center' as const, width: 100,
+      render: (_: unknown, r: DetailRow) => r.accounted
+        ? <Tag color="green" style={{ margin: 0 }}><CheckOutlined /> Yes</Tag> : null },
+    { title: 'Not Accounted', key: 'nacc', align: 'center' as const, width: 110,
+      render: (_: unknown, r: DetailRow) => !r.accounted
+        ? <Tag color="red" style={{ margin: 0, fontWeight: 700 }}><CloseOutlined /> X</Tag> : null },
+  ] : [];
+
   const askAi = () => {
     window.dispatchEvent(new Event('reerp-ai:toggle'));
-    message.info('Ask the assistant e.g. "which AP invoices are not accounted for ' + (period || 'this period') + '?"', 4);
+    message.info(`Ask the assistant e.g. "which AP invoices are not accounted in ${period || year || 'this period'}?"`, 4);
   };
+
+  const years = useMemo(() => [...calendar.keys()].sort((a, b) => b - a), [calendar]);
 
   return (
     <div style={{ padding: '16px 24px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
         <Title level={3} style={{ margin: 0 }}>
           <AuditOutlined style={{ color: C.primary, marginRight: 8 }} />Check Accounting
         </Title>
         <span style={{ flex: 1 }} />
+        <Text style={{ fontSize: 12 }}>Year:</Text>
+        <Select
+          style={{ width: 100 }}
+          value={year ?? undefined}
+          placeholder="Year"
+          onChange={v => { setYear(v); setPeriod(null); }}
+          options={years.map(y => ({ value: y, label: String(y) }))}
+        />
         <Text style={{ fontSize: 12 }}>Period:</Text>
         <Select
           style={{ width: 140 }}
           value={period ?? 'ALL'}
           onChange={v => setPeriod(v === 'ALL' ? null : v)}
-          showSearch
-          options={[{ value: 'ALL', label: 'All periods' }, ...periods.map(p => ({ value: p, label: p }))]}
+          options={[{ value: 'ALL', label: 'All periods' }, ...yearPeriods.map(p => ({ value: p, label: p }))]}
         />
-        <Tooltip title="Reload all statuses">
-          <Button icon={<ReloadOutlined />} loading={summaryLoading} onClick={() => loadSummary(period)}>Refresh</Button>
+        <Tooltip title="Reload the summary">
+          <Button icon={<ReloadOutlined />} loading={summaryLoading} onClick={loadSummary}>Refresh</Button>
         </Tooltip>
         <Tooltip title="Show the API calls made by this page — the gateway endpoint and every SQL executed">
           <Button icon={<ApiOutlined />} onClick={() => setSqlOpen(s => !s)}
@@ -304,8 +425,9 @@ const CheckAccounting: React.FC = () => {
         </Button>
       </div>
       <Text style={{ fontSize: 12, color: C.text2, display: 'block', marginBottom: 14 }}>
-        Live accounting status across modules — documents matched to GL journal lines via their reference columns,
-        queried through the guarded SQL gateway. Click a card to list what is still missing accounting.
+        Pick a fiscal year, then a period (or all periods) — the grid shows per period and transaction type how many
+        documents are accounted vs not, matched to GL journal lines via their reference columns through the guarded
+        SQL gateway. Click a row to drill to the transactions.
       </Text>
 
       {summaryError && (
@@ -313,7 +435,7 @@ const CheckAccounting: React.FC = () => {
           type="error" showIcon style={{ marginBottom: 12 }}
           message={summaryError}
           description={summaryError.includes('ORA-00942')
-            ? 'A status view is missing in the database — run database/ap/144_ap_accounting_status_views.sql and database/ap/145_more_accounting_status_views.sql in APEX SQL Workshop → SQL Scripts, then Refresh.'
+            ? 'A status view is missing in the database — run database/ap/146_all_accounting_status_views.sql in APEX SQL Workshop → SQL Scripts, then Refresh.'
             : undefined}
         />
       )}
@@ -345,91 +467,88 @@ const CheckAccounting: React.FC = () => {
         </Card>
       )}
 
-      <Row gutter={[14, 14]}>
-        {MODULES.map(m => {
-          const statuses = summary[m.key] || {};
-          const entries = Object.entries(statuses).sort(([a], [b]) => a.localeCompare(b));
-          const notAccounted = entries.filter(([s]) => s.includes('NOT ACCOUNTED')).reduce((t, [, n]) => t + n, 0);
-          const selected = detailKey === m.key;
-          return (
-            <Col xs={24} sm={12} md={8} xl={4} key={m.key}>
-              <Card
-                hoverable
-                onClick={() => openDetail(m)}
-                style={{
-                  borderRadius: 10, height: '100%', cursor: 'pointer',
-                  border: selected ? `2px solid ${m.color}` : `1px solid ${C.border}`,
-                  boxShadow: notAccounted > 0 ? '0 0 0 2px rgba(199,70,52,.12)' : undefined,
-                }}
-                styles={{ body: { padding: '12px 14px' } }}
-              >
-                <div style={{ fontWeight: 700, fontSize: 13, color: m.color, marginBottom: 6 }}>{m.label}</div>
-                {summaryLoading ? <Spin size="small" /> : (
-                  <Space direction="vertical" size={2} style={{ width: '100%' }}>
-                    {entries.length === 0 && <Text type="secondary" style={{ fontSize: 11 }}>No documents{period ? ` in ${period}` : ''}</Text>}
-                    {entries.map(([s, n]) => (
-                      <div key={s} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Tag color={s.includes('NOT ACCOUNTED') ? 'red' : s.includes('CANCEL') || s.includes('VOID') ? 'orange' : 'green'}
-                          style={{ fontSize: 10, margin: 0 }}>{s}</Tag>
-                        <Text strong style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>{n.toLocaleString()}</Text>
-                      </div>
-                    ))}
-                  </Space>
-                )}
-              </Card>
-            </Col>
-          );
-        })}
-      </Row>
+      <Card
+        size="small"
+        style={{ borderColor: C.border, borderRadius: 10 }}
+        title={
+          <Space wrap>
+            <Text strong>Accounting by period &amp; transaction type{year ? ` · ${year}` : ''}{period ? ` · ${period}` : ''}</Text>
+            <Tag>{visibleSummary.length}{sumSearch ? ` of ${summary.length}` : ''} row(s)</Tag>
+          </Space>
+        }
+        extra={
+          <Space>
+            <Input size="small" allowClear placeholder="Search…" value={sumSearch}
+              onChange={e => setSumSearch(e.target.value)} style={{ width: 180 }} />
+            <Button size="small" icon={<FileExcelOutlined />} disabled={!visibleSummary.length}
+              style={{ color: C.success, borderColor: C.success }}
+              onClick={() => exportExcel(
+                `Check_Accounting_Summary_${year}${period ? `_${period}` : ''}`,
+                ['Module', 'Year', 'Period', 'Transaction Type', 'Total Transactions', 'Accounted', 'Not Accounted'],
+                visibleSummary.map(r => [r.module, r.year, r.period, r.txnType, r.total, r.accounted, r.notAccounted]),
+              )}>
+              Excel
+            </Button>
+          </Space>
+        }
+      >
+        <Table
+          size="small"
+          loading={summaryLoading}
+          dataSource={visibleSummary}
+          columns={summaryColumns}
+          rowKey="key"
+          pagination={{ pageSize: 25, size: 'small', showTotal: t => `${t} rows` }}
+          onRow={r => ({
+            onClick: () => openDetail(r),
+            style: { cursor: 'pointer', background: detailFor?.key === r.key ? '#FBF1EF' : undefined },
+          })}
+          scroll={{ x: 900 }}
+        />
+      </Card>
 
-      {detailModule && (
+      {detailFor && (
         <Card
           size="small"
           style={{ marginTop: 16, borderColor: C.border, borderRadius: 10 }}
           title={
             <Space wrap>
-              <Text strong>{detailModule.label} — pending accounting{period ? ` · ${period}` : ''}</Text>
-              {detail && <Tag>{filteredDetailRows.length}{rowSearch ? ` of ${detail.rows.length}` : ''} row(s)</Tag>}
+              <Text strong>{detailFor.module} · {detailFor.period} · {detailFor.txnType} — transactions</Text>
+              <Tag>{visibleDetail.length}{detSearch ? ` of ${detailRows.length}` : ''} row(s)</Tag>
             </Space>
           }
           extra={
             <Space>
-              <Input
-                size="small" allowClear placeholder="Search rows…"
-                value={rowSearch} onChange={e => setRowSearch(e.target.value)}
-                style={{ width: 200 }}
-              />
-              <Button size="small" icon={<FileExcelOutlined />} disabled={!filteredDetailRows.length}
-                onClick={exportDetailExcel} style={{ color: C.success, borderColor: C.success }}>
+              <Input size="small" allowClear placeholder="Search rows…" value={detSearch}
+                onChange={e => setDetSearch(e.target.value)} style={{ width: 200 }} />
+              <Button size="small" icon={<FileExcelOutlined />} disabled={!visibleDetail.length}
+                style={{ color: C.success, borderColor: C.success }}
+                onClick={() => exportExcel(
+                  `Check_Accounting_${detailFor.module.replace(/\s+/g, '_')}_${detailFor.period}`,
+                  ['Module', 'Year', 'Period', 'Transaction Type', 'Transaction Number', 'Party', 'Currency', 'Amount', 'Accounted', 'Not Accounted'],
+                  visibleDetail.map(r => [detailFor.module, detailFor.year, detailFor.period, detailFor.txnType,
+                    r.txnNumber, r.party, r.currency, r.amount, r.accounted ? 'Yes' : '', r.accounted ? '' : 'X']),
+                )}>
                 Excel
               </Button>
             </Space>
           }
         >
           {detailLoading && <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>}
-          {detail && !detailLoading && (
-            detail.rows.length === 0
-              ? <Alert type="success" showIcon message={`Nothing pending — every ${detailModule.label.toLowerCase()} document${period ? ` in ${period}` : ''} is accounted.`} />
-              : (
-                <>
-                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
-                    Click an {detailModule.idColumn.replace(/_/g, ' ').toLowerCase()} to drill into the transaction.
-                  </Text>
-                  <Table
-                    size="small"
-                    dataSource={filteredDetailRows}
-                    columns={detailColumns}
-                    rowKey={(_, i) => String(i)}
-                    pagination={{ pageSize: 20, size: 'small', showTotal: t => `${t} rows` }}
-                    scroll={{ x: true }}
-                  />
-                </>
-              )
+          {!detailLoading && (
+            <Table
+              size="small"
+              dataSource={visibleDetail}
+              columns={detailColumns}
+              rowKey="key"
+              pagination={{ pageSize: 20, size: 'small', showTotal: t => `${t} rows` }}
+              scroll={{ x: 1100 }}
+            />
           )}
         </Card>
       )}
 
-      {/* Drill-down: full record from the status view + jump to the module page */}
+      {/* Record modal: full row from the status view + jump to the module page */}
       <Modal
         open={!!drill}
         onCancel={() => { setDrill(null); setDrillData(null); }}
