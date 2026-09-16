@@ -96,7 +96,8 @@ const extTxnIdsOf = (lines: Rec[]): string[] => {
   });
   return Array.from(ids);
 };
-const extTxnDeleteUrl = (id: string) => `${APEX_BASE}/cash/externaltransactions/${id}?force=Y`;
+// own path (script 148) — must not share the shape of cash/externaltransactions/:txnId
+const extTxnDeleteUrl = (id: string) => `${APEX_BASE}/cash/externaltransactions/delete/${id}?force=Y`;
 
 const DeleteJournals: React.FC = () => {
   const [form] = Form.useForm();
@@ -915,12 +916,12 @@ const DeleteJournals: React.FC = () => {
               <Col xs={24} md={12}>
                 <Card size="small" style={{ background: REDWOOD.surface }}>
                   <Text strong style={{ display: 'block', marginBottom: 8 }}>Delete Linked External Transaction</Text>
-                  <Text code style={{ display: 'block', marginBottom: 8 }}>DELETE /cash/externaltransactions/{'{id}'}?force=Y</Text>
+                  <Text code style={{ display: 'block', marginBottom: 8 }}>DELETE /cash/externaltransactions/delete/{'{id}'}?force=Y</Text>
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-                    force=Y allows an accounted transaction only when no GL line still references it (script 147)
+                    force=Y allows an accounted transaction only when no GL line still references it (script 148)
                   </Text>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    URL: {APEX_BASE}/cash/externaltransactions/{'{id}'}?force=Y
+                    URL: {APEX_BASE}/cash/externaltransactions/delete/{'{id}'}?force=Y
                   </Text>
                 </Card>
               </Col>
@@ -1196,7 +1197,7 @@ const DeleteJournals: React.FC = () => {
                     ))}
                     <Text type="secondary" style={{ fontSize: 10.5 }}>
                       force=Y lets the server delete an accounted transaction, but only after it re-verifies that
-                      no GL journal line still references the id (requires DB script 147).
+                      no GL journal line still references the id (requires DB script 148).
                     </Text>
                   </div>
                 </Card>

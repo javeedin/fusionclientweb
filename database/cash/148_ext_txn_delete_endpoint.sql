@@ -1,26 +1,39 @@
 -- ============================================================
--- Patch 147: DELETE /cash/externaltransactions/:externalTransactionId
---            with optional ?force=Y for accounted transactions
+-- Patch 148: DELETE /cash/externaltransactions/delete/:externalTransactionId
+--            (replaces patch 147 — DO NOT run 147)
 --
--- Replaces the handler from patch 88. Behaviour:
---   * Default (no force):     unchanged — refuses when ACCOUNTING_FLAG = 'Y'.
---   * ?force=Y:               allows deleting an ACCOUNTED transaction, but
---                             ONLY after verifying no GL journal lines still
---                             reference it (REFERENCE5 = 'BANK_EXTERNAL_TRANSACTIONS'
---                             and REFERENCE2 = the transaction id). If the GL
---                             batch still exists the call is refused with 409,
---                             so the journal must be deleted first.
+-- WHY A NEW PATH: the module already has a template
+--   cash/externaltransactions/:txnId          (GET by id — patch 132)
+-- Patch 147 re-created the same-shaped template under a different
+-- bind name (:externalTransactionId). Two templates with an identical
+-- URL shape but different bind names collide in ORDS routing and took
+-- the whole reerp module down (every endpoint returned the generic
+-- ECID 500 page). This patch:
+--   1. Removes that conflicting template and its DELETE handler.
+--   2. Registers the delete on its own unambiguous path:
+--        DELETE cash/externaltransactions/delete/:externalTransactionId
+--
+-- Behaviour of the new endpoint:
+--   * Default:   refuses when ACCOUNTING_FLAG = 'Y' (same as before).
+--   * ?force=Y:  allows deleting an ACCOUNTED transaction, but ONLY
+--                after verifying no GL journal line still references it
+--                (REFERENCE5 = 'BANK_EXTERNAL_TRANSACTIONS' and
+--                REFERENCE2 = the id) — the GL batch must be deleted first.
 --   * Attachments in RR_EXTERNAL_TRX_ATTACHMENTS are removed first
 --     (FK FK_EXT_TRX_ATT would otherwise block the delete).
+--   * Response shape unchanged: {"status":"success", ...} / {"status":"error", ...}
 --
--- Used by: Delete Journals → Preview → "Delete this Batch" with
---          "Also delete linked external transaction(s)" checked.
+-- Used by:
+--   * Manage External Transactions → Delete (normal delete, no force)
+--   * Delete Journals → Preview → "Also delete linked external transaction(s)"
+--     (force=Y, after the GL batch is deleted)
 --
 -- HOW TO RUN:
 --   APEX SQL Workshop → SQL Commands — paste and run as one block.
 -- ============================================================
 
 BEGIN
+    -- ── 1. Clean up the conflicting template from patches 85/88/147 ──
     BEGIN
         ORDS.DELETE_HANDLER(
             p_module_name => 'reerp',
@@ -29,21 +42,42 @@ BEGIN
         );
     EXCEPTION WHEN OTHERS THEN NULL;
     END;
-
     BEGIN
-        ORDS.DEFINE_TEMPLATE(
+        ORDS.DELETE_TEMPLATE(
             p_module_name => 'reerp',
-            p_pattern     => 'cash/externaltransactions/:externalTransactionId',
-            p_priority    => 0,
-            p_etag_type   => 'HASH',
-            p_comments    => 'Single external cash transaction operations'
+            p_pattern     => 'cash/externaltransactions/:externalTransactionId'
         );
     EXCEPTION WHEN OTHERS THEN NULL;
     END;
 
+    -- ── 2. New, unambiguous delete endpoint ──
+    BEGIN
+        ORDS.DELETE_HANDLER(
+            p_module_name => 'reerp',
+            p_pattern     => 'cash/externaltransactions/delete/:externalTransactionId',
+            p_method      => 'DELETE'
+        );
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    BEGIN
+        ORDS.DELETE_TEMPLATE(
+            p_module_name => 'reerp',
+            p_pattern     => 'cash/externaltransactions/delete/:externalTransactionId'
+        );
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+
+    ORDS.DEFINE_TEMPLATE(
+        p_module_name => 'reerp',
+        p_pattern     => 'cash/externaltransactions/delete/:externalTransactionId',
+        p_priority    => 0,
+        p_etag_type   => 'HASH',
+        p_comments    => 'Delete an external cash transaction (own path — avoids template-shape conflicts)'
+    );
+
     ORDS.DEFINE_HANDLER(
         p_module_name    => 'reerp',
-        p_pattern        => 'cash/externaltransactions/:externalTransactionId',
+        p_pattern        => 'cash/externaltransactions/delete/:externalTransactionId',
         p_method         => 'DELETE',
         p_source_type    => ORDS.source_type_plsql,
         p_items_per_page => 0,

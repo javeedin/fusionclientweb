@@ -1523,7 +1523,9 @@ const ExternalTxnForm: React.FC<{
   const handleDelete = async () => {
     const extId = savedExtId ?? initialValues?.externalTransactionId;
     if (!extId) { message.error('Transaction ID not available'); return; }
-    const url = `${APEX_BASE}/cash/externaltransactions/${extId}`;
+    // dedicated delete path (script 148) — the old DELETE on cash/externaltransactions/{id}
+    // shared a template shape with the GET-by-id route and broke ORDS routing
+    const url = `${APEX_BASE}/cash/externaltransactions/delete/${extId}`;
     setDeleteApiUrl(url);
     setDeleting(true);
     try {
