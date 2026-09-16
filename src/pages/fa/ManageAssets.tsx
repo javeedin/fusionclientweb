@@ -292,11 +292,21 @@ const AssetTabContent: React.FC<{
     let nbv = cost;
     let cur = startDate;
     const end = deprnToDate.startOf('month');
+    // charge only the days inside the From/To window — partial first/last
+    // months get a prorated amount, not the full month
+    const from = deprnFromDate.startOf('day');
+    const to   = deprnToDate.startOf('day');
 
     while (cur.isBefore(end) || cur.isSame(end, 'month')) {
-      const depr = Math.min(dailyRate * cur.daysInMonth(), nbv - salvage);
+      const monthStart = cur.startOf('month');
+      const monthEnd   = cur.endOf('month').startOf('day');
+      const winStart = monthStart.isBefore(from) ? from : monthStart;
+      const winEnd   = monthEnd.isAfter(to) ? to : monthEnd;
+      const days = winEnd.diff(winStart, 'day') + 1;
+      if (days <= 0) { cur = cur.add(1, 'month'); continue; }
+      const depr = Math.min(dailyRate * days, nbv - salvage);
       if (depr <= 0) { cur = cur.add(1, 'month'); continue; }
-      rows.push({ period: cur.format('MMM-YY'), days: cur.daysInMonth(), dailyRate, openingNbv: nbv, depreciation: depr, closingNbv: nbv - depr });
+      rows.push({ period: cur.format('MMM-YY'), days, dailyRate, openingNbv: nbv, depreciation: depr, closingNbv: nbv - depr });
       nbv -= depr;
       cur = cur.add(1, 'month');
     }
