@@ -178,7 +178,7 @@ const ManageCustomers: React.FC = () => {
     if (tabs.find(t => t.key === key)) { setActiveKey(key); return; }
     const detailUrl   = `${BASE}/ar/parties/${party.partyId}`;
     // accounts load via the SQL gateway — this is what the API tooltip shows
-    const accountsUrl = `POST ${BASE}/ai/executequery — SELECT * FROM rr_raw_ar_hz_cust_accounts_bip WHERE party_id = ${party.partyId} ORDER BY account_number`;
+    const accountsUrl = `POST ${BASE}/ai/executequery — SELECT a.* FROM rr_raw_ar_hz_cust_accounts_bip a WHERE a.cust_account_id IN (SELECT p.cust_account_id FROM rr_raw_ar_hz_parties_dm p WHERE p.party_id = ${party.partyId}) ORDER BY a.account_number`;
     setTabs(prev => [...prev, {
       key, party,
       detail: null, detailLoading: false, detailUrl,
@@ -215,7 +215,12 @@ const ManageCustomers: React.FC = () => {
     loadedRef.current.add(`acct-${tabKey}`);
     setTabs(prev => prev.map(t => t.key === tabKey ? { ...t, accountsLoading: true, accountsError: '' } : t));
     try {
-      const sql = `SELECT * FROM rr_raw_ar_hz_cust_accounts_bip WHERE party_id = ${Number(partyId)} ORDER BY account_number`;
+      // connect party -> account via CUST_ACCOUNT_ID (the parties extract
+      // carries it; the accounts table's PARTY_ID is not reliably populated)
+      const sql =
+        `SELECT a.* FROM rr_raw_ar_hz_cust_accounts_bip a ` +
+        `WHERE a.cust_account_id IN (SELECT p.cust_account_id FROM rr_raw_ar_hz_parties_dm p WHERE p.party_id = ${Number(partyId)}) ` +
+        `ORDER BY a.account_number`;
       const res = await fetch(`${BASE}/ai/executequery`, {
         method: 'POST',
         cache: 'no-store',
