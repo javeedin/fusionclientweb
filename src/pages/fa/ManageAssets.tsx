@@ -3933,7 +3933,9 @@ const ManageAssets: React.FC = () => {
   const [costFilter,  setCostFilter]  = useState(true);
 
   const displayedRows = useMemo(() => rows.filter(r => {
-    if (costFilter && (parseFloat(r.cost) || 0) <= 0) return false;
+    // retired assets stay visible even with the Cost > 0 filter on — their
+    // book row is end-dated, so the server may return no cost for them
+    if (costFilter && (parseFloat(r.cost) || 0) <= 0 && r.retiredFlag !== 'YES') return false;
     if (gridSearch) {
       const q = gridSearch.toLowerCase();
       return (
@@ -3971,6 +3973,7 @@ const ManageAssets: React.FC = () => {
       'Depreciate':        r.depreciateFlag,
       'Capitalize':        r.capitalizeFlag,
       'Status':            assetStatusLabel(r.retiredFlag),
+      'Retired':           r.retiredFlag === 'YES' ? 'Yes' : 'No',
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -4039,6 +4042,13 @@ const ManageAssets: React.FC = () => {
       title: 'Status', dataIndex: 'retiredFlag', key: 'status', width: 90,
       sorter: (a, b) => (a.retiredFlag || '').localeCompare(b.retiredFlag || ''),
       render: (v) => statusTag(v),
+    },
+    {
+      title: 'Retired', dataIndex: 'retiredFlag', key: 'retired', width: 80, align: 'center' as const,
+      sorter: (a, b) => (a.retiredFlag || '').localeCompare(b.retiredFlag || ''),
+      render: (v: string) => v === 'YES'
+        ? <Tag color="error" style={{ borderRadius: 4, fontSize: 11 }}>Yes</Tag>
+        : <Tag style={{ borderRadius: 4, fontSize: 11 }}>No</Tag>,
     },
     {
       title: 'Acctd', dataIndex: 'accountedStatus', key: 'accountedStatus', width: 100,

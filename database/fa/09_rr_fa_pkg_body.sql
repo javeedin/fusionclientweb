@@ -86,12 +86,18 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_PKG AS
         v_total  NUMBER  := 0;
         v_first  BOOLEAN := TRUE;
     BEGIN
-        -- Count
+        -- Count. Retired assets stay in the list: keep each asset's latest book
+        -- row (the active one, else the most recent end-dated one) so cost/NBV
+        -- remain visible after retirement.
         SELECT COUNT(*)
         INTO   v_total
         FROM   RR_FA_ADDITIONS a
-        LEFT JOIN (SELECT * FROM RR_FA_BOOKS WHERE DATE_INEFFECTIVE IS NULL) b
-               ON b.ASSET_ID = a.ASSET_ID
+        LEFT JOIN (SELECT b0.*,
+                          ROW_NUMBER() OVER (PARTITION BY b0.ASSET_ID, b0.BOOK_TYPE_CODE
+                              ORDER BY CASE WHEN b0.DATE_INEFFECTIVE IS NULL THEN 1 ELSE 2 END,
+                                       b0.DATE_INEFFECTIVE DESC) AS RN
+                     FROM RR_FA_BOOKS b0) b
+               ON b.ASSET_ID = a.ASSET_ID AND b.RN = 1
         WHERE  (p_description  IS NULL OR UPPER(a.DESCRIPTION)  LIKE UPPER('%' || p_description  || '%'))
         AND    (p_book_type    IS NULL OR b.BOOK_TYPE_CODE       =    p_book_type)
         AND    (p_asset_number IS NULL OR a.ASSET_NUMBER         LIKE '%' || p_asset_number || '%');
@@ -126,14 +132,20 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_PKG AS
                    NVL(ds.DEPRN_RESERVE, 0)                    AS DEPRN_RESERVE,
                    NVL(ds.YTD_DEPRN, 0)                        AS YTD_DEPRN,
                    NVL(b.COST, 0) - NVL(ds.DEPRN_RESERVE, 0)  AS NBV,
-                   CASE WHEN b.ASSET_ID IS NULL THEN 'YES' ELSE 'NO' END AS RETIRED_FLAG,
+                   CASE WHEN NVL(a.RETIRED_FLAG, 'NO') = 'YES'
+                          OR b.DATE_INEFFECTIVE IS NOT NULL
+                        THEN 'YES' ELSE 'NO' END               AS RETIRED_FLAG,
                    NVL(a.ACCOUNTED_STATUS, 'UNACCOUNTED')       AS ACCOUNTED_STATUS,
                    TO_CHAR(a.ACCOUNTED_DATE, 'YYYY-MM-DD')      AS ACCOUNTED_DATE
             FROM   RR_FA_ADDITIONS a
             LEFT JOIN RR_FA_CATEGORIES_B cat
                    ON cat.CATEGORY_ID = a.ASSET_CATEGORY_ID
-            LEFT JOIN (SELECT * FROM RR_FA_BOOKS WHERE DATE_INEFFECTIVE IS NULL) b
-                   ON b.ASSET_ID = a.ASSET_ID
+            LEFT JOIN (SELECT b0.*,
+                              ROW_NUMBER() OVER (PARTITION BY b0.ASSET_ID, b0.BOOK_TYPE_CODE
+                                  ORDER BY CASE WHEN b0.DATE_INEFFECTIVE IS NULL THEN 1 ELSE 2 END,
+                                           b0.DATE_INEFFECTIVE DESC) AS RN
+                         FROM RR_FA_BOOKS b0) b
+                   ON b.ASSET_ID = a.ASSET_ID AND b.RN = 1
             LEFT JOIN (
                 SELECT ds1.ASSET_ID, ds1.BOOK_TYPE_CODE, ds1.DEPRN_RESERVE, ds1.YTD_DEPRN
                 FROM   RR_FA_DEPRN_SUMMARY ds1
