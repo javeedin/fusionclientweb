@@ -933,10 +933,18 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_PKG AS
             RETURN;
         END IF;
 
+        -- One book row per asset (the active one, else the most recent end-dated
+        -- one). A retired asset stays visible in periods where depreciation was
+        -- ALREADY POSTED (history) but is excluded from any later period.
         SELECT COUNT(*),
                SUM(CASE WHEN dsum.ASSET_ID IS NOT NULL THEN 1 ELSE 0 END)
           INTO v_total, v_posted
-          FROM RR_FA_BOOKS b
+          FROM (SELECT b0.*,
+                       ROW_NUMBER() OVER (PARTITION BY b0.ASSET_ID, b0.BOOK_TYPE_CODE
+                           ORDER BY CASE WHEN b0.DATE_INEFFECTIVE IS NULL THEN 1 ELSE 2 END,
+                                    b0.DATE_INEFFECTIVE DESC) AS RN
+                  FROM RR_FA_BOOKS b0
+                 WHERE b0.BOOK_TYPE_CODE = p_book_type) b
           JOIN RR_FA_ADDITIONS a ON a.ASSET_ID = b.ASSET_ID
           LEFT JOIN (
                 SELECT dd.ASSET_ID, dd.BOOK_TYPE_CODE
@@ -944,8 +952,8 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_PKG AS
                  WHERE dd.PERIOD_COUNTER = v_pc
                  GROUP BY dd.ASSET_ID, dd.BOOK_TYPE_CODE
           ) dsum ON dsum.ASSET_ID = b.ASSET_ID AND dsum.BOOK_TYPE_CODE = b.BOOK_TYPE_CODE
-         WHERE b.BOOK_TYPE_CODE = p_book_type
-           AND b.DATE_INEFFECTIVE IS NULL
+         WHERE b.RN = 1
+           AND (b.DATE_INEFFECTIVE IS NULL OR dsum.ASSET_ID IS NOT NULL)
            AND (p_asset_number IS NULL OR UPPER(a.ASSET_NUMBER) LIKE UPPER('%' || p_asset_number || '%'));
 
         APEX_JSON.INITIALIZE_CLOB_OUTPUT;
@@ -983,7 +991,12 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_PKG AS
                    (SELECT MAX(cb.RESERVE_ACCOUNT_CCID) FROM RR_FA_CATEGORY_BOOKS cb
                      WHERE cb.CATEGORY_ID = a.ASSET_CATEGORY_ID)        AS RES_CCID,
                    CASE WHEN dsum.ASSET_ID IS NOT NULL THEN 'Posted' ELSE 'Not Posted' END AS STATUS
-              FROM RR_FA_BOOKS b
+              FROM (SELECT b0.*,
+                           ROW_NUMBER() OVER (PARTITION BY b0.ASSET_ID, b0.BOOK_TYPE_CODE
+                               ORDER BY CASE WHEN b0.DATE_INEFFECTIVE IS NULL THEN 1 ELSE 2 END,
+                                        b0.DATE_INEFFECTIVE DESC) AS RN
+                      FROM RR_FA_BOOKS b0
+                     WHERE b0.BOOK_TYPE_CODE = p_book_type) b
               JOIN RR_FA_ADDITIONS a ON a.ASSET_ID = b.ASSET_ID
               LEFT JOIN RR_FA_METHODS m ON m.METHOD_ID = b.METHOD_ID
               LEFT JOIN (
@@ -999,8 +1012,9 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_PKG AS
                      WHERE dd.PERIOD_COUNTER = v_pc
                      GROUP BY dd.ASSET_ID, dd.BOOK_TYPE_CODE
               ) dsum ON dsum.ASSET_ID = b.ASSET_ID AND dsum.BOOK_TYPE_CODE = b.BOOK_TYPE_CODE
-             WHERE b.BOOK_TYPE_CODE = p_book_type
-               AND b.DATE_INEFFECTIVE IS NULL
+             WHERE b.RN = 1
+               -- retired assets: history periods (posted detail exists) only
+               AND (b.DATE_INEFFECTIVE IS NULL OR dsum.ASSET_ID IS NOT NULL)
                AND (p_asset_number IS NULL OR UPPER(a.ASSET_NUMBER) LIKE UPPER('%' || p_asset_number || '%'))
              ORDER BY a.ASSET_NUMBER
              OFFSET v_offset ROWS FETCH NEXT v_limit ROWS ONLY
