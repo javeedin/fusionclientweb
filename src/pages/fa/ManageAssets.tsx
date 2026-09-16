@@ -215,6 +215,10 @@ const AssetTabContent: React.FC<{
   const [posting,        setPosting]        = useState(false);
 
   const openDeprnPreview = () => {
+    if (asset.retiredFlag === 'YES') {
+      message.warning('This asset is retired — depreciation cannot be previewed or created.');
+      return;
+    }
     const b0 = books[0];
     // From = the date the asset starts depreciating: the date placed in service
     // (day-prorate convention — a mid-month DPIS charges only the remaining days
@@ -243,6 +247,10 @@ const AssetTabContent: React.FC<{
   const isPosted = (period: string) => postedPeriods.has(normPeriod(period));
 
   const handleCreateDeprn = async () => {
+    if (asset.retiredFlag === 'YES') {
+      message.error('This asset is retired — depreciation cannot be created.');
+      return;
+    }
     const toPost = deprnRows.filter(r => selectedPeriods.has(r.period) && !isPosted(r.period));
     if (!toPost.length) return;
     setPosting(true);
@@ -1784,15 +1792,17 @@ const AssetTabContent: React.FC<{
                 >
                   {asset.retiredFlag === 'YES' ? 'Retired' : 'Retire'}
                 </Button>
-                <Button
-                  size="small"
-                  icon={<DollarOutlined />}
-                  style={{ borderColor: FA_COLOR, color: FA_COLOR }}
-                  onClick={openDeprnPreview}
-                  disabled={!books[0]?.lifeInMonths}
-                >
-                  Preview Depreciation
-                </Button>
+                <Tooltip title={asset.retiredFlag === 'YES' ? 'Asset is retired — it cannot be depreciated' : ''}>
+                  <Button
+                    size="small"
+                    icon={<DollarOutlined />}
+                    style={{ borderColor: FA_COLOR, color: FA_COLOR }}
+                    onClick={openDeprnPreview}
+                    disabled={!books[0]?.lifeInMonths || asset.retiredFlag === 'YES'}
+                  >
+                    Preview Depreciation
+                  </Button>
+                </Tooltip>
               </div>
             </div>
             <Table
