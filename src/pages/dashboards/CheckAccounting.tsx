@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Card, Col, Row, Select, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
 import {
-  AuditOutlined, CodeOutlined, FileExcelOutlined, ReloadOutlined, RobotOutlined,
+  ApiOutlined, AuditOutlined, CopyOutlined, FileExcelOutlined, ReloadOutlined, RobotOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
@@ -26,6 +26,8 @@ const C = {
 };
 
 interface QueryResult { columns: string[]; rows: (string | number | null)[][] }
+
+const GATEWAY_URL = `${BASE}/ai/executequery`;
 
 // GL period month filter — period names are Mon-YY (e.g. Aug-26)
 const periodMonth = (p: string) => `TO_DATE('01-${p}','DD-Mon-RR')`;
@@ -99,7 +101,7 @@ const CheckAccounting: React.FC = () => {
   // Same execution path as the AI assistant's SQL mode
   const runQuery = useCallback(async (label: string, sql: string): Promise<QueryResult> => {
     const t0 = performance.now();
-    const res = await fetch(`${BASE}/ai/executequery`, {
+    const res = await fetch(GATEWAY_URL, {
       method: 'POST',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -216,9 +218,12 @@ const CheckAccounting: React.FC = () => {
         <Tooltip title="Reload all statuses">
           <Button icon={<ReloadOutlined />} loading={summaryLoading} onClick={() => loadSummary(period)}>Refresh</Button>
         </Tooltip>
-        <Button icon={<CodeOutlined />} onClick={() => setSqlOpen(s => !s)}>
-          {sqlOpen ? 'Hide SQL' : 'Inspect SQL'}
-        </Button>
+        <Tooltip title="Show the API calls made by this page — the gateway endpoint and every SQL executed">
+          <Button icon={<ApiOutlined />} onClick={() => setSqlOpen(s => !s)}
+            style={sqlOpen ? { color: C.info, borderColor: C.info } : undefined}>
+            API
+          </Button>
+        </Tooltip>
         <Button type="primary" icon={<RobotOutlined />} onClick={askAi}
           style={{ background: C.primary, borderColor: C.primary }}>
           Ask AI about Accounting
@@ -229,13 +234,37 @@ const CheckAccounting: React.FC = () => {
         queried through the guarded SQL gateway. Click a card to list what is still missing accounting.
       </Text>
 
-      {summaryError && <Alert type="error" showIcon message={summaryError} style={{ marginBottom: 12 }} />}
+      {summaryError && (
+        <Alert
+          type="error" showIcon style={{ marginBottom: 12 }}
+          message={summaryError}
+          description={summaryError.includes('ORA-00942')
+            ? 'A status view is missing in the database — run database/ap/144_ap_accounting_status_views.sql and database/ap/145_more_accounting_status_views.sql in APEX SQL Workshop → SQL Scripts, then Refresh.'
+            : undefined}
+        />
+      )}
 
       {sqlOpen && (
-        <Card size="small" style={{ marginBottom: 14, borderColor: C.border }} title={<Text strong style={{ fontSize: 12 }}><CodeOutlined /> SQL executed (latest first)</Text>}>
+        <Card size="small" style={{ marginBottom: 14, borderColor: C.border }}
+          title={<Text strong style={{ fontSize: 12 }}><ApiOutlined /> API calls — SQL gateway</Text>}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8,
+            background: '#fafafa', border: `1px solid ${C.border}`, borderRadius: 4, padding: '4px 8px' }}>
+            <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>POST</Tag>
+            <code style={{ flex: 1, fontSize: 11, color: '#595959', wordBreak: 'break-all' }}>{GATEWAY_URL}</code>
+            <CopyOutlined style={{ cursor: 'pointer', color: '#8c8c8c', flexShrink: 0 }}
+              onClick={() => { navigator.clipboard.writeText(GATEWAY_URL); message.success('URL copied'); }} />
+          </div>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
+            Body: {'{ "sql": "...", "maxRows": 1000, "appUser": "…" }'} — every query below was sent to this endpoint (latest first).
+          </Text>
           {sqlLog.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>No queries yet.</Text>}
           {sqlLog.map((q, i) => (
-            <pre key={i} style={{ margin: '4px 0', padding: 8, background: '#F7F5F3', border: '1px solid #EFEBE9', borderRadius: 6, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <pre key={i} style={{
+              margin: '4px 0', padding: 8, borderRadius: 6, fontSize: 11,
+              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              background: q.label.includes('FAILED') ? '#FFF1F0' : '#F7F5F3',
+              border: q.label.includes('FAILED') ? '1px solid #FFA39E' : '1px solid #EFEBE9',
+            }}>
               {`-- ${q.label} · ${q.rows} rows · ${q.ms} ms\n${q.sql}`}
             </pre>
           ))}
