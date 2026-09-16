@@ -3921,6 +3921,7 @@ const ManageReceipts: React.FC = () => {
                             })()}
                           </div>
                         , true)}
+                        {field('Customer',       custSel())}
                         {field('Dr. Account',
                           <div>
                             <Space.Compact style={{ width: '100%' }}>
@@ -4049,7 +4050,6 @@ const ManageReceipts: React.FC = () => {
                           </div>
                         )}
                         {field('Receipt Number', inp('receiptNumber', 'Auto-generated if blank'), true)}
-                        {field('Customer',       custSel())}
                         {field('State',          sel('state', ['Applied', 'Unapplied', 'On Account', 'Reversed', 'NSF', 'Stop']))}
                         {field('Status',         sel('status', ['Cleared', 'Uncleared', 'Reversed', 'Remitted']))}
                       </Col>
