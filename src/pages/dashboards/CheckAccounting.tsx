@@ -8,12 +8,13 @@
  * the assistant to enquire about accounting in natural language.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Col, Row, Select, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, Descriptions, Input, Modal, Row, Select, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
 import {
-  ApiOutlined, AuditOutlined, CopyOutlined, FileExcelOutlined, ReloadOutlined, RobotOutlined,
+  ApiOutlined, AuditOutlined, CopyOutlined, FileExcelOutlined, LinkOutlined, ReloadOutlined, RobotOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
+import { useNavigate } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { useAuth } from '../../context/AuthContext';
 
@@ -38,9 +39,15 @@ interface ModuleDef {
   label: string;
   color: string;
   desc: string;
+  view: string;                 // status view backing this module
+  idColumn: string;             // primary id column in the detail result (drill key)
+  pageLabel: string;            // where "Open in ..." navigates
+  pagePath: (row: Record<string, string | number | null>) => string;
   summarySql: (period: string | null) => string;
   detailSql:  (period: string | null) => string;
 }
+
+const isIdColumn = (name: string) => /(^|_)id$/i.test(name);
 
 const dateFilter = (col: string, period: string | null) =>
   period ? ` AND TRUNC(${col},'MM') = ${periodMonth(period)}` : '';
@@ -48,21 +55,30 @@ const dateFilter = (col: string, period: string | null) =>
 const MODULES: ModuleDef[] = [
   {
     key: 'AP_INV', label: 'AP Invoices', color: C.orange, desc: 'RR_V_AP_INVOICE_ACCT_STATUS',
+    view: 'rr_v_ap_invoice_acct_status', idColumn: 'INVOICE_ID',
+    pageLabel: 'Manage AP Invoices', pagePath: () => '/ap/manage-invoices',
     summarySql: p => `SELECT gl_status, COUNT(*) FROM rr_v_ap_invoice_acct_status WHERE 1=1${dateFilter('accounting_date', p)} GROUP BY gl_status`,
     detailSql:  p => `SELECT invoice_id, invoice_number, supplier, business_unit, invoice_currency, invoice_amount, accounting_date, validation_status, payment_status_calc FROM rr_v_ap_invoice_acct_status WHERE gl_status = 'NOT ACCOUNTED'${dateFilter('accounting_date', p)} ORDER BY accounting_date DESC FETCH FIRST 500 ROWS ONLY`,
   },
   {
     key: 'AP_PAY', label: 'AP Payments', color: C.orange, desc: 'RR_V_AP_PAYMENT_ACCT_STATUS',
+    view: 'rr_v_ap_payment_acct_status', idColumn: 'CHECK_ID',
+    pageLabel: 'AP Payments', pagePath: () => '/ap/payments',
     summarySql: p => `SELECT gl_status, COUNT(*) FROM rr_v_ap_payment_acct_status WHERE 1=1${dateFilter('accounting_date', p)} GROUP BY gl_status`,
     detailSql:  p => `SELECT check_id, payment_number, payee, business_unit, payment_currency, payment_amount, payment_date, accounting_date, payment_status FROM rr_v_ap_payment_acct_status WHERE gl_status = 'NOT ACCOUNTED'${dateFilter('accounting_date', p)} ORDER BY payment_date DESC FETCH FIRST 500 ROWS ONLY`,
   },
   {
     key: 'EXT_TXN', label: 'External Transactions', color: C.info, desc: 'RR_V_EXT_TXN_ACCT_STATUS',
+    view: 'rr_v_ext_txn_acct_status', idColumn: 'EXTERNAL_TRANSACTION_ID',
+    pageLabel: 'Manage External Transactions', pagePath: () => '/cash/external-transactions',
     summarySql: p => `SELECT gl_status, COUNT(*) FROM rr_v_ext_txn_acct_status WHERE 1=1${dateFilter('transaction_date', p)} GROUP BY gl_status`,
     detailSql:  p => `SELECT external_transaction_id, transaction_date, amount, currency_code, transaction_type, bank_account_name, business_unit_name, description FROM rr_v_ext_txn_acct_status WHERE gl_status = 'NOT ACCOUNTED'${dateFilter('transaction_date', p)} ORDER BY transaction_date DESC FETCH FIRST 500 ROWS ONLY`,
   },
   {
     key: 'FA', label: 'Fixed Assets', color: C.purple, desc: 'RR_V_FA_ASSET_ACCT_STATUS (additions; deprn for period)',
+    view: 'rr_v_fa_asset_acct_status', idColumn: 'ASSET_ID',
+    pageLabel: 'Manage Assets',
+    pagePath: row => row.ASSET_NUMBER != null ? `/fa/assets?assetNumber=${row.ASSET_NUMBER}` : '/fa/assets',
     summarySql: p => p
       ? `SELECT 'ADDN ' || addition_status, COUNT(*) FROM rr_v_fa_asset_acct_status GROUP BY addition_status UNION ALL SELECT CASE WHEN last_deprn_period = '${p}' THEN 'DEPRN ACCOUNTED' ELSE 'DEPRN NOT ACCOUNTED' END, COUNT(*) FROM rr_v_fa_asset_acct_status GROUP BY CASE WHEN last_deprn_period = '${p}' THEN 'DEPRN ACCOUNTED' ELSE 'DEPRN NOT ACCOUNTED' END`
       : `SELECT 'ADDN ' || addition_status, COUNT(*) FROM rr_v_fa_asset_acct_status GROUP BY addition_status UNION ALL SELECT 'DEPRN ' || deprn_status, COUNT(*) FROM rr_v_fa_asset_acct_status GROUP BY deprn_status`,
@@ -72,17 +88,22 @@ const MODULES: ModuleDef[] = [
   },
   {
     key: 'AR_INV', label: 'AR Invoices', color: C.success, desc: 'RR_V_AR_INVOICE_ACCT_STATUS',
+    view: 'rr_v_ar_invoice_acct_status', idColumn: 'CUSTOMER_TRANSACTION_ID',
+    pageLabel: 'AR Invoices', pagePath: () => '/ar/manage-invoices',
     summarySql: p => `SELECT gl_status, COUNT(*) FROM rr_v_ar_invoice_acct_status WHERE 1=1${dateFilter('accounting_date', p)} GROUP BY gl_status`,
     detailSql:  p => `SELECT customer_transaction_id, transaction_number, bill_to_customer_name, business_unit, invoice_currency_code, entered_amount, invoice_balance_amount, accounting_date, payment_status_calc FROM rr_v_ar_invoice_acct_status WHERE gl_status = 'NOT ACCOUNTED'${dateFilter('accounting_date', p)} ORDER BY accounting_date DESC FETCH FIRST 500 ROWS ONLY`,
   },
   {
     key: 'AR_RCPT', label: 'AR Receipts', color: C.success, desc: 'RR_V_AR_RECEIPT_ACCT_STATUS',
+    view: 'rr_v_ar_receipt_acct_status', idColumn: 'STANDARD_RECEIPT_ID',
+    pageLabel: 'AR Receipts', pagePath: () => '/ar/manage-receipts',
     summarySql: p => `SELECT gl_status, COUNT(*) FROM rr_v_ar_receipt_acct_status WHERE 1=1${dateFilter('accounting_date', p)} GROUP BY gl_status`,
     detailSql:  p => `SELECT standard_receipt_id, receipt_number, customer_name, business_unit, currency, amount, unapplied_amount, receipt_date, application_status FROM rr_v_ar_receipt_acct_status WHERE gl_status = 'NOT ACCOUNTED'${dateFilter('accounting_date', p)} ORDER BY receipt_date DESC FETCH FIRST 500 ROWS ONLY`,
   },
 ];
 
 const CheckAccounting: React.FC = () => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const userName = (user as { name?: string; email?: string })?.name
     ?? (user as { email?: string })?.email?.split('@')[0] ?? 'user';
@@ -97,6 +118,11 @@ const CheckAccounting: React.FC = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [sqlLog, setSqlLog] = useState<{ label: string; sql: string; ms: number; rows: number }[]>([]);
   const [sqlOpen, setSqlOpen] = useState(false);
+  const [rowSearch, setRowSearch] = useState('');
+  // drill-down: full record from the status view + link to the module page
+  const [drill, setDrill] = useState<{ module: ModuleDef; id: string } | null>(null);
+  const [drillData, setDrillData] = useState<QueryResult | null>(null);
+  const [drillLoading, setDrillLoading] = useState(false);
 
   // Same execution path as the AI assistant's SQL mode
   const runQuery = useCallback(async (label: string, sql: string): Promise<QueryResult> => {
@@ -159,6 +185,7 @@ const CheckAccounting: React.FC = () => {
   const openDetail = async (m: ModuleDef) => {
     setDetailKey(m.key);
     setDetail(null);
+    setRowSearch('');
     setDetailLoading(true);
     try {
       setDetail(await runQuery(`${m.label} — pending detail`, m.detailSql(period)));
@@ -172,21 +199,60 @@ const CheckAccounting: React.FC = () => {
 
   const detailModule = MODULES.find(m => m.key === detailKey) || null;
 
+  // client-side search across all columns of the detail grid
+  const filteredDetailRows = useMemo(() => {
+    if (!detail) return [];
+    const f = rowSearch.trim().toLowerCase();
+    if (!f) return detail.rows;
+    return detail.rows.filter(r => r.some(v => String(v ?? '').toLowerCase().includes(f)));
+  }, [detail, rowSearch]);
+
+  const openDrill = useCallback(async (m: ModuleDef, idText: string) => {
+    const idNum = idText.replace(/[^0-9]/g, '');
+    if (!idNum) { message.warning(`Cannot drill — ${idText} is not a numeric id`); return; }
+    setDrill({ module: m, id: idNum });
+    setDrillData(null);
+    setDrillLoading(true);
+    try {
+      setDrillData(await runQuery(`${m.label} — record ${idNum}`,
+        `SELECT * FROM ${m.view} WHERE ${m.idColumn.toLowerCase()} = ${idNum}`));
+    } catch (e) {
+      message.error(`Drill failed: ${e instanceof Error ? e.message : e}`);
+      setDrill(null);
+    } finally {
+      setDrillLoading(false);
+    }
+  }, [runQuery]);
+
   const detailColumns = useMemo(() => (detail?.columns || []).map((c, i) => ({
     title: c.replace(/_/g, ' '),
     key: c,
     ellipsis: true,
     render: (_: unknown, row: (string | number | null)[]) => {
       const v = row[i];
+      if (v === null || v === undefined) return <span style={{ fontSize: 12 }}>—</span>;
+      // ids are identifiers, never amounts — show raw, no thousand separators
+      if (isIdColumn(c)) {
+        const text = String(v);
+        return detailModule && c === detailModule.idColumn
+          ? (
+            <a onClick={() => openDrill(detailModule, text)}
+              style={{ fontFamily: 'monospace', fontSize: 12 }}
+              title="Drill into this transaction">
+              {text}
+            </a>
+          )
+          : <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{text}</span>;
+      }
       return typeof v === 'number'
         ? <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
-        : <span style={{ fontSize: 12 }}>{v === null || v === undefined ? '—' : String(v)}</span>;
+        : <span style={{ fontSize: 12 }}>{String(v)}</span>;
     },
-  })), [detail]);
+  })), [detail, detailModule, openDrill]);
 
   const exportDetailExcel = () => {
     if (!detail || !detailModule) return;
-    const ws = XLSX.utils.aoa_to_sheet([detail.columns, ...detail.rows]);
+    const ws = XLSX.utils.aoa_to_sheet([detail.columns, ...filteredDetailRows]);
     ws['!cols'] = detail.columns.map(() => ({ wch: 18 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Pending Accounting');
@@ -194,6 +260,14 @@ const CheckAccounting: React.FC = () => {
     saveAs(new Blob([buf], { type: 'application/octet-stream' }),
       `Pending_Accounting_${detailModule.label.replace(/\s+/g, '_')}_${period || 'All'}.xlsx`);
   };
+
+  // drill record as { COLUMN: value } for the modal + page link
+  const drillRecord = useMemo(() => {
+    if (!drillData?.rows.length) return null;
+    const rec: Record<string, string | number | null> = {};
+    drillData.columns.forEach((c, i) => { rec[c] = drillData.rows[0][i]; });
+    return rec;
+  }, [drillData]);
 
   const askAi = () => {
     window.dispatchEvent(new Event('reerp-ai:toggle'));
@@ -315,31 +389,88 @@ const CheckAccounting: React.FC = () => {
           title={
             <Space wrap>
               <Text strong>{detailModule.label} — pending accounting{period ? ` · ${period}` : ''}</Text>
-              {detail && <Tag>{detail.rows.length} row(s)</Tag>}
+              {detail && <Tag>{filteredDetailRows.length}{rowSearch ? ` of ${detail.rows.length}` : ''} row(s)</Tag>}
             </Space>
           }
           extra={
-            <Button size="small" icon={<FileExcelOutlined />} disabled={!detail?.rows.length}
-              onClick={exportDetailExcel} style={{ color: C.success, borderColor: C.success }}>
-              Excel
-            </Button>
+            <Space>
+              <Input
+                size="small" allowClear placeholder="Search rows…"
+                value={rowSearch} onChange={e => setRowSearch(e.target.value)}
+                style={{ width: 200 }}
+              />
+              <Button size="small" icon={<FileExcelOutlined />} disabled={!filteredDetailRows.length}
+                onClick={exportDetailExcel} style={{ color: C.success, borderColor: C.success }}>
+                Excel
+              </Button>
+            </Space>
           }
         >
           {detailLoading && <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>}
           {detail && !detailLoading && (
             detail.rows.length === 0
               ? <Alert type="success" showIcon message={`Nothing pending — every ${detailModule.label.toLowerCase()} document${period ? ` in ${period}` : ''} is accounted.`} />
-              : <Table
-                  size="small"
-                  dataSource={detail.rows}
-                  columns={detailColumns}
-                  rowKey={(_, i) => String(i)}
-                  pagination={{ pageSize: 20, size: 'small', showTotal: t => `${t} rows` }}
-                  scroll={{ x: true }}
-                />
+              : (
+                <>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
+                    Click an {detailModule.idColumn.replace(/_/g, ' ').toLowerCase()} to drill into the transaction.
+                  </Text>
+                  <Table
+                    size="small"
+                    dataSource={filteredDetailRows}
+                    columns={detailColumns}
+                    rowKey={(_, i) => String(i)}
+                    pagination={{ pageSize: 20, size: 'small', showTotal: t => `${t} rows` }}
+                    scroll={{ x: true }}
+                  />
+                </>
+              )
           )}
         </Card>
       )}
+
+      {/* Drill-down: full record from the status view + jump to the module page */}
+      <Modal
+        open={!!drill}
+        onCancel={() => { setDrill(null); setDrillData(null); }}
+        width={720}
+        title={drill ? `${drill.module.label} · ${drill.id}` : ''}
+        footer={drill ? [
+          <Button key="open" type="primary" icon={<LinkOutlined />}
+            style={{ background: C.primary, borderColor: C.primary }}
+            onClick={() => { if (drillRecord) navigate(drill.module.pagePath(drillRecord)); }}
+            disabled={!drillRecord}>
+            Open in {drill.module.pageLabel}
+          </Button>,
+          <Button key="close" onClick={() => { setDrill(null); setDrillData(null); }}>Close</Button>,
+        ] : null}
+      >
+        {drillLoading && <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>}
+        {!drillLoading && drillData && !drillRecord && (
+          <Alert type="warning" showIcon message="Record not found in the status view." />
+        )}
+        {!drillLoading && drillRecord && (
+          <Descriptions size="small" column={2} bordered
+            items={Object.entries(drillRecord).map(([k, v]) => ({
+              key: k,
+              label: <span style={{ fontSize: 11 }}>{k.replace(/_/g, ' ')}</span>,
+              children: (
+                <span style={{
+                  fontSize: 12,
+                  fontFamily: isIdColumn(k) ? 'monospace' : undefined,
+                  color: String(v).includes('NOT ACCOUNTED') ? C.primary : undefined,
+                  fontWeight: k === 'GL_STATUS' ? 700 : undefined,
+                }}>
+                  {v === null || v === undefined ? '—'
+                    : typeof v === 'number' && !isIdColumn(k)
+                      ? v.toLocaleString('en-US', { minimumFractionDigits: 2 })
+                      : String(v)}
+                </span>
+              ),
+            }))}
+          />
+        )}
+      </Modal>
     </div>
   );
 };
