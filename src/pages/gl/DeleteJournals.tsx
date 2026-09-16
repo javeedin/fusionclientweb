@@ -1,5 +1,5 @@
 import { buildApexUrl } from '../../config/api.helper';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Layout, Card, Row, Col, Input, Button, Space, Tabs, message, Modal, Divider,
   Form, InputNumber, Statistic, Typography, Alert, Empty, Table, Tag, Popconfirm, Spin,
@@ -55,20 +55,27 @@ const runSql = async (sql: string): Promise<QR> => {
   return { columns: data.columns || [], rows: data.rows || [] };
 };
 
-// generic dynamic columns: ids raw monospace, numbers right-aligned
-const dynCols = (r: QR) => r.columns.map((c, i) => ({
-  title: c.replace(/_/g, ' '),
-  key: c,
-  ellipsis: true,
-  render: (_: unknown, row: (string | number | null)[]) => {
-    const v = row[i];
-    if (v === null || v === undefined) return <span style={{ fontSize: 11, color: '#bbb' }}>—</span>;
-    if (/(^|_)id$/i.test(c)) return <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{String(v)}</span>;
-    return typeof v === 'number'
-      ? <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 11 }}>{v.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
-      : <span style={{ fontSize: 11 }}>{String(v)}</span>;
-  },
-}));
+// row -> { COLUMN: value } record
+type Rec = Record<string, string | number | null>;
+const recOf = (r: QR, rowIdx: number): Rec => {
+  const rec: Rec = {};
+  r.columns.forEach((c, i) => { rec[c.toUpperCase()] = r.rows[rowIdx][i]; });
+  return rec;
+};
+// first non-empty of several candidate columns (schema naming varies)
+const pick = (rec: Rec | null, keys: string[]): string => {
+  if (!rec) return '';
+  for (const k of keys) {
+    const v = rec[k];
+    if (v !== null && v !== undefined && String(v) !== '') return String(v);
+  }
+  return '';
+};
+const num = (v: string | number | null | undefined): number =>
+  typeof v === 'number' ? v : Number(v) || 0;
+const fmtAmt = (n: number) =>
+  n === 0 ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const isPostedStatus = (s: string) => s === 'P' || /post/i.test(s);
 
 const DeleteJournals: React.FC = () => {
   const [form] = Form.useForm();
@@ -114,6 +121,58 @@ const DeleteJournals: React.FC = () => {
     setPrevLines(toSection(settled[2]));
     setPrevLoading(false);
   };
+
+  // shaped records for the journal-document layout
+  const batchRec = useMemo(
+    () => (prevBatch.res?.rows.length ? recOf(prevBatch.res, 0) : null), [prevBatch]);
+  const headerRecs = useMemo(
+    () => (prevHeaders.res ? prevHeaders.res.rows.map((_, i) => recOf(prevHeaders.res!, i)) : []), [prevHeaders]);
+  const lineRecs = useMemo(
+    () => (prevLines.res ? prevLines.res.rows.map((_, i) => recOf(prevLines.res!, i)) : []), [prevLines]);
+  const linesByHeader = useMemo(() => {
+    const m = new Map<string, Rec[]>();
+    lineRecs.forEach(l => {
+      const k = String(l.JE_HEADER_ID ?? '');
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(l);
+    });
+    return m;
+  }, [lineRecs]);
+  const overallTotals = useMemo(
+    () => lineRecs.reduce<{ dr: number; cr: number }>(
+      (a, l) => ({ dr: a.dr + num(l.ACCOUNTED_DR), cr: a.cr + num(l.ACCOUNTED_CR) }),
+      { dr: 0, cr: 0 }),
+    [lineRecs]);
+
+  const journalLineCols = [
+    { title: '#', key: 'n', width: 44, align: 'center' as const,
+      render: (_: unknown, l: Rec) => <Text type="secondary" style={{ fontSize: 11 }}>{pick(l, ['JE_LINE_NUMBER', 'LINE_NUM', 'LINE_ID'])}</Text> },
+    { title: 'Account Combination', key: 'acct', width: 230,
+      render: (_: unknown, l: Rec) => <span style={{ fontFamily: 'monospace', fontSize: 11.5, color: REDWOOD.info }}>{pick(l, ['ACCOUNT_COMBINATION']) || '—'}</span> },
+    { title: 'Description', key: 'desc', ellipsis: true,
+      render: (_: unknown, l: Rec) => <span style={{ fontSize: 11.5 }}>{pick(l, ['DESCRIPTION']) || '—'}</span> },
+    { title: 'Ccy', key: 'ccy', width: 52, align: 'center' as const,
+      render: (_: unknown, l: Rec) => <Tag style={{ fontSize: 10, margin: 0 }}>{pick(l, ['CURRENCY_CODE']) || '—'}</Tag> },
+    { title: 'Entered Dr', key: 'edr', width: 110, align: 'right' as const,
+      render: (_: unknown, l: Rec) => <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5 }}>{fmtAmt(num(l.ENTERED_DR))}</span> },
+    { title: 'Entered Cr', key: 'ecr', width: 110, align: 'right' as const,
+      render: (_: unknown, l: Rec) => <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5 }}>{fmtAmt(num(l.ENTERED_CR))}</span> },
+    { title: 'Accounted Dr', key: 'adr', width: 120, align: 'right' as const,
+      render: (_: unknown, l: Rec) => <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5, fontWeight: 600, color: REDWOOD.success }}>{fmtAmt(num(l.ACCOUNTED_DR))}</span> },
+    { title: 'Accounted Cr', key: 'acr', width: 120, align: 'right' as const,
+      render: (_: unknown, l: Rec) => <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5, fontWeight: 600, color: REDWOOD.primary }}>{fmtAmt(num(l.ACCOUNTED_CR))}</span> },
+    { title: 'References', key: 'refs', width: 170,
+      render: (_: unknown, l: Rec) => {
+        const r1 = pick(l, ['REFERENCE1']); const r2 = pick(l, ['REFERENCE2']); const r5 = pick(l, ['REFERENCE5']);
+        if (!r1 && !r2 && !r5) return <span style={{ fontSize: 10.5, color: '#bbb' }}>—</span>;
+        return (
+          <div style={{ fontSize: 10, color: REDWOOD.neutral600, lineHeight: 1.5 }}>
+            {r5 && <Tag color="purple" style={{ fontSize: 9, lineHeight: '14px', padding: '0 4px', margin: 0 }}>{r5}</Tag>}
+            {(r1 || r2) && <div style={{ fontFamily: 'monospace' }}>{[r1, r2].filter(Boolean).join(' · ')}</div>}
+          </div>
+        );
+      } },
+  ];
 
   // ── Delete SLA Entry ────────────────────────────────────────────────────
   const handleDeleteSla = async (headerId: number) => {
@@ -811,32 +870,158 @@ const DeleteJournals: React.FC = () => {
         >
           {prevLoading && <div style={{ textAlign: 'center', padding: 30 }}><Spin /></div>}
           {!prevLoading && (
-            <>
+            <div style={{ maxHeight: '68vh', overflowY: 'auto', paddingRight: 4 }}>
               {prevSqlOpen && prevSqls.map((s, i) => (
                 <pre key={i} style={{ margin: '4px 0', padding: 8, background: '#F7F5F3', border: '1px solid #EFEBE9', borderRadius: 6, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{s}</pre>
               ))}
 
-              <Title level={5} style={{ marginTop: 4 }}>Batch — RR_GL_JE_BATCHES ({prevBatch.res?.rows.length ?? 0})</Title>
-              {prevBatch.err && <Alert type="error" showIcon message={prevBatch.err} style={{ marginBottom: 8 }} />}
-              {prevBatch.res && (prevBatch.res.rows.length === 0
-                ? <Alert type="warning" showIcon message="No batch row found for this id" style={{ marginBottom: 8 }} />
-                : <Table size="small" dataSource={prevBatch.res.rows} columns={dynCols(prevBatch.res)}
-                    rowKey={(_, i) => `b${i}`} pagination={false} scroll={{ x: true }} style={{ marginBottom: 12 }} />)}
+              {(prevBatch.err || prevHeaders.err || prevLines.err) && (
+                <Alert type="error" showIcon style={{ marginBottom: 10 }}
+                  message="Some data could not be loaded"
+                  description={[prevBatch.err, prevHeaders.err, prevLines.err].filter(Boolean).join(' · ')} />
+              )}
 
-              <Title level={5}>Headers — RR_GL_JE_HEADERS ({prevHeaders.res?.rows.length ?? 0})</Title>
-              {prevHeaders.err && <Alert type="error" showIcon message={prevHeaders.err} style={{ marginBottom: 8 }} />}
-              {prevHeaders.res && (prevHeaders.res.rows.length === 0
-                ? <Alert type="warning" showIcon message="No journal headers for this batch" style={{ marginBottom: 8 }} />
-                : <Table size="small" dataSource={prevHeaders.res.rows} columns={dynCols(prevHeaders.res)}
-                    rowKey={(_, i) => `h${i}`} pagination={{ pageSize: 5, size: 'small' }} scroll={{ x: true }} style={{ marginBottom: 12 }} />)}
+              {/* ── Batch banner ── */}
+              <div style={{
+                background: `linear-gradient(135deg, ${REDWOOD.primary}, ${REDWOOD.primaryDark})`,
+                borderRadius: 10, padding: '14px 18px', color: '#fff', marginBottom: 14,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 16, fontWeight: 700 }}>
+                    {pick(batchRec, ['NAME', 'BATCH_NAME']) || `Batch ${preview?.batchId ?? ''}`}
+                  </span>
+                  <Tag style={{ background: 'rgba(255,255,255,.18)', color: '#fff', border: 'none', fontFamily: 'monospace' }}>
+                    ID {preview?.batchId}
+                  </Tag>
+                  {pick(batchRec, ['STATUS']) && (
+                    <Tag color={isPostedStatus(pick(batchRec, ['STATUS'])) ? 'green' : 'gold'} style={{ fontWeight: 600 }}>
+                      {pick(batchRec, ['STATUS'])}
+                    </Tag>
+                  )}
+                  {pick(batchRec, ['PERIOD_NAME', 'DEFAULT_PERIOD_NAME']) && (
+                    <Tag color="geekblue">{pick(batchRec, ['PERIOD_NAME', 'DEFAULT_PERIOD_NAME'])}</Tag>
+                  )}
+                  {pick(batchRec, ['ACTUAL_FLAG']) === 'A' && <Tag color="cyan">Actual</Tag>}
+                  <span style={{ flex: 1 }} />
+                  <span style={{ fontSize: 11, opacity: .85 }}>
+                    {pick(batchRec, ['CREATED_BY']) && <>by {pick(batchRec, ['CREATED_BY'])}</>}
+                    {pick(batchRec, ['CREATION_DATE']) && <> · {pick(batchRec, ['CREATION_DATE'])}</>}
+                  </span>
+                </div>
+                {pick(batchRec, ['DESCRIPTION']) && (
+                  <div style={{ fontSize: 12, opacity: .9, marginTop: 6 }}>{pick(batchRec, ['DESCRIPTION'])}</div>
+                )}
+                <div style={{ display: 'flex', gap: 24, marginTop: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12 }}>Journals <b style={{ fontSize: 15 }}>{headerRecs.length}</b></span>
+                  <span style={{ fontSize: 12 }}>Lines <b style={{ fontSize: 15 }}>{lineRecs.length}</b></span>
+                  <span style={{ fontSize: 12 }}>Total Dr <b style={{ fontSize: 15, fontVariantNumeric: 'tabular-nums' }}>{overallTotals.dr.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b></span>
+                  <span style={{ fontSize: 12 }}>Total Cr <b style={{ fontSize: 15, fontVariantNumeric: 'tabular-nums' }}>{overallTotals.cr.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b></span>
+                  {Math.abs(overallTotals.dr - overallTotals.cr) < 0.01
+                    ? <Tag color="green" style={{ fontWeight: 700 }}><CheckCircleOutlined /> Balanced</Tag>
+                    : <Tag color="red" style={{ fontWeight: 700 }}>Out of balance Δ {(overallTotals.dr - overallTotals.cr).toLocaleString('en-US', { minimumFractionDigits: 2 })}</Tag>}
+                </div>
+              </div>
 
-              <Title level={5}>Lines — RR_GL_JE_LINES_ALL ({prevLines.res?.rows.length ?? 0})</Title>
-              {prevLines.err && <Alert type="error" showIcon message={prevLines.err} style={{ marginBottom: 8 }} />}
-              {prevLines.res && (prevLines.res.rows.length === 0
-                ? <Alert type="warning" showIcon message="No journal lines for this batch" />
-                : <Table size="small" dataSource={prevLines.res.rows} columns={dynCols(prevLines.res)}
-                    rowKey={(_, i) => `l${i}`} pagination={{ pageSize: 10, size: 'small', showTotal: t => `${t} lines` }} scroll={{ x: true }} />)}
-            </>
+              {!batchRec && prevBatch.res && (
+                <Alert type="warning" showIcon style={{ marginBottom: 10 }}
+                  message="No batch row found for this id in RR_GL_JE_BATCHES (headers/lines shown below if any)" />
+              )}
+
+              {/* ── One card per journal header, with its lines ── */}
+              {headerRecs.length === 0 && prevHeaders.res && (
+                <Alert type="warning" showIcon message="No journal headers for this batch" />
+              )}
+              {headerRecs.map((h, hi) => {
+                const hid = String(h.JE_HEADER_ID ?? '');
+                const hLines = linesByHeader.get(hid) ?? [];
+                const dr = hLines.reduce((s, l) => s + num(l.ACCOUNTED_DR), 0);
+                const cr = hLines.reduce((s, l) => s + num(l.ACCOUNTED_CR), 0);
+                const status = pick(h, ['POSTING_STATUS', 'STATUS']);
+                return (
+                  <Card
+                    key={hid || hi}
+                    size="small"
+                    style={{ marginBottom: 12, borderRadius: 10, border: `1px solid ${REDWOOD.neutral200}` }}
+                    title={
+                      <Space wrap size={6}>
+                        <Text strong style={{ fontSize: 13 }}>
+                          {pick(h, ['JOURNAL_NAME', 'NAME']) || `Journal ${hid}`}
+                        </Text>
+                        <Tag style={{ fontFamily: 'monospace', fontSize: 10 }}>HDR {hid}</Tag>
+                        {status && (
+                          <Tag color={isPostedStatus(status) ? 'green' : 'gold'} style={{ fontSize: 10 }}>
+                            {isPostedStatus(status) ? 'Posted' : status}
+                          </Tag>
+                        )}
+                        {pick(h, ['PERIOD_NAME']) && <Tag color="geekblue" style={{ fontSize: 10 }}>{pick(h, ['PERIOD_NAME'])}</Tag>}
+                        {pick(h, ['LEDGER_NAME']) && <Tag color="purple" style={{ fontSize: 10 }}>{pick(h, ['LEDGER_NAME'])}</Tag>}
+                        {pick(h, ['CURRENCY_CODE', 'LEDGER_CURRENCY_CODE']) && (
+                          <Tag style={{ fontSize: 10 }}>{pick(h, ['CURRENCY_CODE', 'LEDGER_CURRENCY_CODE'])}</Tag>
+                        )}
+                        {pick(h, ['USER_JE_CATEGORY_NAME']) && (
+                          <Tag color="cyan" style={{ fontSize: 10 }}>{pick(h, ['USER_JE_CATEGORY_NAME'])}</Tag>
+                        )}
+                      </Space>
+                    }
+                    extra={
+                      Math.abs(dr - cr) < 0.01
+                        ? <Tag color="green" style={{ fontWeight: 600 }}>Dr = Cr</Tag>
+                        : <Tag color="red" style={{ fontWeight: 600 }}>Δ {(dr - cr).toLocaleString('en-US', { minimumFractionDigits: 2 })}</Tag>
+                    }
+                  >
+                    {pick(h, ['JOURNAL_DESCRIPTION', 'DESCRIPTION']) && (
+                      <Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginBottom: 6 }}>
+                        {pick(h, ['JOURNAL_DESCRIPTION', 'DESCRIPTION'])}
+                      </Text>
+                    )}
+                    <Table
+                      size="small"
+                      dataSource={hLines}
+                      columns={journalLineCols}
+                      rowKey={(_, i) => `${hid}-${i}`}
+                      pagination={hLines.length > 12 ? { pageSize: 12, size: 'small' } : false}
+                      scroll={{ x: 1050 }}
+                      summary={() => (
+                        <Table.Summary fixed>
+                          <Table.Summary.Row style={{ background: '#FBF4F2', fontWeight: 700 }}>
+                            <Table.Summary.Cell index={0} colSpan={4} align="right">
+                              <Text strong style={{ fontSize: 11.5 }}>TOTAL ({hLines.length} lines)</Text>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell index={4} align="right">
+                              <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5 }}>{fmtAmt(hLines.reduce((s, l) => s + num(l.ENTERED_DR), 0))}</span>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell index={5} align="right">
+                              <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5 }}>{fmtAmt(hLines.reduce((s, l) => s + num(l.ENTERED_CR), 0))}</span>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell index={6} align="right">
+                              <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5, color: REDWOOD.success }}>{fmtAmt(dr)}</span>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell index={7} align="right">
+                              <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5, color: REDWOOD.primary }}>{fmtAmt(cr)}</span>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell index={8} />
+                          </Table.Summary.Row>
+                        </Table.Summary>
+                      )}
+                    />
+                  </Card>
+                );
+              })}
+
+              {/* lines whose header row is missing (orphans) still show */}
+              {(() => {
+                const known = new Set(headerRecs.map(h => String(h.JE_HEADER_ID ?? '')));
+                const orphans = lineRecs.filter(l => !known.has(String(l.JE_HEADER_ID ?? '')));
+                if (!orphans.length) return null;
+                return (
+                  <Card size="small" title={<Text strong style={{ fontSize: 12.5, color: REDWOOD.warning }}>Lines without a header row ({orphans.length})</Text>}
+                    style={{ marginBottom: 12, borderRadius: 10, borderColor: REDWOOD.warning }}>
+                    <Table size="small" dataSource={orphans} columns={journalLineCols}
+                      rowKey={(_, i) => `o${i}`} pagination={{ pageSize: 10, size: 'small' }} scroll={{ x: 1050 }} />
+                  </Card>
+                );
+              })()}
+            </div>
           )}
         </Modal>
       </Content>
