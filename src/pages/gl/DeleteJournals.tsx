@@ -6,7 +6,7 @@ import {
 } from 'antd';
 import {
   DeleteOutlined, ClearOutlined, ExclamationCircleOutlined, CheckCircleOutlined,
-  ClockCircleOutlined, BugOutlined,
+  ClockCircleOutlined, BugOutlined, EyeOutlined,
 } from '@ant-design/icons';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 
@@ -38,6 +38,38 @@ interface DeletionResult {
   endTime?: number;
 }
 
+// Preview runs direct SQL through the guarded gateway (POST ai/executequery),
+// the same execution path the AI assistant and Check Accounting use.
+interface QR { columns: string[]; rows: (string | number | null)[][] }
+interface QSection { res?: QR; err?: string }
+
+const runSql = async (sql: string): Promise<QR> => {
+  const res = await fetch(`${APEX_BASE}/ai/executequery`, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ sql, maxRows: 1000, appUser: 'DELETE_JOURNALS' }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
+  return { columns: data.columns || [], rows: data.rows || [] };
+};
+
+// generic dynamic columns: ids raw monospace, numbers right-aligned
+const dynCols = (r: QR) => r.columns.map((c, i) => ({
+  title: c.replace(/_/g, ' '),
+  key: c,
+  ellipsis: true,
+  render: (_: unknown, row: (string | number | null)[]) => {
+    const v = row[i];
+    if (v === null || v === undefined) return <span style={{ fontSize: 11, color: '#bbb' }}>—</span>;
+    if (/(^|_)id$/i.test(c)) return <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{String(v)}</span>;
+    return typeof v === 'number'
+      ? <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 11 }}>{v.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+      : <span style={{ fontSize: 11 }}>{String(v)}</span>;
+  },
+}));
+
 const DeleteJournals: React.FC = () => {
   const [form] = Form.useForm();
   const [activeTab, setActiveTab] = useState('sla');
@@ -49,6 +81,39 @@ const DeleteJournals: React.FC = () => {
     failed: 0,
     duration: 0,
   });
+
+  // ── Preview a GL batch (batch + headers + lines via direct SQL) ─────────
+  const [preview, setPreview] = useState<{ batchId: number } | null>(null);
+  const [prevBatch, setPrevBatch] = useState<QSection>({});
+  const [prevHeaders, setPrevHeaders] = useState<QSection>({});
+  const [prevLines, setPrevLines] = useState<QSection>({});
+  const [prevLoading, setPrevLoading] = useState(false);
+  const [prevSqls, setPrevSqls] = useState<string[]>([]);
+  const [prevSqlOpen, setPrevSqlOpen] = useState(false);
+
+  const openPreview = async (batchId: number) => {
+    if (!batchId || batchId <= 0) {
+      message.error('Please enter a valid GL Batch ID');
+      return;
+    }
+    setPreview({ batchId });
+    setPrevBatch({}); setPrevHeaders({}); setPrevLines({});
+    setPrevSqlOpen(false);
+    setPrevLoading(true);
+    const sqls = [
+      `SELECT * FROM rr_gl_je_batches WHERE je_batch_id = ${batchId}`,
+      `SELECT * FROM rr_gl_je_headers WHERE je_batch_id = ${batchId} ORDER BY je_header_id`,
+      `SELECT * FROM rr_gl_je_lines_all WHERE je_header_id IN (SELECT je_header_id FROM rr_gl_je_headers WHERE je_batch_id = ${batchId}) ORDER BY je_header_id`,
+    ];
+    setPrevSqls(sqls);
+    const settled = await Promise.allSettled(sqls.map(s => runSql(s)));
+    const toSection = (r: PromiseSettledResult<QR>): QSection =>
+      r.status === 'fulfilled' ? { res: r.value } : { err: r.reason instanceof Error ? r.reason.message : String(r.reason) };
+    setPrevBatch(toSection(settled[0]));
+    setPrevHeaders(toSection(settled[1]));
+    setPrevLines(toSection(settled[2]));
+    setPrevLoading(false);
+  };
 
   // ── Delete SLA Entry ────────────────────────────────────────────────────
   const handleDeleteSla = async (headerId: number) => {
@@ -152,48 +217,54 @@ const DeleteJournals: React.FC = () => {
       ),
       okText: 'Delete',
       okType: 'danger',
-      onOk: async () => {
-        setLoading(true);
-        const startTime = Date.now();
-        const result: DeletionResult = {
-          id: batchId,
-          type: 'journal',
-          status: 'pending',
-          startTime,
-        };
-
-        try {
-          const deleteUrl = `${APEX_BASE}/gl/journals/batches/${batchId}`;
-          const response = await fetch(deleteUrl, {
-            method: 'DELETE',
-            headers: {
-              Accept: 'application/json',
-            },
-          });
-
-          const data = await response.json().catch(() => ({}));
-
-          if (response.ok && (data.success !== false)) {
-            result.status = 'success';
-            result.message = `GL Batch ${batchId} deleted successfully`;
-            message.success(result.message);
-          } else {
-            result.status = 'error';
-            result.message = data?.message || data?.error || `HTTP ${response.status}`;
-            message.error(`Failed to delete GL journal: ${result.message}`);
-          }
-        } catch (error: any) {
-          result.status = 'error';
-          result.message = error.message || 'Network error';
-          message.error(`Error deleting GL journal: ${result.message}`);
-        } finally {
-          result.endTime = Date.now();
-          setResults(prev => [...prev, result]);
-          setLoading(false);
-          form.resetFields();
-        }
-      },
+      onOk: () => performDeleteJournal(batchId),
     });
+  };
+
+  // shared by the confirm above and the preview dialog's Delete button
+  const performDeleteJournal = async (batchId: number): Promise<boolean> => {
+    setLoading(true);
+    const startTime = Date.now();
+    const result: DeletionResult = {
+      id: batchId,
+      type: 'journal',
+      status: 'pending',
+      startTime,
+    };
+    let ok = false;
+
+    try {
+      const deleteUrl = `${APEX_BASE}/gl/journals/batches/${batchId}`;
+      const response = await fetch(deleteUrl, {
+        method: 'DELETE',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && (data.success !== false)) {
+        ok = true;
+        result.status = 'success';
+        result.message = `GL Batch ${batchId} deleted successfully`;
+        message.success(result.message);
+      } else {
+        result.status = 'error';
+        result.message = data?.message || data?.error || `HTTP ${response.status}`;
+        message.error(`Failed to delete GL journal: ${result.message}`);
+      }
+    } catch (error: any) {
+      result.status = 'error';
+      result.message = error.message || 'Network error';
+      message.error(`Error deleting GL journal: ${result.message}`);
+    } finally {
+      result.endTime = Date.now();
+      setResults(prev => [...prev, result]);
+      setLoading(false);
+      form.resetFields();
+    }
+    return ok;
   };
 
   // ── Batch Delete ────────────────────────────────────────────────────────
@@ -539,6 +610,14 @@ const DeleteJournals: React.FC = () => {
 
                       <Space>
                         <Button
+                          type="primary"
+                          icon={<EyeOutlined />}
+                          style={{ background: REDWOOD.info, borderColor: REDWOOD.info }}
+                          onClick={() => openPreview(form.getFieldValue('journalId'))}
+                        >
+                          Preview
+                        </Button>
+                        <Button
                           danger
                           type="primary"
                           icon={<DeleteOutlined />}
@@ -695,6 +774,71 @@ const DeleteJournals: React.FC = () => {
             </Row>
           </Card>
         </Spin>
+
+        {/* ── Preview dialog: batch + headers + lines, delete from here ── */}
+        <Modal
+          open={!!preview}
+          onCancel={() => setPreview(null)}
+          width={1100}
+          title={<span><EyeOutlined style={{ color: REDWOOD.info, marginRight: 8 }} />Preview GL Batch {preview?.batchId}</span>}
+          footer={[
+            <Button key="sql" icon={<BugOutlined />} onClick={() => setPrevSqlOpen(s => !s)}>
+              {prevSqlOpen ? 'Hide SQL' : 'Show SQL'}
+            </Button>,
+            <Popconfirm
+              key="del"
+              title={`Permanently delete batch ${preview?.batchId} with ${prevHeaders.res?.rows.length ?? 0} header(s) and ${prevLines.res?.rows.length ?? 0} line(s)?`}
+              okText="Delete"
+              okType="danger"
+              onConfirm={async () => {
+                if (!preview) return;
+                const ok = await performDeleteJournal(preview.batchId);
+                if (ok) setPreview(null);
+              }}
+            >
+              <Button
+                danger
+                type="primary"
+                icon={<DeleteOutlined />}
+                loading={loading}
+                disabled={prevLoading || (!prevBatch.res?.rows.length && !prevHeaders.res?.rows.length && !prevLines.res?.rows.length)}
+              >
+                Delete this Batch
+              </Button>
+            </Popconfirm>,
+            <Button key="close" onClick={() => setPreview(null)}>Close</Button>,
+          ]}
+        >
+          {prevLoading && <div style={{ textAlign: 'center', padding: 30 }}><Spin /></div>}
+          {!prevLoading && (
+            <>
+              {prevSqlOpen && prevSqls.map((s, i) => (
+                <pre key={i} style={{ margin: '4px 0', padding: 8, background: '#F7F5F3', border: '1px solid #EFEBE9', borderRadius: 6, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{s}</pre>
+              ))}
+
+              <Title level={5} style={{ marginTop: 4 }}>Batch — RR_GL_JE_BATCHES ({prevBatch.res?.rows.length ?? 0})</Title>
+              {prevBatch.err && <Alert type="error" showIcon message={prevBatch.err} style={{ marginBottom: 8 }} />}
+              {prevBatch.res && (prevBatch.res.rows.length === 0
+                ? <Alert type="warning" showIcon message="No batch row found for this id" style={{ marginBottom: 8 }} />
+                : <Table size="small" dataSource={prevBatch.res.rows} columns={dynCols(prevBatch.res)}
+                    rowKey={(_, i) => `b${i}`} pagination={false} scroll={{ x: true }} style={{ marginBottom: 12 }} />)}
+
+              <Title level={5}>Headers — RR_GL_JE_HEADERS ({prevHeaders.res?.rows.length ?? 0})</Title>
+              {prevHeaders.err && <Alert type="error" showIcon message={prevHeaders.err} style={{ marginBottom: 8 }} />}
+              {prevHeaders.res && (prevHeaders.res.rows.length === 0
+                ? <Alert type="warning" showIcon message="No journal headers for this batch" style={{ marginBottom: 8 }} />
+                : <Table size="small" dataSource={prevHeaders.res.rows} columns={dynCols(prevHeaders.res)}
+                    rowKey={(_, i) => `h${i}`} pagination={{ pageSize: 5, size: 'small' }} scroll={{ x: true }} style={{ marginBottom: 12 }} />)}
+
+              <Title level={5}>Lines — RR_GL_JE_LINES_ALL ({prevLines.res?.rows.length ?? 0})</Title>
+              {prevLines.err && <Alert type="error" showIcon message={prevLines.err} style={{ marginBottom: 8 }} />}
+              {prevLines.res && (prevLines.res.rows.length === 0
+                ? <Alert type="warning" showIcon message="No journal lines for this batch" />
+                : <Table size="small" dataSource={prevLines.res.rows} columns={dynCols(prevLines.res)}
+                    rowKey={(_, i) => `l${i}`} pagination={{ pageSize: 10, size: 'small', showTotal: t => `${t} lines` }} scroll={{ x: true }} />)}
+            </>
+          )}
+        </Modal>
       </Content>
     </Layout>
   );
