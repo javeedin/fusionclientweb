@@ -177,7 +177,8 @@ const ManageCustomers: React.FC = () => {
     const key = `party-${party.partyId}`;
     if (tabs.find(t => t.key === key)) { setActiveKey(key); return; }
     const detailUrl   = `${BASE}/ar/parties/${party.partyId}`;
-    const accountsUrl = `${BASE}/ar/parties/${party.partyId}/accounts`;
+    // accounts load via the SQL gateway — this is what the API tooltip shows
+    const accountsUrl = `POST ${BASE}/ai/executequery — SELECT * FROM rr_raw_ar_hz_cust_accounts_bip WHERE party_id = ${party.partyId} ORDER BY account_number`;
     setTabs(prev => [...prev, {
       key, party,
       detail: null, detailLoading: false, detailUrl,
@@ -207,17 +208,28 @@ const ManageCustomers: React.FC = () => {
 
   // ── Load party accounts ───────────────────────────────────────────────────
 
+  // Direct SQL through the guarded gateway (same path as the AI assistant):
+  // the accounts live in RR_RAW_AR_HZ_CUST_ACCOUNTS_BIP keyed by PARTY_ID
   const loadAccounts = useCallback(async (tabKey: string, partyId: number) => {
     if (loadedRef.current.has(`acct-${tabKey}`)) return;
     loadedRef.current.add(`acct-${tabKey}`);
     setTabs(prev => prev.map(t => t.key === tabKey ? { ...t, accountsLoading: true, accountsError: '' } : t));
     try {
-      const res = await fetch(`${BASE}/ar/parties/${partyId}/accounts`, { headers: { Accept: 'application/json' } });
-      const raw = await res.text();
-      let data: any = {};
-      try { data = raw ? JSON.parse(raw) : {}; } catch { /* non-JSON */ }
-      if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status} — ${raw.slice(0, 200)}`);
-      const items: any[] = data.items ?? data.rows ?? (Array.isArray(data) ? data : []);
+      const sql = `SELECT * FROM rr_raw_ar_hz_cust_accounts_bip WHERE party_id = ${Number(partyId)} ORDER BY account_number`;
+      const res = await fetch(`${BASE}/ai/executequery`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ sql, maxRows: 500, appUser: 'MANAGE_CUSTOMERS' }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
+      const cols: string[] = data.columns || [];
+      const items: Record<string, any>[] = (data.rows || []).map((r: (string | number | null)[]) => {
+        const o: Record<string, any> = {};
+        cols.forEach((c, i) => { o[c.toLowerCase()] = r[i]; });
+        return o;
+      });
       setTabs(prev => prev.map(t => t.key === tabKey ? { ...t, accountsLoading: false, accounts: items, accountsLoaded: true } : t));
     } catch (e: any) {
       loadedRef.current.delete(`acct-${tabKey}`);
@@ -398,9 +410,9 @@ const ManageCustomers: React.FC = () => {
           }
           extra={
             <Space>
-              <Tooltip title={<Text style={{ fontSize: 11, fontFamily: 'monospace', color: '#fff', wordBreak: 'break-all' }}>{`GET ${tab.accountsUrl}`}</Text>}>
+              <Tooltip title={<Text style={{ fontSize: 11, fontFamily: 'monospace', color: '#fff', wordBreak: 'break-all' }}>{tab.accountsUrl}</Text>}>
                 <Button type="text" size="small" icon={<ApiOutlined style={{ color: REDWOOD.info }} />}
-                  onClick={() => { navigator.clipboard.writeText(tab.accountsUrl); message.success('URL copied'); }} />
+                  onClick={() => { navigator.clipboard.writeText(tab.accountsUrl); message.success('Copied'); }} />
               </Tooltip>
               <Button size="small" icon={<ReloadOutlined />}
                 onClick={() => { loadedRef.current.delete(`acct-${tab.key}`); loadAccounts(tab.key, p.partyId); }}>
@@ -415,7 +427,7 @@ const ManageCustomers: React.FC = () => {
               ? <Alert type="error" showIcon style={{ margin: 12 }}
                   message="Failed to load accounts"
                   description={<div><div>{tab.accountsError}</div>
-                    <div style={{ fontFamily: 'monospace', fontSize: 11, marginTop: 4, wordBreak: 'break-all' }}>GET {tab.accountsUrl}</div></div>} />
+                    <div style={{ fontFamily: 'monospace', fontSize: 11, marginTop: 4, wordBreak: 'break-all' }}>{tab.accountsUrl}</div></div>} />
               : tab.accounts.length === 0
                 ? <Empty description="No customer accounts for this party" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ padding: 24 }} />
                 : <Table
