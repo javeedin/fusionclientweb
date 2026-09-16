@@ -66,13 +66,18 @@ const docDetail = (view: string, dateCol: string, typeExpr: string,
   `FROM ${view} WHERE ${PERIOD_EXPR(dateCol)} = '${esc(period)}' AND ${typeExpr} = '${esc(txnType)}' ` +
   `ORDER BY 2 FETCH FIRST 1000 ROWS ONLY`;
 
-// FA depreciation is per (asset, period): an asset counts as accounted for a
-// period when an FA_DEPRECIATION journal in that period carries its number
-const faDeprnJoin = (period: string) =>
-  `LEFT JOIN (SELECT DISTINCT l.reference1 AS acc FROM rr_gl_je_lines_all l ` +
-  `JOIN rr_gl_je_headers h ON h.je_header_id = l.je_header_id ` +
-  `WHERE l.reference5 = 'FA_DEPRECIATION' AND h.period_name = '${esc(period)}') d ` +
-  `ON d.acc = TO_CHAR(a.asset_number)`;
+// FA depreciation truth lives in RR_FA_DEPRN_DETAIL: one row per asset
+// distribution per period with ACCOUNTED_STATUS = 'ACCOUNTED' once accounting
+// ran. PERIOD_NAME is on the row (or via RR_FA_DEPRN_PERIODS by counter).
+// The per-asset-per-period aggregate: acc = 1 when any row is accounted.
+const faDeprnBase = (periodFilter: string) =>
+  `SELECT NVL(d.period_name, p.period_name) AS period, d.asset_id, ` +
+  `SUM(TO_NUMBER(d.deprn_amount DEFAULT 0 ON CONVERSION ERROR)) AS deprn_amount, ` +
+  `MAX(CASE WHEN d.accounted_status = 'ACCOUNTED' THEN 1 ELSE 0 END) AS acc ` +
+  `FROM rr_fa_deprn_detail d ` +
+  `LEFT JOIN rr_fa_deprn_periods p ON p.book_type_code = d.book_type_code AND TO_CHAR(p.period_counter) = d.period_counter ` +
+  `WHERE ${periodFilter} ` +
+  `GROUP BY NVL(d.period_name, p.period_name), d.asset_id`;
 
 const MODULES: ModuleDef[] = [
   {
@@ -106,18 +111,17 @@ const MODULES: ModuleDef[] = [
     view: 'rr_v_fa_asset_acct_status', idColumn: 'ASSET_ID',
     pageLabel: 'Manage Assets',
     pagePath: row => row.ASSET_NUMBER != null ? `/fa/assets?assetNumber=${row.ASSET_NUMBER}` : '/fa/assets',
-    summarySql: periods => periods.map(p =>
-      `SELECT 'Fixed Assets' AS module, '${esc(p)}' AS period, 'Depreciation' AS txn_type, ` +
-      `COUNT(*) AS total, ` +
-      `SUM(CASE WHEN d.acc IS NOT NULL THEN 1 ELSE 0 END) AS accounted, ` +
-      `SUM(CASE WHEN d.acc IS NULL THEN 1 ELSE 0 END) AS not_accounted ` +
-      `FROM rr_v_fa_asset_acct_status a ${faDeprnJoin(p)}`
-    ).join(' UNION ALL '),
+    summarySql: periods =>
+      `SELECT 'Fixed Assets' AS module, x.period, 'Depreciation' AS txn_type, ` +
+      `COUNT(*) AS total, SUM(x.acc) AS accounted, SUM(1 - x.acc) AS not_accounted ` +
+      `FROM (${faDeprnBase(`NVL(d.period_name, p.period_name) IN (${inList(periods)})`)}) x ` +
+      `GROUP BY x.period`,
     detailSql: p =>
       `SELECT a.asset_id AS id, TO_CHAR(a.asset_number) AS txn_number, a.description AS party, ` +
-      `NULL AS currency, NULL AS amount, ` +
-      `CASE WHEN d.acc IS NOT NULL THEN 'ACCOUNTED' ELSE 'NOT ACCOUNTED' END AS gl_status ` +
-      `FROM rr_v_fa_asset_acct_status a ${faDeprnJoin(p)} ` +
+      `NULL AS currency, x.deprn_amount AS amount, ` +
+      `CASE WHEN x.acc = 1 THEN 'ACCOUNTED' ELSE 'NOT ACCOUNTED' END AS gl_status ` +
+      `FROM (${faDeprnBase(`NVL(d.period_name, p.period_name) = '${esc(p)}'`)}) x ` +
+      `JOIN rr_fa_additions a ON TO_CHAR(a.asset_id) = x.asset_id ` +
       `ORDER BY 2 FETCH FIRST 1000 ROWS ONLY`,
   },
   {
