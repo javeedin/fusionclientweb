@@ -107,10 +107,11 @@ const DeleteJournals: React.FC = () => {
     setPrevBatch({}); setPrevHeaders({}); setPrevLines({});
     setPrevSqlOpen(false);
     setPrevLoading(true);
+    // batches keyed by JE_BATCH_ID; headers/lines reference it as BATCH_ID
     const sqls = [
-      `SELECT * FROM rr_gl_je_batches WHERE je_batch_id = ${batchId}`,
-      `SELECT * FROM rr_gl_je_headers WHERE je_batch_id = ${batchId} ORDER BY je_header_id`,
-      `SELECT * FROM rr_gl_je_lines_all WHERE je_header_id IN (SELECT je_header_id FROM rr_gl_je_headers WHERE je_batch_id = ${batchId}) ORDER BY je_header_id`,
+      `SELECT * FROM rr_gl_journal_batches WHERE je_batch_id = ${batchId}`,
+      `SELECT * FROM rr_gl_je_headers WHERE batch_id = ${batchId} ORDER BY je_header_id`,
+      `SELECT * FROM rr_gl_je_lines_all WHERE je_header_id IN (SELECT je_header_id FROM rr_gl_je_headers WHERE batch_id = ${batchId}) ORDER BY je_header_id`,
     ];
     setPrevSqls(sqls);
     const settled = await Promise.allSettled(sqls.map(s => runSql(s)));
