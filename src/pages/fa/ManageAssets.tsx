@@ -14,7 +14,7 @@ import {
   BookOutlined, HistoryOutlined, BarcodeOutlined, ApiOutlined, CheckOutlined,
   FilterOutlined, DownloadOutlined, DollarOutlined, SaveOutlined, DeleteOutlined,
   AccountBookOutlined, AuditOutlined, TagsOutlined, ArrowLeftOutlined, EditOutlined,
-  LogoutOutlined,
+  LogoutOutlined, PaperClipOutlined,
 } from '@ant-design/icons';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { postSlaToGL } from '../../services/glPosting.service';
@@ -22,6 +22,7 @@ import { useAuth } from '../../context/AuthContext';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { buildApexUrl } from '../../config/api.helper';
 import AccountSegmentSelector from '../../components/AccountSegmentSelector';
+import AssetAttachments from '../../components/AssetAttachments';
 import AccountSegmentDescriptions from '../../components/AccountSegmentDescriptions';
 import { validateAccountCode } from '../../components/AccountSelector';
 import {
@@ -207,6 +208,7 @@ const AssetTabContent: React.FC<{
   interface DeprnRow { period: string; days: number; dailyRate: number; openingNbv: number; depreciation: number; closingNbv: number; }
   interface PostResult { period: string; status: 'POSTED' | 'ALREADY_EXISTS' | 'ERROR'; message?: string; }
   const [deprnModal,     setDeprnModal]     = useState(false);
+  const [attachModal,    setAttachModal]    = useState(false);
   const [deprnFromDate,  setDeprnFromDate]  = useState<dayjs.Dayjs | null>(null);
   const [deprnToDate,    setDeprnToDate]    = useState<dayjs.Dayjs>(dayjs());
   const [deprnRows,      setDeprnRows]      = useState<DeprnRow[]>([]);
@@ -1803,6 +1805,13 @@ const AssetTabContent: React.FC<{
                     Preview Depreciation
                   </Button>
                 </Tooltip>
+                <Button
+                  size="small"
+                  icon={<PaperClipOutlined />}
+                  onClick={() => setAttachModal(true)}
+                >
+                  Attachments
+                </Button>
               </div>
             </div>
             <Table
@@ -2279,6 +2288,22 @@ const AssetTabContent: React.FC<{
                 </Modal>
               );
             })()}
+
+            {/* ── Asset Attachments Modal (same mechanism as retirements) ── */}
+            <Modal
+              open={attachModal}
+              onCancel={() => setAttachModal(false)}
+              footer={[<Button key="close" onClick={() => setAttachModal(false)}>Close</Button>]}
+              width={760}
+              title={
+                <Space>
+                  <PaperClipOutlined style={{ color: FA_COLOR }} />
+                  <span>Asset Attachments — {asset.asset_number || asset.assetNumber}</span>
+                </Space>
+              }
+            >
+              {attachModal && <AssetAttachments assetId={asset.assetId} />}
+            </Modal>
 
             {/* ── Preview Depreciation Modal ── */}
             <Modal
