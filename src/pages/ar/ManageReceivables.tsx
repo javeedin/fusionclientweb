@@ -1050,11 +1050,21 @@ const ManageReceivables: React.FC = () => {
         body: JSON.stringify({ sql, maxRows: 1, appUser: 'MANAGE_RECEIVABLES' }),
       });
       const data = await res.json().catch(() => ({}));
-      const row = data?.rows?.[0];
+      if (!res.ok || data.success === false || !Array.isArray(data.rows)) {
+        throw new Error(data.error || data.message || `HTTP ${res.status}`);
+      }
+      const row = data.rows[0];
       const clean = !!row && Number(row[0]) === 0 && Number(row[1]) === 0 && Number(row[2]) === 0;
+      // eslint-disable-next-line no-console
+      console.info('[AR invoice delete] eligibility', {
+        customerTransactionId, glLines: row?.[0], receiptApplications: row?.[1],
+        adjustments: row?.[2], deletable: clean,
+      });
       setDelEligMap(prev => ({ ...prev, [tabKey]: clean }));
-    } catch {
-      // gateway unavailable → keep the button hidden (default false)
+    } catch (e) {
+      // gateway unavailable / query failed → keep hidden, retry on next activation
+      // eslint-disable-next-line no-console
+      console.warn('[AR invoice delete] eligibility check failed', e);
       delEligFetchedRef.current.delete(tabKey);
     }
   }, []);
