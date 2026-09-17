@@ -18,7 +18,7 @@ import {
   MinusCircleOutlined, ClockCircleOutlined, PlayCircleOutlined,
 } from '@ant-design/icons';
 import { Upload } from 'antd';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import * as XLSX from 'xlsx';
@@ -1093,6 +1093,22 @@ const ManageReceipts: React.FC = () => {
       // leave picker open for user input
     }
   };
+
+  // Deep-link: /ar/manage-receipts?bu=...&receiptNumber=... (e.g. from
+  // Check Accounting) — prefill the search form and run the search once.
+  const [urlParams] = useSearchParams();
+  const deepLinkHandledRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkHandledRef.current) return;
+    const bu  = urlParams.get('bu');
+    const rn  = urlParams.get('receiptNumber');
+    if (!bu && !rn) return;
+    deepLinkHandledRef.current = true;
+    if (bu) searchForm.setFieldValue('businessUnit', bu);
+    if (rn) searchForm.setFieldValue('receiptNumber', rn);
+    handleSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlParams]);
 
   // ── Search ────────────────────────────────────────────────────────────────
   const handleSearch = async () => {

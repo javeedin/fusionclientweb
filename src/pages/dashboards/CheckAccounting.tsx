@@ -142,7 +142,14 @@ const MODULES: ModuleDef[] = [
   {
     key: 'AR_RCPT', label: 'AR Receipts',
     view: 'rr_v_ar_receipt_acct_status', idColumn: 'STANDARD_RECEIPT_ID',
-    pageLabel: 'AR Receipts', pagePath: () => '/ar/manage-receipts',
+    pageLabel: 'Manage Receipts',
+    pagePath: row => {
+      const q = new URLSearchParams();
+      if (row.RECEIPT_NUMBER != null && row.RECEIPT_NUMBER !== '') q.set('receiptNumber', String(row.RECEIPT_NUMBER));
+      if (row.BUSINESS_UNIT != null && row.BUSINESS_UNIT !== '') q.set('bu', String(row.BUSINESS_UNIT));
+      const s = q.toString();
+      return s ? `/ar/manage-receipts?${s}` : '/ar/manage-receipts';
+    },
     summarySql: p => docSummary('AR Receipts', 'rr_v_ar_receipt_acct_status', 'accounting_date', `NVL(receipt_type, 'Receipt')`, p),
     detailSql: (p, t) => docDetail('rr_v_ar_receipt_acct_status', 'accounting_date', `NVL(receipt_type, 'Receipt')`,
       'standard_receipt_id', 'receipt_number', 'customer_name', 'currency', 'amount', p, t),
