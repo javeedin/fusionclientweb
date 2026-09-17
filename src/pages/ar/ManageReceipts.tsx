@@ -982,11 +982,47 @@ const ManageReceipts: React.FC = () => {
     fetchAllCustomers();
   };
 
+  // Cr. Account default from RR_BU_ACCOUNTS_ASSIGNMENTS (script 154):
+  // the customer's receivables account for the receipt's business unit.
+  // Matched by party name (assignments store PARTY_NAME) with a fallback
+  // resolve through RR_RAW_AR_HZ_PARTIES_DM.
+  const fetchAssignedReceivable = async (tabKey: string, customerName: string, businessUnit: string) => {
+    if (!customerName || !businessUnit) return;
+    // only for NEW receipts — never touch the accounts of a saved receipt
+    if (tabs.find(t => t.key === tabKey)?.draft.standardReceiptId) return;
+    const esc = (s: string) => String(s).replace(/'/g, "''");
+    const sql =
+      `SELECT receivables_account FROM rr_bu_accounts_assignments ` +
+      `WHERE business_unit_name = '${esc(businessUnit)}' AND receivables_account IS NOT NULL ` +
+      `AND (UPPER(party_name) = UPPER('${esc(customerName)}') ` +
+      `OR party_id IN (SELECT TO_NUMBER(party_id DEFAULT NULL ON CONVERSION ERROR) ` +
+      `FROM rr_raw_ar_hz_parties_dm WHERE UPPER(party_name) = UPPER('${esc(customerName)}'))) ` +
+      `FETCH FIRST 1 ROWS ONLY`;
+    try {
+      const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/ai/executequery`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ sql, maxRows: 1, appUser: 'MANAGE_RECEIPTS' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const acct = data?.rows?.[0]?.[0];
+      if (acct) {
+        updateDraft(tabKey, { crAccount: String(acct), crAccountDesc: 'Receivables — BU assignment' } as any);
+        message.success(`Cr. Account from BU assignment: ${acct}`);
+      } else {
+        message.info(`No receivables assignment for ${customerName} in ${businessUnit} — pick the Cr. Account manually`);
+      }
+    } catch { /* gateway unavailable — leave the account as is */ }
+  };
+
   const onLovSelect = (c: CustomerOption) => {
     if (lovContext === 'search') {
       setLovSelected(c);
     } else {
       updateDraft(lovContext, { customerName: c.accountName, customerAccountNumber: c.accountNumber });
+      const bu = tabs.find(t => t.key === lovContext)?.draft.businessUnit || '';
+      fetchAssignedReceivable(lovContext, c.accountName, bu);
     }
     setLovVisible(false);
   };
@@ -3314,6 +3350,8 @@ const ManageReceipts: React.FC = () => {
               setReceiptMethods([]);
               setAllMethodAccounts([]);
               if (v) fetchMethodAccountsByBU(tabKey, v);
+              // customer already chosen → refresh the Cr. Account from this BU's assignment
+              if (v && draft.customerName) fetchAssignedReceivable(tabKey, draft.customerName, v);
             }}>
             {businessUnits.map(bu => (
               <Option key={bu.name} value={bu.name}>
