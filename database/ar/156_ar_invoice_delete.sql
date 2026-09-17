@@ -118,13 +118,18 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Children without ON DELETE CASCADE
+    -- Children without ON DELETE CASCADE. Dynamic SQL on purpose: these
+    -- tables are optional — a static reference to a missing table would
+    -- fail the whole block at COMPILE time (ORDS-25001) before any
+    -- exception handler could run.
     BEGIN
-        DELETE FROM RR_AR_INVOICE_INSTALLMENT_NOTES WHERE CUSTOMER_TRX_ID = v_id;
+        EXECUTE IMMEDIATE
+            'DELETE FROM RR_AR_INVOICE_INSTALLMENT_NOTES WHERE CUSTOMER_TRX_ID = ' || v_id;
     EXCEPTION WHEN OTHERS THEN NULL;
     END;
     BEGIN
-        DELETE FROM RR_AR_INVOICES_DFF WHERE CUSTOMER_TRANSACTION_ID = v_id;
+        EXECUTE IMMEDIATE
+            'DELETE FROM RR_AR_INVOICES_DFF WHERE CUSTOMER_TRANSACTION_ID = ' || v_id;
     EXCEPTION WHEN OTHERS THEN NULL;
     END;
 
