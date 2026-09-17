@@ -127,7 +127,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'AR_INV', label: 'AR Invoices',
     view: 'rr_v_ar_invoice_acct_status', idColumn: 'CUSTOMER_TRANSACTION_ID',
-    pageLabel: 'AR Invoices', pagePath: () => '/ar/manage-invoices',
+    pageLabel: 'Manage Receivable Invoices', pagePath: () => '/ar/manage-receivables',
     summarySql: p => docSummary('AR Invoices', 'rr_v_ar_invoice_acct_status', 'accounting_date', `NVL(transaction_type, 'Invoice')`, p),
     detailSql: (p, t) => docDetail('rr_v_ar_invoice_acct_status', 'accounting_date', `NVL(transaction_type, 'Invoice')`,
       'customer_transaction_id', 'transaction_number', 'bill_to_customer_name', 'invoice_currency_code', 'entered_amount', p, t),

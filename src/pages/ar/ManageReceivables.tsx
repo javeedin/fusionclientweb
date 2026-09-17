@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Layout, Card, Form, Select, Input, Button, Space, Typography, Table, Tag,
   Row, Col, Breadcrumb, Tooltip, DatePicker, message, Tabs, Divider, InputNumber,
-  Checkbox, Badge, Alert, Modal, Dropdown,
+  Checkbox, Badge, Alert, Modal, Dropdown, Popconfirm,
 } from 'antd';
 import {
   HomeOutlined, SearchOutlined, PlusOutlined, CloseOutlined,
@@ -1335,6 +1335,33 @@ const ManageReceivables: React.FC = () => {
     return { url, method: isNew ? 'POST' : 'PUT', body };
   };
 
+  // Delete an invoice that is not paid and not accounted. The server
+  // (script 156) re-verifies both guards: no GL lines reference the id and
+  // no receipt applications / adjustments exist — so a stale UI cannot
+  // delete a settled or accounted invoice.
+  const handleDeleteInvoice = async (tabKey: string): Promise<void> => {
+    const tab = tabs.find(t => t.key === tabKey);
+    const id = tab?.draft.customerTransactionId;
+    if (!id) return;
+    setSaving(prev => ({ ...prev, [tabKey]: true }));
+    try {
+      const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/ar/invoices/delete/${id}`, {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || data.message || `HTTP ${res.status} (run DB script 156 if the endpoint is missing)`);
+      }
+      message.success(`Invoice ${data.transactionNumber || id} deleted`);
+      closeTab(tabKey);
+    } catch (e: any) {
+      message.error('Delete failed: ' + (e.message || String(e)));
+    } finally {
+      setSaving(prev => ({ ...prev, [tabKey]: false }));
+    }
+  };
+
   const handleSave = async (tabKey: string): Promise<boolean> => {
     const tab = tabs.find(t => t.key === tabKey);
     if (!tab) return false;
@@ -1803,6 +1830,20 @@ const ManageReceivables: React.FC = () => {
                   onClick={async () => { const ok = await handleSave(tabKey); if (ok) closeTab(tabKey); }}>
                   Save and Close
                 </Button>
+                {!!draft.customerTransactionId && (
+                  <Popconfirm
+                    title={`Delete invoice ${draft.transactionNumber || draft.customerTransactionId}?`}
+                    description="Allowed only when the invoice is not paid and not accounted — the server verifies both. This cannot be undone."
+                    okText="Delete" okButtonProps={{ danger: true }}
+                    onConfirm={() => handleDeleteInvoice(tabKey)}
+                  >
+                    <Tooltip title="Delete this invoice (only if not paid and not accounted)">
+                      <Button size="small" danger icon={<DeleteOutlined />} loading={isSaving}>
+                        Delete
+                      </Button>
+                    </Tooltip>
+                  </Popconfirm>
+                )}
               </>}
               <Button size="small" icon={<CloseOutlined />} onClick={() => closeTab(tabKey)}>Close</Button>
             </Space>
