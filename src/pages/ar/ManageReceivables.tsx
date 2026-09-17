@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Layout, Card, Form, Select, Input, Button, Space, Typography, Table, Tag,
   Row, Col, Breadcrumb, Tooltip, DatePicker, message, Tabs, Divider, InputNumber,
-  Checkbox, Badge, Alert, Modal, Dropdown, Popconfirm,
+  Checkbox, Badge, Alert, Modal, Dropdown, Spin,
 } from 'antd';
 import {
   HomeOutlined, SearchOutlined, PlusOutlined, CloseOutlined,
@@ -12,6 +12,7 @@ import {
   LockOutlined, EyeOutlined, DownloadOutlined, FilterOutlined, ReloadOutlined,
   ApiOutlined, DownOutlined, ProfileOutlined, ApartmentOutlined, AuditOutlined, AccountBookOutlined,
   OrderedListOutlined, SyncOutlined, CopyOutlined,
+  CheckCircleOutlined, CloseCircleOutlined,
 } from '@ant-design/icons';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
@@ -1027,15 +1028,16 @@ const ManageReceivables: React.FC = () => {
     }
   }, []);
 
-  // Delete eligibility per tab: true only when the invoice has NO GL lines
-  // (not accounted), NO receipt applications and NO adjustments — the same
-  // conditions the delete endpoint (script 156) enforces. Checked via the
-  // guarded SQL gateway when the tab opens; the button renders only on true.
-  const [delEligMap, setDelEligMap] = useState<Record<string, boolean>>({});
-  const delEligFetchedRef = useRef<Set<string>>(new Set());
-  const fetchDeleteEligibility = useCallback(async (tabKey: string, customerTransactionId: number) => {
-    if (!customerTransactionId || delEligFetchedRef.current.has(tabKey)) return;
-    delEligFetchedRef.current.add(tabKey);
+  // Delete Invoice dialog — opened from the Actions menu. Runs the same
+  // eligibility checks the delete endpoint (script 156) enforces and shows
+  // each verdict; the Delete button enables only when all three are zero.
+  const [delModal, setDelModal] = useState<{
+    tabKey: string; invoice: string; loading: boolean; deleting: boolean;
+    error?: string; gl?: number; apps?: number; adj?: number;
+  } | null>(null);
+  const openDeleteModal = useCallback(async (tabKey: string, customerTransactionId: number, invoice: string) => {
+    if (!customerTransactionId) return;
+    setDelModal({ tabKey, invoice, loading: true, deleting: false });
     const sql =
       `SELECT (SELECT COUNT(*) FROM rr_gl_je_lines_all l WHERE l.reference2 = TO_CHAR(${customerTransactionId}) ` +
       `AND l.reference5 IN ('AR_INVOICES', 'AR-INVOICE-CREATION', 'AR_INVOICE_CREATION')) AS gl_cnt, ` +
@@ -1053,19 +1055,14 @@ const ManageReceivables: React.FC = () => {
       if (!res.ok || data.success === false || !Array.isArray(data.rows)) {
         throw new Error(data.error || data.message || `HTTP ${res.status}`);
       }
-      const row = data.rows[0];
-      const clean = !!row && Number(row[0]) === 0 && Number(row[1]) === 0 && Number(row[2]) === 0;
-      // eslint-disable-next-line no-console
-      console.info('[AR invoice delete] eligibility', {
-        customerTransactionId, glLines: row?.[0], receiptApplications: row?.[1],
-        adjustments: row?.[2], deletable: clean,
-      });
-      setDelEligMap(prev => ({ ...prev, [tabKey]: clean }));
-    } catch (e) {
-      // gateway unavailable / query failed → keep hidden, retry on next activation
-      // eslint-disable-next-line no-console
-      console.warn('[AR invoice delete] eligibility check failed', e);
-      delEligFetchedRef.current.delete(tabKey);
+      const row = data.rows[0] || [];
+      setDelModal(m => m && m.tabKey === tabKey
+        ? { ...m, loading: false, gl: Number(row[0] ?? 0), apps: Number(row[1] ?? 0), adj: Number(row[2] ?? 0) }
+        : m);
+    } catch (e: any) {
+      setDelModal(m => m && m.tabKey === tabKey
+        ? { ...m, loading: false, error: e.message || String(e) }
+        : m);
     }
   }, []);
 
@@ -1079,8 +1076,7 @@ const ManageReceivables: React.FC = () => {
     fetchBalance(activeKey, tab.draft.customerTransactionId, tab.draft.transactionNumber);
     fetchDff(activeKey, tab.draft.customerTransactionId);
     fetchInstTab(activeKey, tab.draft.customerTransactionId);
-    fetchDeleteEligibility(activeKey, tab.draft.customerTransactionId);
-  }, [activeKey, tabs, fetchReceiptApps, fetchAdjustments, fetchBalance, fetchDff, fetchInstTab, fetchDeleteEligibility]);
+  }, [activeKey, tabs, fetchReceiptApps, fetchAdjustments, fetchBalance, fetchDff, fetchInstTab]);
 
   // Grid-level quick filter for search results
   const [gridFilter, setGridFilter] = useState('');
@@ -1241,11 +1237,9 @@ const ManageReceivables: React.FC = () => {
     fetchedReceiptTabsRef.current.delete(key);
     fetchedAdjTabsRef.current.delete(key);
     fetchedBalanceTabsRef.current.delete(key);
-    delEligFetchedRef.current.delete(key);
     setReceiptAppsMap(prev => { const n = { ...prev }; delete n[key]; return n; });
     setAdjMap(prev => { const n = { ...prev }; delete n[key]; return n; });
     setBalanceMap(prev => { const n = { ...prev }; delete n[key]; return n; });
-    setDelEligMap(prev => { const n = { ...prev }; delete n[key]; return n; });
   };
 
   // ── Update a draft field ───────────────────────────────────────────────────
@@ -1400,10 +1394,10 @@ const ManageReceivables: React.FC = () => {
   // (script 156) re-verifies both guards: no GL lines reference the id and
   // no receipt applications / adjustments exist — so a stale UI cannot
   // delete a settled or accounted invoice.
-  const handleDeleteInvoice = async (tabKey: string): Promise<void> => {
+  const handleDeleteInvoice = async (tabKey: string): Promise<boolean> => {
     const tab = tabs.find(t => t.key === tabKey);
     const id = tab?.draft.customerTransactionId;
-    if (!id) return;
+    if (!id) return false;
     setSaving(prev => ({ ...prev, [tabKey]: true }));
     try {
       const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/ar/invoices/delete/${id}`, {
@@ -1416,8 +1410,10 @@ const ManageReceivables: React.FC = () => {
       }
       message.success(`Invoice ${data.transactionNumber || id} deleted`);
       closeTab(tabKey);
+      return true;
     } catch (e: any) {
       message.error('Delete failed: ' + (e.message || String(e)));
+      return false;
     } finally {
       setSaving(prev => ({ ...prev, [tabKey]: false }));
     }
@@ -1850,6 +1846,15 @@ const ManageReceivables: React.FC = () => {
                         label: 'Review Distributions',
                         onClick: () => openDistributions(draft.customerTransactionId),
                       },
+                      { type: 'divider' as const },
+                      {
+                        key: 'deleteInvoice',
+                        icon: <DeleteOutlined />,
+                        danger: true,
+                        label: 'Delete Invoice',
+                        onClick: () => openDeleteModal(tabKey, draft.customerTransactionId,
+                          draft.transactionNumber || String(draft.customerTransactionId)),
+                      },
                     ],
                   }}
                   trigger={['click']}
@@ -1891,25 +1896,72 @@ const ManageReceivables: React.FC = () => {
                   onClick={async () => { const ok = await handleSave(tabKey); if (ok) closeTab(tabKey); }}>
                   Save and Close
                 </Button>
-                {/* shown only when the eligibility check confirmed: no GL lines,
-                    no receipt applications, no adjustments */}
-                {!!draft.customerTransactionId && delEligMap[tabKey] === true && (
-                  <Popconfirm
-                    title={`Delete invoice ${draft.transactionNumber || draft.customerTransactionId}?`}
-                    description="The invoice is not paid and not accounted. This cannot be undone."
-                    okText="Delete" okButtonProps={{ danger: true }}
-                    onConfirm={() => handleDeleteInvoice(tabKey)}
-                  >
-                    <Button size="small" danger icon={<DeleteOutlined />} loading={isSaving}>
-                      Delete
-                    </Button>
-                  </Popconfirm>
-                )}
               </>}
               <Button size="small" icon={<CloseOutlined />} onClick={() => closeTab(tabKey)}>Close</Button>
             </Space>
           </div>
         </div>
+
+        {/* ── Delete Invoice — eligibility + confirm dialog ── */}
+        {delModal && delModal.tabKey === tabKey && (() => {
+          const eligible = !delModal.loading && !delModal.error &&
+            delModal.gl === 0 && delModal.apps === 0 && delModal.adj === 0;
+          const checkRow = (label: string, count: number | undefined, why: string) => (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+              {count === 0
+                ? <CheckCircleOutlined style={{ color: REDWOOD.success, fontSize: 16 }} />
+                : <CloseCircleOutlined style={{ color: REDWOOD.primary, fontSize: 16 }} />}
+              <Text style={{ fontSize: 13, flex: 1 }}>{label}</Text>
+              {count === 0
+                ? <Tag color="success" style={{ margin: 0 }}>OK</Tag>
+                : <Tag color="error" style={{ margin: 0 }}>{count} found — {why}</Tag>}
+            </div>
+          );
+          return (
+            <Modal
+              open
+              title={<Space><DeleteOutlined style={{ color: REDWOOD.primary }} /><span>Delete Invoice {delModal.invoice}</span></Space>}
+              onCancel={() => { if (!delModal.deleting) setDelModal(null); }}
+              maskClosable={!delModal.deleting}
+              footer={[
+                <Button key="cancel" disabled={delModal.deleting} onClick={() => setDelModal(null)}>Cancel</Button>,
+                <Button key="del" danger type="primary" icon={<DeleteOutlined />}
+                  disabled={!eligible} loading={delModal.deleting}
+                  onClick={async () => {
+                    setDelModal(m => m && ({ ...m, deleting: true }));
+                    const ok = await handleDeleteInvoice(tabKey);
+                    if (ok) setDelModal(null);
+                    else setDelModal(m => m && ({ ...m, deleting: false }));
+                  }}>
+                  Delete Invoice
+                </Button>,
+              ]}
+            >
+              {delModal.loading ? (
+                <div style={{ textAlign: 'center', padding: 24 }}><Spin tip="Checking eligibility…" /></div>
+              ) : delModal.error ? (
+                <Alert type="error" showIcon message="Eligibility check failed" description={delModal.error} />
+              ) : (
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                    An invoice can be deleted only when it is not accounted and not paid:
+                  </Text>
+                  {checkRow('Not accounted — no GL journal lines reference this invoice', delModal.gl, 'delete the journal first')}
+                  {checkRow('Not paid — no receipt applications', delModal.apps, 'unapply the receipts first')}
+                  {checkRow('No adjustments', delModal.adj, 'remove the adjustments first')}
+                  <Alert
+                    style={{ marginTop: 12 }}
+                    type={eligible ? 'warning' : 'info'}
+                    showIcon
+                    message={eligible
+                      ? 'Eligible for deletion — this permanently removes the invoice with its lines, installments and distributions. It cannot be undone.'
+                      : 'Not eligible — resolve the failed checks above, then try again. The server enforces the same rules.'}
+                  />
+                </div>
+              )}
+            </Modal>
+          );
+        })()}
 
         <div style={{ padding: '12px 16px' }}>
           {/* ── General Information ───────────────────────────────────── */}
