@@ -1190,12 +1190,17 @@ const Retirements: React.FC = () => {
                       columns={[
                         { title: 'Journal', dataIndex: 'journal_name', key: 'journal', width: 150 },
                         { title: 'Line #', dataIndex: 'line_num', key: 'line_num', width: 60, align: 'center' as const },
-                        { title: 'Account', dataIndex: 'account', key: 'account', width: 180,
-                          render: (v) => <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text> },
-                        { title: 'Description', dataIndex: 'description', key: 'description', ellipsis: true, width: 180 },
-                        { title: 'Debit', dataIndex: 'accounted_dr', key: 'debit', width: 100, align: 'right' as const,
+                        { title: 'Period', dataIndex: 'period_name', key: 'period', width: 85, align: 'center' as const,
+                          render: (v) => v ? <Tag color="geekblue" style={{ margin: 0, fontSize: 11 }}>{v}</Tag> : '—' },
+                        { title: 'Acct Date', dataIndex: 'accounting_date', key: 'acct_date', width: 105,
+                          render: (v: string) => <span style={{ fontSize: 12 }}>{fmtRetDate(v)}</span> },
+                        { title: 'Account', dataIndex: 'account', key: 'account', width: 280,
+                          render: (v) => <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, whiteSpace: 'nowrap' }}>{v}</Text> },
+                        { title: 'Description', dataIndex: 'description', key: 'description', ellipsis: true,
+                          render: (v: string) => <Tooltip title={v}><span style={{ fontSize: 12 }}>{v}</span></Tooltip> },
+                        { title: 'Debit', dataIndex: 'accounted_dr', key: 'debit', width: 110, align: 'right' as const,
                           render: (v) => v > 0 ? formatCurrency(v) : '—' },
-                        { title: 'Credit', dataIndex: 'accounted_cr', key: 'credit', width: 100, align: 'right' as const,
+                        { title: 'Credit', dataIndex: 'accounted_cr', key: 'credit', width: 110, align: 'right' as const,
                           render: (v) => v > 0 ? formatCurrency(v) : '—' },
                       ]}
                       dataSource={acctModal.glLines.map((l, i) => ({ ...l, key: i }))}
