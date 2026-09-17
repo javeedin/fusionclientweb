@@ -29,27 +29,19 @@ import {
   BranchesOutlined,
   CreditCardOutlined,
   ReloadOutlined,
-  DatabaseOutlined,
-  CloudOutlined,
-  CloseOutlined,
   GlobalOutlined,
   CheckCircleOutlined,
   DollarOutlined,
   EditOutlined,
   SearchOutlined,
-  FileTextOutlined,
-  BookOutlined,
-  BugOutlined,
   ApiOutlined,
   CopyOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
-import { ORACLE_FUSION_CONFIG } from '../../config/api.config';
 import FloatingMenu from '../../components/FloatingMenu';
 import AccountSelector from '../../components/AccountSelector';
 
-const FUSION_AUTH = 'Basic ' + btoa(`${ORACLE_FUSION_CONFIG.username}:${ORACLE_FUSION_CONFIG.password}`);
-const fusionHeaders = { Authorization: FUSION_AUTH, Accept: 'application/json' };
+const apexHeaders = { Accept: 'application/json' };
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -143,40 +135,70 @@ interface AccountTab {
   loading: boolean;
 }
 
-interface PaymentDocument {
-  PaymentDocumentId: number;
-  PaymentDocumentName: string;
-  PaymentMethodCode: string;
-  PaymentMethodName: string;
-  FormatCode: string;
-  FormatName: string;
-  FirstAvailableDocumentNumber: number | null;
-  LastAvailableDocumentNumber: number | null;
-  LastIssuedCheckNumber: number | null;
-  PaperStockType: string | null;
-  PaymentDocumentCategory: string | null;
-  ActiveFlag: boolean;
-  CreatedBy: string;
-  CreationDate: string;
-  LastUpdateDate: string;
-}
+// ── APEX (ORDS) row mappers ─────────────────────────────────────────────────
+// The local endpoints (banks/list, banks/brankbranches, banks/accounts/list —
+// database/cash/159_banks_local_get_endpoints.sql) serialise columns as
+// lowercase snake_case; map them onto the PascalCase shapes the page renders.
+const toFlag = (v: unknown): boolean =>
+  String(v ?? '').toLowerCase() === 'true' || v === 'Y' || v === 'y';
 
-interface Checkbook {
-  CheckbookId: number;
-  CheckbookName: string;
-  CheckDigits: number | null;
-  FirstAvailableCheckNumber: number;
-  LastAvailableCheckNumber: number;
-  LastIssuedCheckNumber: number | null;
-  CheckbookStatus: string;
-  ActiveFlag: boolean;
-  CreatedBy: string;
-  CreationDate: string;
-  LastUpdateDate: string;
-}
+const mapApexBank = (r: any): Bank => ({
+  BankPartyId: Number(r.bank_party_id),
+  BankName: r.bank_name,
+  BankNameAlt: r.bank_name_alt ?? null,
+  BankNumber: r.bank_number,
+  Description: r.description ?? null,
+  CountryName: r.country_name,
+  BankPartyNumber: r.bank_party_number,
+  CreatedBy: r.created_by,
+  CreationDate: r.creation_date,
+  LastUpdateDate: r.last_update_date,
+  LastUpdatedBy: r.last_updated_by,
+});
+
+const mapApexBranch = (r: any): BankBranch => ({
+  BranchPartyId: Number(r.branch_party_id),
+  BankName: r.bank_name,
+  BankBranchName: r.bank_branch_name,
+  BankBranchNameAlt: r.bank_branch_name_alt ?? null,
+  BranchNumber: r.branch_number,
+  BankNumber: r.bank_number,
+  Description: r.description ?? null,
+  EFTSWIFTCode: r.eft_swift_code ?? null,
+  CountryName: r.country_name,
+  BranchPartyNumber: r.branch_party_number,
+  BankPartyNumber: r.bank_party_number,
+  CreatedBy: r.created_by,
+  CreationDate: r.creation_date,
+  LastUpdateDate: r.last_update_date,
+});
+
+const mapApexAccount = (r: any): BankAccount => ({
+  BankAccountId: Number(r.bank_account_id),
+  BankAccountName: r.bank_account_name,
+  BankAccountNumber: r.bank_account_number,
+  BankAccountNumberElectronic: r.bank_account_number_electronic,
+  MaskedAccountNumber: r.masked_account_number,
+  CurrencyCode: r.currency_code,
+  BankName: r.bank_name,
+  BankBranchName: r.bank_branch_name,
+  BranchNumber: r.branch_number,
+  LegalEntityName: r.legal_entity_name,
+  Description: r.description ?? null,
+  AccountType: r.account_type,
+  ApUseAllowedFlag: toFlag(r.ap_use_allowed_flag),
+  ArUseAllowedFlag: toFlag(r.ar_use_allowed_flag),
+  CashAccountCombination: r.cash_account_combination,
+  CashClearingAccountCombination: r.cash_clearing_account_combination,
+  ReconciliationDifferenceAccountCombination: r.recon_difference_account_combination,
+  PdcAccountCombination: r.pdc_account_combination,
+  ReconStartDate: r.recon_start_date,
+  CreatedBy: r.created_by,
+  CreationDate: r.creation_date,
+  LastUpdateDate: r.last_update_date,
+});
 
 const Banks: React.FC = () => {
-  const [dataSource, setDataSource] = useState<'fusion' | 'apex'>('fusion');
   const [banks, setBanks] = useState<Bank[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
@@ -199,18 +221,11 @@ const Banks: React.FC = () => {
   // Account selector state
   const [accountSelectorField, setAccountSelectorField] = useState<'cash' | 'clearing' | 'recon' | 'pdc' | null>(null);
 
-  // Payment documents state
-  const [paymentDocuments, setPaymentDocuments] = useState<PaymentDocument[]>([]);
-  const [paymentDocsLoading, setPaymentDocsLoading] = useState(false);
-  const [selectedPaymentDoc, setSelectedPaymentDoc] = useState<PaymentDocument | null>(null);
-  const [checkbooks, setCheckbooks] = useState<Checkbook[]>([]);
-  const [checkbooksLoading, setCheckbooksLoading] = useState(false);
-
   // API Log state
   const [apiLogs, setApiLogs] = useState<Array<{ type: string; url: string; status: string; count: number; time: string }>>([]);
   const [showApiLog, setShowApiLog] = useState(false);
 
-  // Fetch banks from selected source
+  // Fetch banks from the locally synced RR_BANKS table (APEX/ORDS)
   const fetchBanks = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -218,12 +233,12 @@ const Banks: React.FC = () => {
     setApiLogs([]);
 
     try {
-      const url = `${ORACLE_FUSION_CONFIG.baseUrl}/cashBanks?limit=500&onlyData=true`;
+      const url = buildApexUrl('banks/list');
       const t0 = Date.now();
-      const response = await fetch(url, { headers: fusionHeaders });
+      const response = await fetch(url, { headers: apexHeaders });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const result = await response.json();
-      const items = result.items || [];
+      const items = (result.items || []).map(mapApexBank);
       setBanks(items);
       setApiLogs(prev => [...prev, { type: 'Banks', url, status: `${response.status} OK`, count: items.length, time: `${Date.now() - t0}ms` }]);
     } catch (err) {
@@ -234,16 +249,17 @@ const Banks: React.FC = () => {
     }
   }, []);
 
-  // Fetch branches for a bank
+  // Fetch branches for a bank from RR_BANK_BRANCHES (filtered client-side)
   const fetchBranches = async (bankName: string): Promise<BankBranch[]> => {
     try {
-      const encodedBankName = encodeURIComponent(bankName);
-      const url = `${ORACLE_FUSION_CONFIG.baseUrl}/cashBankBranches?q=BankName=${encodedBankName}&limit=500&onlyData=true`;
+      const url = buildApexUrl('banks/brankbranches');
       const t0 = Date.now();
-      const response = await fetch(url, { headers: fusionHeaders });
+      const response = await fetch(url, { headers: apexHeaders });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const result = await response.json();
-      const items = result.items || [];
+      const items = (result.items || [])
+        .filter((r: any) => r.bank_name === bankName)
+        .map(mapApexBranch);
       setApiLogs(prev => [...prev, { type: 'Branches', url, status: `${response.status} OK`, count: items.length, time: `${Date.now() - t0}ms` }]);
       return items;
     } catch (err) {
@@ -252,16 +268,17 @@ const Banks: React.FC = () => {
     }
   };
 
-  // Fetch accounts for a branch
+  // Fetch accounts for a branch from RR_BANK_ACCOUNTS (filtered client-side)
   const fetchAccounts = async (branchName: string): Promise<BankAccount[]> => {
     try {
-      const encodedBranchName = encodeURIComponent(branchName);
-      const url = `${ORACLE_FUSION_CONFIG.baseUrl}/cashBankAccounts?q=BankBranchName=${encodedBranchName}&limit=500&onlyData=true`;
+      const url = buildApexUrl('banks/accounts/list');
       const t0 = Date.now();
-      const response = await fetch(url, { headers: fusionHeaders });
+      const response = await fetch(url, { headers: apexHeaders });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const result = await response.json();
-      const items = result.items || [];
+      const items = (result.items || [])
+        .filter((r: any) => r.bank_branch_name === branchName)
+        .map(mapApexAccount);
       setApiLogs(prev => [...prev, { type: 'Accounts', url, status: `${response.status} OK`, count: items.length, time: `${Date.now() - t0}ms` }]);
       return items;
     } catch (err) {
@@ -270,139 +287,10 @@ const Banks: React.FC = () => {
     }
   };
 
-  // Fetch payment documents for a bank account
-  const fetchPaymentDocuments = async (bankAccountId: number) => {
-    setPaymentDocsLoading(true);
-    setPaymentDocuments([]);
-    setSelectedPaymentDoc(null);
-    setCheckbooks([]);
-    setApiLogs([]); // Clear previous logs
-
-    const url = `${ORACLE_FUSION_CONFIG.baseUrl}/cashBankAccounts/${bankAccountId}/child/bankAccountPaymentDocuments?limit=500&onlyData=true`;
-    const displayUrl = url;
-
-    console.log('=== PAYMENT DOCUMENTS API CALL ===');
-    console.log('URL:', url);
-    console.log('Oracle URL:', displayUrl);
-    console.log('BankAccountId:', bankAccountId);
-
-    try {
-      const response = await fetch(url, { headers: fusionHeaders });
-
-      console.log('Response Status:', response.status);
-      console.log('Response OK:', response.ok);
-
-      const result = await response.json();
-      console.log('Response Data:', JSON.stringify(result, null, 2));
-
-      const items = result.items || [];
-      console.log('Items Count:', items.length);
-
-      const logEntry = {
-        type: 'Payment Documents',
-        url: displayUrl,
-        status: response.ok ? 'Success' : `Failed (${response.status})`,
-        count: items.length,
-        time: new Date().toLocaleTimeString(),
-      };
-      setApiLogs(prev => [...prev, logEntry]);
-
-      if (items.length > 0) {
-        setPaymentDocuments(items);
-      }
-    } catch (err) {
-      console.error('=== PAYMENT DOCUMENTS ERROR ===');
-      console.error('Error Type:', err instanceof Error ? err.constructor.name : typeof err);
-      console.error('Error Message:', err instanceof Error ? err.message : String(err));
-      console.error('Full Error:', err);
-
-      setApiLogs(prev => [...prev, {
-        type: 'Payment Documents',
-        url: displayUrl,
-        status: `Error: ${err instanceof Error ? err.message : 'Unknown'}`,
-        count: 0,
-        time: new Date().toLocaleTimeString(),
-      }]);
-    } finally {
-      setPaymentDocsLoading(false);
-      console.log('=== END PAYMENT DOCUMENTS ===');
-    }
-  };
-
-  // Fetch checkbooks for a payment document
-  const fetchCheckbooks = async (bankAccountId: number, paymentDocumentId: number) => {
-    setCheckbooksLoading(true);
-    setCheckbooks([]);
-
-    const url = `${ORACLE_FUSION_CONFIG.baseUrl}/cashBankAccounts/${bankAccountId}/child/bankAccountPaymentDocuments/${paymentDocumentId}/child/bankAccountCheckbooks?limit=500&onlyData=true`;
-    const displayUrl = url;
-
-    console.log('=== CHECKBOOKS API CALL ===');
-    console.log('URL:', url);
-    console.log('Oracle URL:', displayUrl);
-    console.log('BankAccountId:', bankAccountId);
-    console.log('PaymentDocumentId:', paymentDocumentId);
-
-    try {
-      const response = await fetch(url, { headers: fusionHeaders });
-
-      console.log('Response Status:', response.status);
-      console.log('Response OK:', response.ok);
-
-      const result = await response.json();
-      console.log('Response Data:', JSON.stringify(result, null, 2));
-
-      const items = result.items || [];
-      console.log('Items Count:', items.length);
-
-      const logEntry = {
-        type: 'Checkbooks',
-        url: displayUrl,
-        status: response.ok ? 'Success' : `Failed (${response.status})`,
-        count: items.length,
-        time: new Date().toLocaleTimeString(),
-      };
-      setApiLogs(prev => [...prev, logEntry]);
-
-      if (items.length > 0) {
-        setCheckbooks(items);
-      }
-    } catch (err) {
-      console.error('=== CHECKBOOKS ERROR ===');
-      console.error('Error Type:', err instanceof Error ? err.constructor.name : typeof err);
-      console.error('Error Message:', err instanceof Error ? err.message : String(err));
-      console.error('Full Error:', err);
-
-      setApiLogs(prev => [...prev, {
-        type: 'Checkbooks',
-        url: displayUrl,
-        status: `Error: ${err instanceof Error ? err.message : 'Unknown'}`,
-        count: 0,
-        time: new Date().toLocaleTimeString(),
-      }]);
-    } finally {
-      setCheckbooksLoading(false);
-      console.log('=== END CHECKBOOKS ===');
-    }
-  };
-
-  // Handle payment document selection
-  const handlePaymentDocClick = (doc: PaymentDocument) => {
-    setSelectedPaymentDoc(doc);
-    if (editingAccount) {
-      fetchCheckbooks(editingAccount.BankAccountId, doc.PaymentDocumentId);
-    }
-  };
-
   // Fetch on mount
   useEffect(() => {
     fetchBanks();
   }, [fetchBanks]);
-
-  // Toggle data source
-  const handleSourceToggle = (checked: boolean) => {
-    setDataSource(checked ? 'fusion' : 'apex');
-  };
 
   // Open bank tab
   const handleBankClick = async (bank: Bank) => {
@@ -597,20 +485,6 @@ const Banks: React.FC = () => {
       LastUpdateDate: account.LastUpdateDate,
     });
     setEditAccountModalOpen(true);
-    // Fetch payment documents for this account
-    fetchPaymentDocuments(account.BankAccountId);
-    // Enrich with local APEX data (PDC account combination is stored locally only)
-    fetch(buildApexUrl('banks/bankaccounts'), {
-      headers: { Accept: 'application/json' },
-    })
-      .then(r => r.json())
-      .then(data => {
-        const apex = (data.items || []).find((a: any) => Number(a.bank_account_id) === account.BankAccountId);
-        if (apex?.pdc_account_combination) {
-          accountForm.setFieldsValue({ PdcAccountCombination: apex.pdc_account_combination });
-        }
-      })
-      .catch(() => {/* silently ignore */});
   };
 
   // Handle account selector selection
@@ -632,7 +506,7 @@ const Banks: React.FC = () => {
       const values = await accountForm.validateFields();
       if (!editingAccount?.BankAccountId) return;
 
-      const url = `${buildApexUrl("banks/bankaccounts/${editingAccount.BankAccountId}")}`;
+      const url = buildApexUrl(`banks/bankaccounts/${editingAccount.BankAccountId}`);
       const body = {
         cashAccountCombination:                 values.CashAccountCombination || null,
         cashClearingAccountCombination:         values.CashClearingAccountCombination || null,
@@ -1265,9 +1139,6 @@ const Banks: React.FC = () => {
           setEditAccountModalOpen(false);
           setEditingAccount(null);
           accountForm.resetFields();
-          setPaymentDocuments([]);
-          setSelectedPaymentDoc(null);
-          setCheckbooks([]);
           setApiLogs([]);
           setShowApiLog(false);
         }}
@@ -1276,9 +1147,6 @@ const Banks: React.FC = () => {
             setEditAccountModalOpen(false);
             setEditingAccount(null);
             accountForm.resetFields();
-            setPaymentDocuments([]);
-            setSelectedPaymentDoc(null);
-            setCheckbooks([]);
             setApiLogs([]);
             setShowApiLog(false);
           }}>Cancel</Button>,
@@ -1406,225 +1274,6 @@ const Banks: React.FC = () => {
                     <Row gutter={12}>
                       <Col span={12}><Form.Item name="LastUpdateDate" label="Last Update Date" style={{ marginBottom: 0 }}><Input disabled size="small" /></Form.Item></Col>
                     </Row>
-                  </div>
-                ),
-              },
-              {
-                key: 'paymentDocs',
-                label: <Space size={4}><FileTextOutlined />Payment Documents</Space>,
-                children: (
-                  <div style={{ paddingTop: 8 }}>
-                    {/* API Log Toggle and Refresh */}
-                    <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                      <Tooltip title="Refresh Payment Documents">
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={<ReloadOutlined />}
-                          onClick={() => editingAccount && fetchPaymentDocuments(editingAccount.BankAccountId)}
-                          loading={paymentDocsLoading}
-                          style={{ fontSize: 11 }}
-                        >
-                          Refresh
-                        </Button>
-                      </Tooltip>
-                      <Tooltip title="Toggle API Log">
-                        <Button
-                          type={showApiLog ? 'primary' : 'text'}
-                          size="small"
-                          icon={<BugOutlined />}
-                          onClick={() => setShowApiLog(!showApiLog)}
-                          style={{ fontSize: 11 }}
-                        >
-                          API Log
-                        </Button>
-                      </Tooltip>
-                    </div>
-
-                    {/* API Log Panel */}
-                    {showApiLog && (
-                      <div style={{
-                        marginBottom: 8,
-                        padding: 8,
-                        background: '#f5f5f5',
-                        borderRadius: 4,
-                        border: `1px solid ${REDWOOD.border}`,
-                        maxHeight: 120,
-                        overflow: 'auto',
-                      }}>
-                        <Text strong style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>API Calls:</Text>
-                        {apiLogs.length === 0 ? (
-                          <Text type="secondary" style={{ fontSize: 10 }}>No API calls yet</Text>
-                        ) : (
-                          apiLogs.map((log, idx) => (
-                            <div key={idx} style={{ marginBottom: 6, fontSize: 10, fontFamily: 'monospace' }}>
-                              <div>
-                                <Tag color={log.status === 'Success' ? 'green' : 'red'} style={{ fontSize: 9 }}>{log.type}</Tag>
-                                <Text type="secondary">{log.time}</Text>
-                                <Text style={{ marginLeft: 8 }}>Items: {log.count}</Text>
-                              </div>
-                              <div style={{ wordBreak: 'break-all', color: '#666', marginTop: 2 }}>
-                                {log.url}
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-
-                    <Spin spinning={paymentDocsLoading}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        {/* Payment Documents Table - Top Section */}
-                        <div>
-                          <div style={{ marginBottom: 8 }}>
-                            <Space size={4}>
-                              <FileTextOutlined style={{ color: REDWOOD.primary }} />
-                              <Text strong style={{ fontSize: 12 }}>Payment Documents ({paymentDocuments.length})</Text>
-                            </Space>
-                          </div>
-                          {paymentDocuments.length === 0 ? (
-                            <Empty description="No payment documents" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                          ) : (
-                            <Table
-                              dataSource={paymentDocuments}
-                              rowKey="PaymentDocumentId"
-                              size="small"
-                              pagination={false}
-                              scroll={{ y: 150 }}
-                              rowClassName={(record) =>
-                                selectedPaymentDoc?.PaymentDocumentId === record.PaymentDocumentId ? 'ant-table-row-selected' : ''
-                              }
-                              onRow={(record) => ({
-                                onClick: () => handlePaymentDocClick(record),
-                                style: {
-                                  cursor: 'pointer',
-                                  background: selectedPaymentDoc?.PaymentDocumentId === record.PaymentDocumentId ? `${REDWOOD.primary}15` : undefined,
-                                },
-                              })}
-                              columns={[
-                                {
-                                  title: 'Document Name',
-                                  dataIndex: 'PaymentDocumentName',
-                                  key: 'PaymentDocumentName',
-                                  width: 180,
-                                  ellipsis: true,
-                                  render: (name: string, record: PaymentDocument) => (
-                                    <Space size={4}>
-                                      <Text strong style={{ fontSize: 11 }}>{name}</Text>
-                                      {record.ActiveFlag && <CheckCircleOutlined style={{ color: REDWOOD.success, fontSize: 10 }} />}
-                                    </Space>
-                                  ),
-                                },
-                                {
-                                  title: 'Category',
-                                  dataIndex: 'PaymentDocumentCategory',
-                                  key: 'PaymentDocumentCategory',
-                                  width: 130,
-                                  ellipsis: true,
-                                  render: (cat: string) => cat ? <Tag style={{ fontSize: 9 }}>{cat}</Tag> : '-',
-                                },
-                                {
-                                  title: 'Format',
-                                  dataIndex: 'FormatName',
-                                  key: 'FormatName',
-                                  width: 180,
-                                  ellipsis: true,
-                                  render: (name: string) => <Text style={{ fontSize: 10 }}>{name || '-'}</Text>,
-                                },
-                                {
-                                  title: 'Paper Stock',
-                                  dataIndex: 'PaperStockType',
-                                  key: 'PaperStockType',
-                                  width: 120,
-                                  ellipsis: true,
-                                  render: (type: string) => <Text style={{ fontSize: 10 }}>{type || '-'}</Text>,
-                                },
-                                {
-                                  title: 'First Doc #',
-                                  dataIndex: 'FirstAvailableDocumentNumber',
-                                  key: 'FirstAvailableDocumentNumber',
-                                  width: 90,
-                                  render: (num: number | null) => num ? <Text code style={{ fontSize: 10 }}>{num}</Text> : '-',
-                                },
-                                {
-                                  title: 'Last Doc #',
-                                  dataIndex: 'LastAvailableDocumentNumber',
-                                  key: 'LastAvailableDocumentNumber',
-                                  width: 90,
-                                  render: (num: number | null) => num ? <Text code style={{ fontSize: 10 }}>{num}</Text> : '-',
-                                },
-                              ]}
-                            />
-                          )}
-                        </div>
-
-                        {/* Checkbooks Table - Bottom Section */}
-                        <div style={{ borderTop: `1px solid ${REDWOOD.border}`, paddingTop: 12 }}>
-                          <div style={{ marginBottom: 8 }}>
-                            <Space size={4}>
-                              <BookOutlined style={{ color: REDWOOD.info }} />
-                              <Text strong style={{ fontSize: 12 }}>
-                                Checkbooks {selectedPaymentDoc ? `- ${selectedPaymentDoc.PaymentDocumentName} (${checkbooks.length})` : ''}
-                              </Text>
-                            </Space>
-                          </div>
-                          <Spin spinning={checkbooksLoading}>
-                            {!selectedPaymentDoc ? (
-                              <Empty description="Select a payment document above to view checkbooks" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                            ) : checkbooks.length === 0 ? (
-                              <Empty description="No checkbooks for this payment document" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                            ) : (
-                              <Table
-                                dataSource={checkbooks}
-                                rowKey="CheckbookId"
-                                size="small"
-                                pagination={false}
-                                scroll={{ y: 120 }}
-                                columns={[
-                                  {
-                                    title: 'Checkbook Name',
-                                    dataIndex: 'CheckbookName',
-                                    key: 'CheckbookName',
-                                    ellipsis: true,
-                                    render: (name: string) => <Text style={{ fontSize: 11 }}>{name}</Text>,
-                                  },
-                                  {
-                                    title: 'First Check #',
-                                    dataIndex: 'FirstAvailableCheckNumber',
-                                    key: 'FirstAvailableCheckNumber',
-                                    width: 100,
-                                    render: (num: number) => <Text code style={{ fontSize: 10 }}>{num}</Text>,
-                                  },
-                                  {
-                                    title: 'Last Check #',
-                                    dataIndex: 'LastAvailableCheckNumber',
-                                    key: 'LastAvailableCheckNumber',
-                                    width: 100,
-                                    render: (num: number) => <Text code style={{ fontSize: 10 }}>{num}</Text>,
-                                  },
-                                  {
-                                    title: 'Last Issued',
-                                    dataIndex: 'LastIssuedCheckNumber',
-                                    key: 'LastIssuedCheckNumber',
-                                    width: 90,
-                                    render: (num: number | null) => num ? <Text code style={{ fontSize: 10 }}>{num}</Text> : '-',
-                                  },
-                                  {
-                                    title: 'Status',
-                                    dataIndex: 'CheckbookStatus',
-                                    key: 'CheckbookStatus',
-                                    width: 80,
-                                    render: (status: string) => (
-                                      <Tag color={status === 'ACTIVE' ? 'green' : 'default'} style={{ fontSize: 9 }}>{status}</Tag>
-                                    ),
-                                  },
-                                ]}
-                              />
-                            )}
-                          </Spin>
-                        </div>
-                      </div>
-                    </Spin>
                   </div>
                 ),
               },
