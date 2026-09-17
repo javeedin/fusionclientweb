@@ -4100,7 +4100,10 @@ const ManageAssets: React.FC = () => {
         styles={{ body: { padding: '16px 20px' } }}
         title={<Space><FilterOutlined style={{ color: FA_COLOR }} /><Text strong style={{ fontSize: 13 }}>Search Parameters</Text></Space>}
       >
-        <Form form={form} layout="vertical" onFinish={() => runSearch(1, pageSize)}>
+        {/* Status defaults to Active — retired assets show only when the
+            filter is changed to Retired or cleared to All */}
+        <Form form={form} layout="vertical" onFinish={() => runSearch(1, pageSize)}
+          initialValues={{ status: 'ACTIVE' }}>
           <Row gutter={[16, 0]}>
             <Col xs={24} sm={12} md={6}>
               <Form.Item name="bookTypeCode" label="Book" style={{ marginBottom: 8 }}>
