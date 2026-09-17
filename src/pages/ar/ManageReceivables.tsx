@@ -13,7 +13,7 @@ import {
   ApiOutlined, DownOutlined, ProfileOutlined, ApartmentOutlined, AuditOutlined, AccountBookOutlined,
   OrderedListOutlined, SyncOutlined, CopyOutlined,
 } from '@ant-design/icons';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import jsPDF from 'jspdf';
@@ -1273,6 +1273,22 @@ const ManageReceivables: React.FC = () => {
   };
 
   // ── Search ─────────────────────────────────────────────────────────────────
+  // Deep-link: /ar/manage-receivables?bu=...&txnNumber=... (e.g. from
+  // Check Accounting) — prefill the search form and run the search once.
+  const [urlParams] = useSearchParams();
+  const deepLinkHandledRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkHandledRef.current) return;
+    const bu  = urlParams.get('bu');
+    const txn = urlParams.get('txnNumber');
+    if (!bu && !txn) return;
+    deepLinkHandledRef.current = true;
+    if (bu)  searchForm.setFieldValue('businessUnit', bu);
+    if (txn) searchForm.setFieldValue('transactionNumber', txn);
+    handleSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlParams]);
+
   const handleSearch = async () => {
     const v = searchForm.getFieldsValue();
     setSearching(true);

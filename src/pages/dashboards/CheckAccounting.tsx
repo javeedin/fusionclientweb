@@ -127,7 +127,14 @@ const MODULES: ModuleDef[] = [
   {
     key: 'AR_INV', label: 'AR Invoices',
     view: 'rr_v_ar_invoice_acct_status', idColumn: 'CUSTOMER_TRANSACTION_ID',
-    pageLabel: 'Manage Receivable Invoices', pagePath: () => '/ar/manage-receivables',
+    pageLabel: 'Manage Receivable Invoices',
+    pagePath: row => {
+      const q = new URLSearchParams();
+      if (row.TRANSACTION_NUMBER != null && row.TRANSACTION_NUMBER !== '') q.set('txnNumber', String(row.TRANSACTION_NUMBER));
+      if (row.BUSINESS_UNIT != null && row.BUSINESS_UNIT !== '') q.set('bu', String(row.BUSINESS_UNIT));
+      const s = q.toString();
+      return s ? `/ar/manage-receivables?${s}` : '/ar/manage-receivables';
+    },
     summarySql: p => docSummary('AR Invoices', 'rr_v_ar_invoice_acct_status', 'accounting_date', `NVL(transaction_type, 'Invoice')`, p),
     detailSql: (p, t) => docDetail('rr_v_ar_invoice_acct_status', 'accounting_date', `NVL(transaction_type, 'Invoice')`,
       'customer_transaction_id', 'transaction_number', 'bill_to_customer_name', 'invoice_currency_code', 'entered_amount', p, t),
