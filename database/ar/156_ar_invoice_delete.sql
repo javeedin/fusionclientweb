@@ -71,14 +71,14 @@ BEGIN
     END IF;
     IF v_raw IS NULL THEN
         :status_code := 400;
-        HTP.PRN('{"success":false,"error":"Could not determine customerTransactionId from request"}');
+        HTP.PRN('{"success": false,"error":"Could not determine customerTransactionId from request"}');
         RETURN;
     END IF;
     BEGIN
         v_id := TO_NUMBER(v_raw);
     EXCEPTION WHEN OTHERS THEN
         :status_code := 400;
-        HTP.PRN('{"success":false,"error":"Invalid id: ' || v_raw || '"}');
+        HTP.PRN('{"success": false,"error":"Invalid id: ' || v_raw || '"}');
         RETURN;
     END;
 
@@ -88,7 +88,7 @@ BEGIN
          WHERE CUSTOMER_TRANSACTION_ID = v_id;
     EXCEPTION WHEN NO_DATA_FOUND THEN
         :status_code := 404;
-        HTP.PRN('{"success":false,"error":"Invoice not found","id":' || v_id || '}');
+        HTP.PRN('{"success": false,"error":"Invoice not found","id":' || v_id || '}');
         RETURN;
     END;
 
@@ -99,7 +99,7 @@ BEGIN
        AND l.REFERENCE5 IN ('AR_INVOICES', 'AR-INVOICE-CREATION', 'AR_INVOICE_CREATION');
     IF l_gl > 0 THEN
         :status_code := 409;
-        HTP.PRN('{"success":false,"error":"Invoice ' || l_num || ' is accounted — ' || l_gl ||
+        HTP.PRN('{"success": false,"error":"Invoice ' || l_num || ' is accounted — ' || l_gl ||
                 ' GL journal line(s) reference it. Delete the journal first if this is intentional."}');
         RETURN;
     END IF;
@@ -112,7 +112,7 @@ BEGIN
       FROM RR_AR_ADJUSTMENTS WHERE CUSTOMER_TRANSACTION_ID = v_id;
     IF l_apps > 0 OR l_adj > 0 THEN
         :status_code := 409;
-        HTP.PRN('{"success":false,"error":"Invoice ' || l_num || ' has ' || l_apps ||
+        HTP.PRN('{"success": false,"error":"Invoice ' || l_num || ' has ' || l_apps ||
                 ' receipt application(s) and ' || l_adj ||
                 ' adjustment(s) — unapply them before deleting."}');
         RETURN;
@@ -134,13 +134,13 @@ BEGIN
     COMMIT;
 
     :status_code := 200;
-    HTP.PRN('{"success":true,"message":"Invoice deleted","customerTransactionId":' || v_id ||
+    HTP.PRN('{"success": true,"message":"Invoice deleted","customerTransactionId":' || v_id ||
             ',"transactionNumber":"' || REPLACE(l_num, '"', '\"') || '"}');
 EXCEPTION
     WHEN OTHERS THEN
         ROLLBACK;
         :status_code := 500;
-        HTP.PRN('{"success":false,"error":' || APEX_JSON.STRINGIFY(SQLERRM) || '}');
+        HTP.PRN('{"success": false,"error":' || APEX_JSON.STRINGIFY(SQLERRM) || '}');
 END;
 ]'
     );
@@ -152,4 +152,4 @@ END;
 --   DELETE {base}/ar/invoices/delete/300000091482652
 --   Accounted invoice  -> 409 "...is accounted..."
 --   Paid invoice       -> 409 "...receipt application(s)..."
---   Clean invoice      -> {"success":true,...} and header+children removed
+--   Clean invoice      -> {"success": true,...} and header+children removed

@@ -1034,6 +1034,7 @@ const ManageReceivables: React.FC = () => {
   const [delModal, setDelModal] = useState<{
     tabKey: string; invoice: string; loading: boolean; deleting: boolean;
     error?: string; gl?: number; apps?: number; adj?: number;
+    lastStatus?: number; lastBody?: string;   // raw result of the last DELETE attempt
   } | null>(null);
   const openDeleteModal = useCallback(async (tabKey: string, customerTransactionId: number, invoice: string) => {
     if (!customerTransactionId) return;
@@ -1404,9 +1405,14 @@ const ManageReceivables: React.FC = () => {
         method: 'DELETE',
         headers: { Accept: 'application/json' },
       });
-      const data = await res.json().catch(() => ({}));
+      const raw = await res.text();
+      let data: any = {};
+      try { data = raw ? JSON.parse(raw) : {}; } catch { /* non-JSON error page */ }
+      // keep the raw result visible in the delete dialog for diagnosis
+      setDelModal(m => m && m.tabKey === tabKey ? { ...m, lastStatus: res.status, lastBody: raw } : m);
       if (!res.ok || data.success === false) {
-        throw new Error(data.error || data.message || `HTTP ${res.status} (run DB script 156 if the endpoint is missing)`);
+        throw new Error(data.error || data.message ||
+          `HTTP ${res.status} — ${raw.slice(0, 200) || '(empty response)'} (re-run DB script 156 if the handler is broken)`);
       }
       message.success(`Invoice ${data.transactionNumber || id} deleted`);
       closeTab(tabKey);
@@ -1959,6 +1965,33 @@ const ManageReceivables: React.FC = () => {
                   />
                 </div>
               )}
+              {/* ── API transparency: exact call + last raw response ── */}
+              <div style={{ marginTop: 14, borderTop: `1px solid ${REDWOOD.border}`, paddingTop: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <ApiOutlined style={{ color: REDWOOD.info, fontSize: 13 }} />
+                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>API</Text>
+                  <Text copyable={{ text: `${APEX_DB_CONFIG.baseUrl}/ar/invoices/delete/${tabs.find(t => t.key === tabKey)?.draft.customerTransactionId ?? ''}` }}
+                    style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
+                    DELETE {APEX_DB_CONFIG.baseUrl}/ar/invoices/delete/{tabs.find(t => t.key === tabKey)?.draft.customerTransactionId ?? ''}
+                  </Text>
+                </div>
+                <Text type="secondary" style={{ fontSize: 10.5, display: 'block', marginTop: 2 }}>
+                  No request body — the id travels in the URL; guards run server-side (script 156).
+                </Text>
+                {delModal.lastStatus != null && (
+                  <div style={{ marginTop: 8 }}>
+                    <Text strong style={{ fontSize: 11, color: delModal.lastStatus === 200 ? REDWOOD.success : REDWOOD.primary }}>
+                      Last response — HTTP {delModal.lastStatus}
+                    </Text>
+                    <pre style={{
+                      margin: '4px 0 0', padding: 8, borderRadius: 6, fontSize: 10.5, maxHeight: 160, overflow: 'auto',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                      background: delModal.lastStatus === 200 ? '#f6ffed' : '#fff1f0',
+                      border: `1px solid ${delModal.lastStatus === 200 ? '#b7eb8f' : '#ffa39e'}`,
+                    }}>{delModal.lastBody || '(empty response body)'}</pre>
+                  </div>
+                )}
+              </div>
             </Modal>
           );
         })()}

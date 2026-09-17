@@ -117,7 +117,7 @@ BEGIN
     END LOOP;
 EXCEPTION WHEN OTHERS THEN
     :status_code := 500;
-    HTP.PRN('{"success":false,"error":' || APEX_JSON.STRINGIFY(SQLERRM) || '}');
+    HTP.PRN('{"success": false,"error":' || APEX_JSON.STRINGIFY(SQLERRM) || '}');
 END;
 ]'
     );
@@ -171,16 +171,16 @@ BEGIN
 
     COMMIT;
     :status_code := 200;
-    HTP.PRN('{"success":true,"assignmentId":' || l_id || '}');
+    HTP.PRN('{"success": true,"assignmentId":' || l_id || '}');
 EXCEPTION
     WHEN DUP_VAL_ON_INDEX THEN
         ROLLBACK;
         :status_code := 409;
-        HTP.PRN('{"success":false,"error":"This business unit is already assigned to the party — use update instead"}');
+        HTP.PRN('{"success": false,"error":"This business unit is already assigned to the party — use update instead"}');
     WHEN OTHERS THEN
         ROLLBACK;
         :status_code := 500;
-        HTP.PRN('{"success":false,"error":' || APEX_JSON.STRINGIFY(SQLERRM) || '}');
+        HTP.PRN('{"success": false,"error":' || APEX_JSON.STRINGIFY(SQLERRM) || '}');
 END;
 ]'
     );
@@ -229,20 +229,20 @@ BEGIN
 
     IF l_rows = 0 THEN
         :status_code := 404;
-        HTP.PRN('{"success":false,"error":"Assignment not found","assignmentId":' || l_id || '}');
+        HTP.PRN('{"success": false,"error":"Assignment not found","assignmentId":' || l_id || '}');
     ELSE
         :status_code := 200;
-        HTP.PRN('{"success":true,"assignmentId":' || l_id || '}');
+        HTP.PRN('{"success": true,"assignmentId":' || l_id || '}');
     END IF;
 EXCEPTION
     WHEN DUP_VAL_ON_INDEX THEN
         ROLLBACK;
         :status_code := 409;
-        HTP.PRN('{"success":false,"error":"This business unit is already assigned to the party"}');
+        HTP.PRN('{"success": false,"error":"This business unit is already assigned to the party"}');
     WHEN OTHERS THEN
         ROLLBACK;
         :status_code := 500;
-        HTP.PRN('{"success":false,"error":' || APEX_JSON.STRINGIFY(SQLERRM) || '}');
+        HTP.PRN('{"success": false,"error":' || APEX_JSON.STRINGIFY(SQLERRM) || '}');
 END;
 ]'
     );
