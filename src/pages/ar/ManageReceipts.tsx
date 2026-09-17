@@ -2992,48 +2992,67 @@ const ManageReceipts: React.FC = () => {
     return true;
   };
 
-  // ── Delete an unaccounted receipt (reverses applications/installments/adjustments) ──
-  const handleDeleteReceipt = (tabKey: string, draft: ReceiptDraft) => {
+  // ── Delete Receipt — eligibility dialog (same mechanism as AR invoices):
+  // the receipt must be NOT ACCOUNTED (no GL lines reference it) and NOT
+  // APPLIED (no receipt applications). Checks run through the guarded SQL
+  // gateway; the Delete button enables only when both pass.
+  const [delRcptModal, setDelRcptModal] = useState<{
+    tabKey: string; receiptNumber: string; standardReceiptId: number;
+    loading: boolean; deleting: boolean; error?: string;
+    gl?: number; apps?: number; lastStatus?: number; lastBody?: string;
+  } | null>(null);
+
+  const handleDeleteReceipt = async (tabKey: string, draft: ReceiptDraft) => {
     if (!draft.standardReceiptId) { message.warning('Receipt is not saved yet.'); return; }
-    if ((draft.accountingStatus || '').toLowerCase() === 'accounted') {
-      message.warning('Accounted receipts cannot be deleted.'); return;
+    const id = draft.standardReceiptId;
+    setDelRcptModal({ tabKey, receiptNumber: draft.receiptNumber, standardReceiptId: id, loading: true, deleting: false });
+    const sql =
+      `SELECT (SELECT COUNT(*) FROM rr_gl_je_lines_all l WHERE l.reference2 = TO_CHAR(${id}) ` +
+      `AND l.reference5 IN ('AR_RECEIPTS', 'AR_ADJUSTMENTS')) AS gl_cnt, ` +
+      `(SELECT COUNT(*) FROM rr_ar_receipt_applications WHERE standard_receipt_id = ${id}) AS app_cnt ` +
+      `FROM dual`;
+    try {
+      const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/ai/executequery`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ sql, maxRows: 1, appUser: 'MANAGE_RECEIPTS' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false || !Array.isArray(data.rows)) {
+        throw new Error(data.error || data.message || `HTTP ${res.status}`);
+      }
+      const row = data.rows[0] || [];
+      setDelRcptModal(m => m && m.standardReceiptId === id
+        ? { ...m, loading: false, gl: Number(row[0] ?? 0), apps: Number(row[1] ?? 0) }
+        : m);
+    } catch (e: any) {
+      setDelRcptModal(m => m && m.standardReceiptId === id
+        ? { ...m, loading: false, error: e.message || String(e) }
+        : m);
     }
-    Modal.confirm({
-      title: 'Delete Receipt',
-      icon: <ExclamationCircleOutlined style={{ color: REDWOOD.primary }} />,
-      width: 480,
-      okText: 'Delete', okType: 'danger', cancelText: 'Cancel',
-      content: (
-        <div style={{ fontSize: 13 }}>
-          <p style={{ margin: '8px 0' }}>Delete receipt <strong>{draft.receiptNumber}</strong> (ID {draft.standardReceiptId})?</p>
-          <p style={{ color: REDWOOD.warning, fontSize: 12, margin: 0 }}>
-            This reverses its receipt applications (restores each installment) and deletes its
-            adjustments. This cannot be undone.
-          </p>
-          <div style={{ marginTop: 8, padding: '6px 10px', background: '#fafafa', border: '1px solid #eee', borderRadius: 6 }}>
-            <Text type="secondary" style={{ fontSize: 10 }}>API — no request body</Text>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
-              <Tag color="green" style={{ fontSize: 10, margin: 0 }}>POST</Tag>
-              <code style={{ fontSize: 11, wordBreak: 'break-all' }}>{`${APEX_AR_RECEIPTS}/${draft.standardReceiptId}/delete`}</code>
-            </div>
-          </div>
-        </div>
-      ),
-      onOk: async () => {
-        try {
-          const res  = await fetch(`${APEX_AR_RECEIPTS}/${draft.standardReceiptId}/delete`, { method: 'POST', headers: { Accept: 'application/json' } });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || data.success === false) {
-            message.error(`Delete failed: ${data.error || `HTTP ${res.status}`}`);
-            return;
-          }
-          message.success(`Receipt ${draft.receiptNumber} deleted — ${data.applicationsDeleted ?? 0} application(s), ${data.adjustmentsDeleted ?? 0} adjustment(s), ${data.installmentsRestored ?? 0} installment(s) restored`);
-          closeTab(tabKey);
-        } catch (e: any) {
-          message.error(`Delete failed: ${e.message}`);
-        }
-      },
-    });
+  };
+
+  const performDeleteReceipt = async (): Promise<void> => {
+    if (!delRcptModal) return;
+    const { tabKey, standardReceiptId: id, receiptNumber } = delRcptModal;
+    setDelRcptModal(m => m && ({ ...m, deleting: true }));
+    try {
+      const res  = await fetch(`${APEX_AR_RECEIPTS}/${id}/delete`, { method: 'POST', headers: { Accept: 'application/json' } });
+      const raw  = await res.text();
+      let data: any = {};
+      try { data = raw ? JSON.parse(raw) : {}; } catch { /* non-JSON */ }
+      setDelRcptModal(m => m && ({ ...m, lastStatus: res.status, lastBody: raw }));
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || `HTTP ${res.status} — ${raw.slice(0, 200) || '(empty response)'}`);
+      }
+      message.success(`Receipt ${receiptNumber} deleted`);
+      setDelRcptModal(null);
+      closeTab(tabKey);
+    } catch (e: any) {
+      message.error(`Delete failed: ${e.message || String(e)}`);
+      setDelRcptModal(m => m && ({ ...m, deleting: false }));
+    }
   };
 
   // ── Debug Modal ────────────────────────────────────────────────────────────
@@ -5746,6 +5765,88 @@ const ManageReceipts: React.FC = () => {
         />
       </Content>
       <FloatingMenu />
+
+      {/* ── Delete Receipt — eligibility + confirm dialog ── */}
+      {delRcptModal && (() => {
+        const m = delRcptModal;
+        const eligible = !m.loading && !m.error && m.gl === 0 && m.apps === 0;
+        const checkRow = (label: string, count: number | undefined, why: string) => (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+            {count === 0
+              ? <CheckCircleOutlined style={{ color: REDWOOD.success, fontSize: 16 }} />
+              : <CloseCircleOutlined style={{ color: REDWOOD.primary, fontSize: 16 }} />}
+            <Text style={{ fontSize: 13, flex: 1 }}>{label}</Text>
+            {count === 0
+              ? <Tag color="success" style={{ margin: 0 }}>OK</Tag>
+              : <Tag color="error" style={{ margin: 0 }}>{count} found — {why}</Tag>}
+          </div>
+        );
+        return (
+          <Modal
+            open
+            title={<Space><DeleteOutlined style={{ color: REDWOOD.primary }} /><span>Delete Receipt {m.receiptNumber}</span></Space>}
+            onCancel={() => { if (!m.deleting) setDelRcptModal(null); }}
+            maskClosable={!m.deleting}
+            footer={[
+              <Button key="cancel" disabled={m.deleting} onClick={() => setDelRcptModal(null)}>Cancel</Button>,
+              <Button key="del" danger type="primary" icon={<DeleteOutlined />}
+                disabled={!eligible} loading={m.deleting}
+                onClick={performDeleteReceipt}>
+                Delete Receipt
+              </Button>,
+            ]}
+          >
+            {m.loading ? (
+              <div style={{ textAlign: 'center', padding: 24 }}><Spin tip="Checking eligibility…" /></div>
+            ) : m.error ? (
+              <Alert type="error" showIcon message="Eligibility check failed" description={m.error} />
+            ) : (
+              <div>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                  A receipt can be deleted only when it is not accounted and not applied:
+                </Text>
+                {checkRow('Not accounted — no GL journal lines reference this receipt', m.gl, 'delete the journal first')}
+                {checkRow('Not applied — no receipt applications', m.apps, 'unapply from the invoices first')}
+                <Alert
+                  style={{ marginTop: 12 }}
+                  type={eligible ? 'warning' : 'info'}
+                  showIcon
+                  message={eligible
+                    ? 'Eligible for deletion — this permanently removes the receipt. It cannot be undone.'
+                    : 'Not eligible — resolve the failed checks above, then try again.'}
+                />
+              </div>
+            )}
+            {/* API transparency: exact call + last raw response */}
+            <div style={{ marginTop: 14, borderTop: `1px solid ${REDWOOD.neutral200}`, paddingTop: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <ApiOutlined style={{ color: REDWOOD.info, fontSize: 13 }} />
+                <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>API</Text>
+                <Text copyable={{ text: `${APEX_AR_RECEIPTS}/${m.standardReceiptId}/delete` }}
+                  style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
+                  POST {APEX_AR_RECEIPTS}/{m.standardReceiptId}/delete
+                </Text>
+              </div>
+              <Text type="secondary" style={{ fontSize: 10.5, display: 'block', marginTop: 2 }}>
+                No request body — the id travels in the URL; the server refuses accounted receipts.
+              </Text>
+              {m.lastStatus != null && (
+                <div style={{ marginTop: 8 }}>
+                  <Text strong style={{ fontSize: 11, color: m.lastStatus === 200 ? REDWOOD.success : REDWOOD.primary }}>
+                    Last response — HTTP {m.lastStatus}
+                  </Text>
+                  <pre style={{
+                    margin: '4px 0 0', padding: 8, borderRadius: 6, fontSize: 10.5, maxHeight: 160, overflow: 'auto',
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                    background: m.lastStatus === 200 ? '#f6ffed' : '#fff1f0',
+                    border: `1px solid ${m.lastStatus === 200 ? '#b7eb8f' : '#ffa39e'}`,
+                  }}>{m.lastBody || '(empty response body)'}</pre>
+                </div>
+              )}
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* Receipt PDF Preview Modal */}
       <Modal
