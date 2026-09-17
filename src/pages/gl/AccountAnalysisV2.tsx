@@ -13,8 +13,9 @@ import {
   FileExcelOutlined, FilePdfOutlined, AuditOutlined, ReloadOutlined,
   ApiOutlined, CopyOutlined, BookOutlined, DownOutlined,
   FilterOutlined, PlusOutlined, GroupOutlined, BarChartOutlined,
-  CalendarOutlined, ExclamationCircleOutlined, LinkOutlined,
+  CalendarOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined,
 } from '@ant-design/icons';
+import JournalFullPreview from '../../components/JournalFullPreview';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Link } from 'react-router-dom';
@@ -391,7 +392,8 @@ const DrillModal: React.FC<{
   record: JournalLine | null;
   lines: any[]; loading: boolean;
   functionalCcy: string;
-}> = ({ open, onClose, record, lines, loading, functionalCcy }) => {
+  onFullJournal?: () => void;
+}> = ({ open, onClose, record, lines, loading, functionalCcy, onFullJournal }) => {
   const totals = useMemo(() => lines.reduce((acc, l) => ({
     entDr: acc.entDr + Number(l.entered_dr || l.enteredDr || 0),
     entCr: acc.entCr + Number(l.entered_cr || l.enteredCr || 0),
@@ -428,7 +430,15 @@ const DrillModal: React.FC<{
   ];
 
   return (
-    <Modal open={open} onCancel={onClose} footer={null} width={1100} style={{ top: 20 }}
+    <Modal open={open} onCancel={onClose} width={1100} style={{ top: 20 }}
+      footer={[
+        onFullJournal && (
+          <Button key="full" type="primary" icon={<EyeOutlined />} onClick={onFullJournal}>
+            Full Journal
+          </Button>
+        ),
+        <Button key="close" onClick={onClose}>Close</Button>,
+      ]}
       title={
         <Space wrap>
           <AuditOutlined style={{ color: REDWOOD.info }} />
@@ -1085,6 +1095,8 @@ const AAPanel: React.FC = () => {
   const [drillLines, setDrillLines]           = useState<any[]>([]);
   const [drillLoading, setDrillLoading]       = useState(false);
   const [drillOpen, setDrillOpen]             = useState(false);
+  // Full-journal preview (batch + headers + lines + attachments via gateway SQL)
+  const [fullPrevHeaderId, setFullPrevHeaderId] = useState<number | null>(null);
 
   // API modal
   const [apiUrl, setApiUrl]                   = useState('');
@@ -3993,7 +4005,13 @@ const AAPanel: React.FC = () => {
 
       <DrillModal open={drillOpen} onClose={() => setDrillOpen(false)}
         record={drillRecord} lines={drillLines} loading={drillLoading}
-        functionalCcy={functionalCcy} />
+        functionalCcy={functionalCcy}
+        onFullJournal={drillRecord ? () => setFullPrevHeaderId(drillRecord.jeHeaderId) : undefined} />
+
+      <JournalFullPreview
+        open={fullPrevHeaderId != null}
+        jeHeaderId={fullPrevHeaderId}
+        onClose={() => setFullPrevHeaderId(null)} />
 
       <Modal open={apiModalOpen} onCancel={() => setApiModalOpen(false)}
         title={<Space><ApiOutlined style={{ color: REDWOOD.info }} />API Endpoint</Space>}
