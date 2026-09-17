@@ -1,18 +1,20 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   Layout, Card, Form, Input, Button, Space, Typography, Table, Tabs,
   Breadcrumb, Tooltip, message, Tag, Spin, Descriptions, Badge, Empty, Alert,
+  Modal, Select,
 } from 'antd';
 import {
   HomeOutlined, SearchOutlined, ReloadOutlined,
   UserOutlined, BankOutlined, IdcardOutlined, DownloadOutlined,
   ApiOutlined, CopyOutlined, CloseOutlined, EnvironmentOutlined,
-  ApartmentOutlined, InfoCircleOutlined,
+  ApartmentOutlined, InfoCircleOutlined, PlusOutlined, EditOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
 import FloatingMenu from '../../components/FloatingMenu';
+import AccountSelector from '../../components/AccountSelector';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 
 const { Content } = Layout;
@@ -53,11 +55,47 @@ interface PartyTab {
   detail: Record<string, any> | null;   // raw /ar/parties/:id row
   detailLoading: boolean;
   detailUrl: string;
-  accounts: Record<string, any>[];       // raw /ar/parties/:id/accounts rows
+  accounts: BuAssignment[];              // RR_BU_ACCOUNTS_ASSIGNMENTS rows for the party
   accountsLoading: boolean;
   accountsLoaded: boolean;
   accountsUrl: string;
   accountsError: string;
+}
+
+// One row of RR_BU_ACCOUNTS_ASSIGNMENTS (keys as the GET handler emits them)
+interface BuAssignment {
+  assignmentId: number;
+  partyId: number;
+  partyName: string | null;
+  businessUnitName: string;
+  companyCode: string | null;
+  receivablesAccount: string | null;
+  revenueAccount: string | null;
+  taxAccount: string | null;
+  freightAccount: string | null;
+  unbilledAccount: string | null;
+  unearnedAccount: string | null;
+  clearingAccount: string | null;
+  status: string | null;
+}
+
+// Account types assignable per BU (Fusion AutoAccounting classes)
+const ACCOUNT_TYPES: { key: keyof BuAssignment & string; label: string }[] = [
+  { key: 'receivablesAccount', label: 'Receivables' },
+  { key: 'revenueAccount',     label: 'Revenue' },
+  { key: 'taxAccount',         label: 'Tax' },
+  { key: 'freightAccount',     label: 'Freight' },
+  { key: 'unbilledAccount',    label: 'Unbilled Receivable' },
+  { key: 'unearnedAccount',    label: 'Unearned Revenue' },
+  { key: 'clearingAccount',    label: 'AutoInvoice Clearing' },
+];
+
+// Draft being edited in the Assign/Edit BU dialog
+interface BuDraft {
+  assignmentId?: number;
+  businessUnitName: string;
+  companyCode: string;
+  accounts: Record<string, string>;   // ACCOUNT_TYPES key -> code combination
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -75,31 +113,6 @@ const up = (v: any): string => {
 const fmtVal = (v: any): string => {
   if (v === null || v === undefined || v === '') return '—';
   return String(v);
-};
-
-// Build table columns dynamically from the returned rows (schema-agnostic),
-// putting a few well-known columns first.
-const buildDynamicColumns = (rows: Record<string, any>[], preferred: string[]): ColumnsType<any> => {
-  if (!rows.length) return [];
-  const keys = Object.keys(rows[0]);
-  const ordered = [
-    ...preferred.filter(k => keys.includes(k)),
-    ...keys.filter(k => !preferred.includes(k)),
-  ];
-  return ordered.map(k => ({
-    title: prettyKey(k),
-    dataIndex: k,
-    key: k,
-    width: 170,
-    ellipsis: true,
-    render: (v: any) => (
-      <Tooltip title={fmtVal(v)}>
-        <Text style={{ fontSize: 12, fontFamily: /id|number|amount|date/i.test(k) ? 'monospace' : undefined }}>
-          {fmtVal(v)}
-        </Text>
-      </Tooltip>
-    ),
-  }));
 };
 
 const statusColor = (s: string) => {
@@ -177,8 +190,7 @@ const ManageCustomers: React.FC = () => {
     const key = `party-${party.partyId}`;
     if (tabs.find(t => t.key === key)) { setActiveKey(key); return; }
     const detailUrl   = `${BASE}/ar/parties/${party.partyId}`;
-    // filled with the real SQL once loadAccounts has discovered the columns
-    const accountsUrl = `POST ${BASE}/ai/executequery — (link columns discovered on load)`;
+    const accountsUrl = `GET ${BASE}/ar/buaccounts?party_id=${party.partyId}`;
     setTabs(prev => [...prev, {
       key, party,
       detail: null, detailLoading: false, detailUrl,
@@ -206,61 +218,108 @@ const ManageCustomers: React.FC = () => {
     }
   }, []);
 
-  // ── Load party accounts ───────────────────────────────────────────────────
-
-  // Direct SQL through the guarded gateway (same path as the AI assistant).
-  // The party -> account linkage differs per environment, so first read the
-  // REAL columns of both tables from user_tab_columns, then match on every
-  // link that exists (PARTY_ID, CUST_ACCOUNT_ID via the parties extract,
-  // party number, account-name) OR'd together — no guessed identifiers.
+  // ── Load BU account assignments (RR_BU_ACCOUNTS_ASSIGNMENTS) ──────────────
   const loadAccounts = useCallback(async (tabKey: string, party: PartyRow) => {
     if (loadedRef.current.has(`acct-${tabKey}`)) return;
     loadedRef.current.add(`acct-${tabKey}`);
-    setTabs(prev => prev.map(t => t.key === tabKey ? { ...t, accountsLoading: true, accountsError: '' } : t));
-    const gw = async (sql: string) => {
-      const res = await fetch(`${BASE}/ai/executequery`, {
-        method: 'POST',
-        cache: 'no-store',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ sql, maxRows: 500, appUser: 'MANAGE_CUSTOMERS' }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
-      return { columns: (data.columns || []) as string[], rows: (data.rows || []) as (string | number | null)[][] };
-    };
-    const escQ = (s: string) => String(s || '').replace(/'/g, "''");
+    const url = `${BASE}/ar/buaccounts?party_id=${party.partyId}`;
+    setTabs(prev => prev.map(t => t.key === tabKey
+      ? { ...t, accountsLoading: true, accountsError: '', accountsUrl: `GET ${url}` } : t));
     try {
-      const meta = await gw(
-        `SELECT table_name, column_name FROM user_tab_columns WHERE table_name IN ('RR_RAW_AR_HZ_CUST_ACCOUNTS_BIP', 'RR_RAW_AR_HZ_PARTIES_DM')`);
-      const acctCols = new Set(meta.rows.filter(r => r[0] === 'RR_RAW_AR_HZ_CUST_ACCOUNTS_BIP').map(r => String(r[1])));
-      const partyCols = new Set(meta.rows.filter(r => r[0] === 'RR_RAW_AR_HZ_PARTIES_DM').map(r => String(r[1])));
-
-      const pid = Number(party.partyId);
-      const links: string[] = [];
-      if (acctCols.has('PARTY_ID')) links.push(`a.party_id = ${pid}`);
-      if (acctCols.has('CUST_ACCOUNT_ID') && partyCols.has('CUST_ACCOUNT_ID'))
-        links.push(`a.cust_account_id IN (SELECT p.cust_account_id FROM rr_raw_ar_hz_parties_dm p WHERE p.party_id = ${pid})`);
-      if (acctCols.has('PARTY_NUMBER') && party.partyNumber)
-        links.push(`a.party_number = '${escQ(party.partyNumber)}'`);
-      if (acctCols.has('ACCOUNT_NAME') && party.partyName)
-        links.push(`UPPER(a.account_name) = UPPER('${escQ(party.partyName)}')`);
-      if (links.length === 0) throw new Error('No usable link column found between the party and accounts tables');
-
-      const sql = `SELECT a.* FROM rr_raw_ar_hz_cust_accounts_bip a WHERE ${links.join(' OR ')} ORDER BY a.account_number`;
-      setTabs(prev => prev.map(t => t.key === tabKey ? { ...t, accountsUrl: `POST ${BASE}/ai/executequery — ${sql}` } : t));
-
-      const data = await gw(sql);
-      const items: Record<string, any>[] = data.rows.map(r => {
-        const o: Record<string, any> = {};
-        data.columns.forEach((c, i) => { o[c.toLowerCase()] = r[i]; });
-        return o;
-      });
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      const raw = await res.text();
+      let data: any = {};
+      try { data = raw ? JSON.parse(raw) : {}; } catch { /* non-JSON */ }
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || data.message || `HTTP ${res.status} — ${raw.slice(0, 200)} (run DB script 154 if the endpoint is missing)`);
+      }
+      const items: BuAssignment[] = data.items ?? [];
       setTabs(prev => prev.map(t => t.key === tabKey ? { ...t, accountsLoading: false, accounts: items, accountsLoaded: true } : t));
     } catch (e: any) {
       loadedRef.current.delete(`acct-${tabKey}`);
       setTabs(prev => prev.map(t => t.key === tabKey ? { ...t, accountsLoading: false, accountsLoaded: true, accountsError: e.message || String(e) } : t));
     }
   }, []);
+
+  // ── Business units (for the Assign BU dialog; company code drives the
+  //     locked first segment of every account picker) ───────────────────────
+  const [businessUnits, setBusinessUnits] = useState<{ name: string; companyCode: string }[]>([]);
+  useEffect(() => {
+    fetch(`${BASE}/gl/businessunits`, { headers: { Accept: 'application/json' } })
+      .then(r => r.json())
+      .then(data => {
+        setBusinessUnits(
+          ((data.items || []) as any[])
+            .map((i: any) => ({ name: i.business_unit_name || '', companyCode: i.company_code ?? i.company ?? '' }))
+            .filter(b => b.name)
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
+      })
+      .catch(() => {});
+  }, []);
+
+  // ── Assign / edit BU accounts dialog ──────────────────────────────────────
+  const [buModal, setBuModal]   = useState<{ tabKey: string; party: PartyRow; draft: BuDraft } | null>(null);
+  const [savingBu, setSavingBu] = useState(false);
+  // which ACCOUNT_TYPES key the AccountSelector is currently picking for
+  const [acctPickKey, setAcctPickKey] = useState<string | null>(null);
+
+  const openBuModal = (tabKey: string, party: PartyRow, existing?: BuAssignment) => {
+    const accounts: Record<string, string> = {};
+    if (existing) ACCOUNT_TYPES.forEach(t => { accounts[t.key] = String(existing[t.key] ?? ''); });
+    setBuModal({
+      tabKey, party,
+      draft: existing
+        ? { assignmentId: existing.assignmentId, businessUnitName: existing.businessUnitName,
+            companyCode: existing.companyCode || '', accounts }
+        : { businessUnitName: '', companyCode: '', accounts: {} },
+    });
+  };
+
+  const saveBuAssignment = async () => {
+    if (!buModal) return;
+    const { tabKey, party, draft } = buModal;
+    if (!draft.businessUnitName) { message.error('Select a business unit'); return; }
+    if (!ACCOUNT_TYPES.some(t => draft.accounts[t.key])) { message.error('Assign at least one account'); return; }
+    setSavingBu(true);
+    let user = 'REACTERP';
+    try {
+      const u = JSON.parse(localStorage.getItem('erp_user') || 'null');
+      user = u?.email || u?.username || 'REACTERP';
+    } catch { /* fall back */ }
+    const body: Record<string, any> = {
+      partyId: party.partyId,
+      partyName: party.partyName,
+      businessUnitName: draft.businessUnitName,
+      companyCode: draft.companyCode,
+      createdBy: user,
+      updatedBy: user,
+    };
+    ACCOUNT_TYPES.forEach(t => { body[t.key] = draft.accounts[t.key] || null; });
+    // first time → POST creates the row; existing assignment → PUT updates it
+    const url = draft.assignmentId
+      ? `${BASE}/ar/buaccounts/${draft.assignmentId}`
+      : `${BASE}/ar/buaccounts`;
+    try {
+      const res = await fetch(url, {
+        method: draft.assignmentId ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
+      message.success(draft.assignmentId
+        ? `Assignment updated (${draft.businessUnitName})`
+        : `Business unit ${draft.businessUnitName} assigned`);
+      setBuModal(null);
+      loadedRef.current.delete(`acct-${tabKey}`);
+      loadAccounts(tabKey, party);
+    } catch (e: any) {
+      message.error('Save failed: ' + (e.message || String(e)));
+    } finally {
+      setSavingBu(false);
+    }
+  };
 
   // ── Close tab ─────────────────────────────────────────────────────────────
 
@@ -366,8 +425,26 @@ const ManageCustomers: React.FC = () => {
   const renderPartyDetail = (tab: PartyTab) => {
     const p = tab.party;
     const detail = tab.detail;
-    const accountsCols = buildDynamicColumns(tab.accounts,
-      ['ACCOUNT_NUMBER', 'ACCOUNT_NAME', 'STATUS', 'CUST_ACCOUNT_ID', 'PARTY_ID']);
+    const acctCell = (v: string | null) => v
+      ? <Tooltip title={v}><Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text></Tooltip>
+      : <Text type="secondary">—</Text>;
+    const accountsCols: ColumnsType<BuAssignment> = [
+      { title: 'Business Unit', dataIndex: 'businessUnitName', key: 'bu', fixed: 'left', width: 200,
+        render: (v: string) => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+      { title: 'Company', dataIndex: 'companyCode', key: 'co', width: 90, align: 'center',
+        render: (v: string) => v ? <Tag color="geekblue" style={{ fontFamily: 'monospace' }}>{v}</Tag> : '—' },
+      ...ACCOUNT_TYPES.map(t => ({
+        title: t.label, dataIndex: t.key, key: t.key, width: 210,
+        render: (v: string | null) => acctCell(v),
+      })),
+      { title: 'Status', dataIndex: 'status', key: 'st', width: 90,
+        render: (v: string) => <Tag color={statusColor(v || '')} style={{ fontSize: 11 }}>{v || '—'}</Tag> },
+      { title: '', key: 'edit', width: 70, fixed: 'right',
+        render: (_: any, r: BuAssignment) => (
+          <Button size="small" icon={<EditOutlined />} style={{ fontSize: 11 }}
+            onClick={() => openBuModal(tab.key, p, r)}>Edit</Button>
+        ) },
+    ];
 
     return (
       <div style={{ padding: '0 4px' }}>
@@ -429,7 +506,7 @@ const ManageCustomers: React.FC = () => {
           title={
             <Space>
               <ApartmentOutlined style={{ color: REDWOOD.info }} />
-              <span style={{ fontWeight: 600 }}>Customer Accounts</span>
+              <span style={{ fontWeight: 600 }}>Customer Accounts — BU Assignments</span>
               {tab.accountsLoaded && <Badge count={tab.accounts.length} style={{ backgroundColor: REDWOOD.info }} showZero />}
             </Space>
           }
@@ -443,24 +520,30 @@ const ManageCustomers: React.FC = () => {
                 onClick={() => { loadedRef.current.delete(`acct-${tab.key}`); loadAccounts(tab.key, p); }}>
                 Reload
               </Button>
+              <Button size="small" type="primary" icon={<PlusOutlined />}
+                style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}
+                onClick={() => openBuModal(tab.key, p)}>
+                Assign BU
+              </Button>
             </Space>
           }
         >
           {tab.accountsLoading
-            ? <div style={{ textAlign: 'center', padding: 40 }}><Spin tip="Loading accounts…" /></div>
+            ? <div style={{ textAlign: 'center', padding: 40 }}><Spin tip="Loading assignments…" /></div>
             : tab.accountsError
               ? <Alert type="error" showIcon style={{ margin: 12 }}
-                  message="Failed to load accounts"
+                  message="Failed to load BU account assignments"
                   description={<div><div>{tab.accountsError}</div>
                     <div style={{ fontFamily: 'monospace', fontSize: 11, marginTop: 4, wordBreak: 'break-all' }}>{tab.accountsUrl}</div></div>} />
               : tab.accounts.length === 0
-                ? <Empty description="No customer accounts for this party" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ padding: 24 }} />
+                ? <Empty description={<span>No business units assigned yet — use <b>Assign BU</b> to add the first one</span>}
+                    image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ padding: 24 }} />
                 : <Table
-                    dataSource={tab.accounts.map((a, i) => ({ ...a, _k: i }))}
-                    rowKey="_k"
+                    dataSource={tab.accounts}
+                    rowKey="assignmentId"
                     columns={accountsCols}
                     size="small"
-                    pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `${t} accounts` }}
+                    pagination={{ pageSize: 20, showSizeChanger: true, showTotal: t => `${t} business units` }}
                     scroll={{ x: 'max-content' }}
                   />
           }
@@ -661,6 +744,112 @@ const ManageCustomers: React.FC = () => {
           />
         </Card>
       </Content>
+
+      {/* ── Assign / Edit BU accounts dialog ── */}
+      <Modal
+        open={!!buModal}
+        onCancel={() => setBuModal(null)}
+        width={640}
+        title={
+          <Space>
+            <ApartmentOutlined style={{ color: REDWOOD.primary }} />
+            <span>{buModal?.draft.assignmentId ? 'Edit BU Account Assignment' : 'Assign Business Unit'}</span>
+            {buModal && <Tag color="blue" style={{ fontSize: 11 }}>{buModal.party.partyName}</Tag>}
+          </Space>
+        }
+        footer={[
+          <Button key="cancel" onClick={() => setBuModal(null)}>Cancel</Button>,
+          <Button key="save" type="primary" loading={savingBu}
+            style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}
+            onClick={saveBuAssignment}>
+            {buModal?.draft.assignmentId ? 'Update' : 'Save'}
+          </Button>,
+        ]}
+      >
+        {buModal && (
+          <div>
+            <div style={{ marginBottom: 14 }}>
+              <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>Business Unit</Text>
+              <Space>
+                <Select
+                  showSearch
+                  style={{ width: 340 }}
+                  placeholder="Select business unit"
+                  value={buModal.draft.businessUnitName || undefined}
+                  disabled={!!buModal.draft.assignmentId}
+                  optionFilterProp="label"
+                  options={businessUnits.map(b => ({
+                    value: b.name,
+                    label: b.name,
+                    // creating: hide BUs already assigned to this party
+                    disabled: !buModal.draft.assignmentId &&
+                      (tabs.find(t => t.key === buModal.tabKey)?.accounts ?? [])
+                        .some(a => a.businessUnitName === b.name),
+                  }))}
+                  onChange={(name: string) => {
+                    const bu = businessUnits.find(b => b.name === name);
+                    // BU changed → company changes → previously picked accounts
+                    // belong to the old company, so clear them
+                    setBuModal(m => m && ({ ...m, draft: {
+                      ...m.draft, businessUnitName: name,
+                      companyCode: bu?.companyCode || '', accounts: {},
+                    } }));
+                  }}
+                />
+                {buModal.draft.companyCode && (
+                  <Tooltip title="Company segment — locked in the account picker">
+                    <Tag color="geekblue" style={{ fontFamily: 'monospace' }}>Company {buModal.draft.companyCode}</Tag>
+                  </Tooltip>
+                )}
+              </Space>
+            </div>
+
+            <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>Accounts (code combinations)</Text>
+            {ACCOUNT_TYPES.map(t => (
+              <div key={t.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <Text style={{ width: 150, fontSize: 12 }}>{t.label}</Text>
+                <Input
+                  readOnly
+                  size="small"
+                  style={{ flex: 1, fontFamily: 'monospace', fontSize: 11.5, background: '#FAFAFA' }}
+                  placeholder="Pick from segments →"
+                  value={buModal.draft.accounts[t.key] || ''}
+                  onClick={() => buModal.draft.businessUnitName && setAcctPickKey(t.key)}
+                />
+                <Button size="small" disabled={!buModal.draft.businessUnitName}
+                  onClick={() => setAcctPickKey(t.key)}>Pick</Button>
+                {buModal.draft.accounts[t.key] && (
+                  <Button size="small" type="text" icon={<CloseOutlined style={{ fontSize: 10 }} />}
+                    onClick={() => setBuModal(m => m && ({ ...m, draft: {
+                      ...m.draft, accounts: { ...m.draft.accounts, [t.key]: '' },
+                    } }))} />
+                )}
+              </div>
+            ))}
+            {!buModal.draft.businessUnitName && (
+              <Alert type="info" showIcon style={{ marginTop: 8 }}
+                message="Select the business unit first — the company segment of every account comes from it" />
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Segment-based account picker (company segment locked to the BU) ── */}
+      {acctPickKey && buModal && (
+        <AccountSelector
+          visible={!!acctPickKey}
+          lockedFirstSegment={buModal.draft.companyCode || undefined}
+          initialValue={buModal.draft.accounts[acctPickKey] || undefined}
+          onSelect={(code) => {
+            setBuModal(m => m && ({ ...m, draft: {
+              ...m.draft, accounts: { ...m.draft.accounts, [acctPickKey]: code },
+            } }));
+            setAcctPickKey(null);
+          }}
+          onCancel={() => setAcctPickKey(null)}
+        />
+      )}
+
       <FloatingMenu />
     </Layout>
   );
