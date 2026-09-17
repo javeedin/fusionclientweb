@@ -2289,22 +2289,6 @@ const AssetTabContent: React.FC<{
               );
             })()}
 
-            {/* ── Asset Attachments Modal (same mechanism as retirements) ── */}
-            <Modal
-              open={attachModal}
-              onCancel={() => setAttachModal(false)}
-              footer={[<Button key="close" onClick={() => setAttachModal(false)}>Close</Button>]}
-              width={760}
-              title={
-                <Space>
-                  <PaperClipOutlined style={{ color: FA_COLOR }} />
-                  <span>Asset Attachments — {asset.asset_number || asset.assetNumber}</span>
-                </Space>
-              }
-            >
-              {attachModal && <AssetAttachments assetId={asset.assetId} />}
-            </Modal>
-
             {/* ── Preview Depreciation Modal ── */}
             <Modal
               open={deprnModal}
@@ -3020,6 +3004,13 @@ const AssetTabContent: React.FC<{
           )}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
             {statusTag(asset.retiredFlag)}
+            <Tooltip title="Attachments">
+              <Button size="small" icon={<PaperClipOutlined />}
+                style={{ color: FA_COLOR, borderColor: FA_COLOR }}
+                onClick={() => setAttachModal(true)}>
+                Attach
+              </Button>
+            </Tooltip>
             <Popover title="API — how NBV & Deprn Reserve are fetched" content={valuesApiContent} trigger="click" placement="bottomRight">
               <Tooltip title="Show the API URLs behind these values">
                 <Button size="small" icon={<ApiOutlined />} style={{ color: '#0572CE', borderColor: '#0572CE' }} />
@@ -3065,6 +3056,23 @@ const AssetTabContent: React.FC<{
         }}
         items={subTabs}
       />
+
+      {/* ── Asset Attachments Modal (same mechanism as retirements) ──
+           Mounted at root level so the header Attach button works from any tab */}
+      <Modal
+        open={attachModal}
+        onCancel={() => setAttachModal(false)}
+        footer={[<Button key="close" onClick={() => setAttachModal(false)}>Close</Button>]}
+        width={760}
+        title={
+          <Space>
+            <PaperClipOutlined style={{ color: FA_COLOR }} />
+            <span>Asset Attachments — {asset.asset_number || asset.assetNumber}</span>
+          </Space>
+        }
+      >
+        {attachModal && <AssetAttachments assetId={asset.assetId} />}
+      </Modal>
 
       {/* ── Accounting Preview Modal ── */}
       <Modal
