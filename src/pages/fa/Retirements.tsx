@@ -120,28 +120,7 @@ const Retirements: React.FC = () => {
       setRows(records);
       setSearched(true);
 
-      // Show API response modal
-      Modal.info({
-        title: 'GET Retirements API Response',
-        width: 900,
-        content: (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 12, color: '#52c41a', marginBottom: 12, fontWeight: 600 }}>
-              ✓ Success! Retrieved {records.length} retirement records
-            </div>
-            <div style={{ fontSize: 11, color: '#888', marginBottom: 8, fontWeight: 600 }}>ENDPOINT (GET)</div>
-            <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
-              {apiUrl}
-            </Text>
-            <div style={{ fontSize: 11, color: '#888', margin: '16px 0 8px', fontWeight: 600 }}>RESPONSE ({records.length} records)</div>
-            <div style={{ background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 6, padding: 12, maxHeight: 500, overflow: 'auto' }}>
-              <pre style={{ margin: 0, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#333' }}>
-                {JSON.stringify(data, null, 2)}
-              </pre>
-            </div>
-          </div>
-        ),
-      });
+      // no API-response popup on search — the API button in the form shows it on demand
     } catch (error) {
       message.error(`API Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
@@ -1126,7 +1105,7 @@ const Retirements: React.FC = () => {
             open
             onCancel={() => { if (!acctModal.posting) setAcctModal(null); }}
             maskClosable={!acctModal.posting}
-            width={1000}
+            width={1200}
             footer={[
               <Button key="cancel" onClick={() => setAcctModal(null)}>Close</Button>,
               !acctModal.slaExists && <Button key="run" type="primary" icon={<AuditOutlined />}
@@ -1171,13 +1150,24 @@ const Retirements: React.FC = () => {
                       size="small"
                       style={{ marginTop: 8 }}
                       columns={[
-                        { title: 'Line', dataIndex: 'label', key: 'label', width: 150 },
-                        { title: 'Account', dataIndex: 'account', key: 'account', width: 180,
-                          render: (v) => <Text copyable style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text> },
-                        { title: 'Description', dataIndex: 'desc', key: 'desc', ellipsis: true },
-                        { title: 'Debit', dataIndex: 'dr', key: 'dr', width: 100, align: 'right' as const,
+                        // long labels clamp to two lines; the full text shows on hover
+                        { title: 'Line', dataIndex: 'label', key: 'label', width: 300,
+                          render: (v: string) => (
+                            <Tooltip title={v}>
+                              <div style={{
+                                fontSize: 12, lineHeight: '17px', overflow: 'hidden',
+                                display: '-webkit-box', WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical' as const,
+                              }}>{v}</div>
+                            </Tooltip>
+                          ) },
+                        { title: 'Account', dataIndex: 'account', key: 'account', width: 300,
+                          render: (v) => <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, whiteSpace: 'nowrap' }}>{v}</Text> },
+                        { title: 'Description', dataIndex: 'desc', key: 'desc', ellipsis: true,
+                          render: (v: string) => <Tooltip title={v}><span style={{ fontSize: 12 }}>{v}</span></Tooltip> },
+                        { title: 'Debit', dataIndex: 'dr', key: 'dr', width: 110, align: 'right' as const,
                           render: (v) => v > 0 ? formatCurrency(v) : '—' },
-                        { title: 'Credit', dataIndex: 'cr', key: 'cr', width: 100, align: 'right' as const,
+                        { title: 'Credit', dataIndex: 'cr', key: 'cr', width: 110, align: 'right' as const,
                           render: (v) => v > 0 ? formatCurrency(v) : '—' },
                       ]}
                       dataSource={acctModal.acctLines.map((l, i) => ({ ...l, key: i }))}
