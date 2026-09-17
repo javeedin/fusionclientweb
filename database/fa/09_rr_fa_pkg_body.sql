@@ -66,9 +66,10 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_PKG AS
 
     -- ── GET_ASSETS ────────────────────────────────────────────────────────────
     -- Sources: RR_FA_ADDITIONS_TL + RR_FA_BOOKS.
-    -- Supported filters: p_description, p_book_type.
-    -- Others (p_asset_number, p_category, p_asset_type, p_status) are ignored
-    -- because those columns do not exist in these two tables.
+    -- Supported filters: p_description, p_book_type, p_asset_number,
+    -- p_status (ACTIVE | RETIRED — retired = RETIRED_FLAG or end-dated book).
+    -- Others (p_category, p_asset_type) are ignored because those columns
+    -- do not exist in these two tables.
     PROCEDURE GET_ASSETS (
         p_asset_number  IN  VARCHAR2,
         p_description   IN  VARCHAR2,
@@ -100,7 +101,12 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_PKG AS
                ON b.ASSET_ID = a.ASSET_ID AND b.RN = 1
         WHERE  (p_description  IS NULL OR UPPER(a.DESCRIPTION)  LIKE UPPER('%' || p_description  || '%'))
         AND    (p_book_type    IS NULL OR b.BOOK_TYPE_CODE       =    p_book_type)
-        AND    (p_asset_number IS NULL OR a.ASSET_NUMBER         LIKE '%' || p_asset_number || '%');
+        AND    (p_asset_number IS NULL OR a.ASSET_NUMBER         LIKE '%' || p_asset_number || '%')
+        AND    (p_status IS NULL
+                OR (UPPER(p_status) = 'RETIRED'
+                    AND (NVL(a.RETIRED_FLAG, 'NO') = 'YES' OR b.DATE_INEFFECTIVE IS NOT NULL))
+                OR (UPPER(p_status) = 'ACTIVE'
+                    AND NVL(a.RETIRED_FLAG, 'NO') <> 'YES' AND b.DATE_INEFFECTIVE IS NULL));
 
         -- JSON header — no envelope, just totalCount + items
         p_result := '{"totalCount":' || v_total
@@ -157,6 +163,11 @@ CREATE OR REPLACE PACKAGE BODY RR_FA_PKG AS
             WHERE  (p_description  IS NULL OR UPPER(a.DESCRIPTION)  LIKE UPPER('%' || p_description  || '%'))
             AND    (p_book_type    IS NULL OR b.BOOK_TYPE_CODE       =    p_book_type)
             AND    (p_asset_number IS NULL OR a.ASSET_NUMBER         LIKE '%' || p_asset_number || '%')
+            AND    (p_status IS NULL
+                    OR (UPPER(p_status) = 'RETIRED'
+                        AND (NVL(a.RETIRED_FLAG, 'NO') = 'YES' OR b.DATE_INEFFECTIVE IS NOT NULL))
+                    OR (UPPER(p_status) = 'ACTIVE'
+                        AND NVL(a.RETIRED_FLAG, 'NO') <> 'YES' AND b.DATE_INEFFECTIVE IS NULL))
             ORDER BY a.ASSET_ID
             OFFSET v_offset ROWS FETCH NEXT v_limit ROWS ONLY
         ) LOOP
