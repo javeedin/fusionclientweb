@@ -142,6 +142,38 @@ const BankWizard: React.FC<Props> = ({ open, mode, existingBanks, onClose, onDon
   const isNewBank = bankChoice === 'new';
   const isNewBranch = isNewBank || branchChoice === 'new';
 
+  // Selected context (live) — shown on later steps so the user always knows
+  // which bank/branch the record is going under
+  const wExistingBank   = Form.useWatch('existingBank', form);
+  const wNewBankName    = Form.useWatch('newBankName', form);
+  const wExistingBranch = Form.useWatch('existingBranch', form);
+  const wNewBranchName  = Form.useWatch('newBranchName', form);
+  const selBankName   = isNewBank ? wNewBankName : wExistingBank;
+  const selBranchName = isNewBranch ? wNewBranchName : wExistingBranch;
+
+  const contextBar = (showBranch: boolean) => (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+      background: '#f0f7ff', border: '1px solid #bdd7f5', borderRadius: 6,
+      padding: '8px 12px', marginBottom: 14,
+    }}>
+      <Space size={6}>
+        <BankOutlined style={{ color: '#0572CE' }} />
+        <Text type="secondary" style={{ fontSize: 11 }}>Bank:</Text>
+        <Text strong style={{ fontSize: 12 }}>{selBankName || '—'}</Text>
+        {isNewBank && <Tag color="green" style={{ fontSize: 10, marginInlineEnd: 0 }}>new</Tag>}
+      </Space>
+      {showBranch && (
+        <Space size={6}>
+          <BranchesOutlined style={{ color: '#0572CE' }} />
+          <Text type="secondary" style={{ fontSize: 11 }}>Branch:</Text>
+          <Text strong style={{ fontSize: 12 }}>{selBranchName || '—'}</Text>
+          {isNewBranch && <Tag color="green" style={{ fontSize: 10, marginInlineEnd: 0 }}>new</Tag>}
+        </Space>
+      )}
+    </div>
+  );
+
   const fieldsForStep = (s: number): string[] => {
     const key = steps[s]?.key;
     if (key === 'bank')   return isNewBank ? ['newBankName'] : ['existingBank'];
@@ -292,6 +324,7 @@ const BankWizard: React.FC<Props> = ({ open, mode, existingBanks, onClose, onDon
 
         {/* ── Step: Branch ── */}
         <div style={{ display: stepKey === 'branch' ? 'block' : 'none' }}>
+          {contextBar(false)}
           {!isNewBank && (
             <Segmented
               options={[
@@ -342,6 +375,7 @@ const BankWizard: React.FC<Props> = ({ open, mode, existingBanks, onClose, onDon
 
         {/* ── Step: Account ── */}
         <div style={{ display: stepKey === 'account' ? 'block' : 'none' }}>
+          {contextBar(true)}
           <Space.Compact block>
             <Form.Item name="accountName" label="Account Name" style={{ width: '50%', marginRight: 8 }}
               rules={[{ required: true, message: 'Account name is required' }]}>
