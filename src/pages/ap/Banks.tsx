@@ -40,6 +40,7 @@ import {
 import { Link } from 'react-router-dom';
 import FloatingMenu from '../../components/FloatingMenu';
 import AccountSelector from '../../components/AccountSelector';
+import BankWizard, { type BankWizardMode } from '../../components/BankWizard';
 
 const apexHeaders = { Accept: 'application/json' };
 
@@ -224,6 +225,9 @@ const Banks: React.FC = () => {
   // API Log state
   const [apiLogs, setApiLogs] = useState<Array<{ type: string; url: string; status: string; count: number; time: string }>>([]);
   const [showApiLog, setShowApiLog] = useState(false);
+
+  // Create wizard (New Bank / New Branch / Create Bank Account)
+  const [wizardMode, setWizardMode] = useState<BankWizardMode | null>(null);
 
   // Fetch banks from the locally synced RR_BANKS table (APEX/ORDS)
   const fetchBanks = useCallback(async () => {
@@ -1013,6 +1017,31 @@ const Banks: React.FC = () => {
             </Col>
             <Col>
               <Space size={8}>
+                <Button
+                  size="small"
+                  icon={<BankOutlined />}
+                  onClick={() => setWizardMode('bank')}
+                  style={{ color: REDWOOD.info, borderColor: REDWOOD.info }}
+                >
+                  New Bank
+                </Button>
+                <Button
+                  size="small"
+                  icon={<BranchesOutlined />}
+                  onClick={() => setWizardMode('branch')}
+                  style={{ color: REDWOOD.info, borderColor: REDWOOD.info }}
+                >
+                  New Branch
+                </Button>
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<CreditCardOutlined />}
+                  onClick={() => setWizardMode('account')}
+                  style={{ background: REDWOOD.primary }}
+                >
+                  Create Bank Account
+                </Button>
                 <Tooltip title="View API calls">
                   <Button
                     size="small"
@@ -1338,8 +1367,17 @@ const Banks: React.FC = () => {
         )}
       </Modal>
 
+      {/* Create wizard: New Bank / New Branch / Create Bank Account */}
+      <BankWizard
+        open={wizardMode !== null}
+        mode={wizardMode ?? 'bank'}
+        existingBanks={banks.map(b => ({ bankName: b.BankName, bankNumber: b.BankNumber, countryName: b.CountryName }))}
+        onClose={() => setWizardMode(null)}
+        onDone={fetchBanks}
+      />
+
       {/* Autopilot Assistant */}
-      
+
       <FloatingMenu />
     </Layout>
   );
