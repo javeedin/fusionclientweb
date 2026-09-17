@@ -111,12 +111,14 @@ const JournalFullPreview: React.FC<Props> = ({ open, jeHeaderId, batchId, onClos
   const [attachments, setAttachments] = useState<AttRow[]>([]);
   const [attErr, setAttErr]           = useState<string>('');
   const [attBusy, setAttBusy]         = useState<Set<number>>(new Set());
+  // natural-account (4th segment) descriptions, keyed by segment value
+  const [acctDescs, setAcctDescs]     = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open) return;
     (async () => {
       setPrevBatch({}); setPrevHeaders({}); setPrevLines({}); setPrevExt({});
-      setAttachments([]); setAttErr('');
+      setAttachments([]); setAttErr(''); setAcctDescs({});
       setSqlOpen(false);
       setResolvedBatchId(null);
       setLoading(true);
@@ -153,9 +155,31 @@ const JournalFullPreview: React.FC<Props> = ({ open, jeHeaderId, batchId, onClos
         setPrevHeaders(toSection(settled[1]));
         setPrevLines(toSection(settled[2]));
 
-        // 3) linked external transactions
+        // 3) account-segment (4th segment) descriptions for all line combos
         const linesQR = settled[2].status === 'fulfilled' ? settled[2].value : null;
-        const extIdList = linesQR ? extTxnIdsOf(linesQR.rows.map((_, i) => recOf(linesQR, i))) : [];
+        const lineRecList = linesQR ? linesQR.rows.map((_, i) => recOf(linesQR, i)) : [];
+        const seg4s = new Set<string>();
+        lineRecList.forEach(l => {
+          const seg = String(l.ACCOUNT_COMBINATION ?? '').split('-')[3]?.trim();
+          if (seg && /^\w+$/.test(seg)) seg4s.add(seg);
+        });
+        if (seg4s.size) {
+          const descSql =
+            `SELECT value, description FROM rr_value_set_values ` +
+            `WHERE value_set_code = 'BUIMERC_FIN_GLB_COA_ACCOUNT' ` +
+            `AND value IN (${Array.from(seg4s).map(s => `'${s}'`).join(', ')})`;
+          allSqls.push(descSql);
+          setSqls([...allSqls]);
+          try {
+            const r = await runSql(descSql);
+            const m: Record<string, string> = {};
+            r.rows.forEach(row => { m[String(row[0] ?? '')] = String(row[1] ?? ''); });
+            setAcctDescs(m);
+          } catch { /* descriptions are best-effort */ }
+        }
+
+        // 4) linked external transactions
+        const extIdList = extTxnIdsOf(lineRecList);
         if (extIdList.length) {
           const extSql =
             `SELECT external_transaction_id, transaction_date, transaction_type, bank_account_name, ` +
@@ -170,7 +194,7 @@ const JournalFullPreview: React.FC<Props> = ({ open, jeHeaderId, batchId, onClos
           }
         }
 
-        // 4) journal attachments (stored against the batch id)
+        // 5) journal attachments (stored against the batch id)
         try {
           const res = await fetch(`${APEX_BASE}/cash/externaltransactions/${bId}/attachments`, {
             headers: { Accept: 'application/json' },
@@ -254,8 +278,22 @@ const JournalFullPreview: React.FC<Props> = ({ open, jeHeaderId, batchId, onClos
   const journalLineCols = [
     { title: '#', key: 'n', width: 44, align: 'center' as const,
       render: (_: unknown, l: Rec) => <Text type="secondary" style={{ fontSize: 11 }}>{pick(l, ['JE_LINE_NUMBER', 'LINE_NUM', 'LINE_ID'])}</Text> },
-    { title: 'Account Combination', key: 'acct', width: 230,
-      render: (_: unknown, l: Rec) => <span style={{ fontFamily: 'monospace', fontSize: 11.5, color: REDWOOD.info }}>{pick(l, ['ACCOUNT_COMBINATION']) || '—'}</span> },
+    { title: 'Account Combination', key: 'acct', width: 250,
+      render: (_: unknown, l: Rec) => {
+        const combo = pick(l, ['ACCOUNT_COMBINATION']);
+        const seg4 = combo.split('-')[3]?.trim();
+        const desc = seg4 ? acctDescs[seg4] : '';
+        return (
+          <div>
+            <span style={{ fontFamily: 'monospace', fontSize: 11.5, color: REDWOOD.info }}>{combo || '—'}</span>
+            {desc && (
+              <div style={{ fontSize: 10.5, color: REDWOOD.neutral600, lineHeight: 1.4 }}>
+                {seg4} · {desc}
+              </div>
+            )}
+          </div>
+        );
+      } },
     { title: 'Description', key: 'desc', ellipsis: true,
       render: (_: unknown, l: Rec) => <span style={{ fontSize: 11.5 }}>{pick(l, ['DESCRIPTION']) || '—'}</span> },
     { title: 'Ccy', key: 'ccy', width: 52, align: 'center' as const,

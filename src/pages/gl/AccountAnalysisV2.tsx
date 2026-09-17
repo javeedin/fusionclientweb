@@ -13,7 +13,7 @@ import {
   FileExcelOutlined, FilePdfOutlined, AuditOutlined, ReloadOutlined,
   ApiOutlined, CopyOutlined, BookOutlined, DownOutlined,
   FilterOutlined, PlusOutlined, GroupOutlined, BarChartOutlined,
-  CalendarOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined,
+  CalendarOutlined, ExclamationCircleOutlined, LinkOutlined,
 } from '@ant-design/icons';
 import JournalFullPreview from '../../components/JournalFullPreview';
 import jsPDF from 'jspdf';
@@ -382,106 +382,6 @@ const SegmentPicker: React.FC<{
           </div>
         </div>
       )}
-    </Modal>
-  );
-};
-
-// ─── Drill-Down Modal ─────────────────────────────────────────────────────────
-const DrillModal: React.FC<{
-  open: boolean; onClose: () => void;
-  record: JournalLine | null;
-  lines: any[]; loading: boolean;
-  functionalCcy: string;
-  onFullJournal?: () => void;
-}> = ({ open, onClose, record, lines, loading, functionalCcy, onFullJournal }) => {
-  const totals = useMemo(() => lines.reduce((acc, l) => ({
-    entDr: acc.entDr + Number(l.entered_dr || l.enteredDr || 0),
-    entCr: acc.entCr + Number(l.entered_cr || l.enteredCr || 0),
-    accDr: acc.accDr + Number(l.accounted_dr || l.accountedDr || 0),
-    accCr: acc.accCr + Number(l.accounted_cr || l.accountedCr || 0),
-  }), { entDr: 0, entCr: 0, accDr: 0, accCr: 0 }), [lines]);
-
-  const drillCols: ColumnsType<any> = [
-    { title: '#', key: 'lineNo', width: 44,
-      render: (_: any, r: any) => <span style={{ fontSize: 10, color: REDWOOD.neutral600 }}>{r.je_line_number || r.jeLineNumber || ''}</span> },
-    { title: 'Account', key: 'acct', width: 280,
-      render: (_: any, r: any) => {
-        const combo = r.account_combination || r.accountCombination || r.concatenatedSegments ||
-          [r.company, r.lob, r.department, r.account, r.sub_account || r.subAccount, r.analysis, r.intercompany]
-            .filter(Boolean).join('-');
-        return <Text code style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{combo || '—'}</Text>;
-      } },
-    { title: 'Description', key: 'desc', ellipsis: true,
-      render: (_: any, r: any) => (
-        <Tooltip title={r.description || r.je_line_description || ''}>
-          <span style={{ fontSize: 10 }}>{r.description || r.je_line_description || '—'}</span>
-        </Tooltip>
-      ) },
-    { title: 'Ent Dr', key: 'entDr', width: 120, align: 'right',
-      render: (_: any, r: any) => { const v = Number(r.entered_dr || r.enteredDr || 0); return v ? <span style={{ fontSize: 10, color: REDWOOD.success }}>{fmtN(v)}</span> : null; } },
-    { title: 'Ent Cr', key: 'entCr', width: 120, align: 'right',
-      render: (_: any, r: any) => { const v = Number(r.entered_cr || r.enteredCr || 0); return v ? <span style={{ fontSize: 10, color: REDWOOD.primary }}>{fmtN(v)}</span> : null; } },
-    { title: `Acc Dr (${functionalCcy})`, key: 'accDr', width: 130, align: 'right',
-      render: (_: any, r: any) => { const v = Number(r.accounted_dr || r.accountedDr || 0); return v ? <span style={{ fontSize: 10, color: REDWOOD.success }}>{fmtN(v)}</span> : null; } },
-    { title: `Acc Cr (${functionalCcy})`, key: 'accCr', width: 130, align: 'right',
-      render: (_: any, r: any) => { const v = Number(r.accounted_cr || r.accountedCr || 0); return v ? <span style={{ fontSize: 10, color: REDWOOD.primary }}>{fmtN(v)}</span> : null; } },
-    { title: 'Ccy', key: 'ccy', width: 60,
-      render: (_: any, r: any) => <Tag style={{ fontSize: 9 }}>{r.currency_code || r.currencyCode || ''}</Tag> },
-  ];
-
-  return (
-    <Modal open={open} onCancel={onClose} width={1100} style={{ top: 20 }}
-      footer={[
-        onFullJournal && (
-          <Button key="full" type="primary" icon={<EyeOutlined />} onClick={onFullJournal}>
-            Full Journal
-          </Button>
-        ),
-        <Button key="close" onClick={onClose}>Close</Button>,
-      ]}
-      title={
-        <Space wrap>
-          <AuditOutlined style={{ color: REDWOOD.info }} />
-          <Text strong>Journal Lines</Text>
-          {record && (
-            <>
-              <Tag color="geekblue">{record.batchName || `JE #${record.jeHeaderId}`}</Tag>
-              <Tag color="blue">ID: {record.jeHeaderId}</Tag>
-              <Tag>{record.defaultPeriodName}</Tag>
-              <Tag>{record.userJeSourceName}</Tag>
-            </>
-          )}
-          <Tag color={lines.length ? 'green' : 'default'}>{lines.length} lines</Tag>
-        </Space>
-      }>
-      <Spin spinning={loading}>
-        <Table dataSource={lines.map((l, i) => ({ ...l, key: i }))}
-          columns={drillCols} size="small" pagination={false}
-          scroll={{ x: 900, y: 420 }}
-          summary={() => lines.length === 0 ? null : (
-            <Table.Summary fixed>
-              <Table.Summary.Row>
-                <Table.Summary.Cell index={0} colSpan={3}>
-                  <Text strong style={{ fontSize: 11 }}>Total</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={3} align="right">
-                  <Text strong style={{ fontSize: 10, color: REDWOOD.success }}>{totals.entDr ? fmtN(totals.entDr) : ''}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={4} align="right">
-                  <Text strong style={{ fontSize: 10, color: REDWOOD.primary }}>{totals.entCr ? fmtN(totals.entCr) : ''}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={5} align="right">
-                  <Text strong style={{ fontSize: 10, color: REDWOOD.success }}>{totals.accDr ? fmtN(totals.accDr) : ''}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={6} align="right">
-                  <Text strong style={{ fontSize: 10, color: REDWOOD.primary }}>{totals.accCr ? fmtN(totals.accCr) : ''}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={7} />
-              </Table.Summary.Row>
-            </Table.Summary>
-          )}
-        />
-      </Spin>
     </Modal>
   );
 };
@@ -1090,12 +990,8 @@ const AAPanel: React.FC = () => {
   const [closingBal, setClosingBal]           = useState<{ acc: number; ent: number } | null>(null);
   const [tablePageSize, setTablePageSize]     = useState(50);
 
-  // Drill-down state
-  const [drillRecord, setDrillRecord]         = useState<JournalLine | null>(null);
-  const [drillLines, setDrillLines]           = useState<any[]>([]);
-  const [drillLoading, setDrillLoading]       = useState(false);
-  const [drillOpen, setDrillOpen]             = useState(false);
-  // Full-journal preview (batch + headers + lines + attachments via gateway SQL)
+  // Drill-down opens the full-journal preview directly
+  // (batch + headers + lines + attachments via gateway SQL)
   const [fullPrevHeaderId, setFullPrevHeaderId] = useState<number | null>(null);
 
   // API modal
@@ -1433,21 +1329,9 @@ const AAPanel: React.FC = () => {
     }
   }, [ledger, periods, dateMode, dateRange, account, segFilters, fetchBalanceRow]);
 
-  // ── Drill-down ────────────────────────────────────────────────────────────────
-  const openDrill = useCallback(async (record: JournalLine) => {
-    setDrillRecord(record);
-    setDrillLines([]);
-    setDrillOpen(true);
-    setDrillLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/journals/${record.jeHeaderId}/lines`);
-      const data = await res.json();
-      setDrillLines(data.items || []);
-    } catch {
-      message.error('Failed to load journal lines');
-    } finally {
-      setDrillLoading(false);
-    }
+  // ── Drill-down: straight to the full journal preview ─────────────────────────
+  const openDrill = useCallback((record: JournalLine) => {
+    setFullPrevHeaderId(record.jeHeaderId);
   }, []);
 
   // ── Segment filter helpers ────────────────────────────────────────────────────
@@ -4002,11 +3886,6 @@ const AAPanel: React.FC = () => {
           </Modal>
         );
       })()}
-
-      <DrillModal open={drillOpen} onClose={() => setDrillOpen(false)}
-        record={drillRecord} lines={drillLines} loading={drillLoading}
-        functionalCcy={functionalCcy}
-        onFullJournal={drillRecord ? () => setFullPrevHeaderId(drillRecord.jeHeaderId) : undefined} />
 
       <JournalFullPreview
         open={fullPrevHeaderId != null}
