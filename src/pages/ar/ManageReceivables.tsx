@@ -1041,7 +1041,7 @@ const ManageReceivables: React.FC = () => {
     const sql =
       `SELECT (SELECT COUNT(*) FROM rr_gl_je_lines_all l WHERE l.reference2 = TO_CHAR(${customerTransactionId}) ` +
       `AND l.reference5 IN ('AR_INVOICES', 'AR-INVOICE-CREATION', 'AR_INVOICE_CREATION')) AS gl_cnt, ` +
-      `(SELECT COUNT(*) FROM rr_ar_receipt_applications WHERE customer_transaction_id = ${customerTransactionId}) AS app_cnt, ` +
+      `(SELECT COUNT(*) FROM rr_ar_receipt_applications WHERE reference_transaction_id = ${customerTransactionId}) AS app_cnt, ` +
       `(SELECT COUNT(*) FROM rr_ar_adjustments WHERE customer_transaction_id = ${customerTransactionId}) AS adj_cnt ` +
       `FROM dual`;
     try {

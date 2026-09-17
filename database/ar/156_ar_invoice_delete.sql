@@ -105,8 +105,9 @@ BEGIN
     END IF;
 
     -- Guard 2: paid / settled? (receipt applications or adjustments exist)
+    -- receipt applications link to the invoice via REFERENCE_TRANSACTION_ID
     SELECT COUNT(*) INTO l_apps
-      FROM RR_AR_RECEIPT_APPLICATIONS WHERE CUSTOMER_TRANSACTION_ID = v_id;
+      FROM RR_AR_RECEIPT_APPLICATIONS WHERE REFERENCE_TRANSACTION_ID = v_id;
     SELECT COUNT(*) INTO l_adj
       FROM RR_AR_ADJUSTMENTS WHERE CUSTOMER_TRANSACTION_ID = v_id;
     IF l_apps > 0 OR l_adj > 0 THEN
