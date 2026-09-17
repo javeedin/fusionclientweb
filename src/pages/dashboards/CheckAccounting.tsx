@@ -10,7 +10,7 @@
  * the full record and on to the module page.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Descriptions, Input, Modal, Select, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
+import { Alert, Button, Card, Descriptions, Input, Modal, Segmented, Select, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
 import {
   ApiOutlined, AuditOutlined, CheckOutlined, CloseOutlined, CopyOutlined,
   FileExcelOutlined, LinkOutlined, ReloadOutlined, RobotOutlined,
@@ -169,6 +169,9 @@ const CheckAccounting: React.FC = () => {
 
   const [detailFor, setDetailFor] = useState<SummaryRow | null>(null);
   const [detailRows, setDetailRows] = useState<DetailRow[]>([]);
+  // detail grid accounting filter — the drill loads ALL documents of the
+  // (period, type); default view shows only the ones still to account
+  const [detAcctFilter, setDetAcctFilter] = useState<'Not Accounted' | 'Accounted' | 'All'>('Not Accounted');
   const [detailLoading, setDetailLoading] = useState(false);
   const [detSearch, setDetSearch] = useState('');
 
@@ -278,6 +281,7 @@ const CheckAccounting: React.FC = () => {
     setDetailFor(row);
     setDetailRows([]);
     setDetSearch('');
+    setDetAcctFilter('Not Accounted');
     setDetailLoading(true);
     try {
       const r = await runQuery(`${row.module} · ${row.period} · ${row.txnType} — documents`,
@@ -332,12 +336,15 @@ const CheckAccounting: React.FC = () => {
   }, [summary, sumSearch]);
 
   const visibleDetail = useMemo(() => {
+    let rows = detailRows;
+    if (detAcctFilter === 'Not Accounted') rows = rows.filter(r => !r.accounted);
+    else if (detAcctFilter === 'Accounted') rows = rows.filter(r => r.accounted);
     const f = detSearch.trim().toLowerCase();
-    if (!f) return detailRows;
-    return detailRows.filter(r =>
+    if (!f) return rows;
+    return rows.filter(r =>
       [r.txnNumber, r.party, r.currency, String(r.amount ?? ''), r.accounted ? 'yes accounted' : 'x not accounted']
         .some(v => v.toLowerCase().includes(f)));
-  }, [detailRows, detSearch]);
+  }, [detailRows, detSearch, detAcctFilter]);
 
   const detailDef = detailFor ? MODULES.find(m => m.key === detailFor.moduleKey) ?? null : null;
 
@@ -525,11 +532,21 @@ const CheckAccounting: React.FC = () => {
           title={
             <Space wrap>
               <Text strong>{detailFor.module} · {detailFor.period} · {detailFor.txnType} — transactions</Text>
-              <Tag>{visibleDetail.length}{detSearch ? ` of ${detailRows.length}` : ''} row(s)</Tag>
+              <Tag>{visibleDetail.length}{visibleDetail.length !== detailRows.length ? ` of ${detailRows.length}` : ''} row(s)</Tag>
             </Space>
           }
           extra={
             <Space>
+              <Segmented
+                size="small"
+                value={detAcctFilter}
+                onChange={v => setDetAcctFilter(v as 'Not Accounted' | 'Accounted' | 'All')}
+                options={[
+                  { label: <span style={{ color: detAcctFilter === 'Not Accounted' ? C.primary : undefined, fontWeight: detAcctFilter === 'Not Accounted' ? 600 : undefined }}>✗ Not Accounted</span>, value: 'Not Accounted' },
+                  { label: <span style={{ color: detAcctFilter === 'Accounted' ? C.success : undefined, fontWeight: detAcctFilter === 'Accounted' ? 600 : undefined }}>✓ Accounted</span>, value: 'Accounted' },
+                  { label: 'All', value: 'All' },
+                ]}
+              />
               <Input size="small" allowClear placeholder="Search rows…" value={detSearch}
                 onChange={e => setDetSearch(e.target.value)} style={{ width: 200 }} />
               <Button size="small" icon={<FileExcelOutlined />} disabled={!visibleDetail.length}
