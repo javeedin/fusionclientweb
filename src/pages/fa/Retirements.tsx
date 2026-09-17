@@ -9,9 +9,12 @@ import {
   HomeOutlined, SearchOutlined, ReloadOutlined, AuditOutlined,
   DollarOutlined, InfoCircleOutlined, StopOutlined, ApiOutlined,
   SyncOutlined, CheckCircleOutlined, ClockCircleOutlined,
+  PrinterOutlined, PaperClipOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
+import jsPDF from 'jspdf';
+import RetirementAttachments from '../../components/RetirementAttachments';
 import {
   getRetirements, getBookControls, retireAsset, formatCurrency,
   getRetirementAccountingPreview, createSlaAccounting, markFaDeprnAccounted,
@@ -552,12 +555,20 @@ const Retirements: React.FC = () => {
                  color: statusColor[v] || REDWOOD.neutral600, border: `1px solid ${statusColor[v] || REDWOOD.neutral600}40` }}>
         {v || '—'}
       </Tag> },
-    { title: '', key: 'actions', width: 120, align: 'center' as const,
+    { title: '', key: 'actions', width: 160, align: 'center' as const,
       render: (_: any, record: RetirementRecord) => (
         <Space size="small">
           <Tooltip title="View/Create accounting">
             <Button size="small" type="text" style={{ color: FA_COLOR }} icon={<AuditOutlined />}
               onClick={() => openAccounting(record)} />
+          </Tooltip>
+          <Tooltip title="Print retirement details (PDF)">
+            <Button size="small" type="text" style={{ color: REDWOOD.info }} icon={<PrinterOutlined />}
+              onClick={() => printRetirement(record)} />
+          </Tooltip>
+          <Tooltip title="Attachments">
+            <Button size="small" type="text" icon={<PaperClipOutlined />}
+              onClick={() => setAttachFor(record)} />
           </Tooltip>
           <Tooltip title="View details">
             <Button size="small" type="text" icon={<InfoCircleOutlined />}
@@ -567,6 +578,102 @@ const Retirements: React.FC = () => {
       ),
     },
   ];
+
+  // ── Attachments modal (same mechanism as AP payment attachments) ────────────
+  const [attachFor, setAttachFor] = useState<RetirementRecord | null>(null);
+
+  // ── Print — retirement details as a PDF document ────────────────────────────
+  const printRetirement = (r: RetirementRecord) => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const W = 210;
+    const M = 16;
+    let y = 20;
+    const money = (v: string) => {
+      const n = parseFloat(v || '0');
+      return isNaN(n) ? '—' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    // header band
+    doc.setFillColor(199, 70, 52);
+    doc.rect(0, 0, W, 26, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
+    doc.text('Asset Retirement', M, 12);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text(`Retirement ID ${r.retirementId}  ·  Printed ${dayjs().format('DD-MMM-YYYY HH:mm')}`, M, 19);
+    doc.setTextColor(26, 26, 26);
+    y = 36;
+
+    // asset block
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text(`${r.assetNumber} — ${r.description || ''}`.slice(0, 70), M, y); y += 6;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    doc.text(`Book: ${r.bookTypeCode || '—'}`, M, y); y += 10;
+
+    // details table
+    const row = (label: string, value: string, bold = false) => {
+      doc.setDrawColor(229, 229, 229);
+      doc.line(M, y + 2, W - M, y + 2);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+      doc.setTextColor(107, 107, 107);
+      doc.text(label, M, y);
+      doc.setTextColor(26, 26, 26);
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
+      doc.text(value || '—', W - M, y, { align: 'right' });
+      y += 8;
+    };
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    doc.text('Retirement Details', M, y); y += 7;
+    row('Date Retired',    fmtRetDate(r.dateRetired));
+    row('Type',            r.retirementTypeCode || '—');
+    row('Status',          r.status || '—');
+    row('Sold To',         r.soldTo || '—');
+    y += 4;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    doc.text('Amounts', M, y); y += 7;
+    row('Cost Retired',    money(r.costRetired));
+    row('NBV Retired',     money(r.nbvRetired));
+    row('Proceeds of Sale', money(r.proceedsOfSale));
+    row('Cost of Removal', money(r.costOfRemoval));
+    row('Gain / Loss',     money(r.gainLossAmount), true);
+
+    // accounts (only the ones present)
+    const accounts: [string, string | undefined][] = [
+      ['Asset Cost Account',      r.assetCostAccount],
+      ['Deprn Reserve Account',   r.deprnReserveAccount],
+      ['Proceeds Account',        r.proceedsAccount],
+      ['Cost of Removal Account', r.costOfRemovalAccount],
+      ['Gain Account',            r.gainAccount],
+      ['Loss Account',            r.lossAccount],
+    ];
+    const present = accounts.filter(([, v]) => v);
+    if (present.length) {
+      y += 4;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+      doc.text('Accounts', M, y); y += 7;
+      present.forEach(([label, v]) => {
+        doc.setDrawColor(229, 229, 229);
+        doc.line(M, y + 2, W - M, y + 2);
+        doc.setFontSize(9.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(107, 107, 107);
+        doc.text(label, M, y);
+        doc.setTextColor(26, 26, 26);
+        doc.setFont('courier', 'normal');
+        doc.text(String(v), W - M, y, { align: 'right' });
+        doc.setFont('helvetica', 'normal');
+        y += 8;
+      });
+    }
+
+    // footer
+    doc.setFontSize(8); doc.setTextColor(150, 150, 150);
+    doc.text('Generated by Re-ERP — Fixed Assets · Asset Retirements', M, 287);
+
+    // open in a new tab for print / save
+    const url = doc.output('bloburl');
+    window.open(url as unknown as string, '_blank');
+  };
 
   // ── Grid quick search (filters every visible column) ───────────────────────
   const [gridSearch, setGridSearch] = useState('');
@@ -769,6 +876,24 @@ const Retirements: React.FC = () => {
             />
           </Card>
         </div>
+
+        {/* ── Attachments Modal (same pattern as AP payment attachments) ── */}
+        <Modal
+          open={!!attachFor}
+          onCancel={() => setAttachFor(null)}
+          footer={[<Button key="close" onClick={() => setAttachFor(null)}>Close</Button>]}
+          width={760}
+          title={
+            <Space>
+              <PaperClipOutlined style={{ color: FA_COLOR }} />
+              <span>Retirement Attachments — {attachFor?.assetNumber} · Retirement {attachFor?.retirementId}</span>
+            </Space>
+          }
+        >
+          {attachFor && (
+            <RetirementAttachments retirementId={attachFor.retirementId} />
+          )}
+        </Modal>
 
         {/* Retire Asset Modal */}
         <Modal
