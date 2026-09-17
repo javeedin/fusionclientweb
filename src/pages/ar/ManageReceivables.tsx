@@ -1027,6 +1027,38 @@ const ManageReceivables: React.FC = () => {
     }
   }, []);
 
+  // Delete eligibility per tab: true only when the invoice has NO GL lines
+  // (not accounted), NO receipt applications and NO adjustments — the same
+  // conditions the delete endpoint (script 156) enforces. Checked via the
+  // guarded SQL gateway when the tab opens; the button renders only on true.
+  const [delEligMap, setDelEligMap] = useState<Record<string, boolean>>({});
+  const delEligFetchedRef = useRef<Set<string>>(new Set());
+  const fetchDeleteEligibility = useCallback(async (tabKey: string, customerTransactionId: number) => {
+    if (!customerTransactionId || delEligFetchedRef.current.has(tabKey)) return;
+    delEligFetchedRef.current.add(tabKey);
+    const sql =
+      `SELECT (SELECT COUNT(*) FROM rr_gl_je_lines_all l WHERE l.reference2 = TO_CHAR(${customerTransactionId}) ` +
+      `AND l.reference5 IN ('AR_INVOICES', 'AR-INVOICE-CREATION', 'AR_INVOICE_CREATION')) AS gl_cnt, ` +
+      `(SELECT COUNT(*) FROM rr_ar_receipt_applications WHERE customer_transaction_id = ${customerTransactionId}) AS app_cnt, ` +
+      `(SELECT COUNT(*) FROM rr_ar_adjustments WHERE customer_transaction_id = ${customerTransactionId}) AS adj_cnt ` +
+      `FROM dual`;
+    try {
+      const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/ai/executequery`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ sql, maxRows: 1, appUser: 'MANAGE_RECEIVABLES' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const row = data?.rows?.[0];
+      const clean = !!row && Number(row[0]) === 0 && Number(row[1]) === 0 && Number(row[2]) === 0;
+      setDelEligMap(prev => ({ ...prev, [tabKey]: clean }));
+    } catch {
+      // gateway unavailable → keep the button hidden (default false)
+      delEligFetchedRef.current.delete(tabKey);
+    }
+  }, []);
+
   // Auto-fetch receipts, adjustments and balance when an invoice tab becomes active
   useEffect(() => {
     if (!activeKey || activeKey === 'search') return;
@@ -1037,7 +1069,8 @@ const ManageReceivables: React.FC = () => {
     fetchBalance(activeKey, tab.draft.customerTransactionId, tab.draft.transactionNumber);
     fetchDff(activeKey, tab.draft.customerTransactionId);
     fetchInstTab(activeKey, tab.draft.customerTransactionId);
-  }, [activeKey, tabs, fetchReceiptApps, fetchAdjustments, fetchBalance, fetchDff, fetchInstTab]);
+    fetchDeleteEligibility(activeKey, tab.draft.customerTransactionId);
+  }, [activeKey, tabs, fetchReceiptApps, fetchAdjustments, fetchBalance, fetchDff, fetchInstTab, fetchDeleteEligibility]);
 
   // Grid-level quick filter for search results
   const [gridFilter, setGridFilter] = useState('');
@@ -1198,9 +1231,11 @@ const ManageReceivables: React.FC = () => {
     fetchedReceiptTabsRef.current.delete(key);
     fetchedAdjTabsRef.current.delete(key);
     fetchedBalanceTabsRef.current.delete(key);
+    delEligFetchedRef.current.delete(key);
     setReceiptAppsMap(prev => { const n = { ...prev }; delete n[key]; return n; });
     setAdjMap(prev => { const n = { ...prev }; delete n[key]; return n; });
     setBalanceMap(prev => { const n = { ...prev }; delete n[key]; return n; });
+    setDelEligMap(prev => { const n = { ...prev }; delete n[key]; return n; });
   };
 
   // ── Update a draft field ───────────────────────────────────────────────────
@@ -1830,18 +1865,18 @@ const ManageReceivables: React.FC = () => {
                   onClick={async () => { const ok = await handleSave(tabKey); if (ok) closeTab(tabKey); }}>
                   Save and Close
                 </Button>
-                {!!draft.customerTransactionId && (
+                {/* shown only when the eligibility check confirmed: no GL lines,
+                    no receipt applications, no adjustments */}
+                {!!draft.customerTransactionId && delEligMap[tabKey] === true && (
                   <Popconfirm
                     title={`Delete invoice ${draft.transactionNumber || draft.customerTransactionId}?`}
-                    description="Allowed only when the invoice is not paid and not accounted — the server verifies both. This cannot be undone."
+                    description="The invoice is not paid and not accounted. This cannot be undone."
                     okText="Delete" okButtonProps={{ danger: true }}
                     onConfirm={() => handleDeleteInvoice(tabKey)}
                   >
-                    <Tooltip title="Delete this invoice (only if not paid and not accounted)">
-                      <Button size="small" danger icon={<DeleteOutlined />} loading={isSaving}>
-                        Delete
-                      </Button>
-                    </Tooltip>
+                    <Button size="small" danger icon={<DeleteOutlined />} loading={isSaving}>
+                      Delete
+                    </Button>
                   </Popconfirm>
                 )}
               </>}
