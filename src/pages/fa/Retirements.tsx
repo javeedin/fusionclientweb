@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Layout, Card, Form, Input, Select, Button, Space, Typography, Table,
   Row, Col, Breadcrumb, Tag, Modal, InputNumber, DatePicker, Descriptions,
@@ -508,21 +508,58 @@ const Retirements: React.FC = () => {
   };
 
   // ── Table columns ───────────────────────────────────────────────────────────
+  // Date Retired arrives in mixed shapes ('2025-09-25T00:00:00.000+00:00',
+  // '24-JUN-26') — show date only, uniformly, and sort chronologically.
+  const fmtRetDate = (v?: string): string => {
+    if (!v) return '—';
+    const s = String(v);
+    const iso = s.includes('T') ? s.slice(0, 10) : s;
+    return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? dayjs(iso).format('DD-MMM-YYYY') : iso;
+  };
+  const retDateTime = (v?: string): number => {
+    if (!v) return 0;
+    const s = String(v);
+    const iso = s.includes('T') ? s.slice(0, 10) : s;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return new Date(iso).getTime();
+    const m = /^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/.exec(iso);
+    if (m) {
+      const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+      const mi = MON.indexOf(m[2].toUpperCase());
+      const yy = m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10);
+      if (mi >= 0) return new Date(yy, mi, parseInt(m[1], 10)).getTime();
+    }
+    return 0;
+  };
+  const strSort = (k: keyof RetirementRecord) =>
+    (a: RetirementRecord, b: RetirementRecord) => String(a[k] ?? '').localeCompare(String(b[k] ?? ''));
+  const numSort = (k: keyof RetirementRecord) =>
+    (a: RetirementRecord, b: RetirementRecord) => (parseFloat(String(a[k] ?? '0')) || 0) - (parseFloat(String(b[k] ?? '0')) || 0);
+
   const columns: ColumnsType<RetirementRecord> = [
     { title: 'Asset Number', dataIndex: 'assetNumber', key: 'assetNumber', width: 130,
+      sorter: strSort('assetNumber'),
       render: (v) => <Text strong style={{ color: FA_COLOR }}>{v}</Text> },
-    { title: 'Description', dataIndex: 'description', key: 'description', ellipsis: true },
-    { title: 'Book',        dataIndex: 'bookTypeCode', key: 'bookTypeCode', width: 160, ellipsis: true },
-    { title: 'Date Retired',dataIndex: 'dateRetired',  key: 'dateRetired',  width: 120 },
+    { title: 'Description', dataIndex: 'description', key: 'description', ellipsis: true,
+      sorter: strSort('description') },
+    { title: 'Book',        dataIndex: 'bookTypeCode', key: 'bookTypeCode', width: 160, ellipsis: true,
+      sorter: strSort('bookTypeCode') },
+    { title: 'Date Retired',dataIndex: 'dateRetired',  key: 'dateRetired',  width: 120,
+      sorter: (a, b) => retDateTime(a.dateRetired) - retDateTime(b.dateRetired),
+      render: (v: string) => fmtRetDate(v) },
     { title: 'Type',        dataIndex: 'retirementTypeCode', key: 'type',   width: 100,
+      sorter: strSort('retirementTypeCode'),
       render: (v) => v ? <Tag style={{ borderRadius: 4 }}>{v}</Tag> : '—' },
     { title: 'Cost Retired',dataIndex: 'costRetired',  key: 'costRetired',  width: 130, align: 'right' as const,
+      sorter: numSort('costRetired'),
       render: (v: any) => formatCurrency(v) },
     { title: 'NBV Retired', dataIndex: 'nbvRetired',   key: 'nbvRetired',   width: 120, align: 'right' as const,
+      sorter: numSort('nbvRetired'),
       render: (v: any) => formatCurrency(v) },
     { title: 'Proceeds',    dataIndex: 'proceedsOfSale',key: 'proceeds',    width: 120, align: 'right' as const,
+      sorter: numSort('proceedsOfSale'),
       render: (v: any) => formatCurrency(v) },
     { title: 'Gain / Loss', dataIndex: 'gainLossAmount',key: 'gainLoss',    width: 120, align: 'right' as const,
+      sorter: numSort('gainLossAmount'),
       render: (v) => {
         const n = parseFloat(v || '0');
         return <Text style={{ color: n >= 0 ? REDWOOD.success : REDWOOD.primary, fontWeight: 600 }}>
@@ -530,6 +567,7 @@ const Retirements: React.FC = () => {
         </Text>;
       }},
     { title: 'Status', dataIndex: 'status', key: 'status', width: 110,
+      sorter: strSort('status'),
       render: (v) => <Tag color={statusColor[v] ? undefined : undefined}
         style={{ borderRadius: 4, background: `${statusColor[v] || REDWOOD.neutral600}20`,
                  color: statusColor[v] || REDWOOD.neutral600, border: `1px solid ${statusColor[v] || REDWOOD.neutral600}40` }}>
@@ -550,6 +588,18 @@ const Retirements: React.FC = () => {
       ),
     },
   ];
+
+  // ── Grid quick search (filters every visible column) ───────────────────────
+  const [gridSearch, setGridSearch] = useState('');
+  const visibleRows = useMemo(() => {
+    const f = gridSearch.trim().toLowerCase();
+    if (!f) return rows;
+    return rows.filter(r =>
+      [r.assetNumber, r.description, r.bookTypeCode, r.dateRetired, fmtRetDate(r.dateRetired),
+       r.retirementTypeCode, r.costRetired, r.nbvRetired, r.proceedsOfSale, r.gainLossAmount, r.status]
+        .some(v => String(v ?? '').toLowerCase().includes(f)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, gridSearch]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -712,12 +762,24 @@ const Retirements: React.FC = () => {
             bodyStyle={{ padding: 0 }}
             title={
               searched
-                ? <Text strong>Retirements <Badge count={rows.length} style={{ backgroundColor: REDWOOD.primary }} /></Text>
+                ? <Text strong>Retirements <Badge count={visibleRows.length} style={{ backgroundColor: REDWOOD.primary }} />
+                    {gridSearch && visibleRows.length !== rows.length &&
+                      <Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>of {rows.length}</Text>}
+                  </Text>
                 : <Text strong>Retirements</Text>
+            }
+            extra={
+              <Input
+                size="small" allowClear placeholder="Search in grid…"
+                prefix={<SearchOutlined style={{ color: REDWOOD.neutral200 }} />}
+                style={{ width: 220 }}
+                value={gridSearch}
+                onChange={e => setGridSearch(e.target.value)}
+              />
             }
           >
             <Table<RetirementRecord>
-              dataSource={rows}
+              dataSource={visibleRows}
               columns={columns}
               rowKey="retirementId"
               loading={loading}
