@@ -94,14 +94,16 @@ const mapLe = (i: Raw): LegalEntity => ({
   syncDate: fmtTs(i.sync_date ?? i.syncDate),
 });
 
+// ORDS json/collection lowercases column aliases ("ledgerName" -> ledgername),
+// so accept snake_case, camelCase and all-lowercase spellings.
 const mapLedger = (i: Raw): Ledger => ({
-  ledgerId: n(i.ledger_id ?? i.ledgerId) ?? 0,
-  ledgerName: s(i.ledger_name ?? i.ledgerName) ?? '',
+  ledgerId: n(i.ledger_id ?? i.ledgerId ?? i.ledgerid) ?? 0,
+  ledgerName: s(i.ledger_name ?? i.ledgerName ?? i.ledgername) ?? '',
   description: s(i.description),
-  currencyCode: s(i.currency_code ?? i.currencyCode),
-  ledgerCategoryCode: s(i.ledger_category_code ?? i.ledgerCategoryCode),
-  createdBy: s(i.created_by ?? i.createdBy),
-  creationDate: fmtTs(i.creation_date ?? i.creationDate),
+  currencyCode: s(i.currency_code ?? i.currencyCode ?? i.currencycode),
+  ledgerCategoryCode: s(i.ledger_category_code ?? i.ledgerCategoryCode ?? i.ledgercategorycode),
+  createdBy: s(i.created_by ?? i.createdBy ?? i.createdby),
+  creationDate: fmtTs(i.creation_date ?? i.creationDate ?? i.creationdate),
 });
 
 const getItems = async (url: string): Promise<Raw[]> => {
