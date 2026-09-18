@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Breadcrumb, Button, Card, Divider, Form, Input, InputNumber, Modal, Select, Space, Switch,
+  Alert, Breadcrumb, Button, Card, Divider, Form, Input, InputNumber, Modal, Select, Space, Switch,
   Table, Tabs, Tag, Tooltip, Typography, message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -144,6 +144,8 @@ const ManageBusinessUnits: React.FC = () => {
   const [bus, setBus] = useState<BusinessUnit[]>([]);
   const [les, setLes] = useState<LegalEntity[]>([]);
   const [ledgers, setLedgers] = useState<Ledger[]>([]);
+  const [leError, setLeError] = useState('');
+  const [ledgerError, setLedgerError] = useState('');
   const [calMap, setCalMap] = useState<Record<number, CalInfo>>({});
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -179,14 +181,23 @@ const ManageBusinessUnits: React.FC = () => {
   }, []);
 
   const loadPickers = useCallback(async () => {
-    try {
-      const [leList, ledgerList] = await Promise.all([
-        getItems(`${APEX}/gl/legalentities`),
-        getItems(`${APEX}/gl/setup/ledgers`),
-      ]);
-      setLes(leList.map(mapLe));
-      setLedgers(ledgerList.map(mapLedger));
-    } catch { /* pickers load lazily — surfaced when dialogs open */ }
+    // Load independently: one endpoint failing must not blank the other list
+    const [leRes, ledgerRes] = await Promise.allSettled([
+      getItems(`${APEX}/gl/legalentities`),
+      getItems(`${APEX}/gl/setup/ledgers`),
+    ]);
+    if (leRes.status === 'fulfilled') {
+      setLes(leRes.value.map(mapLe));
+      setLeError('');
+    } else {
+      setLeError(leRes.reason instanceof Error ? leRes.reason.message : String(leRes.reason));
+    }
+    if (ledgerRes.status === 'fulfilled') {
+      setLedgers(ledgerRes.value.map(mapLedger));
+      setLedgerError('');
+    } else {
+      setLedgerError(ledgerRes.reason instanceof Error ? ledgerRes.reason.message : String(ledgerRes.reason));
+    }
   }, []);
 
   // which ledgers already have an accounting calendar (one summary call)
@@ -470,6 +481,11 @@ const ManageBusinessUnits: React.FC = () => {
                     <Tooltip title="Reload"><Button icon={<ReloadOutlined />} onClick={loadPickers} /></Tooltip>
                     <Button type="primary" icon={<PlusOutlined />} onClick={() => setLeOpen(true)}>New Legal Entity</Button>
                   </Space>
+                  {leError && (
+                    <Alert type="error" showIcon style={{ marginBottom: 12 }}
+                      message={`Legal entities could not be loaded — GET ${APEX}/gl/legalentities`}
+                      description={leError} />
+                  )}
                   <Table size="small" rowKey="legalEntityId" columns={leCols} dataSource={les}
                     scroll={{ x: 'max-content' }} pagination={{ pageSize: 20, showTotal: t => `${t} legal entities` }} />
                 </>
@@ -484,6 +500,11 @@ const ManageBusinessUnits: React.FC = () => {
                     <Tooltip title="Reload"><Button icon={<ReloadOutlined />} onClick={loadPickers} /></Tooltip>
                     <Button type="primary" icon={<PlusOutlined />} onClick={() => setLedgerOpen(true)}>New Ledger</Button>
                   </Space>
+                  {ledgerError && (
+                    <Alert type="error" showIcon style={{ marginBottom: 12 }}
+                      message={`Ledgers could not be loaded — GET ${APEX}/gl/setup/ledgers`}
+                      description={ledgerError} />
+                  )}
                   <Table size="small" rowKey="ledgerId" columns={ledgerCols} dataSource={ledgers}
                     scroll={{ x: 'max-content' }} pagination={{ pageSize: 20, showTotal: t => `${t} ledgers` }} />
                 </>
