@@ -49,7 +49,11 @@ async function loadEmailConfig() {
 }
 
 const app = express();
-const PORT = 3001;
+// REERP_PORT overrides the port for server deployments only (e.g.
+// REERP_PORT=80 on the hosting VM). Deliberately NOT the generic PORT
+// variable, so a stray PORT in someone's environment can never move the
+// Electron shell's proxy off 3001.
+const PORT = Number(process.env.REERP_PORT) || 3001;
 
 // Verbose logging - set VERBOSE=true to enable detailed console logs
 const VERBOSE = process.env.VERBOSE === 'true';
@@ -1306,6 +1310,19 @@ try {
   require('./ftp-manager.cjs')(app);
 } catch (e) {
   console.warn('FTP Manager routes unavailable:', e.message);
+}
+
+// ── Static hosting of the built web app (server deployments) ────────────────
+// When a dist/ build exists next to server/, this process serves the whole
+// application: the SPA plus the /api backend on one port. Client-side routes
+// fall back to index.html; /api and /mcp stay with their handlers above.
+const DIST_DIR = path.join(__dirname, '..', 'dist');
+if (fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
+  app.use(express.static(DIST_DIR));
+  app.get(/^\/(?!api\/|mcp\/).*/, (req, res) => {
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+  });
+  console.log('Serving web app from', DIST_DIR);
 }
 
 // Start server
