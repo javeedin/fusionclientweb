@@ -1,0 +1,682 @@
+<title>Re-ERP Inventory Prototype</title>
+<style>
+:root{
+  --brand:#C74634; --brand-dark:#A33B2C; --info:#0572CE; --ok:#1D7B4D; --warn:#B98A00; --bad:#C0392B;
+  --ground:#F7F6F4; --panel:#FFFFFF; --panel2:#FBFAF8; --ink:#1F1D1B; --ink2:#6C6660; --line:#E6E1DB;
+  --chip:#F1EDE8; --code:#F4F1EC; --brand-soft:#FBEFEC; --info-soft:#EBF4FC; --ok-soft:#EAF4EE; --warn-soft:#FBF4E0;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#191614; --panel:#221E1B; --panel2:#282824; --ink:#ECE7E1; --ink2:#A39B92; --line:#3A342E;
+    --chip:#2E2925; --code:#2A2622; --brand-soft:#3A2521; --info-soft:#1E2C3A; --ok-soft:#20301F; --warn-soft:#39301C;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#191614; --panel:#221E1B; --panel2:#282824; --ink:#ECE7E1; --ink2:#A39B92; --line:#3A342E;
+  --chip:#2E2925; --code:#2A2622; --brand-soft:#3A2521; --info-soft:#1E2C3A; --ok-soft:#20301F; --warn-soft:#39301C;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:30;background:linear-gradient(135deg,var(--brand),var(--brand-dark));color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px}
+.top .logo{font-weight:800;font-size:16px;letter-spacing:.3px}
+.top .sub{font-size:11px;opacity:.85}
+.top .tag{margin-left:auto;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.3);border-radius:99px;padding:2px 10px;font-size:11px}
+.burger{display:none;background:none;border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:6px;padding:4px 9px;font-size:15px;cursor:pointer}
+.shell{display:flex;min-height:calc(100vh - 46px)}
+nav{width:236px;flex:0 0 236px;background:var(--panel);border-right:1px solid var(--line);padding:10px 0 30px}
+nav .grp{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2);padding:14px 16px 4px}
+nav a{display:block;padding:6px 16px 6px 22px;color:var(--ink);text-decoration:none;font-size:13px;border-left:3px solid transparent;cursor:pointer}
+nav a:hover{background:var(--panel2)}
+nav a.on{border-left-color:var(--brand);background:var(--brand-soft);color:var(--brand);font-weight:600}
+main{flex:1;min-width:0;padding:18px 22px 60px}
+h1{font-size:19px;margin:0 0 2px}
+.crumb{font-size:11px;color:var(--ink2);margin-bottom:10px}
+.note{font-size:12px;color:var(--ink2);margin:2px 0 14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.tile{flex:1 1 150px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.tile .v{font-size:21px;font-weight:700;font-variant-numeric:tabular-nums}
+.tile .l{font-size:11px;color:var(--ink2)}
+.tile.hot{border-color:var(--brand);background:var(--brand-soft)}
+.tblwrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th{background:var(--panel2);text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink2);padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:hover td{background:var(--panel2)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:11.5px}
+.chip{display:inline-block;border-radius:99px;padding:1px 9px;font-size:10.5px;font-weight:600;background:var(--chip);color:var(--ink2);white-space:nowrap}
+.chip.ok{background:var(--ok-soft);color:var(--ok)} .chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--brand-soft);color:var(--brand)} .chip.info{background:var(--info-soft);color:var(--info)}
+.btn{background:var(--brand);color:#fff;border:none;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer}
+.btn:hover{background:var(--brand-dark)} .btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.ghost{background:transparent;color:var(--brand);border:1px solid var(--brand)}
+.btn.blue{background:var(--info)} .btn.grey{background:transparent;color:var(--ink2);border:1px solid var(--line)}
+.btn.sm{padding:3px 10px;font-size:11.5px}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.tabs{display:flex;gap:2px;border-bottom:2px solid var(--line);margin-bottom:12px;flex-wrap:wrap}
+.tabs b{padding:7px 13px;font-size:12.5px;font-weight:600;color:var(--ink2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px}
+.tabs b.on{color:var(--brand);border-bottom-color:var(--brand)}
+label{display:block;font-size:11px;color:var(--ink2);margin:0 0 3px}
+input,select{width:100%;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:13px}
+.frow{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.frow>div{flex:1 1 140px;min-width:120px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 18px;font-size:12.5px}
+.kv b{color:var(--ink2);font-weight:500}
+.acct{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:10px}
+.acct h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2)}
+.dim{color:var(--ink2)}
+.modal-bg{position:fixed;inset:0;background:rgba(20,15,12,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;max-width:720px;width:100%;max-height:86vh;overflow:auto;padding:18px 20px}
+.modal h3{margin:0 0 10px;font-size:15px}
+.toast{position:fixed;bottom:calc(18px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--ink);color:var(--ground);padding:9px 18px;border-radius:99px;font-size:12.5px;z-index:60;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+.err{background:var(--brand-soft);color:var(--brand);border:1px solid var(--brand);border-radius:8px;padding:8px 12px;font-size:12.5px;margin:8px 0}
+.hint{font-size:11px;color:var(--ink2)}
+.right{margin-left:auto}
+@media (max-width:760px){
+  .burger{display:block}
+  nav{position:fixed;left:0;top:0;bottom:0;z-index:40;transform:translateX(-105%);transition:transform .2s;box-shadow:4px 0 20px rgba(0,0,0,.2);overflow-y:auto;padding-top:calc(10px + env(safe-area-inset-top,0px))}
+  nav.open{transform:none}
+  main{padding:14px 16px 60px}
+}
+</style>
+
+<div class="top">
+  <button class="burger" id="burger">&#9776;</button>
+  <div><div class="logo">Re-ERP</div><div class="sub">Inventory Management</div></div>
+  <span class="tag">PROTOTYPE &middot; sample data &middot; RD v2.2</span>
+</div>
+<div class="shell">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+<div id="overlay"></div>
+
+<script>
+"use strict";
+/* ═══════════ sample master data (all figures are examples) ═══════════ */
+const S = {
+  user:'KHALID',
+  orgs:[
+    {code:'MST', name:'BUIMERC Master', type:'MASTER', master:null, bu:'-', le:'-', status:'ACTIVE'},
+    {code:'W1', name:'DIFC Main Warehouse', type:'CHILD', master:'MST', bu:'BUIMERC CORP_DIFC_INVST', le:'BUIMERC CORPORATION LIMITED', status:'ACTIVE'},
+    {code:'W2', name:'JAFZA Warehouse', type:'CHILD', master:'MST', bu:'BUIMERC CORP FZE_JAFZA_TRADING', le:'BUIMERC CORPORATION FZE', status:'ACTIVE'},
+  ],
+  params:{
+    W1:{uom:'EA',defsub:'STORES',locator:'NONE',negok:'N',lot:'Y',serial:'N',ccy:'AED',
+        material:'01-00-00-1410001-0000-000-00-000-000',adjust:'01-00-00-6900001-0000-000-00-000-000',
+        ccadj:'01-00-00-6900002-0000-000-00-000-000',intransit:'01-00-00-1415001-0000-000-00-000-000',
+        iorec:'01-00-00-1310001-0000-000-00-000-000',iopay:'01-00-00-2310001-0000-000-00-000-000',
+        routing:'DIRECT',rcptnum:'AUTOMATIC',nextrcpt:12,shipnum:'AUTOMATIC',nextship:3,shipmethod:'ROAD'},
+    W2:{uom:'EA',defsub:'STORES',locator:'NONE',negok:'N',lot:'Y',serial:'N',ccy:'AED',
+        material:'02-00-00-1410001-0000-000-00-000-000',adjust:'02-00-00-6900001-0000-000-00-000-000',
+        ccadj:'02-00-00-6900002-0000-000-00-000-000',intransit:'02-00-00-1415001-0000-000-00-000-000',
+        iorec:'02-00-00-1310001-0000-000-00-000-000',iopay:'02-00-00-2310001-0000-000-00-000-000',
+        routing:'STANDARD',rcptnum:'AUTOMATIC',nextrcpt:4,shipnum:'AUTOMATIC',nextship:1,shipmethod:'ROAD'},
+  },
+  subinvs:[
+    {org:'W1',code:'STORES',desc:'Main stores',type:'STORAGE',asset:'Y',status:'ACTIVE'},
+    {org:'W1',code:'FG',desc:'Finished goods',type:'STORAGE',asset:'Y',status:'ACTIVE'},
+    {org:'W1',code:'DAMAGED',desc:'Damaged / quarantine',type:'STORAGE',asset:'Y',status:'ACTIVE',mstatus:'QUARANTINE'},
+    {org:'W2',code:'STORES',desc:'Main stores',type:'STORAGE',asset:'Y',status:'ACTIVE'},
+    {org:'W2',code:'FG',desc:'Finished goods',type:'STORAGE',asset:'Y',status:'ACTIVE'},
+  ],
+  uoms:[['EA','Each','QUANTITY'],['DOZ','Dozen','QUANTITY'],['KG','Kilogram','WEIGHT'],['G','Gram','WEIGHT'],
+        ['M','Meter','LENGTH'],['L','Litre','VOLUME'],['BOX','Box','QUANTITY'],['ROLL','Roll','QUANTITY']],
+  reasons:['OPENING','DAMAGE','EXPIRY','SAMPLE','CORRECTION','DONATION'],
+  aliases:[{org:'W1',code:'MARKETING-SAMPLES',acct:'01-00-00-6150009-0000-000-00-000-000'},
+           {org:'W1',code:'SITE-CONSUMPTION',acct:'01-00-00-6150011-0000-000-00-000-000'}],
+  mstatuses:[['UNRESTRICTED','Y','Y','Y','Y'],['HOLD','Y','N','N','N'],['QUARANTINE','Y','N','Y','N'],['REJECTED','N','N','Y','N']],
+  shipmethods:['ROAD','SEA','AIR','COURIER'],
+  itemstatuses:['ACTIVE','PROTOTYPE','ON_HOLD','PHASE_OUT','OBSOLETE'],
+  catsets:[{set:'PRODUCT',cats:['BRACKETS','FRAMES','RAW-STEEL','PACKAGING']},{set:'COST',cats:['STD-MFG','TRADED','CONSUMABLE']}],
+  access:[{user:'KHALID',orgs:'ALL'},{user:'RATHEESH',orgs:'W1, W2'},{user:'STOREKEEPER1',orgs:'W1'}],
+  items:[
+    {n:'FG-1001',desc:'Steel Bracket 40mm',type:'FINISHED_GOOD',status:'ACTIVE',uom:'EA',lot:'Y',expctl:'Y',shelf:365,serial:'N',
+     std:14.00,sell:25.50,list:12.50,taxS:'VAT5_OUT',taxP:'VAT5_IN',
+     sales:'01-00-00-4110001-0000-000-00-000-000',cogs:'01-00-00-5110001-0000-000-00-000-000',exp:'01-00-00-6150001-0000-000-00-000-000',
+     cat:'BRACKETS',plan:'MIN_MAX',min:50,max:500,orgs:['W1','W2']},
+    {n:'FG-1002',desc:'Aluminium Frame 60cm',type:'FINISHED_GOOD',status:'ACTIVE',uom:'EA',lot:'N',expctl:'N',shelf:null,serial:'N',
+     std:22.00,sell:39.00,list:19.00,taxS:'VAT5_OUT',taxP:'VAT5_IN',
+     sales:'01-00-00-4110001-0000-000-00-000-000',cogs:'01-00-00-5110001-0000-000-00-000-000',exp:'01-00-00-6150001-0000-000-00-000-000',
+     cat:'FRAMES',plan:'NONE',min:null,max:null,orgs:['W1','W2']},
+    {n:'RM-2001',desc:'Steel Coil 2mm (per KG)',type:'RAW_MATERIAL',status:'ACTIVE',uom:'KG',lot:'N',expctl:'N',shelf:null,serial:'N',
+     std:8.50,sell:null,list:7.80,taxS:'VAT5_OUT',taxP:'VAT5_IN',
+     sales:'',cogs:'01-00-00-5120001-0000-000-00-000-000',exp:'01-00-00-6150001-0000-000-00-000-000',
+     cat:'RAW-STEEL',plan:'MIN_MAX',min:200,max:2000,orgs:['W1']},
+    {n:'CON-3001',desc:'Packing Box Large',type:'CONSUMABLE',status:'ACTIVE',uom:'EA',lot:'N',expctl:'N',shelf:null,serial:'N',
+     std:1.20,sell:null,list:1.05,taxS:'EXEMPT',taxP:'VAT5_IN',
+     sales:'',cogs:'',exp:'01-00-00-6150022-0000-000-00-000-000',
+     cat:'PACKAGING',plan:'NONE',min:null,max:null,orgs:['W1']},
+  ],
+  costorg:{code:'CO-01',name:'BUIMERC Costing',method:'AVERAGE',ccy:'AED',orgs:['W1','W2']},
+  costs:{'FG-1001':14.00,'FG-1002':22.00,'RM-2001':8.50,'CON-3001':1.20},
+  periods:[
+    {name:'Aug-26',start:'2026-08-01',end:'2026-08-31',status:'CLOSED',balances:null},
+    {name:'Sep-26',start:'2026-09-01',end:'2026-09-30',status:'OPEN',balances:null},
+    {name:'Oct-26',start:'2026-10-01',end:'2026-10-31',status:'NEVER_OPENED',balances:null},
+  ],
+  txns:[], onhand:{}, seq:5000000500,
+  reservations:[{id:'R-701',org:'W1',item:'FG-1001',subinv:'STORES',qty:25,fulfilled:10,ref:'Project ALPHA',need:'2026-10-01',status:'ACTIVE'}],
+  shipments:[], torders:[
+    {no:'TO-000002',from:'W1',to:'W2',mode:'INTRANSIT',status:'APPROVED',need:'2026-09-28',
+     lines:[{item:'FG-1001',req:20,shipped:0,received:0,srcsub:'FG',dstsub:'STORES'}]},
+  ],
+  ccentries:[
+    {id:'CC-801',org:'W1',item:'FG-1001',subinv:'STORES',lot:'L-2026-002',snap:null,counted:null,status:'PENDING'},
+    {id:'CC-802',org:'W1',item:'RM-2001',subinv:'STORES',lot:null,snap:null,counted:null,status:'PENDING'},
+  ],
+  abc:[['FG-1002','A',1,'46%'],['FG-1001','A',2,'31%'],['RM-2001','B',3,'19%'],['CON-3001','C',4,'4%']],
+  lots:[
+    {item:'FG-1001',org:'W1',lot:'L-2026-001',orig:'2026-09-05',exp:'2027-09-05'},
+    {item:'FG-1001',org:'W1',lot:'L-2026-002',orig:'2026-09-05',exp:'2027-10-01'},
+    {item:'FG-1001',org:'W2',lot:'L-2026-002',orig:'2026-09-14',exp:'2027-10-01'},
+  ],
+};
+const nid=()=>'T-'+(S.seq++);
+const fmt=n=>Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const P=o=>S.params[o];
+const item=n=>S.items.find(i=>i.n===n);
+const cost=n=>S.costs[n]??item(n).std;
+
+/* ═══════════ engine (ported from docs/design/inv_rd_simulation.py) ═══════════ */
+function ohKey(o,s,i,l){return o+'|'+s+'|'+i+'|'+(l||'-');}
+function addOnhand(o,s,i,l,q){const k=ohKey(o,s,i,l);S.onhand[k]=(S.onhand[k]||0)+q;if(Math.abs(S.onhand[k])<1e-9)delete S.onhand[k];}
+function onhand(o,i,s,l){let t=0;for(const k in S.onhand){const[ko,ks,ki,kl]=k.split('|');
+  if(ko===o&&ki===i&&(!s||ks===s)&&(!l||kl===l))t+=S.onhand[k];}return t;}
+function reservedQty(o,i,s){return S.reservations.filter(r=>r.status==='ACTIVE'&&r.org===o&&r.item===i&&(!s||!r.subinv||r.subinv===s))
+  .reduce((a,r)=>a+r.qty-r.fulfilled,0);}
+function att(o,i,s){return onhand(o,i,s)-reservedQty(o,i,s);}
+function periodOf(date){return S.periods.find(p=>date>=p.start&&date<=p.end);}
+function inTransit(){let t=0;S.shipments.filter(x=>x.status==='SHIPPED').forEach(x=>x.lines.forEach(l=>t+=l.qty));return t;}
+
+function acctLines(type,org,itemN,qty,val,alias){
+  const p=P(org), it=item(itemN);
+  const off=alias?S.aliases.find(a=>a.code===alias)?.acct:null;
+  switch(type){
+    case 'MISC_RECEIPT': return [['DR',p.material,val],['CR',off||p.adjust,val]];
+    case 'MISC_ISSUE':   return [['DR',off||it.exp||p.adjust,val],['CR',p.material,val]];
+    case 'SUBINV_TRANSFER': return [];
+    case 'INTERORG_SHIP': return [['DR',p.intransit,val],['CR',p.material,val]];
+    case 'INTERORG_RECEIVE': return [['DR',p.material,val],['CR',p.intransit,val]];
+    case 'CYCLE_COUNT_ADJ': return qty>0?[['DR',p.material,val],['CR',p.ccadj,val]]:[['DR',p.ccadj,val],['CR',p.material,val]];
+  } return [];
+}
+function createTxn(o){
+  const it=item(o.item); if(!it) throw 'Unknown item';
+  const org=S.orgs.find(x=>x.code===o.org);
+  if(!org||org.type!=='CHILD') throw 'Select a child organization';
+  if(!it.orgs.includes(o.org)) throw `Item ${o.item} has no ACTIVE assignment in ${o.org} (409)`;
+  if(!S.subinvs.find(s=>s.org===o.org&&s.code===o.subinv)) throw 'Unknown subinventory (404)';
+  const pd=periodOf(o.date); if(!pd||pd.status!=='OPEN') throw `Cost period for ${o.date} is ${pd?pd.status:'missing'} - transaction rejected (409)`;
+  const q=Math.abs(Number(o.qty)); if(!q) throw 'Quantity must be greater than zero (400)';
+  const sign={'MISC_RECEIPT':1,'MISC_ISSUE':-1,'SUBINV_TRANSFER':-1,'INTERORG_SHIP':-1,'INTERORG_RECEIVE':1,'CYCLE_COUNT_ADJ':(o.qty>=0?1:-1)}[o.type];
+  const sq=q*sign;
+  if(sq<0){
+    let avail=att(o.org,o.item,o.subinv);
+    if(o.ref) avail+=S.reservations.filter(r=>r.status==='ACTIVE'&&r.ref===o.ref).reduce((a,r)=>a+r.qty-r.fulfilled,0);
+    if(P(o.org).negok!=='Y'&&avail+1e-9<q) throw `Available to transact is ${fmt(avail)} - cannot take ${fmt(q)} (reservations protected) (409)`;
+  }
+  let legs=[];
+  if(it.lot==='Y'){
+    if(!o.lots||!o.lots.length) throw 'Item is lot controlled - lot details are required (400)';
+    const s=o.lots.reduce((a,l)=>a+Number(l.q||0),0);
+    if(Math.abs(s-q)>1e-9) throw `Lot quantities (${fmt(s)}) must cover the transaction quantity (${fmt(q)}) (400)`;
+    legs=o.lots.map(l=>[l.lot,(sq<0?-1:1)*Math.abs(Number(l.q))]);
+  } else legs=[[null,sq]];
+  const c=cost(o.item), ids=[];
+  legs.forEach(([lot,lq])=>{
+    const val=Math.round(Math.abs(lq)*c*100)/100;
+    const t={id:nid(),type:o.type,org:o.org,item:o.item,subinv:o.subinv,lot,qty:lq,cost:c,value:Math.round(lq*c*100)/100,
+      date:o.date,period:pd.name,reason:o.reason||null,alias:o.alias||null,ref:o.ref||null,shipment:o.shipment||null,
+      accounted:false,acct:acctLines(o.type,o.org,o.item,lq,val,o.alias)};
+    S.txns.push(t); addOnhand(o.org,o.subinv,o.item,lot,lq); ids.push(t.id);
+    if(o.type==='SUBINV_TRANSFER'){
+      const t2={...t,id:nid(),subinv:o.tosub,qty:-lq,value:Math.round(-lq*c*100)/100,acct:[]};
+      S.txns.push(t2); addOnhand(o.org,o.tosub,o.item,lot,-lq); ids.push(t2.id);
+    }
+  });
+  if(sq<0&&o.ref){let need=q;
+    S.reservations.forEach(r=>{if(r.status==='ACTIVE'&&r.ref===o.ref&&need>0){
+      const take=Math.min(need,r.qty-r.fulfilled); r.fulfilled+=take; need-=take;
+      if(r.fulfilled>=r.qty)r.status='FULFILLED';}});}
+  return ids;
+}
+function createAccounting(){let n=0;S.txns.forEach(t=>{if(!t.accounted){
+  const dr=t.acct.filter(a=>a[0]==='DR').reduce((a,x)=>a+x[2],0);
+  const cr=t.acct.filter(a=>a[0]==='CR').reduce((a,x)=>a+x[2],0);
+  if(Math.abs(dr-cr)>.005)throw 'Unbalanced entry on '+t.id; t.accounted=true;n++;}});return n;}
+function closePeriod(name){
+  const pd=S.periods.find(p=>p.name===name);
+  const un=S.txns.filter(t=>t.period===name&&!t.accounted).length;
+  if(un) throw `${un} unaccounted transaction(s) in ${name} - run Create Accounting first (409)`;
+  const bal={};
+  for(const k in S.onhand){const[o,s,i]=k.split('|');const kk=o+'|'+s+'|'+i;bal[kk]=(bal[kk]||0)+S.onhand[k];}
+  pd.status='CLOSED';
+  pd.balances=Object.entries(bal).map(([k,q])=>{const[o,s,i]=k.split('|');return{org:o,sub:s,item:i,qty:q,cost:cost(i),val:Math.round(q*cost(i)*100)/100};});
+  return pd.balances;
+}
+
+/* seed transaction history (replayed so on-hand always reconciles) */
+(function seed(){
+  const mk=(o)=>{try{const ids=createTxn(o);ids.forEach(id=>{const t=S.txns.find(x=>x.id===id);if(o.acc)t.accounted=true;});}catch(e){console.error('seed',e);}};
+  mk({type:'MISC_RECEIPT',org:'W1',item:'FG-1001',subinv:'STORES',qty:100,date:'2026-09-05',reason:'OPENING',acc:true,
+      lots:[{lot:'L-2026-001',q:60},{lot:'L-2026-002',q:40}]});
+  mk({type:'MISC_RECEIPT',org:'W1',item:'RM-2001',subinv:'STORES',qty:800,date:'2026-09-05',reason:'OPENING',acc:true});
+  mk({type:'MISC_RECEIPT',org:'W1',item:'FG-1002',subinv:'FG',qty:40,date:'2026-09-06',reason:'OPENING',acc:true});
+  mk({type:'MISC_RECEIPT',org:'W1',item:'CON-3001',subinv:'STORES',qty:500,date:'2026-09-06',reason:'OPENING',acc:true});
+  mk({type:'MISC_ISSUE',org:'W1',item:'FG-1001',subinv:'STORES',qty:30,date:'2026-09-08',reason:'DAMAGE',acc:true,lots:[{lot:'L-2026-001',q:30}]});
+  mk({type:'MISC_ISSUE',org:'W1',item:'FG-1001',subinv:'STORES',qty:10,date:'2026-09-09',ref:'Project ALPHA',acc:true,lots:[{lot:'L-2026-002',q:10}]});
+  mk({type:'SUBINV_TRANSFER',org:'W1',item:'FG-1001',subinv:'STORES',tosub:'FG',qty:20,date:'2026-09-10',acc:true,lots:[{lot:'L-2026-002',q:20}]});
+  // in-transit shipment SHP-000001: shipped 10, not yet received
+  mk({type:'INTERORG_SHIP',org:'W1',item:'FG-1001',subinv:'FG',qty:10,date:'2026-09-12',shipment:'SHP-000001',acc:true,lots:[{lot:'L-2026-002',q:10}]});
+  S.shipments.push({no:'SHP-000001',from:'W1',to:'W2',mode:'INTRANSIT',status:'SHIPPED',date:'2026-09-12',method:'ROAD',
+                    lines:[{item:'FG-1001',qty:10,lot:'L-2026-002',dstsub:'STORES'}]});
+  mk({type:'MISC_ISSUE',org:'W1',item:'RM-2001',subinv:'STORES',qty:120,date:'2026-09-15',reason:'CORRECTION'}); // left unaccounted on purpose
+  S.ccentries.forEach(e=>e.snap=onhand(e.org,e.item,e.subinv,e.lot));
+})();
+
+/* ═══════════ ui plumbing ═══════════ */
+const MENU=[
+ ['Overview',[['home','Dashboard']]],
+ ['Setup',[['orgs','Inventory Organizations'],['costorgs','Cost Organizations'],['lookups','Setup Lookups']]],
+ ['Items',[['items','Item Master'],['lots','Lots & Serials']]],
+ ['Transactions',[['txn','Create Transaction'],['hist','Transaction History'],['acctg','Create Accounting']]],
+ ['Transfers',[['torders','Transfer Orders'],['ships','Inter-Org Shipments']]],
+ ['Counting',[['cc','Cycle Counting'],['pi','Physical Inventory'],['abc','ABC Analysis']]],
+ ['Inquiry',[['oh','On-Hand & Availability'],['res','Reservations'],['val','Valuation']]],
+];
+let PAGE='home', SUBTAB={};
+const nav=document.getElementById('nav'), main=document.getElementById('main');
+function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),2600);}
+function modal(html){const bg=document.createElement('div');bg.className='modal-bg';bg.innerHTML=`<div class="modal">${html}</div>`;
+  bg.addEventListener('click',e=>{if(e.target===bg||e.target.dataset.close!==undefined)bg.remove();});
+  document.getElementById('overlay').appendChild(bg);return bg;}
+function go(p){PAGE=p;render();document.getElementById('nav').classList.remove('open');window.scrollTo(0,0);}
+function chipStatus(s){const m={ACTIVE:'ok',OPEN:'ok',CLOSED:'',SHIPPED:'info',RECEIVED:'ok',APPROVED:'info',PENDING:'warn',
+  COUNTED:'info',APPROVED_ADJ:'ok',NEVER_OPENED:'',FULFILLED:'',CANCELLED:'bad',QUARANTINE:'warn',DRAFT:'',IN_PROGRESS:'info',COMPLETED:'ok'};
+  return `<span class="chip ${m[s]??''}">${s}</span>`;}
+function tbl(head,rows){return `<div class="tblwrap"><table><thead><tr>${head.map(h=>`<th${h.startsWith('#')?' class="num"':''}>${h.replace(/^#/,'')}</th>`).join('')}</tr></thead><tbody>${
+  rows.length?rows.map(r=>`<tr>${r.map(c=>String(c).startsWith('#')?`<td class="num">${String(c).slice(1)}</td>`:`<td>${c}</td>`).join('')}</tr>`).join(''):
+  `<tr><td colspan="${head.length}" class="dim">No rows</td></tr>`}</tbody></table></div>`;}
+
+/* ═══════════ pages ═══════════ */
+const pages={
+home(){
+  const totalVal=Object.keys(S.onhand).reduce((a,k)=>{const i=k.split('|')[2];return a+S.onhand[k]*cost(i);},0);
+  const un=S.txns.filter(t=>!t.accounted).length;
+  return `<h1>Inventory Dashboard</h1><div class="note">All numbers are sample data flowing through the prototype engine - create transactions and watch every screen update.</div>
+  <div class="cards">
+   <div class="tile"><div class="v">${fmt(totalVal)}</div><div class="l">On-hand valuation (AED)</div></div>
+   <div class="tile"><div class="v">${S.txns.length}</div><div class="l">Transaction legs</div></div>
+   <div class="tile ${un?'hot':''}"><div class="v">${un}</div><div class="l">Unaccounted transactions</div></div>
+   <div class="tile"><div class="v">${fmt(inTransit())}</div><div class="l">Units in transit</div></div>
+   <div class="tile"><div class="v">${S.reservations.filter(r=>r.status==='ACTIVE').length}</div><div class="l">Active reservations</div></div>
+   <div class="tile"><div class="v">Sep-26</div><div class="l">Open cost period (CO-01)</div></div>
+  </div>
+  <div class="card"><b>Try the flow:</b><div class="hint" style="margin-top:6px">
+  1&nbsp;Create Transaction (receipt with lots, watch the accounting preview) &nbsp;&rarr;&nbsp; 2&nbsp;On-Hand updates &nbsp;&rarr;&nbsp;
+  3&nbsp;Reservations protect stock (try over-issuing) &nbsp;&rarr;&nbsp; 4&nbsp;Receive shipment SHP-000001 in Inter-Org Shipments &nbsp;&rarr;&nbsp;
+  5&nbsp;Approve a cycle count &nbsp;&rarr;&nbsp; 6&nbsp;Create Accounting &nbsp;&rarr;&nbsp; 7&nbsp;Close Sep-26 in Cost Organizations.</div></div>
+  <div class="card"><h4 style="margin:0 0 8px">Recent transactions</h4>${
+    tbl(['Txn','Type','Org','Item','Subinv','Lot','#Qty','#Value','Accounted'],
+    S.txns.slice(-6).reverse().map(t=>[`<span class="mono">${t.id}</span>`,t.type,t.org,t.item,t.subinv,t.lot||'-',
+      '#'+fmt(t.qty),'#'+fmt(t.value),t.accounted?'<span class="chip ok">YES</span>':'<span class="chip warn">NO</span>']))}</div>`;
+},
+orgs(){
+  const sel=SUBTAB.org||'W1'; const tab=SUBTAB.orgtab||'Parameters'; const p=P(sel)||{};
+  const orgRows=S.orgs.map(o=>[`<a style="color:var(--info);cursor:pointer" data-act="pickorg" data-v="${o.code}"><b>${o.code}</b></a>`,
+    o.name,o.type==='MASTER'?'<span class="chip info">MASTER</span>':'<span class="chip">CHILD</span>',o.master||'-',o.bu,chipStatus(o.status)]);
+  let body='';
+  if(S.orgs.find(o=>o.code===sel).type==='MASTER'){body=`<div class="card dim">The master organization holds item definitions only (setup-only - RD open decision 1).</div>`;}
+  else if(tab==='Parameters'){body=`<div class="card"><div class="frow">
+    <div><label>Primary UOM</label><input id="f1" value="${p.uom}"></div>
+    <div><label>Default subinventory</label><input id="f2" value="${p.defsub}"></div>
+    <div><label>Locator control</label><select id="f3"><option>NONE</option><option>PRESPECIFIED</option></select></div>
+    <div><label>Negative inventory</label><select id="f4"><option ${p.negok==='N'?'selected':''}>N</option><option ${p.negok==='Y'?'selected':''}>Y</option></select></div>
+    <div><label>Lot control enabled</label><input value="${p.lot}"></div><div><label>Currency</label><input value="${p.ccy}"></div></div>
+    <div class="frow"><div style="flex:2 1 300px"><label>Material account</label><input class="mono" value="${p.material}"></div>
+    <div style="flex:2 1 300px"><label>Adjustment account</label><input class="mono" value="${p.adjust}"></div></div>
+    <div class="frow"><div style="flex:2 1 300px"><label>Count adjustment account</label><input class="mono" value="${p.ccadj}"></div>
+    <div style="flex:2 1 300px"><label>In-transit account</label><input class="mono" value="${p.intransit}"></div></div>
+    <div class="frow"><div style="flex:2 1 300px"><label>Inter-org receivable</label><input class="mono" value="${p.iorec}"></div>
+    <div style="flex:2 1 300px"><label>Inter-org payable</label><input class="mono" value="${p.iopay}"></div></div>
+    <button class="btn" data-act="savefake">Save Parameters</button> <span class="hint">accounts open the AccountSelector in the real build</span></div>`;}
+  else if(tab==='Receiving'){body=`<div class="card"><div class="frow">
+    <div><label>Receipt routing</label><select><option ${p.routing==='DIRECT'?'selected':''}>DIRECT</option><option ${p.routing==='STANDARD'?'selected':''}>STANDARD</option><option>INSPECTION</option></select></div>
+    <div><label>Receipt numbering</label><input value="${p.rcptnum}"></div><div><label>Next receipt #</label><input value="${p.nextrcpt}"></div>
+    <div><label>Over-receipt tolerance %</label><input value="5"></div><div><label>Over-receipt action</label><select><option>WARNING</option><option>REJECT</option><option>NONE</option></select></div></div>
+    <button class="btn" data-act="savefake">Save Receiving Parameters</button></div>`;}
+  else if(tab==='Shipping'){body=`<div class="card"><div class="frow">
+    <div><label>Shipment numbering</label><input value="${p.shipnum}"></div><div><label>Next shipment #</label><input value="${p.nextship}"></div>
+    <div><label>Default ship method</label><select>${S.shipmethods.map(m=>`<option ${m===p.shipmethod?'selected':''}>${m}</option>`).join('')}</select></div>
+    <div style="flex:2 1 300px"><label>Goods in transit account</label><input class="mono" value="${p.intransit}"></div></div>
+    <button class="btn" data-act="savefake">Save Shipping Parameters</button></div>`;}
+  else if(tab==='Subinventories'){body=`<div class="card">${tbl(['Code','Description','Type','Asset','Material status','Status'],
+    S.subinvs.filter(s=>s.org===sel).map(s=>[`<b>${s.code}</b>`,s.desc,s.type,s.asset,s.mstatus?`<span class="chip warn">${s.mstatus}</span>`:'<span class="chip ok">UNRESTRICTED</span>',chipStatus(s.status)]))}
+    <div style="margin-top:10px"><button class="btn ghost sm" data-act="savefake">+ Add Subinventory</button></div></div>`;}
+  else {body=`<div class="card">${tbl(['User','Organizations'],S.access.map(a=>[a.user,a.orgs==='ALL'?'<span class="chip info">ALL ORGS</span>':a.orgs]))}</div>`;}
+  return `<h1>Inventory Organizations</h1><div class="crumb">Home / Inventory / Setup</div>
+  <div class="card">${tbl(['Code','Name','Type','Master','Business Unit','Status'],orgRows)}
+  <div style="margin-top:10px"><button class="btn sm" data-act="savefake">+ Create Organization</button></div></div>
+  <h1 style="font-size:15px">Organization workspace - ${sel}</h1>
+  <div class="tabs">${['Parameters','Receiving','Shipping','Subinventories','Access'].map(t=>`<b class="${t===tab?'on':''}" data-act="orgtab" data-v="${t}">${t}</b>`).join('')}</div>${body}`;
+},
+costorgs(){
+  const tab=SUBTAB.cotab||'Cost Periods';
+  let body='';
+  if(tab==='Assignments'){body=`<div class="card">${tbl(['Inventory Org','Name','Assigned'],
+    S.costorg.orgs.map(o=>[`<b>${o}</b>`,S.orgs.find(x=>x.code===o).name,'<span class="chip ok">YES</span>']))}</div>`;}
+  else if(tab==='Item Costs'){body=`<div class="card">${tbl(['Item','Description','#Cost / unit','Source','Effective'],
+    Object.entries(S.costs).map(([n,c])=>[`<b>${n}</b>`,item(n).desc,'#'+fmt(c),'MANUAL','01-Sep-2026']))}
+    <div style="margin-top:10px"><button class="btn ghost sm" data-act="savefake">Set Item Cost</button></div></div>`;}
+  else if(tab==='Cost Periods'){
+    body=`<div class="card">${tbl(['Period','Start','End','Status','Actions'],S.periods.map(p=>[
+      `<b>${p.name}</b>`,p.start,p.end,chipStatus(p.status),
+      p.status==='OPEN'?`<button class="btn sm" data-act="closeperiod" data-v="${p.name}">Close...</button>`:
+      p.status==='NEVER_OPENED'?`<button class="btn ghost sm" data-act="openperiod" data-v="${p.name}">Open</button>`:
+      p.balances?`<button class="btn grey sm" data-act="showbal" data-v="${p.name}">Balances</button>`:'-']))}</div>
+    <div class="hint">Close runs the checklist from RD 7.3: unaccounted transactions block, open physical inventories block, aged in-transit warns.</div>`;}
+  else {const pd=S.periods.find(p=>p.balances); body=`<div class="card">${pd?tbl(['Period','Org','Subinv','Item','#Qty','#Unit cost','#Value'],
+    pd.balances.map(b=>[pd.name,b.org,b.sub,b.item,'#'+fmt(b.qty),'#'+fmt(b.cost),'#'+fmt(b.val)])):'<span class="dim">No closed period with a snapshot yet - close Sep-26 to see balances here.</span>'}</div>`;}
+  return `<h1>Cost Organizations</h1><div class="crumb">Home / Inventory / Setup</div>
+  <div class="card"><div class="kv"><b>Cost org</b><span><b>${S.costorg.code}</b> - ${S.costorg.name}</span>
+  <b>Method</b><span>${S.costorg.method}</span><b>Currency</b><span>${S.costorg.ccy}</span>
+  <b>Inventory orgs</b><span>${S.costorg.orgs.join(', ')}</span></div></div>
+  <div class="tabs">${['Assignments','Item Costs','Cost Periods','Period Balances'].map(t=>`<b class="${t===tab?'on':''}" data-act="cotab" data-v="${t}">${t}</b>`).join('')}</div>${body}`;
+},
+lookups(){
+  const tab=SUBTAB.lk||'UOMs';
+  const T={'UOMs':tbl(['Code','Name','Class'],S.uoms.map(u=>[`<b>${u[0]}</b>`,u[1],u[2]])),
+   'Item Statuses':tbl(['Status','Behavior'],[['ACTIVE','All usage flags on'],['PROTOTYPE','Not saleable'],['ON_HOLD','Not transactable, not reservable'],['PHASE_OUT','Not purchasable - sell remaining stock'],['OBSOLETE','All usage flags off']]),
+   'Categories':S.catsets.map(cs=>`<div class="card"><b>${cs.set}</b> category set<div style="margin-top:6px">${cs.cats.map(c=>`<span class="chip info" style="margin:2px">${c}</span>`).join(' ')}</div></div>`).join(''),
+   'Reasons':tbl(['Reason'],S.reasons.map(r=>[`<b>${r}</b>`])),
+   'Account Aliases':tbl(['Org','Alias','Account'],S.aliases.map(a=>[a.org,`<b>${a.code}</b>`,`<span class="mono">${a.acct}</span>`])),
+   'Material Statuses':tbl(['Status','Receipt','Issue','Transfer','Reserve'],S.mstatuses.map(m=>[`<b>${m[0]}</b>`,...m.slice(1).map(f=>f==='Y'?'<span class="chip ok">Y</span>':'<span class="chip bad">N</span>')])),
+   'Ship Methods':tbl(['Method'],S.shipmethods.map(m=>[`<b>${m}</b>`])),
+   'Org Access':tbl(['User','Organizations'],S.access.map(a=>[a.user,a.orgs==='ALL'?'<span class="chip info">ALL ORGS</span>':a.orgs]))};
+  return `<h1>Setup Lookups</h1><div class="crumb">Home / Inventory / Setup</div>
+  <div class="tabs">${Object.keys(T).map(t=>`<b class="${t===tab?'on':''}" data-act="lk" data-v="${t}">${t}</b>`).join('')}</div>
+  ${tab==='Categories'?T[tab]:`<div class="card">${T[tab]}</div>`}`;
+},
+items(){
+  const sel=SUBTAB.item||'FG-1001'; const it=item(sel); const tab=SUBTAB.ittab||'Inventory';
+  const rows=S.items.map(i=>[`<a style="color:var(--info);cursor:pointer" data-act="pickitem" data-v="${i.n}"><b>${i.n}</b></a>`,
+    i.desc,i.type.replace('_',' '),i.uom,chipStatus(i.status),i.orgs.map(o=>`<span class="chip">${o}</span>`).join(' ')]);
+  const F=(l,v)=>`<div><label>${l}</label><input value="${v??''}"></div>`;
+  const tabs={
+   'Main':`<div class="frow">${F('Item number',it.n)}${F('Type',it.type)}${F('Status',it.status)}${F('Primary UOM',it.uom)}</div>
+     <div class="frow"><div style="flex:3 1 300px">${F('Description',it.desc)}</div></div>`,
+   'Inventory':`<div class="frow">${F('Stockable','Y')}${F('Transactable','Y')}${F('Reservable','Y')}${F('Lot control',it.lot)}${F('Expiration control',it.expctl)}${F('Shelf life (days)',it.shelf??'-')}${F('Serial control',it.serial)}</div>`,
+   'Costing & Purch':`<div class="frow">${F('Costing enabled','Y')}${F('Standard cost',it.std)}${F('Purchasable','Y')}${F('List price',it.list??'-')}${F('Purchase tax',it.taxP)}${F('Invoice match','3_WAY')}</div>`,
+   'Order Mgmt':`<div class="frow">${F('Saleable',it.sell?'Y':'N')}${F('Orderable',it.sell?'Y':'N')}${F('Shippable','Y')}${F('Invoiceable',it.sell?'Y':'N')}${F('ATP check','Y')}${F('Selling price',it.sell??'-')}${F('Sales tax code',it.taxS)}${F('Taxable','Y')}</div>`,
+   'Accounting':`<div class="frow"><div style="flex:2 1 300px"><label>Sales (revenue) account</label><input class="mono" value="${it.sales||'-'}"></div>
+     <div style="flex:2 1 300px"><label>COGS account</label><input class="mono" value="${it.cogs||'-'}"></div></div>
+     <div class="frow"><div style="flex:2 1 300px"><label>Expense account</label><input class="mono" value="${it.exp||'-'}"></div>
+     <div style="flex:2 1 300px"><label>Purchase price variance</label><input class="mono" value="01-00-00-5190001-0000-000-00-000-000"></div></div>
+     <div class="hint">Resolution: document line &rarr; org assignment override &rarr; item &rarr; org parameter.</div>`,
+   'Planning':`<div class="frow">${F('Planning method',it.plan)}${F('Min qty',it.min??'-')}${F('Max qty',it.max??'-')}${F('Lead time (days)','7')}</div>`,
+   'Categories':`<div class="kv"><b>PRODUCT</b><span><span class="chip info">${it.cat}</span></span><b>COST</b><span><span class="chip info">${it.type==='CONSUMABLE'?'CONSUMABLE':'TRADED'}</span></span></div>`,
+   'Organizations':tbl(['Org','Status','Default subinv','#Min','#Max','Overrides'],
+      it.orgs.map(o=>[`<b>${o}</b>`,'<span class="chip ok">ACTIVE</span>','STORES','#'+(it.min??'-'),'#'+(it.max??'-'),'<span class="dim">inherit</span>']))+
+      `<div style="margin-top:10px"><button class="btn ghost sm" data-act="savefake">Assign to Organizations...</button></div>`,
+   'Attachments':`<div class="dim">Drag files here - same attachment mechanism as payments / assets (RD 5.6).</div>`,
+  };
+  return `<h1>Item Master</h1><div class="crumb">Home / Inventory / Items &middot; master org MST</div>
+  <div class="card">${tbl(['Item','Description','Type','UOM','Status','Assigned Orgs'],rows)}
+  <div style="margin-top:10px"><button class="btn sm" data-act="savefake">+ Create Item</button></div></div>
+  <h1 style="font-size:15px">Item workspace - ${sel} <span class="dim" style="font-weight:400;font-size:12px">${it.desc}</span></h1>
+  <div class="tabs">${Object.keys(tabs).map(t=>`<b class="${t===tab?'on':''}" data-act="ittab" data-v="${t}">${t}</b>`).join('')}</div>
+  <div class="card">${tabs[tab]}${['Categories','Organizations','Attachments'].includes(tab)?'':'<button class="btn" style="margin-top:4px" data-act="savefake">Save Item</button>'}</div>`;
+},
+lots(){
+  return `<h1>Lots &amp; Serials</h1><div class="crumb">Home / Inventory / Items</div>
+  <div class="card">${tbl(['Item','Org','Lot','Origination','Expiry','#On-hand'],
+    S.lots.map(l=>[`<b>${l.item}</b>`,l.org,`<span class="mono">${l.lot}</span>`,l.orig,l.exp,'#'+fmt(onhand(l.org,l.item,null,l.lot))]))}</div>
+  <div class="hint">Serial control is schema-ready (RD 6.2); no serialized items in the sample data.</div>`;
+},
+txn(){
+  const f=SUBTAB.txnf||(SUBTAB.txnf={type:'MISC_RECEIPT',org:'W1',item:'FG-1001',subinv:'STORES',tosub:'FG',qty:'50',
+    date:'2026-09-21',reason:'',alias:'',ref:'',l1:'L-2026-001',q1:'30',l2:'L-2026-002',q2:'20'});
+  const it=item(f.item); const isLot=it&&it.lot==='Y'; const isXfer=f.type==='SUBINV_TRANSFER';
+  let preview='', err='';
+  try{
+    const q=Math.abs(Number(f.qty)||0); const c=cost(f.item); const val=Math.round(q*c*100)/100;
+    const lines=acctLines(f.type,f.org,f.item,(f.type==='MISC_ISSUE'?-1:1)*q,val,f.alias||null);
+    preview=`<div class="acct"><h4>Accounting preview &middot; ${fmt(q)} x ${fmt(c)} = ${fmt(val)} AED</h4>${
+      lines.length?tbl(['Dr/Cr','Account','#Amount'],lines.map(l=>[l[0]==='DR'?'<b>Dr</b>':'Cr',`<span class="mono">${l[1]}</span>`,'#'+fmt(l[2])])):
+      '<span class="dim">Subinventory transfer within one material account - net zero, no journal lines.</span>'}</div>`;
+  }catch(e){}
+  const opt=(list,v)=>list.map(x=>`<option ${x===v?'selected':''}>${x}</option>`).join('');
+  return `<h1>Create Transaction</h1><div class="crumb">Home / Inventory / Transactions</div>
+  <div class="card">
+   <div class="frow">
+    <div><label>Type</label><select id="t_type">${opt(['MISC_RECEIPT','MISC_ISSUE','SUBINV_TRANSFER'],f.type)}</select></div>
+    <div><label>Organization</label><select id="t_org">${opt(['W1','W2'],f.org)}</select></div>
+    <div><label>Item</label><select id="t_item">${opt(S.items.map(i=>i.n),f.item)}</select></div>
+    <div><label>Subinventory</label><select id="t_sub">${opt(S.subinvs.filter(s=>s.org===f.org).map(s=>s.code),f.subinv)}</select></div>
+    ${isXfer?`<div><label>To subinventory</label><select id="t_tosub">${opt(S.subinvs.filter(s=>s.org===f.org).map(s=>s.code),f.tosub)}</select></div>`:''}
+    <div><label>Quantity (${it?it.uom:''})</label><input id="t_qty" value="${f.qty}"></div>
+    <div><label>Date</label><input id="t_date" value="${f.date}"></div>
+    <div><label>Reason</label><select id="t_reason"><option value=""></option>${opt(S.reasons,f.reason)}</select></div>
+    ${f.type!=='SUBINV_TRANSFER'?`<div><label>Account alias</label><select id="t_alias"><option value=""></option>${opt(S.aliases.filter(a=>a.org===f.org).map(a=>a.code),f.alias)}</select></div>`:''}
+    ${f.type==='MISC_ISSUE'?`<div><label>Demand reference (uses reservation)</label><input id="t_ref" value="${f.ref}" placeholder="e.g. Project ALPHA"></div>`:''}
+   </div>
+   ${isLot?`<div class="frow"><div><label>Lot 1</label><input id="t_l1" value="${f.l1}"></div><div><label>Qty 1</label><input id="t_q1" value="${f.q1}"></div>
+   <div><label>Lot 2</label><input id="t_l2" value="${f.l2}"></div><div><label>Qty 2</label><input id="t_q2" value="${f.q2}"></div></div>
+   <div class="hint">Item is lot controlled - lot quantities must cover the transaction quantity (validation 17.4).</div>`:''}
+   <div class="hint" style="margin-top:4px">On-hand ${f.org}/${f.subinv}: <b>${fmt(onhand(f.org,f.item,f.subinv))}</b> &middot; reserved ${fmt(reservedQty(f.org,f.item,f.subinv))} &middot; ATT <b>${fmt(att(f.org,f.item,f.subinv))}</b> &middot; open period Sep-26</div>
+   ${preview}
+   <div id="t_err"></div>
+   <div style="margin-top:12px"><button class="btn" data-act="dotxn">Create Transaction</button>
+   <span class="hint">try: qty 999 (ATT reject) &middot; date 2026-08-15 (closed period reject) &middot; item CON-3001 in W2 (no assignment)</span></div>
+  </div>`;
+},
+hist(){
+  return `<h1>Transaction History</h1><div class="crumb">Home / Inventory / Transactions</div>
+  <div class="card">${tbl(['Txn','Date','Type','Org','Item','Subinv','Lot','#Qty','#Unit cost','#Value','Reason','Accounted',''],
+    S.txns.slice().reverse().map(t=>[`<span class="mono">${t.id}</span>`,t.date,t.type,t.org,t.item,t.subinv,t.lot||'-',
+    '#'+fmt(t.qty),'#'+fmt(t.cost),'#'+fmt(t.value),t.reason||t.ref||'-',
+    t.accounted?'<span class="chip ok">YES</span>':'<span class="chip warn">NO</span>',
+    `<button class="btn grey sm" data-act="viewtxn" data-v="${t.id}">Accounting</button>`]))}</div>`;
+},
+acctg(){
+  const un=S.txns.filter(t=>!t.accounted);
+  return `<h1>Create Accounting</h1><div class="crumb">Home / Inventory / Transactions</div>
+  <div class="card"><p style="margin-top:0">Groups unposted Dr/Cr lines into one GL journal batch (REFERENCE2 = transaction id, REFERENCE5 = INV_TRANSACTIONS) - same convention as AR/AP/Cash, so Check Accounting links back automatically.</p>
+  ${tbl(['Txn','Date','Type','Org','#Value','Dr account','Cr account'],un.map(t=>[`<span class="mono">${t.id}</span>`,t.date,t.type,t.org,'#'+fmt(Math.abs(t.value)),
+    `<span class="mono">${(t.acct.find(a=>a[0]==='DR')||['','-'])[1]}</span>`,`<span class="mono">${(t.acct.find(a=>a[0]==='CR')||['','-'])[1]}</span>`]))}
+  <div style="margin-top:12px"><button class="btn" data-act="runacctg" ${un.length?'':'disabled'}>Create Accounting (${un.length})</button></div></div>`;
+},
+torders(){
+  return `<h1>Transfer Orders</h1><div class="crumb">Home / Inventory / Transfers</div>
+  <div class="card">${tbl(['TO #','From','To','Mode','Need by','Status','Lines',''],S.torders.map(t=>[
+    `<b>${t.no}</b>`,t.from,t.to,t.mode,t.need,chipStatus(t.status),
+    t.lines.map(l=>`${l.item}: ${l.shipped}/${l.req} shipped, ${l.received} received`).join('<br>'),
+    t.status==='APPROVED'?`<button class="btn sm" data-act="shipto" data-v="${t.no}">Ship</button>`:
+    t.status==='IN_PROGRESS'?'<span class="dim">awaiting receipt</span>':'-' ]))}
+  <div style="margin-top:10px"><button class="btn ghost sm" data-act="savefake">+ New Transfer Order</button></div></div>
+  <div class="hint">Lifecycle: DRAFT &rarr; REQUESTED &rarr; APPROVED &rarr; IN_PROGRESS &rarr; COMPLETED (RD 10.2). Ship creates an in-transit shipment; receive it on the Shipments page.</div>`;
+},
+ships(){
+  return `<h1>Inter-Org Shipments</h1><div class="crumb">Home / Inventory / Transfers</div>
+  <div class="card">${tbl(['Shipment','From','To','Mode','Date','Status','Lines',''],S.shipments.map(x=>[
+    `<b>${x.no}</b>`,x.from,x.to,x.mode,x.date,chipStatus(x.status),
+    x.lines.map(l=>`${l.item} x ${fmt(l.qty)}${l.lot?' ('+l.lot+')':''} &rarr; ${l.dstsub}`).join('<br>'),
+    x.status==='SHIPPED'?`<button class="btn sm" data-act="receiveship" data-v="${x.no}">Receive at ${x.to}</button>`:'-']))}</div>
+  <div class="hint">Accounting on ship: Dr In-transit / Cr Material (source). On receive: Dr Material / Cr In-transit (destination). In-transit units: <b>${fmt(inTransit())}</b>.</div>`;
+},
+cc(){
+  return `<h1>Cycle Counting</h1><div class="crumb">Home / Inventory / Counting &middot; definition CC-W1-MAIN (ABC-driven, tolerance 2%)</div>
+  <div class="card">${tbl(['Entry','Org','Item','Subinv','Lot','#Snapshot','Counted qty','Status',''],S.ccentries.map(e=>[
+    `<span class="mono">${e.id}</span>`,e.org,e.item,e.subinv,e.lot||'-','#'+fmt(e.snap??0),
+    e.status==='PENDING'?`<input style="width:90px" id="cnt_${e.id}" value="${e.counted??''}" placeholder="count">`:fmt(e.counted),
+    chipStatus(e.status),
+    e.status==='PENDING'?`<button class="btn sm" data-act="approvecc" data-v="${e.id}">Enter &amp; Approve</button>`:
+    e.adj?`<span class="dim">adj <span class="mono">${e.adj}</span></span>`:'-']))}</div>
+  <div class="hint">Approval posts a CYCLE_COUNT_ADJ through the engine: Dr/Cr Material vs Count-adjustment account, on-hand corrected (RD 11.2).</div>`;
+},
+pi(){
+  return `<h1>Physical Inventory</h1><div class="crumb">Home / Inventory / Counting</div>
+  <div class="card"><div class="kv"><b>PI</b><span><b>PI-2026-01</b> - W1 wall-to-wall</span><b>Status</b><span>${chipStatus('DRAFT')}</span>
+  <b>Steps</b><span>1 Define &rarr; 2 Snapshot (freeze) &rarr; 3 Tags &rarr; 4 Counts &rarr; 5 Variances &rarr; 6 Adjust &amp; Complete</span></div>
+  <div style="margin-top:10px"><button class="btn ghost sm" data-act="savefake">Take Snapshot</button></div></div>
+  <div class="hint">The snapshot freezes the scope (transactions rejected while frozen) and cost periods cannot close with an open PI (validations 17.9 / 17.5).</div>`;
+},
+abc(){
+  return `<h1>ABC Analysis</h1><div class="crumb">Home / Inventory / Counting &middot; compile ABC-W1-SEP26, criterion ONHAND_VALUE</div>
+  <div class="card">${tbl(['Item','Class','#Rank','% of value'],S.abc.map(a=>[`<b>${a[0]}</b>`,
+    `<span class="chip ${a[1]==='A'?'bad':a[1]==='B'?'warn':''}">${a[1]}</span>`,'#'+a[2],a[3]]))}</div>
+  <div class="hint">Classes drive cycle-count frequency: A = 12 counts/year, B = 4, C = 1 (definition CC-W1-MAIN).</div>`;
+},
+oh(){
+  const rows=Object.keys(S.onhand).sort().map(k=>{const[o,s,i,l]=k.split('|');const q=S.onhand[k];
+    return [o,s,`<b>${i}</b>`,l==='-'?'-':`<span class="mono">${l}</span>`,'#'+fmt(q),'#'+fmt(att(o,i,s)),item(i).uom,'#'+fmt(q*cost(i))];});
+  S.shipments.filter(x=>x.status==='SHIPPED').forEach(x=>x.lines.forEach(l=>
+    rows.push([`<span class="chip info">IN-TRANSIT &rarr; ${x.to}</span>`,'-',`<b>${l.item}</b>`,l.lot?`<span class="mono">${l.lot}</span>`:'-','#'+fmt(l.qty),'#-',item(l.item).uom,'#'+fmt(l.qty*cost(l.item))])));
+  return `<h1>On-Hand &amp; Availability</h1><div class="crumb">Home / Inventory / Inquiry</div>
+  <div class="card">${tbl(['Org','Subinv','Item','Lot','#On-hand','#ATT','UOM','#Value AED'],rows)}</div>
+  <div class="hint">ATT = on-hand minus active reservations (invariant I3). Data reconciles to the transaction ledger at every level (I1).</div>`;
+},
+res(){
+  return `<h1>Reservations</h1><div class="crumb">Home / Inventory / Inquiry</div>
+  <div class="card">${tbl(['Id','Org','Item','Subinv','#Reserved','#Fulfilled','Demand','Need by','Status',''],
+    S.reservations.map(r=>[r.id,r.org,`<b>${r.item}</b>`,r.subinv||'-','#'+fmt(r.qty),'#'+fmt(r.fulfilled),r.ref,r.need,chipStatus(r.status),
+    r.status==='ACTIVE'?`<button class="btn grey sm" data-act="cancelres" data-v="${r.id}">Cancel</button>`:'-']))}
+  <div style="margin-top:12px" class="frow">
+   <div><label>Item</label><select id="r_item">${S.items.filter(i=>i.orgs.includes('W1')).map(i=>`<option>${i.n}</option>`).join('')}</select></div>
+   <div><label>Org</label><select id="r_org"><option>W1</option><option>W2</option></select></div>
+   <div><label>Subinv</label><input id="r_sub" value="STORES"></div>
+   <div><label>Qty</label><input id="r_qty" value="10"></div>
+   <div><label>Demand reference</label><input id="r_ref" value="SO-DEMO-001"></div>
+   <div style="align-self:end"><button class="btn" data-act="addres">Reserve</button></div>
+  </div><div id="r_err"></div></div>
+  <div class="hint">Issues quoting the demand reference consume the reservation; unrelated issues cannot touch reserved stock (validation 17.7).</div>`;
+},
+val(){
+  const byOrg={};
+  for(const k in S.onhand){const[o,s,i]=k.split('|');const v=S.onhand[k]*cost(i);byOrg[o+'|'+s]=(byOrg[o+'|'+s]||0)+v;}
+  const closed=S.periods.find(p=>p.balances);
+  return `<h1>Valuation</h1><div class="crumb">Home / Inventory / Inquiry &middot; cost org CO-01 (AVERAGE, AED)</div>
+  <div class="card"><h4 style="margin:0 0 8px">Open period (live: on-hand x current cost)</h4>
+  ${tbl(['Org','Subinventory','#Value AED'],Object.entries(byOrg).map(([k,v])=>{const[o,s]=k.split('|');return[o,s,'#'+fmt(v)];}))}</div>
+  <div class="card"><h4 style="margin:0 0 8px">Closed period snapshot</h4>
+  ${closed?tbl(['Period','Org','Subinv','Item','#Qty','#Value'],closed.balances.map(b=>[closed.name,b.org,b.sub,b.item,'#'+fmt(b.qty),'#'+fmt(b.val)])):
+  '<span class="dim">Close Sep-26 (Cost Organizations &rarr; Cost Periods) to snapshot balances here.</span>'}</div>`;
+},
+};
+
+/* ═══════════ actions ═══════════ */
+document.body.addEventListener('click',e=>{
+  const el=e.target.closest('[data-act]'); if(!el)return;
+  const act=el.dataset.act, v=el.dataset.v;
+  const F=SUBTAB.txnf;
+  try{
+  if(act==='savefake') toast('Saved (prototype - wired to POST/PUT in the real build)');
+  else if(act==='pickorg'){SUBTAB.org=v;render();}
+  else if(act==='orgtab'){SUBTAB.orgtab=v;render();}
+  else if(act==='cotab'){SUBTAB.cotab=v;render();}
+  else if(act==='lk'){SUBTAB.lk=v;render();}
+  else if(act==='pickitem'){SUBTAB.item=v;render();}
+  else if(act==='ittab'){SUBTAB.ittab=v;render();}
+  else if(act==='dotxn'){
+    const g=id=>document.getElementById(id)?document.getElementById(id).value:undefined;
+    Object.assign(F,{type:g('t_type'),org:g('t_org'),item:g('t_item'),subinv:g('t_sub'),tosub:g('t_tosub')||F.tosub,
+      qty:g('t_qty'),date:g('t_date'),reason:g('t_reason'),alias:g('t_alias')||'',ref:g('t_ref')||'',
+      l1:g('t_l1')||F.l1,q1:g('t_q1')||F.q1,l2:g('t_l2')||F.l2,q2:g('t_q2')||F.q2});
+    const it=item(F.item);
+    const lots=it.lot==='Y'?[{lot:F.l1,q:Number(F.q1)||0},{lot:F.l2,q:Number(F.q2)||0}].filter(l=>l.q>0):null;
+    const ids=createTxn({type:F.type,org:F.org,item:F.item,subinv:F.subinv,tosub:F.tosub,qty:F.qty,date:F.date,
+      reason:F.reason,alias:F.alias,ref:F.ref,lots});
+    toast(`Transaction created: ${ids.join(', ')} - on-hand updated`); render();
+  }
+  else if(act==='viewtxn'){
+    const t=S.txns.find(x=>x.id===v);
+    modal(`<h3>Transaction ${t.id} - ${t.type}</h3>
+     <div class="kv"><b>Org / Subinv</b><span>${t.org} / ${t.subinv}</span><b>Item</b><span>${t.item}${t.lot?' &middot; lot '+t.lot:''}</span>
+     <b>Qty x Cost</b><span>${fmt(t.qty)} x ${fmt(t.cost)} = ${fmt(t.value)} AED</span><b>Date / Period</b><span>${t.date} &middot; ${t.period}</span>
+     <b>Accounted</b><span>${t.accounted?'YES - GL batch (REFERENCE5 = INV_TRANSACTIONS)':'NO'}</span></div>
+     <div class="acct"><h4>Accounting lines</h4>${t.acct.length?tbl(['Dr/Cr','Account','#Amount'],
+       t.acct.map(l=>[l[0]==='DR'?'<b>Dr</b>':'Cr',`<span class="mono">${l[1]}</span>`,'#'+fmt(l[2])])):'<span class="dim">Net zero (subinventory transfer).</span>'}</div>
+     <div style="margin-top:12px;text-align:right"><button class="btn grey" data-close>Close</button></div>`);
+  }
+  else if(act==='runacctg'){const n=createAccounting();toast(`${n} transactions accounted - all entries balanced (Dr = Cr)`);render();}
+  else if(act==='openperiod'){S.periods.find(p=>p.name===v).status='OPEN';toast(v+' opened');render();}
+  else if(act==='closeperiod'){
+    const un=S.txns.filter(t=>t.period===v&&!t.accounted).length;
+    const m=modal(`<h3>Close cost period ${v}</h3>
+     <div class="kv"><b>Unaccounted transactions</b><span>${un?`<span class="chip bad">${un} - blocking</span>`:'<span class="chip ok">0 - ok</span>'}</span>
+     <b>Open physical inventories</b><span><span class="chip ok">0 - ok</span></span>
+     <b>In-transit older than period end</b><span>${inTransit()?`<span class="chip warn">${fmt(inTransit())} units - warning only</span>`:'<span class="chip ok">none</span>'}</span></div>
+     <p class="hint">Close writes the valuation snapshot to period balances (RD 7.3 / 7.4).</p>
+     <div style="text-align:right"><button class="btn grey" data-close>Cancel</button>
+     <button class="btn" data-act="doclose" data-v="${v}" ${un?'disabled':''}>Close ${v}</button></div>`);
+  }
+  else if(act==='doclose'){const bal=closePeriod(v);document.querySelector('.modal-bg')?.remove();
+    toast(`${v} closed - snapshot of ${bal.length} balance rows written`);SUBTAB.cotab='Period Balances';render();}
+  else if(act==='showbal'){SUBTAB.cotab='Period Balances';render();}
+  else if(act==='receiveship'){
+    const x=S.shipments.find(s=>s.no===v);
+    x.lines.forEach(l=>createTxn({type:'INTERORG_RECEIVE',org:x.to,item:l.item,subinv:l.dstsub,qty:l.qty,
+      date:'2026-09-21',shipment:x.no,lots:item(l.item).lot==='Y'?[{lot:l.lot,q:l.qty}]:null}));
+    x.status='RECEIVED';
+    const to=S.torders.find(t=>t.status==='IN_PROGRESS'&&t.shipno===x.no);
+    if(to){to.lines.forEach(l=>{const sl=x.lines.find(s=>s.item===l.item);if(sl)l.received+=sl.qty;});
+      if(to.lines.every(l=>l.received>=l.req))to.status='COMPLETED';}
+    toast(`${x.no} received at ${x.to} - Dr Material / Cr In-transit`);render();
+  }
+  else if(act==='shipto'){
+    const t=S.torders.find(x=>x.no===v);
+    const no='SHP-00000'+(P(t.from).nextship++);
+    t.lines.forEach(l=>{createTxn({type:'INTERORG_SHIP',org:t.from,item:l.item,subinv:l.srcsub,qty:l.req,
+      date:'2026-09-21',shipment:no,lots:item(l.item).lot==='Y'?[{lot:'L-2026-001',q:l.req}]:null});l.shipped=l.req;});
+    S.shipments.push({no,from:t.from,to:t.to,mode:t.mode,status:'SHIPPED',date:'2026-09-21',method:'ROAD',
+      lines:t.lines.map(l=>({item:l.item,qty:l.req,lot:item(l.item).lot==='Y'?'L-2026-001':null,dstsub:l.dstsub}))});
+    t.status='IN_PROGRESS'; t.shipno=no;
+    toast(`${t.no} shipped as ${no} - Dr In-transit / Cr Material`);render();
+  }
+  else if(act==='approvecc'){
+    const e=S.ccentries.find(x=>x.id===v);
+    const cnt=Number(document.getElementById('cnt_'+e.id).value);
+    if(isNaN(cnt)||cnt<0) throw 'Enter the counted quantity (>= 0) first (400)';
+    const varq=cnt-e.snap;
+    if(Math.abs(varq)<1e-9){e.counted=cnt;e.status='APPROVED_ADJ';toast('No variance - entry approved');render();return;}
+    const ids=createTxn({type:'CYCLE_COUNT_ADJ',org:e.org,item:e.item,subinv:e.subinv,qty:varq,date:'2026-09-21',
+      lots:item(e.item).lot==='Y'?[{lot:e.lot,q:Math.abs(varq)}]:null});
+    e.counted=cnt;e.status='APPROVED_ADJ';e.adj=ids[0];
+    toast(`Variance ${varq>0?'+':''}${fmt(varq)} - adjustment ${ids[0]} posted`);render();
+  }
+  else if(act==='cancelres'){const r=S.reservations.find(x=>x.id===v);r.status='CANCELLED';toast('Reservation cancelled (fulfilled qty kept)');render();}
+  else if(act==='addres'){
+    const o=document.getElementById('r_org').value,i=document.getElementById('r_item').value,
+          s=document.getElementById('r_sub').value,q=Number(document.getElementById('r_qty').value),
+          ref=document.getElementById('r_ref').value;
+    if(!item(i).orgs.includes(o)) throw `Item ${i} not assigned to ${o} (409)`;
+    const a=att(o,i,s); if(q>a) throw `Cannot reserve ${fmt(q)} - available to transact is ${fmt(a)} (409)`;
+    S.reservations.push({id:'R-'+(S.seq++),org:o,item:i,subinv:s,qty:q,fulfilled:0,ref,need:'2026-10-15',status:'ACTIVE'});
+    toast('Reserved - ATT reduced');render();
+  }
+  }catch(err){
+    const box=document.getElementById('t_err')||document.getElementById('r_err');
+    const msg=String(err.message||err);
+    if(box){box.innerHTML=`<div class="err">${msg}</div>`;}else toast(msg);
+  }
+});
+/* live form refresh for the transaction page */
+document.body.addEventListener('change',e=>{
+  if(!SUBTAB.txnf)return;
+  const map={t_type:'type',t_org:'org',t_item:'item',t_sub:'subinv',t_tosub:'tosub',t_qty:'qty',t_date:'date',
+             t_reason:'reason',t_alias:'alias',t_ref:'ref',t_l1:'l1',t_q1:'q1',t_l2:'l2',t_q2:'q2'};
+  if(map[e.target.id]!==undefined){SUBTAB.txnf[map[e.target.id]]=e.target.value;
+    if(PAGE==='txn'){if(e.target.id==='t_org'){SUBTAB.txnf.subinv=S.subinvs.find(s=>s.org===SUBTAB.txnf.org).code;}render();}}
+});
+
+function render(){
+  nav.innerHTML=MENU.map(([g,items])=>`<div class="grp">${g}</div>`+items.map(([id,l])=>
+    `<a class="${id===PAGE?'on':''}" data-nav="${id}">${l}</a>`).join('')).join('');
+  nav.querySelectorAll('[data-nav]').forEach(a=>a.addEventListener('click',()=>go(a.dataset.nav)));
+  main.innerHTML=pages[PAGE]();
+}
+document.getElementById('burger').addEventListener('click',()=>nav.classList.toggle('open'));
+render();
+</script>
