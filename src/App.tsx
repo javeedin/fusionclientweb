@@ -117,6 +117,7 @@ const OracleFusionAI          = lazy(() => import('./pages/admin/OracleFusionAI'
 const RagAssistant            = lazy(() => import('./pages/admin/RagAssistant'));
 const GLAccountAnalysis       = lazy(() => import('./modules/admin/GLAccountAnalysis'));
 const ApprovalEngine          = lazy(() => import('./pages/admin/ApprovalEngine'));
+const FTPManager              = lazy(() => import('./pages/admin/FTPManager'));
 const BrevoSettings           = lazy(() => import('./pages/admin/BrevoSettings'));
 const ManageChangeRequest     = lazy(() => import('./pages/admin/ManageChangeRequest'));
 const ReleaseUploader         = lazy(() => import('./pages/admin/ReleaseUploader'));
@@ -393,6 +394,7 @@ function App() {
               <Route path="admin/ai-assistant" element={<RagAssistant />} />
               <Route path="admin/gl-account-analysis" element={<GLAccountAnalysis />} />
               <Route path="admin/approvals" element={<ApprovalEngine />} />
+              <Route path="admin/ftp-manager" element={<FTPManager />} />
               <Route path="admin/brevo-settings" element={<BrevoSettings />} />
               <Route path="admin/releases" element={<ReleaseUploader />} />
               <Route path="admin/change-requests" element={<ManageChangeRequest />} />

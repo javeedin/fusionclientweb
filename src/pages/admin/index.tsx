@@ -96,6 +96,14 @@ const adminCards: AdminCard[] = [
     path: '/admin/ords-token',
   },
   {
+    key: 'ftp-manager',
+    title: 'FTP Manager',
+    description: 'Dual-pane SFTP/FTP file transfer — browse the hosting server and deploy application files.',
+    icon: <CloudUploadOutlined />,
+    color: '#0572CE',
+    path: '/admin/ftp-manager',
+  },
+  {
     key: 'ai-assistant',
     title: 'AI Assistant',
     description: 'RAG-powered chat assistant. Upload manuals and SOPs, then ask questions — or query live ERP data in natural language.',

@@ -1301,6 +1301,13 @@ app.all(/^\/mcp\/([^/]+)\/(.*)$/, async (req, res) => {
   }
 });
 
+// FTP / SFTP Manager (Administration > FTP Manager)
+try {
+  require('./ftp-manager.cjs')(app);
+} catch (e) {
+  console.warn('FTP Manager routes unavailable:', e.message);
+}
+
 // Start server
 app.listen(PORT, () => {
   console.log('='.repeat(50));
