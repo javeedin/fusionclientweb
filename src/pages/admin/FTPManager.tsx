@@ -148,6 +148,26 @@ const FTPManager: React.FC = () => {
   useEffect(() => { loadLocal(); }, [loadLocal]);
 
   // ── connect / disconnect ──────────────────────────────────────────────────
+  const persistConnection = useCallback((v: { protocol: string; host: string; port?: string | number; username: string; password?: string }) => {
+    const entry: SavedConn = {
+      name: `${v.username.trim()}@${v.host.trim()}`,
+      protocol: v.protocol,
+      host: v.host.trim(),
+      port: v.port ? Number(v.port) : undefined,
+      username: v.username.trim(),
+      password: v.password || undefined,
+    };
+    setSaved(prev => {
+      const next = [...prev.filter(s => s.name !== entry.name), entry];
+      try {
+        localStorage.setItem(SAVED_KEY, JSON.stringify(next));
+        localStorage.setItem(`${SAVED_KEY}_last`, entry.name);
+      } catch { /* storage full/blocked */ }
+      return next;
+    });
+    return entry;
+  }, []);
+
   const handleConnect = async () => {
     const v = await connForm.validateFields();
     setConnecting(true);
@@ -158,6 +178,9 @@ const FTPManager: React.FC = () => {
       });
       setSessionId(d.sessionId);
       setConnLabel(`${v.protocol.toUpperCase()} ${v.username}@${v.host}`);
+      // remember the full connection (incl. password and port) on every
+      // successful connect, so next time one click reconnects
+      persistConnection(v);
       message.success('Connected');
       await loadRemote('/', d.sessionId);
     } catch (e: any) {
@@ -173,22 +196,38 @@ const FTPManager: React.FC = () => {
   };
 
   const saveConnection = async () => {
-    const v = await connForm.validateFields(['protocol', 'host', 'username']);
-    const all = connForm.getFieldsValue();
-    const entry: SavedConn = {
-      name: `${v.username}@${v.host}`, protocol: v.protocol, host: v.host,
-      port: all.port || undefined, username: v.username, password: all.password || undefined,
-    };
-    const next = [...saved.filter(s => s.name !== entry.name), entry];
-    setSaved(next);
-    try { localStorage.setItem(SAVED_KEY, JSON.stringify(next)); } catch { /* full */ }
-    message.success(`Saved "${entry.name}" (password stored locally in this browser)`);
+    await connForm.validateFields(['protocol', 'host', 'username']);
+    const all = connForm.getFieldsValue(true);
+    const entry = persistConnection(all);
+    message.success(`Saved "${entry.name}" with port and credentials (stored locally on this computer)`);
   };
 
   const applySaved = (name: string) => {
     const s = saved.find(x => x.name === name);
-    if (s) connForm.setFieldsValue({ protocol: s.protocol, host: s.host, port: s.port, username: s.username, password: s.password });
+    if (!s) return;
+    connForm.setFieldsValue({
+      protocol: s.protocol, host: s.host,
+      port: s.port != null ? String(s.port) : undefined,
+      username: s.username, password: s.password,
+    });
+    try { localStorage.setItem(`${SAVED_KEY}_last`, s.name); } catch { /* ignore */ }
   };
+
+  // restore the last-used connection into the form on page load
+  useEffect(() => {
+    try {
+      const last = localStorage.getItem(`${SAVED_KEY}_last`);
+      if (!last) return;
+      const all: SavedConn[] = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]');
+      const s = all.find(x => x.name === last);
+      if (s) connForm.setFieldsValue({
+        protocol: s.protocol, host: s.host,
+        port: s.port != null ? String(s.port) : undefined,
+        username: s.username, password: s.password,
+      });
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── transfers ─────────────────────────────────────────────────────────────
   const startTransfer = async (direction: 'upload' | 'download', names: string[]) => {
