@@ -245,6 +245,45 @@ module.exports = function registerFtpRoutes(app) {
     ok(res, { jobId });
   });
 
+  // Deploy the web runtime (dist + server + package.json) from this machine's
+  // app folder to a remote folder, as one tracked job.
+  app.post('/api/ftp/deploy-runtime', async (req, res) => {
+    const s = getSession(req, res); if (!s) return;
+    const remoteDir = String(req.body?.remoteDir || '').trim().replace(/[\\/]+$/, '');
+    if (!remoteDir) return fail(res, 'remoteDir is required', 400);
+
+    const appRoot = path.join(__dirname, '..');
+    const distDir = path.join(appRoot, 'dist');
+    const serverDir = path.join(appRoot, 'server');
+    const pkgFile = path.join(appRoot, 'package.json');
+    if (!fs.existsSync(path.join(distDir, 'index.html'))) {
+      return fail(res, 'dist/index.html not found — run "npm run build" first, then deploy', 400);
+    }
+    if (!fs.existsSync(pkgFile)) return fail(res, 'package.json not found in app folder', 400);
+
+    const jobId = newId();
+    const job = { status: 'running', filesDone: 0, totalFiles: null, currentFile: '', error: null, startedAt: Date.now() };
+    jobs.set(jobId, job);
+    const onFile = (name) => { job.filesDone += 1; job.currentFile = name; };
+
+    enqueue(s, async () => {
+      try {
+        try { job.totalFiles = countLocalFiles(distDir) + countLocalFiles(serverDir) + 1; } catch { /* best effort */ }
+        try { await s.client.mkdir(remoteDir); } catch { /* may already exist */ }
+        await s.client.uploadDir(distDir, `${remoteDir}/dist`, onFile);
+        await s.client.uploadDir(serverDir, `${remoteDir}/server`, onFile);
+        await s.client.uploadFile(pkgFile, `${remoteDir}/package.json`);
+        onFile('package.json');
+        job.status = 'done';
+      } catch (e) {
+        job.status = 'error';
+        job.error = e instanceof Error ? e.message : String(e);
+      }
+    });
+
+    ok(res, { jobId });
+  });
+
   app.get('/api/ftp/job/:id', (req, res) => {
     const job = jobs.get(req.params.id);
     if (!job) return fail(res, 'Unknown job', 404);

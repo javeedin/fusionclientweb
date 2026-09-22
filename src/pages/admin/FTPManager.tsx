@@ -14,7 +14,7 @@ import {
   ArrowUpOutlined, ReloadOutlined, FolderAddOutlined, DeleteOutlined,
   DoubleLeftOutlined, DoubleRightOutlined, LinkOutlined, DisconnectOutlined,
   LaptopOutlined, SaveOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  LoadingOutlined,
+  LoadingOutlined, RocketOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { PROXY_CONFIG } from '../../config/api.config';
@@ -250,6 +250,30 @@ const FTPManager: React.FC = () => {
       } catch (e: any) {
         message.error(`Transfer failed to start (${name}): ${e.message}`);
       }
+    }
+  };
+
+  // ── deploy runtime (dist + server + package.json) ─────────────────────────
+  const [deployOpen, setDeployOpen] = useState(false);
+  const [deployDir, setDeployDir] = useState<string>(() => {
+    try { return localStorage.getItem('reerp_ftp_deploy_dir') || 'C:/reerp'; } catch { return 'C:/reerp'; }
+  });
+  const startDeploy = async () => {
+    if (!sessionId) { message.warning('Connect to a server first'); return; }
+    const dir = deployDir.trim();
+    if (!dir) { message.warning('Enter the remote target folder'); return; }
+    try { localStorage.setItem('reerp_ftp_deploy_dir', dir); } catch { /* ignore */ }
+    try {
+      const d = await post(`${API}/deploy-runtime`, { sessionId, remoteDir: dir });
+      setJobs(prev => [{
+        jobId: d.jobId,
+        label: `Deploy runtime → ${dir}`,
+        direction: 'upload', status: 'running', filesDone: 0, totalFiles: null, currentFile: '',
+      }, ...prev]);
+      setDeployOpen(false);
+      message.info('Deploying runtime (dist + server + package.json)…');
+    } catch (e: any) {
+      message.error(`Deploy failed to start: ${e.message}`);
     }
   };
 
@@ -489,6 +513,13 @@ const FTPManager: React.FC = () => {
                 Download
               </Button>
             </Tooltip>
+            <Tooltip title="Push the web runtime (dist + server + package.json) from this machine's app folder to the server" placement="left">
+              <Button icon={<RocketOutlined />} danger
+                disabled={!sessionId}
+                onClick={() => setDeployOpen(true)}>
+                Deploy Runtime
+              </Button>
+            </Tooltip>
           </div>
 
           {pane('local')}
@@ -532,6 +563,36 @@ const FTPManager: React.FC = () => {
           </Card>
         </div>
       </Content>
+
+      {/* ── Deploy Runtime modal ── */}
+      <Modal
+        title={<Space><RocketOutlined style={{ color: REDWOOD.primary }} /> Deploy Runtime to Server</Space>}
+        open={deployOpen}
+        onCancel={() => setDeployOpen(false)}
+        onOk={startDeploy}
+        okText="Deploy"
+        okButtonProps={{ style: { background: REDWOOD.primary, borderColor: REDWOOD.primary } }}
+      >
+        <Text style={{ fontSize: 12 }}>
+          Uploads only what the hosting server needs to run the web app:
+        </Text>
+        <ul style={{ fontSize: 12, margin: '8px 0 12px', paddingLeft: 20 }}>
+          <li><Text code>dist/</Text> — the built web application (run <Text code>npm run build</Text> first)</li>
+          <li><Text code>server/</Text> — the proxy server (serves the app + APIs)</li>
+          <li><Text code>package.json</Text> — for <Text code>npm install --omit=dev</Text> on the server</li>
+        </ul>
+        <Form layout="vertical">
+          <Form.Item label="Remote target folder" style={{ marginBottom: 4 }}>
+            <Input value={deployDir} onChange={e => setDeployDir(e.target.value)} placeholder="C:/reerp" />
+          </Form.Item>
+        </Form>
+        <Text type="secondary" style={{ fontSize: 11 }}>
+          After the transfer finishes, on the server run: <Text code>cd C:\reerp</Text> →{' '}
+          <Text code>npm install --omit=dev</Text> → <Text code>set REERP_PORT=80</Text> →{' '}
+          <Text code>node server\proxy.cjs</Text>
+        </Text>
+      </Modal>
+
       <FloatingMenu />
     </Layout>
   );
