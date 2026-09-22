@@ -1,11 +1,14 @@
 @echo off
 REM ============================================================
 REM  Re-ERP web server - one-time setup (run as Administrator)
-REM  Installs runtime dependencies and opens port 80 in firewall
+REM  Installs runtime dependencies and opens the web port in the
+REM  Windows Firewall. Port is 80 unless port.txt says otherwise.
 REM ============================================================
 cd /d %~dp0
+set REERP_PORT=80
+if exist "%~dp0port.txt" set /p REERP_PORT=<"%~dp0port.txt"
 echo.
-echo === Re-ERP server setup ===
+echo === Re-ERP server setup (port %REERP_PORT%) ===
 where node >nul 2>&1
 if errorlevel 1 (
   echo ERROR: Node.js not found. Install Node LTS first, then rerun.
@@ -23,13 +26,13 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo Adding Windows Firewall rule for port 80 (if missing)...
-netsh advfirewall firewall show rule name="ReERP-Web" >nul 2>&1
-if errorlevel 1 netsh advfirewall firewall add rule name="ReERP-Web" dir=in action=allow protocol=TCP localport=80
+echo Adding Windows Firewall rule for port %REERP_PORT% (if missing)...
+netsh advfirewall firewall show rule name="ReERP-Web-%REERP_PORT%" >nul 2>&1
+if errorlevel 1 netsh advfirewall firewall add rule name="ReERP-Web-%REERP_PORT%" dir=in action=allow protocol=TCP localport=%REERP_PORT%
 echo.
 echo Setup complete.
 echo   - To run manually now:            2-start-server.bat
 echo   - To auto-start on every reboot:  3-install-autostart.bat
 echo.
-echo Remember: port 80 must also be open in the OCI security list.
+echo Remember: port %REERP_PORT% must also be open in the OCI security list.
 pause
