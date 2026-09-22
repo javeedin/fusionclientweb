@@ -259,6 +259,8 @@ module.exports = function registerFtpRoutes(app) {
     const s = getSession(req, res); if (!s) return;
     const remoteDir = String(req.body?.remoteDir || '').trim().replace(/[\\/]+$/, '');
     if (!remoteDir) return fail(res, 'remoteDir is required', 400);
+    const webPort = Number(req.body?.webPort) || 80;
+    if (webPort < 1 || webPort > 65535) return fail(res, 'webPort must be 1-65535', 400);
 
     const appRoot = path.join(__dirname, '..');
     const distDir = path.join(appRoot, 'dist');
@@ -279,7 +281,7 @@ module.exports = function registerFtpRoutes(app) {
     enqueue(s, async () => {
       try {
         const batCount = fs.existsSync(batDir) ? countLocalFiles(batDir) : 0;
-        try { job.totalFiles = countLocalFiles(distDir) + countLocalFiles(serverDir) + 1 + batCount; } catch { /* best effort */ }
+        try { job.totalFiles = countLocalFiles(distDir) + countLocalFiles(serverDir) + 2 + batCount; } catch { /* best effort */ }
         try { await s.client.mkdir(remoteDir); } catch { /* may already exist */ }
         await s.client.uploadDir(distDir, `${remoteDir}/dist`, onFile);
         await s.client.uploadDir(serverDir, `${remoteDir}/server`, onFile);
@@ -291,6 +293,15 @@ module.exports = function registerFtpRoutes(app) {
             await s.client.uploadFile(path.join(batDir, f), `${remoteDir}/${f}`);
             onFile(f);
           }
+        }
+        // port.txt tells the server-side scripts which port to serve on
+        const portTmp = path.join(os.tmpdir(), `reerp-port-${jobId}.txt`);
+        fs.writeFileSync(portTmp, `${webPort}\r\n`);
+        try {
+          await s.client.uploadFile(portTmp, `${remoteDir}/port.txt`);
+          onFile('port.txt');
+        } finally {
+          try { fs.unlinkSync(portTmp); } catch { /* ignore */ }
         }
         job.status = 'done';
       } catch (e) {

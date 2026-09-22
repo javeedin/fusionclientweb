@@ -258,13 +258,21 @@ const FTPManager: React.FC = () => {
   const [deployDir, setDeployDir] = useState<string>(() => {
     try { return localStorage.getItem('reerp_ftp_deploy_dir') || 'C:/reerp'; } catch { return 'C:/reerp'; }
   });
+  const [deployPort, setDeployPort] = useState<string>(() => {
+    try { return localStorage.getItem('reerp_ftp_deploy_port') || '80'; } catch { return '80'; }
+  });
   const startDeploy = async () => {
     if (!sessionId) { message.warning('Connect to a server first'); return; }
     const dir = deployDir.trim();
     if (!dir) { message.warning('Enter the remote target folder'); return; }
-    try { localStorage.setItem('reerp_ftp_deploy_dir', dir); } catch { /* ignore */ }
+    const port = Number(deployPort);
+    if (!port || port < 1 || port > 65535) { message.warning('Enter a valid web port (1-65535)'); return; }
     try {
-      const d = await post(`${API}/deploy-runtime`, { sessionId, remoteDir: dir });
+      localStorage.setItem('reerp_ftp_deploy_dir', dir);
+      localStorage.setItem('reerp_ftp_deploy_port', String(port));
+    } catch { /* ignore */ }
+    try {
+      const d = await post(`${API}/deploy-runtime`, { sessionId, remoteDir: dir, webPort: port });
       setJobs(prev => [{
         jobId: d.jobId,
         label: `Deploy runtime → ${dir}`,
@@ -581,10 +589,14 @@ const FTPManager: React.FC = () => {
           <li><Text code>server/</Text> — the proxy server (serves the app + APIs)</li>
           <li><Text code>package.json</Text> — for <Text code>npm install --omit=dev</Text> on the server</li>
           <li><Text code>1-setup.bat … 4-restart.bat</Text> — server-side helper scripts</li>
+          <li><Text code>port.txt</Text> — the web port below (scripts serve on this port)</li>
         </ul>
         <Form layout="vertical">
-          <Form.Item label="Remote target folder" style={{ marginBottom: 4 }}>
+          <Form.Item label="Remote target folder" style={{ marginBottom: 8 }}>
             <Input value={deployDir} onChange={e => setDeployDir(e.target.value)} placeholder="C:/reerp" />
+          </Form.Item>
+          <Form.Item label="Web server port (80 = clean URL without port suffix)" style={{ marginBottom: 4 }}>
+            <Input value={deployPort} onChange={e => setDeployPort(e.target.value)} placeholder="80" style={{ width: 140 }} />
           </Form.Item>
         </Form>
         <Text type="secondary" style={{ fontSize: 11 }}>
