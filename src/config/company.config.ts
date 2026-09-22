@@ -49,14 +49,29 @@ export function getAppBranding(): { name: string; version: string; tagline: stri
     : { name: 'FusionClient', version: '3.2.0', tagline: 'Multi-Tenant ERP Platform' };
 }
 
+// Per-deployment lock injected by the hosting proxy into index.html
+// (window.__REERP_DEPLOY__ = {"lockCompany":"BUIMERC"}). Electron and dev
+// builds never carry it, so they keep normal company selection.
+export function getLockedCompany(): CompanyCode | null {
+  try {
+    const code = (window as any).__REERP_DEPLOY__?.lockCompany as CompanyCode | undefined;
+    return code && COMPANIES[code] ? code : null;
+  } catch {
+    return null;
+  }
+}
+
 // Check if company selection is disabled
 export function isCompanySelectionDisabled(): boolean {
+  if (getLockedCompany()) return true;
   const disabled = import.meta.env.REACT_APP_DISABLE_COMPANY_SELECTION as string || 'no';
   return disabled.toLowerCase() === 'yes';
 }
 
 // Get default company
 export function getDefaultCompany(): CompanyCode {
+  const locked = getLockedCompany();
+  if (locked) return locked;
   const defaultCompany = import.meta.env.REACT_APP_DEFAULT_COMPANY as CompanyCode;
   if (defaultCompany && COMPANIES[defaultCompany]) {
     return defaultCompany;
@@ -100,6 +115,7 @@ export function getAllCompanies(): CompanyConfig[] {
 }
 
 export function setCurrentCompany(code: CompanyCode): void {
+  if (getLockedCompany()) return; // deployment is locked to one company
   localStorage.setItem('selectedCompany', code);
   window.location.reload();
 }

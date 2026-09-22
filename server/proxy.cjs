@@ -1318,10 +1318,26 @@ try {
 // fall back to index.html; /api and /mcp stay with their handlers above.
 const DIST_DIR = path.join(__dirname, '..', 'dist');
 if (fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
-  app.use(express.static(DIST_DIR));
-  app.get(/^\/(?!api\/|mcp\/).*/, (req, res) => {
-    res.sendFile(path.join(DIST_DIR, 'index.html'));
-  });
+  // Optional per-deployment settings (e.g. {"lockCompany":"BUIMERC"}) injected
+  // into the page as window.__REERP_DEPLOY__. Only web deployments get this —
+  // Electron loads index.html from disk without the proxy, so it is unaffected.
+  const DEPLOY_CFG_FILE = path.join(__dirname, '..', 'deploy-config.json');
+  const serveIndex = (_req, res) => {
+    let html = fs.readFileSync(path.join(DIST_DIR, 'index.html'), 'utf8');
+    try {
+      if (fs.existsSync(DEPLOY_CFG_FILE)) {
+        const cfg = JSON.parse(fs.readFileSync(DEPLOY_CFG_FILE, 'utf8'));
+        if (cfg && Object.keys(cfg).length) {
+          html = html.replace('<head>', `<head><script>window.__REERP_DEPLOY__=${JSON.stringify(cfg)}</script>`);
+        }
+      }
+    } catch (e) { console.warn('deploy-config.json ignored:', e.message); }
+    res.type('html').send(html);
+  };
+  app.get('/', serveIndex);
+  app.get('/index.html', serveIndex);
+  app.use(express.static(DIST_DIR, { index: false }));
+  app.get(/^\/(?!api\/|mcp\/).*/, serveIndex);
   console.log('Serving web app from', DIST_DIR);
 }
 

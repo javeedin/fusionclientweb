@@ -261,6 +261,8 @@ module.exports = function registerFtpRoutes(app) {
     if (!remoteDir) return fail(res, 'remoteDir is required', 400);
     const webPort = Number(req.body?.webPort) || 80;
     if (webPort < 1 || webPort > 65535) return fail(res, 'webPort must be 1-65535', 400);
+    const lockCompany = String(req.body?.lockCompany || '').trim().toUpperCase();
+    if (lockCompany && !/^[A-Z0-9_]{1,40}$/.test(lockCompany)) return fail(res, 'invalid lockCompany', 400);
 
     const appRoot = path.join(__dirname, '..');
     const distDir = path.join(appRoot, 'dist');
@@ -294,14 +296,20 @@ module.exports = function registerFtpRoutes(app) {
             onFile(f);
           }
         }
-        // port.txt tells the server-side scripts which port to serve on
+        // port.txt tells the server-side scripts which port to serve on;
+        // deploy-config.json carries per-deployment app settings (company lock)
         const portTmp = path.join(os.tmpdir(), `reerp-port-${jobId}.txt`);
+        const cfgTmp = path.join(os.tmpdir(), `reerp-cfg-${jobId}.json`);
         fs.writeFileSync(portTmp, `${webPort}\r\n`);
+        fs.writeFileSync(cfgTmp, JSON.stringify(lockCompany ? { lockCompany } : {}, null, 2));
         try {
           await s.client.uploadFile(portTmp, `${remoteDir}/port.txt`);
           onFile('port.txt');
+          await s.client.uploadFile(cfgTmp, `${remoteDir}/deploy-config.json`);
+          onFile('deploy-config.json');
         } finally {
           try { fs.unlinkSync(portTmp); } catch { /* ignore */ }
+          try { fs.unlinkSync(cfgTmp); } catch { /* ignore */ }
         }
         job.status = 'done';
       } catch (e) {

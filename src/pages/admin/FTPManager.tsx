@@ -261,6 +261,9 @@ const FTPManager: React.FC = () => {
   const [deployPort, setDeployPort] = useState<string>(() => {
     try { return localStorage.getItem('reerp_ftp_deploy_port') || '80'; } catch { return '80'; }
   });
+  const [deployLockCompany, setDeployLockCompany] = useState<string>(() => {
+    try { return localStorage.getItem('reerp_ftp_deploy_lock_company') || ''; } catch { return ''; }
+  });
   const startDeploy = async () => {
     if (!sessionId) { message.warning('Connect to a server first'); return; }
     const dir = deployDir.trim();
@@ -270,9 +273,10 @@ const FTPManager: React.FC = () => {
     try {
       localStorage.setItem('reerp_ftp_deploy_dir', dir);
       localStorage.setItem('reerp_ftp_deploy_port', String(port));
+      localStorage.setItem('reerp_ftp_deploy_lock_company', deployLockCompany);
     } catch { /* ignore */ }
     try {
-      const d = await post(`${API}/deploy-runtime`, { sessionId, remoteDir: dir, webPort: port });
+      const d = await post(`${API}/deploy-runtime`, { sessionId, remoteDir: dir, webPort: port, lockCompany: deployLockCompany || undefined });
       setJobs(prev => [{
         jobId: d.jobId,
         label: `Deploy runtime → ${dir}`,
@@ -595,8 +599,20 @@ const FTPManager: React.FC = () => {
           <Form.Item label="Remote target folder" style={{ marginBottom: 8 }}>
             <Input value={deployDir} onChange={e => setDeployDir(e.target.value)} placeholder="C:/reerp" />
           </Form.Item>
-          <Form.Item label="Web server port (80 = clean URL without port suffix)" style={{ marginBottom: 4 }}>
+          <Form.Item label="Web server port (80 = clean URL without port suffix)" style={{ marginBottom: 8 }}>
             <Input value={deployPort} onChange={e => setDeployPort(e.target.value)} placeholder="80" style={{ width: 140 }} />
+          </Form.Item>
+          <Form.Item label="Lock company (users on this server cannot switch)" style={{ marginBottom: 4 }}>
+            <Select
+              value={deployLockCompany}
+              onChange={v => setDeployLockCompany(v)}
+              style={{ width: 220 }}
+              options={[
+                { value: '', label: 'No lock — selectable' },
+                { value: 'BUIMERC', label: 'BUIMERC' },
+                { value: 'GRAYSINC', label: 'GRAYS INC' },
+              ]}
+            />
           </Form.Item>
         </Form>
         <Text type="secondary" style={{ fontSize: 11 }}>
