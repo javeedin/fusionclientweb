@@ -580,6 +580,7 @@ const FTPManager: React.FC = () => {
           <li><Text code>dist/</Text> — the built web application (run <Text code>npm run build</Text> first)</li>
           <li><Text code>server/</Text> — the proxy server (serves the app + APIs)</li>
           <li><Text code>package.json</Text> — for <Text code>npm install --omit=dev</Text> on the server</li>
+          <li><Text code>1-setup.bat … 4-restart.bat</Text> — server-side helper scripts</li>
         </ul>
         <Form layout="vertical">
           <Form.Item label="Remote target folder" style={{ marginBottom: 4 }}>
@@ -587,9 +588,8 @@ const FTPManager: React.FC = () => {
           </Form.Item>
         </Form>
         <Text type="secondary" style={{ fontSize: 11 }}>
-          After the transfer finishes, on the server run: <Text code>cd C:\reerp</Text> →{' '}
-          <Text code>npm install --omit=dev</Text> → <Text code>set REERP_PORT=80</Text> →{' '}
-          <Text code>node server\proxy.cjs</Text>
+          On the server (as Administrator): first deploy — run <Text code>1-setup.bat</Text> then{' '}
+          <Text code>3-install-autostart.bat</Text>. After later deploys — just <Text code>4-restart.bat</Text>.
         </Text>
       </Modal>
 

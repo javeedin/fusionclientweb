@@ -274,14 +274,24 @@ module.exports = function registerFtpRoutes(app) {
     jobs.set(jobId, job);
     const onFile = (name) => { job.filesDone += 1; job.currentFile = name; };
 
+    const batDir = path.join(appRoot, 'deploy'); // server-side helper .bat files
+
     enqueue(s, async () => {
       try {
-        try { job.totalFiles = countLocalFiles(distDir) + countLocalFiles(serverDir) + 1; } catch { /* best effort */ }
+        const batCount = fs.existsSync(batDir) ? countLocalFiles(batDir) : 0;
+        try { job.totalFiles = countLocalFiles(distDir) + countLocalFiles(serverDir) + 1 + batCount; } catch { /* best effort */ }
         try { await s.client.mkdir(remoteDir); } catch { /* may already exist */ }
         await s.client.uploadDir(distDir, `${remoteDir}/dist`, onFile);
         await s.client.uploadDir(serverDir, `${remoteDir}/server`, onFile);
         await s.client.uploadFile(pkgFile, `${remoteDir}/package.json`);
         onFile('package.json');
+        if (batCount) {
+          // .bat helpers land in the remote root so they can be double-clicked
+          for (const f of fs.readdirSync(batDir)) {
+            await s.client.uploadFile(path.join(batDir, f), `${remoteDir}/${f}`);
+            onFile(f);
+          }
+        }
         job.status = 'done';
       } catch (e) {
         job.status = 'error';
