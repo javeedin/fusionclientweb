@@ -335,7 +335,9 @@ const ManageJournals: React.FC = () => {
   const [postedPeriodEdit, setPostedPeriodEdit] = useState<{ tabKey: string; period: string; date: dayjs.Dayjs | null } | null>(null);
   const [postedPeriodUpdating, setPostedPeriodUpdating] = useState(false);
   const [postedPeriods, setPostedPeriods] = useState<Period[]>([]);
-  const [createJournalTabOpen, setCreateJournalTabOpen] = useState(false);
+  // Multiple Create Journal tabs: each entry is a unique id (key = `create-journal-${id}`)
+  const [createJournalTabs, setCreateJournalTabs] = useState<number[]>([]);
+  const createJournalSeq = useRef(0);
 
   // API indicator — tracks the last URL called during search
   const [lastSearchUrl, setLastSearchUrl] = useState<string | null>(null);
@@ -850,19 +852,39 @@ const ManageJournals: React.FC = () => {
   // Handle tab edit (close)
   const onTabEdit = (targetKey: React.MouseEvent | React.KeyboardEvent | string, action: 'add' | 'remove') => {
     if (action === 'remove' && typeof targetKey === 'string') {
-      if (targetKey === 'create-journal') {
-        setCreateJournalTabOpen(false);
-        setActiveTabKey('search');
+      if (targetKey.startsWith('create-journal-')) {
+        closeCreateJournalTab(targetKey);
       } else {
         closeJournalTab(targetKey);
       }
     }
   };
 
-  // Open the Create Journal in-app tab
+  // Open a fresh Create Journal in-app tab (each click opens a new independent tab)
   const openCreateJournalTab = () => {
-    setCreateJournalTabOpen(true);
-    setActiveTabKey('create-journal');
+    createJournalSeq.current += 1;
+    const id = createJournalSeq.current;
+    setCreateJournalTabs(prev => [...prev, id]);
+    setActiveTabKey(`create-journal-${id}`);
+  };
+
+  // Close one Create Journal tab
+  const closeCreateJournalTab = (tabKey: string) => {
+    const id = Number(tabKey.replace('create-journal-', ''));
+    setCreateJournalTabs(prev => {
+      const next = prev.filter(t => t !== id);
+      if (activeTabKey === tabKey) {
+        // Switch to the last remaining create tab, else last journal tab, else search
+        if (next.length > 0) {
+          setActiveTabKey(`create-journal-${next[next.length - 1]}`);
+        } else if (openJournalTabs.length > 0) {
+          setActiveTabKey(openJournalTabs[openJournalTabs.length - 1].key);
+        } else {
+          setActiveTabKey('search');
+        }
+      }
+      return next;
+    });
   };
 
   // Page APIs definition
@@ -5180,31 +5202,32 @@ const ManageJournals: React.FC = () => {
                 </div>
               ),
             },
-            // Create Journal tab (inline, opens when + or Create Journal button clicked)
-            ...(createJournalTabOpen ? [{
-              key: 'create-journal',
-              label: (
-                <span style={{
-                  fontSize: 12,
-                  fontWeight: activeTabKey === 'create-journal' ? 600 : 400,
-                  color: activeTabKey === 'create-journal' ? REDWOOD.primary : REDWOOD.neutral600,
-                  padding: '4px 8px',
-                }}>
-                  <PlusOutlined style={{ marginRight: 6, color: REDWOOD.primary }} />
-                  Create Journal
-                </span>
-              ),
-              closable: true,
-              children: (
-                <CreateJournal
-                  embeddedMode
-                  onSaved={() => {
-                    setCreateJournalTabOpen(false);
-                    setActiveTabKey('search');
-                  }}
-                />
-              ),
-            }] : []),
+            // Create Journal tabs (each click on + / Create Journal opens a fresh independent tab)
+            ...createJournalTabs.map((id, idx) => {
+              const tabKey = `create-journal-${id}`;
+              return {
+                key: tabKey,
+                label: (
+                  <span style={{
+                    fontSize: 12,
+                    fontWeight: activeTabKey === tabKey ? 600 : 400,
+                    color: activeTabKey === tabKey ? REDWOOD.primary : REDWOOD.neutral600,
+                    padding: '4px 8px',
+                  }}>
+                    <PlusOutlined style={{ marginRight: 6, color: REDWOOD.primary }} />
+                    Create Journal{createJournalTabs.length > 1 ? ` ${idx + 1}` : ''}
+                  </span>
+                ),
+                closable: true,
+                children: (
+                  <CreateJournal
+                    key={tabKey}
+                    embeddedMode
+                    onSaved={() => closeCreateJournalTab(tabKey)}
+                  />
+                ),
+              };
+            }),
             // Dynamic journal edit tabs
             ...openJournalTabs.map(tab => ({
               key: tab.key,

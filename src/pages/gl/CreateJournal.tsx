@@ -199,10 +199,11 @@ const formatNumber = (value: number | null | undefined) => {
   return value.toLocaleString('en-US', { minimumFractionDigits: 2 });
 };
 
-// Generate batch name with timestamp
+// Generate batch name with timestamp (millisecond suffix keeps multiple
+// Create Journal tabs opened in the same second unique)
 const generateBatchName = (): string => {
   const now = dayjs();
-  return `JB-${now.format('YYYYMMDD-HHmmss')}`;
+  return `JB-${now.format('YYYYMMDD-HHmmss')}-${String(now.millisecond()).padStart(3, '0')}`;
 };
 
 const GL_ORDS_BASE = buildApexUrl('gl');
