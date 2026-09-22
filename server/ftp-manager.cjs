@@ -58,6 +58,14 @@ const makeSftp = async (cfg) => {
     tryKeyboard: true,
     readyTimeout: 15000,
   });
+  // ssh2-sftp-client has .on() but no .removeAllListeners(); register the
+  // progress listeners once and swap the active callback per transfer.
+  let onUpload = null;
+  let onDownload = null;
+  try {
+    client.on('upload', info => { if (onUpload) onUpload(info.source); });
+    client.on('download', info => { if (onDownload) onDownload(info.source); });
+  } catch { /* progress reporting unavailable */ }
   return {
     list: async (dir) => (await client.list(dir)).map(e => ({
       name: e.name,
@@ -69,16 +77,16 @@ const makeSftp = async (cfg) => {
     delete: async (p, isDir) => (isDir ? client.rmdir(p, true) : client.delete(p)),
     isDir: async (p) => (await client.exists(p)) === 'd',
     uploadFile: (local, remote) => client.fastPut(local, remote),
-    uploadDir: (local, remote, onFile) => {
-      client.removeAllListeners('upload');
-      client.on('upload', info => onFile(info.source));
-      return client.uploadDir(local, remote);
+    uploadDir: async (local, remote, onFile) => {
+      onUpload = onFile;
+      try { return await client.uploadDir(local, remote); }
+      finally { onUpload = null; }
     },
     downloadFile: (remote, local) => client.fastGet(remote, local),
-    downloadDir: (remote, local, onFile) => {
-      client.removeAllListeners('download');
-      client.on('download', info => onFile(info.source));
-      return client.downloadDir(remote, local);
+    downloadDir: async (remote, local, onFile) => {
+      onDownload = onFile;
+      try { return await client.downloadDir(remote, local); }
+      finally { onDownload = null; }
     },
     end: () => client.end().catch(() => {}),
   };
