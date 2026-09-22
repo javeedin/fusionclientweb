@@ -47,9 +47,15 @@ const countLocalFiles = (p) => {
 const makeSftp = async (cfg) => {
   const SftpClient = require('ssh2-sftp-client');
   const client = new SftpClient();
+  // Some servers (notably Windows OpenSSH) may only offer keyboard-interactive
+  // auth; answer its password prompt with the same password.
+  client.client.on('keyboard-interactive', (_name, _instr, _lang, prompts, finish) => {
+    finish(prompts.map(() => cfg.password || ''));
+  });
   await client.connect({
     host: cfg.host, port: cfg.port || 22,
     username: cfg.username, password: cfg.password,
+    tryKeyboard: true,
     readyTimeout: 15000,
   });
   return {
