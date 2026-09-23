@@ -509,6 +509,9 @@ export interface InvoiceInitialData {
     lines: any[];
     taxRate: number;
   };
+  // Duplicate from the search grid: header comes from the fields above,
+  // item lines are loaded from this source invoice.
+  duplicateFromInvoiceId?: number;
 }
 
 interface CreateInvoiceProps {
@@ -2535,6 +2538,16 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       setHeaderValues((prev) => ({ ...prev, ...formValues }));
       if (initialData.businessUnit) setBuSelected(true);
 
+      // Duplicate from search grid: copy the source invoice's lines into this new invoice
+      if (initialData.duplicateFromInvoiceId && !initialData.invoiceId) {
+        fetchExistingLines(initialData.duplicateFromInvoiceId);
+        if (initialData.supplierId) {
+          setSelectedSupplierInfo({ number: initialData.supplierNumber || '', id: initialData.supplierId });
+          fetchSupplierSites(initialData.supplierId, initialData.businessUnit || '');
+        }
+        return;
+      }
+
       // Edit mode: fetch existing lines, payments, holds, installments, applied prepayments
       if (initialData.invoiceId) {
         fetchSuppliers(); // load suppliers so supplierId fallback lookup works for prepayments
@@ -2555,6 +2568,12 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
           .then(data => {
             const hdr = data?.header || data;
             const patch: Record<string, any> = {};
+            const curInvDate = form.getFieldValue('invoiceDate');
+            const dbInvDate = hdr.InvoiceDate || hdr.invoice_date;
+            if (dbInvDate && !(dayjs.isDayjs(curInvDate) && curInvDate.isValid())) {
+              const d = dayjs(dbInvDate, ['YYYY-MM-DD', 'DD-MMM-YYYY', 'YYYY-MM-DDTHH:mm:ss[Z]']);
+              if (d.isValid()) patch.invoiceDate = d;
+            }
             if (hdr.AccountingDate || hdr.accounting_date) patch.accountingDate = dayjs(hdr.AccountingDate || hdr.accounting_date, ['YYYY-MM-DD', 'DD-MMM-YYYY']);
             if (hdr.ConversionRateType || hdr.conversion_rate_type) patch.conversionRateType = hdr.ConversionRateType || hdr.conversion_rate_type;
             if (hdr.ConversionDate || hdr.conversion_date) patch.conversionDate = dayjs(hdr.ConversionDate || hdr.conversion_date, ['YYYY-MM-DD', 'DD-MMM-YYYY']);

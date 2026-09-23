@@ -273,11 +273,20 @@ const formatCurrency = (amount: number, currency: string = 'AED'): string => {
 const formatDate = (dateStr: string | null): string => {
   if (!dateStr) return '';
   try {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    // dayjs keeps 3-letter months everywhere; toLocaleDateString('en-GB') emits "Sept",
+    // which dayjs cannot parse back and made September invoices open with "Invalid Date".
+    const d = dayjs(dateStr);
+    return d.isValid() ? d.format('DD MMM YYYY') : dateStr;
   } catch {
     return dateStr;
   }
+};
+
+// Parse a grid display date ("22 Sep 2026", or legacy "22 Sept 2026") back to dayjs
+const parseDisplayDate = (dateStr: string | null | undefined) => {
+  if (!dateStr) return undefined;
+  const d = dayjs(dateStr.replace(/\bSept\b/, 'Sep'), ['DD MMM YYYY', 'YYYY-MM-DD', 'DD-MMM-YYYY'], true);
+  return d.isValid() ? d : undefined;
 };
 
 // Aging color helper
@@ -1611,6 +1620,55 @@ const ManageInvoices: React.FC = () => {
     }
   };
 
+  // Map a search-grid record to the CreateInvoice initial data (edit mode)
+  const buildInvoiceInitialData = (record: InvoiceRecord): InvoiceInitialData => ({
+    invoiceId: record.invoiceId,
+    isSynced: record.syncStatus === 'SYNCED',
+    supplier: record.supplierOrParty,
+    supplierNumber: record.supplierNumber,
+    supplierId: record.supplierId,
+    invoiceNumber: record.invoiceNumber,
+    invoiceAmount: record.invoiceAmount,
+    invoiceDate: parseDisplayDate(record.invoiceDate),
+    description: record.notes || '',
+    invoiceCurrency: record.invoiceCurrency,
+    businessUnit: record.businessUnit,
+    invoiceType: record.invoiceType,
+    supplierSite: record.supplierSite,
+    unpaidAmount: record.unpaidAmount,
+    validationStatus: record.validationStatus,
+    approvalStatus: record.approvalStatus,
+    holdPaidStatus: record.holdPaidStatus,
+    applyAfterDate: record.applyAfterDate,
+    paymentTerms: record.paymentTerms,
+    invoiceGroup: record.invoiceGroup,
+    termsDate: record.termsDate,
+    goodsReceivedDate: record.goodsReceivedDate,
+    liabilityDistribution: record.liabilityDistribution,
+    accountingDate: record.accountingDate,
+    conversionRateType: record.conversionRateType,
+    conversionDate: record.conversionDate,
+    conversionRate: record.conversionRate,
+    paymentCurrency: record.paymentCurrency,
+    // Audit / system info
+    creationDate:                record.creationDate,
+    createdBy:                   record.createdBy,
+    lastUpdatedBy:               record.lastUpdatedBy,
+    lastUpdateDate:              record.lastUpdateDate,
+    syncDate:                    record.syncDate,
+    cancellationDate:            record.cancellationDate,
+    cancelledBy:                 record.cancelledBy,
+    deliveryChannelCode:         record.deliveryChannelCode,
+    deliveryChannel:             record.deliveryChannel,
+    firstPartyTaxRegistrationId: record.firstPartyTaxRegistrationId,
+    firstPartyTaxRegistrationNum:record.firstPartyTaxRegistrationNum,
+    taxationCountry:             record.taxationCountry,
+    documentCategory:            record.documentCategory,
+    documentSequence:            record.documentSequence,
+    voucherNumber:               record.voucherNumber,
+    accountingStatus:            record.accountingStatus,
+  });
+
   // Open invoice in new tab
   // Synced invoices (from Oracle Fusion) open as read-only InvoiceDetail.
   // Locally-created invoices open in CreateInvoice (edit mode).
@@ -1624,53 +1682,7 @@ const ManageInvoices: React.FC = () => {
     }
 
     // Always open CreateInvoice — synced invoices are read-only inside that component
-    const editData: InvoiceInitialData = {
-      invoiceId: record.invoiceId,
-      isSynced: record.syncStatus === 'SYNCED',
-      supplier: record.supplierOrParty,
-      supplierNumber: record.supplierNumber,
-      supplierId: record.supplierId,
-      invoiceNumber: record.invoiceNumber,
-      invoiceAmount: record.invoiceAmount,
-      invoiceDate: record.invoiceDate ? dayjs(record.invoiceDate, 'DD MMM YYYY') : undefined,
-      description: record.notes || '',
-      invoiceCurrency: record.invoiceCurrency,
-      businessUnit: record.businessUnit,
-      invoiceType: record.invoiceType,
-      supplierSite: record.supplierSite,
-      unpaidAmount: record.unpaidAmount,
-      validationStatus: record.validationStatus,
-      approvalStatus: record.approvalStatus,
-      holdPaidStatus: record.holdPaidStatus,
-      applyAfterDate: record.applyAfterDate,
-      paymentTerms: record.paymentTerms,
-      invoiceGroup: record.invoiceGroup,
-      termsDate: record.termsDate,
-      goodsReceivedDate: record.goodsReceivedDate,
-      liabilityDistribution: record.liabilityDistribution,
-      accountingDate: record.accountingDate,
-      conversionRateType: record.conversionRateType,
-      conversionDate: record.conversionDate,
-      conversionRate: record.conversionRate,
-      paymentCurrency: record.paymentCurrency,
-      // Audit / system info
-      creationDate:                record.creationDate,
-      createdBy:                   record.createdBy,
-      lastUpdatedBy:               record.lastUpdatedBy,
-      lastUpdateDate:              record.lastUpdateDate,
-      syncDate:                    record.syncDate,
-      cancellationDate:            record.cancellationDate,
-      cancelledBy:                 record.cancelledBy,
-      deliveryChannelCode:         record.deliveryChannelCode,
-      deliveryChannel:             record.deliveryChannel,
-      firstPartyTaxRegistrationId: record.firstPartyTaxRegistrationId,
-      firstPartyTaxRegistrationNum:record.firstPartyTaxRegistrationNum,
-      taxationCountry:             record.taxationCountry,
-      documentCategory:            record.documentCategory,
-      documentSequence:            record.documentSequence,
-      voucherNumber:               record.voucherNumber,
-      accountingStatus:            record.accountingStatus,
-    };
+    const editData = buildInvoiceInitialData(record);
 
     const newTab: InvoiceTab = {
       key: tabKey,
@@ -1681,6 +1693,27 @@ const ManageInvoices: React.FC = () => {
     };
     setOpenTabs([...openTabs, newTab]);
     setActiveTab(tabKey);
+  };
+
+  // Duplicate the selected invoice from the search grid into a new, unsaved Create Invoice tab
+  const duplicateSelectedInvoice = () => {
+    const record = selectedRowKeys.length === 1 ? invoices.find(i => i.key === selectedRowKeys[0]) : undefined;
+    if (!record) { message.warning('Select one invoice to duplicate.'); return; }
+    const src = buildInvoiceInitialData(record);
+    openCreateInvoiceTab({
+      supplier: src.supplier, supplierNumber: src.supplierNumber, supplierId: src.supplierId,
+      invoiceNumber: record.invoiceNumber ? `${record.invoiceNumber}-COPY` : '',
+      invoiceAmount: src.invoiceAmount, invoiceDate: src.invoiceDate || dayjs(),
+      description: src.description, invoiceCurrency: src.invoiceCurrency,
+      businessUnit: src.businessUnit, invoiceType: src.invoiceType, supplierSite: src.supplierSite,
+      paymentTerms: src.paymentTerms, invoiceGroup: src.invoiceGroup, termsDate: src.termsDate,
+      goodsReceivedDate: src.goodsReceivedDate, liabilityDistribution: src.liabilityDistribution,
+      accountingDate: src.accountingDate, conversionRateType: src.conversionRateType,
+      conversionDate: src.conversionDate, conversionRate: src.conversionRate,
+      paymentCurrency: src.paymentCurrency, documentCategory: src.documentCategory,
+      duplicateFromInvoiceId: record.invoiceId,
+    });
+    message.success(`Invoice ${record.invoiceNumber} duplicated — review the new tab and click Save.`);
   };
 
   // Open create invoice tab (optionally with pre-filled data)
@@ -3872,7 +3905,15 @@ const ManageInvoices: React.FC = () => {
               background: REDWOOD.neutral100,
             }}>
               <Space size="small">
-                <Dropdown menu={{ items: actionsMenuItems }} trigger={['click']}>
+                <Dropdown
+                  menu={{
+                    items: actionsMenuItems,
+                    onClick: ({ key }) => {
+                      if (key === 'duplicate') duplicateSelectedInvoice();
+                    },
+                  }}
+                  trigger={['click']}
+                >
                   <Button size="small">
                     Actions <DownOutlined />
                   </Button>
