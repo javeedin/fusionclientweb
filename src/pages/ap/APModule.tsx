@@ -166,7 +166,7 @@ interface KpiData {
   approvedInvoices: number;
   pendingPayments: number;
   overduePayments: number;
-  totalPayables: number;
+  totalPayables: number | null;
   lastSync: string;
 }
 
@@ -212,13 +212,14 @@ const APModule: React.FC = () => {
     try {
       const params = new URLSearchParams();
       if (selectedBU) params.set('P_BUSINESS_UNIT', selectedBU);
-      const url = `${APEX_DB_CONFIG.baseUrl}/ap/invoices/outstanding-by-supplier${params.toString() ? '?' + params : ''}`;
+      // Same service (and formula) as the headline total, so the rows add up to it
+      const url = `${APEX_DB_CONFIG.baseUrl}/suppliers/balance/outstanding${params.toString() ? '?' + params : ''}`;
       setDrillApiUrl(url);
       const res  = await fetch(url);
       const text = await res.text();
       if (!text.trim()) throw new Error('Empty response from server');
       const data = JSON.parse(text);
-      if (data.error) throw new Error(data.error);
+      if (data.error || data.success === 'false') throw new Error(data.error || 'Failed to load outstanding');
       const items: any[] = Array.isArray(data.items) ? data.items : (Array.isArray(data) ? data : []);
       setDrillRows(items.map((r: any) => ({
         supplierNumber:     r.supplier_number     || '',
@@ -271,12 +272,22 @@ const APModule: React.FC = () => {
         d = Array.isArray(json?.items) && json.items.length > 0 ? json.items[0] : json;
       } catch { /* leave d empty — KPIs default to 0 */ }
 
+      // Total outstanding: same formula as the supplier balance dashboard
+      // (suppliers/balance/dashboard/:no), summed across the selected BU
+      let totalOutstanding: number | null = null;
+      try {
+        const res  = await fetch(`${APEX_DB_CONFIG.baseUrl}/suppliers/balance/outstanding${buQs}`);
+        const json = res.ok ? await res.json() : null;
+        const bal  = Number(json?.balance_summary?.balance);
+        if (json && json.success !== 'false' && Number.isFinite(bal)) totalOutstanding = bal;
+      } catch { /* service not deployed or failed — show "—" rather than a wrong figure */ }
+
       setKpi({
         pendingInvoices:  Number(d.pending_invoices  ?? 0),
         approvedInvoices: Number(d.approved_invoices ?? 0),
         pendingPayments:  Number(d.pending_payments  ?? 0),
         overduePayments:  Number(d.overdue_payments  ?? 0),
-        totalPayables:    Number(d.total_outstanding ?? 0),
+        totalPayables:    totalOutstanding,
         lastSync: d.last_sync_date
           ? new Date(d.last_sync_date).toLocaleString()
           : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -555,7 +566,9 @@ const APModule: React.FC = () => {
                     </Space>
                   </div>
                   <Text style={{ fontSize: 32, fontWeight: 600, color: REDWOOD.neutral900 }}>
-                    AED {kpi.totalPayables.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {kpi.totalPayables !== null
+                      ? `AED ${kpi.totalPayables.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      : '—'}
                   </Text>
                 </Card>
               </Col>
@@ -810,7 +823,14 @@ const APModule: React.FC = () => {
             method: 'GET',
             url: `${APEX_DB_CONFIG.baseUrl}/ap/invoices/stats`,
             params: selectedBU ? `P_BUSINESS_UNIT=${selectedBU}` : '(no filter — all BUs)',
-            note: 'Returns pending/approved/payment counts and total outstanding. Deploy database/ap/rr_ap_dashboard_stats.sql to activate.',
+            note: 'Returns pending/approved/payment counts. Deploy database/ap/rr_ap_dashboard_stats.sql to activate.',
+          },
+          {
+            label: 'Total Outstanding Payables (tile + drill-down)',
+            method: 'GET',
+            url: `${APEX_DB_CONFIG.baseUrl}/suppliers/balance/outstanding`,
+            params: selectedBU ? `P_BUSINESS_UNIT=${selectedBU}` : '(no filter — all BUs)',
+            note: 'balance_summary.balance uses the same formula as suppliers/balance/dashboard/:supplier_number. Deploy database/ap/rr_ap_supplier_balance_outstanding.sql to activate.',
           },
           {
             label: 'Business Unit List',
