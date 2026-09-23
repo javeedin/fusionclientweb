@@ -501,15 +501,24 @@ export interface InvoiceInitialData {
   accountingStatus?: string;
   // Synced invoice (from Oracle Fusion) — read-only except Pay in Full
   isSynced?: boolean;
+  // Duplicate Invoice: full header + lines snapshot copied from a source invoice.
+  // Opens as a brand-new (unsaved) invoice — the user reviews it and clicks Save.
+  duplicate?: {
+    sourceInvoiceNumber: string;
+    values: Record<string, any>;
+    lines: any[];
+    taxRate: number;
+  };
 }
 
 interface CreateInvoiceProps {
   onClose: () => void;
   onSave?: (values: any) => void;
   initialData?: InvoiceInitialData;
+  onDuplicate?: (data: InvoiceInitialData) => void;
 }
 
-const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialData }) => {
+const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialData, onDuplicate }) => {
   const { user } = useAuth();
   const [form] = Form.useForm();
   const [payInFullForm] = Form.useForm();
@@ -2474,6 +2483,20 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
 
   // Pre-fill from initialData (Quick Create or Edit mode)
   useEffect(() => {
+    // Duplicate Invoice: restore the copied header + lines as a new, unsaved invoice
+    if (initialData?.duplicate) {
+      const { values, lines: dupLines, taxRate: dupTaxRate } = initialData.duplicate;
+      form.setFieldsValue(values);
+      setHeaderValues((prev) => ({ ...prev, ...values }));
+      if (values.businessUnit) setBuSelected(true);
+      if (dupLines.length > 0) setLines(dupLines);
+      setTaxRate(dupTaxRate);
+      if (values.supplierId) {
+        setSelectedSupplierInfo({ number: values.supplierNumber || '', id: values.supplierId });
+        fetchSupplierSites(values.supplierId, values.businessUnit || '');
+      }
+      return;
+    }
     if (initialData) {
       const formValues: Record<string, any> = {};
       if (initialData.supplier) formValues.supplier = initialData.supplier;
@@ -4402,9 +4425,29 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       case 'reverseInvoice':
         message.warning('Reverse invoice...');
         break;
-      case 'duplicate':
-        message.info('Duplicating invoice...');
+      case 'duplicate': {
+        if (!onDuplicate) { message.warning('Duplicate is not available here.'); return; }
+        const src = { ...headerValues, ...form.getFieldsValue(true) };
+        const sourceInvoiceNumber = src.invoiceNumber || initialData?.invoiceNumber || '';
+        // System-assigned / status fields must not carry over to the new invoice
+        const {
+          invoiceId: _invoiceId, voucherNumber: _voucher, documentSequence: _docSeq,
+          applyAfterDate: _applyAfter, ...copied
+        } = src;
+        const validOrToday = (d: any) => (dayjs.isDayjs(d) && d.isValid() ? d : dayjs());
+        copied.invoiceNumber = sourceInvoiceNumber ? `${sourceInvoiceNumber}-COPY` : '';
+        copied.invoiceDate = validOrToday(copied.invoiceDate);
+        if (copied.accountingDate) copied.accountingDate = validOrToday(copied.accountingDate);
+        const stamp = Date.now();
+        const copiedLines = lines.map((l, idx) => ({ ...l, key: `dup-${stamp}-${idx}` }));
+        onDuplicate({
+          invoiceNumber: copied.invoiceNumber,
+          supplier: copied.supplier,
+          duplicate: { sourceInvoiceNumber, values: copied, lines: copiedLines, taxRate },
+        });
+        message.success(`Invoice ${sourceInvoiceNumber} duplicated — review the new tab and click Save.`);
         break;
+      }
       case 'manageInstallments': {
         const invId = savedInvoiceId ?? initialData?.invoiceId ?? null;
         if (invId) {

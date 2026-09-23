@@ -4110,6 +4110,7 @@ const ManageInvoices: React.FC = () => {
         <CreateInvoice
           onClose={() => closeInvoiceTab(tab.key)}
           initialData={tab.initialData}
+          onDuplicate={openCreateInvoiceTab}
           onSave={(savedValues) => {
             // Update tab label to invoice number after first save
             if (savedValues?.invoiceNumber) {
