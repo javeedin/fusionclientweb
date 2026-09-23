@@ -4462,6 +4462,8 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
         onDuplicate({
           invoiceNumber: copied.invoiceNumber,
           supplier: copied.supplier,
+          // BU drives the tax-code list (tax accounts on each line) and BU-selected state
+          businessUnit: copied.businessUnit,
           duplicate: { sourceInvoiceNumber, values: copied, lines: copiedLines, taxRate },
         });
         message.success(`Invoice ${sourceInvoiceNumber} duplicated — review the new tab and click Save.`);
