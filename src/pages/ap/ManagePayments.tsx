@@ -288,7 +288,6 @@ const fetchGlPostedCheckIds = async (): Promise<Set<string> | null> => {
 const APEX_SUPPLIERS_URL = `${APEX_DB_CONFIG.baseUrl}/suppliers`;
 const APEX_BANK_ACCOUNTS_URL = `${APEX_DB_CONFIG.baseUrl}/banks/bankaccounts`;
 const APEX_BUSINESS_UNITS_URL = `${APEX_DB_CONFIG.baseUrl}/gl/businessunits`;
-const APEX_INVOICE_URL = `${APEX_DB_CONFIG.baseUrl}/ap/createinvoice`;
 
 // Helper function to format amount in UAE format (000,000.00)
 const formatAmount = (value: number): string => {
@@ -1379,19 +1378,19 @@ const ManagePayments: React.FC = () => {
     setSupplierBalanceLoading(true);
     setSupplierTotalBalance(null);
     try {
-      const url = `${APEX_INVOICE_URL}?supplier_number=${encodeURIComponent(supplierNumber)}`;
+      // Same source as the supplier balance dashboard — the authoritative outstanding balance
+      const url = `${APEX_DB_CONFIG.baseUrl}/suppliers/balance/dashboard/${encodeURIComponent(supplierNumber)}`;
       setSupplierBalanceApiUrl(url);
       const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      const balance = (data.items || []).reduce((sum: number, item: any) => {
-        const due = (item.invoice_amount || 0) - (item.amount_paid || 0);
-        return due > 0 ? sum + due : sum;
-      }, 0);
-      setSupplierTotalBalance(balance);
+      if (data.success === 'false' || data.success === false) throw new Error(data.error || 'Failed to load supplier balance');
+      const balance = Number(data.balance_summary?.balance);
+      setSupplierTotalBalance(Number.isFinite(balance) ? balance : null);
     } catch (err) {
       console.error('Failed to fetch supplier balance:', err);
-      setSupplierTotalBalance(0);
+      // Leave as null ("—") so a failed call is not mistaken for a zero balance
+      setSupplierTotalBalance(null);
     } finally {
       setSupplierBalanceLoading(false);
     }
@@ -4237,7 +4236,7 @@ const ManagePayments: React.FC = () => {
                                       {supplierBalanceApiUrl || '(select a supplier first)'}
                                     </Typography.Paragraph>
                                     <Text type="secondary" style={{ fontSize: 11 }}>
-                                      GET /ap/createinvoice?supplier_number=… — balance = Σ(invoice_amount − amount_paid) for rows where due &gt; 0.
+                                      GET /suppliers/balance/dashboard/&#123;supplier_number&#125; — shows balance_summary.balance.
                                     </Text>
                                   </div>
                                 }
