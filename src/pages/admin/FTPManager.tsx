@@ -8,13 +8,15 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Layout, Card, Table, Button, Space, Typography, Breadcrumb, Tag, Input,
   Select, Tooltip, Modal, Form, Progress, Empty, message, Popconfirm,
+  Checkbox, Descriptions, Badge, Alert,
 } from 'antd';
 import {
   HomeOutlined, CloudServerOutlined, FolderOutlined, FileOutlined,
   ArrowUpOutlined, ReloadOutlined, FolderAddOutlined, DeleteOutlined,
   DoubleLeftOutlined, DoubleRightOutlined, LinkOutlined, DisconnectOutlined,
   LaptopOutlined, SaveOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  LoadingOutlined, RocketOutlined,
+  LoadingOutlined, RocketOutlined, PoweroffOutlined, PlayCircleOutlined,
+  SyncOutlined, DashboardOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { PROXY_CONFIG } from '../../config/api.config';
@@ -35,6 +37,14 @@ interface TransferJob {
   jobId: string; label: string; direction: 'upload' | 'download';
   status: 'running' | 'done' | 'error';
   filesDone: number; totalFiles: number | null; currentFile: string; error?: string | null;
+  note?: string | null;
+}
+interface ServerStatus {
+  port: number; pid: number | null; process: string | null;
+  running: boolean; portBusyByOther: boolean;
+  taskInstalled: boolean; taskStatus: string | null;
+  http: { ok: boolean; statusCode?: number; ms?: number; error?: string };
+  checkedAt: string;
 }
 interface SavedConn { name: string; protocol: string; host: string; port?: number; username: string; password?: string }
 
@@ -75,6 +85,7 @@ const FTPManager: React.FC = () => {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connLabel, setConnLabel] = useState('');
+  const [connProtocol, setConnProtocol] = useState('');
   const [saved, setSaved] = useState<SavedConn[]>(() => {
     try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); } catch { return []; }
   });
@@ -178,6 +189,7 @@ const FTPManager: React.FC = () => {
       });
       setSessionId(d.sessionId);
       setConnLabel(`${v.protocol.toUpperCase()} ${v.username}@${v.host}`);
+      setConnProtocol(v.protocol);
       // remember the full connection (incl. password and port) on every
       // successful connect, so next time one click reconnects
       persistConnection(v);
@@ -191,7 +203,7 @@ const FTPManager: React.FC = () => {
 
   const handleDisconnect = async () => {
     if (sessionId) { try { await post(`${API}/disconnect`, { sessionId }); } catch { /* gone */ } }
-    setSessionId(null); setConnLabel('');
+    setSessionId(null); setConnLabel(''); setConnProtocol(''); setSrvStatus(null);
     setRemoteItems([]); setRemotePath('/'); setRemotePathInput('/'); setRemoteSel([]);
   };
 
@@ -258,9 +270,10 @@ const FTPManager: React.FC = () => {
   const [deployDir, setDeployDir] = useState<string>(() => {
     try { return localStorage.getItem('reerp_ftp_deploy_dir') || 'C:/reerp'; } catch { return 'C:/reerp'; }
   });
-  const [deployPort, setDeployPort] = useState<string>(() => {
-    try { return localStorage.getItem('reerp_ftp_deploy_port') || '80'; } catch { return '80'; }
+  const [deployRestart, setDeployRestart] = useState<boolean>(() => {
+    try { return localStorage.getItem('reerp_ftp_deploy_restart') !== 'N'; } catch { return true; }
   });
+  const isSftp = connProtocol === 'sftp';
   const [deployLockCompany, setDeployLockCompany] = useState<string>(() => {
     try { return localStorage.getItem('reerp_ftp_deploy_lock_company') || ''; } catch { return ''; }
   });
@@ -268,25 +281,73 @@ const FTPManager: React.FC = () => {
     if (!sessionId) { message.warning('Connect to a server first'); return; }
     const dir = deployDir.trim();
     if (!dir) { message.warning('Enter the remote target folder'); return; }
-    const port = Number(deployPort);
-    if (!port || port < 1 || port > 65535) { message.warning('Enter a valid web port (1-65535)'); return; }
+    const restartServer = isSftp && deployRestart;
     try {
       localStorage.setItem('reerp_ftp_deploy_dir', dir);
-      localStorage.setItem('reerp_ftp_deploy_port', String(port));
+      localStorage.setItem('reerp_ftp_deploy_restart', deployRestart ? 'Y' : 'N');
       localStorage.setItem('reerp_ftp_deploy_lock_company', deployLockCompany);
     } catch { /* ignore */ }
     try {
-      const d = await post(`${API}/deploy-runtime`, { sessionId, remoteDir: dir, webPort: port, lockCompany: deployLockCompany || undefined });
+      const d = await post(`${API}/deploy-runtime`, { sessionId, remoteDir: dir, restartServer, lockCompany: deployLockCompany || undefined });
       setJobs(prev => [{
         jobId: d.jobId,
         label: `Deploy runtime → ${dir}`,
         direction: 'upload', status: 'running', filesDone: 0, totalFiles: null, currentFile: '',
       }, ...prev]);
       setDeployOpen(false);
-      message.info('Deploying runtime (dist + server + package.json)…');
+      message.info(restartServer
+        ? 'Deploying: stop server → upload → start server…'
+        : 'Deploying runtime (dist + server + package.json)…');
     } catch (e: any) {
       message.error(`Deploy failed to start: ${e.message}`);
     }
+  };
+
+  // ── hosting-server control (SSH commands over the SFTP connection) ────────
+  const [srvOpen, setSrvOpen] = useState(false);
+  const [srvStatus, setSrvStatus] = useState<ServerStatus | null>(null);
+  const [srvBusy, setSrvBusy] = useState<string | null>(null); // 'status' | 'stop' | 'start' | 'restart' | 'npm'
+  const [srvError, setSrvError] = useState<string | null>(null);
+  const [srvNpmOutput, setSrvNpmOutput] = useState<string>('');
+
+  const serverAction = useCallback(async (action: 'status' | 'stop' | 'start' | 'restart' | 'npm') => {
+    if (!sessionId) { message.warning('Connect to the server first'); return; }
+    const remoteDir = deployDir.trim();
+    if (!remoteDir) { message.warning('Enter the server folder'); return; }
+    setSrvBusy(action); setSrvError(null);
+    try {
+      if (action === 'npm') {
+        setSrvNpmOutput('');
+        const d = await post(`${API}/server/npm-install`, { sessionId, remoteDir });
+        setSrvNpmOutput(d.output || '');
+        message.success('npm install finished on the server');
+      } else {
+        if (action === 'stop' || action === 'restart') {
+          setSrvStatus(await post(`${API}/server/stop`, { sessionId, remoteDir }));
+        }
+        if (action === 'start' || action === 'restart') {
+          setSrvStatus(await post(`${API}/server/start`, { sessionId, remoteDir }));
+        }
+        if (action === 'status') {
+          setSrvStatus(await post(`${API}/server/status`, { sessionId, remoteDir }));
+        }
+        if (action !== 'status') message.success(`Server ${action === 'restart' ? 'restarted' : action === 'stop' ? 'stopped' : 'started'}`);
+      }
+      try { localStorage.setItem('reerp_ftp_deploy_dir', remoteDir); } catch { /* ignore */ }
+    } catch (e: any) {
+      setSrvError(e.message);
+      // refresh the picture after a failed stop/start
+      if (action !== 'status' && action !== 'npm') {
+        try { setSrvStatus(await post(`${API}/server/status`, { sessionId, remoteDir })); } catch { /* ignore */ }
+      }
+    }
+    setSrvBusy(null);
+  }, [sessionId, deployDir]);
+
+  const openServerControl = () => {
+    setSrvOpen(true);
+    setSrvNpmOutput('');
+    serverAction('status');
   };
 
   // poll running jobs
@@ -300,10 +361,14 @@ const FTPManager: React.FC = () => {
           const d = await res.json();
           if (d.success) {
             setJobs(prev => prev.map(p => p.jobId === j.jobId
-              ? { ...p, status: d.status, filesDone: d.filesDone, totalFiles: d.totalFiles, currentFile: d.currentFile, error: d.error }
+              ? { ...p, status: d.status, filesDone: d.filesDone, totalFiles: d.totalFiles, currentFile: d.currentFile, error: d.error, note: d.note }
               : p));
             if (d.status === 'done') {
               message.success(`Transfer complete: ${j.label}`);
+              if (d.note) {
+                if (/did not start/i.test(d.note)) message.warning(d.note, 8);
+                else message.success(d.note, 5);
+              }
               if (j.direction === 'upload') loadRemote(remotePath);
               else loadLocal(localPath);
             }
@@ -532,6 +597,13 @@ const FTPManager: React.FC = () => {
                 Deploy Runtime
               </Button>
             </Tooltip>
+            <Tooltip title={isSftp ? 'Check, stop and start the Re-ERP web server on this host (no Remote Desktop needed)' : 'Server control needs an SFTP (SSH) connection'} placement="left">
+              <Button icon={<DashboardOutlined />}
+                disabled={!sessionId || !isSftp}
+                onClick={openServerControl}>
+                Server Control
+              </Button>
+            </Tooltip>
           </div>
 
           {pane('local')}
@@ -562,7 +634,11 @@ const FTPManager: React.FC = () => {
                       ? <Progress size="small" percent={Math.min(99, Math.round((j.filesDone / j.totalFiles) * 100))} />
                       : <Progress size="small" percent={99} status="active" showInfo={false} />
                   )}
-                  {j.status === 'done' && <Text type="secondary" style={{ fontSize: 10 }}>{j.filesDone} file{j.filesDone !== 1 ? 's' : ''} transferred</Text>}
+                  {j.status === 'done' && (
+                    <Text type={j.note && /did not start/i.test(j.note) ? 'warning' : 'secondary'} style={{ fontSize: 10 }}>
+                      {j.filesDone} file{j.filesDone !== 1 ? 's' : ''} transferred{j.note ? ` — ${j.note}` : ''}
+                    </Text>
+                  )}
                   {j.status === 'error' && <Text type="danger" style={{ fontSize: 10 }}>{j.error}</Text>}
                 </div>
                 {j.status === 'running' && j.currentFile && (
@@ -593,14 +669,17 @@ const FTPManager: React.FC = () => {
           <li><Text code>server/</Text> — the proxy server (serves the app + APIs)</li>
           <li><Text code>package.json</Text> — for <Text code>npm install --omit=dev</Text> on the server</li>
           <li><Text code>1-setup.bat … 4-restart.bat</Text> — server-side helper scripts</li>
-          <li><Text code>port.txt</Text> — the web port below (scripts serve on this port)</li>
+          <li><Text code>deploy-config.json</Text> — company lock below (<Text code>port.txt</Text> on the server is left as is)</li>
         </ul>
         <Form layout="vertical">
           <Form.Item label="Remote target folder" style={{ marginBottom: 8 }}>
             <Input value={deployDir} onChange={e => setDeployDir(e.target.value)} placeholder="C:/reerp" />
           </Form.Item>
-          <Form.Item label="Web server port (80 = clean URL without port suffix)" style={{ marginBottom: 8 }}>
-            <Input value={deployPort} onChange={e => setDeployPort(e.target.value)} placeholder="80" style={{ width: 140 }} />
+          <Form.Item style={{ marginBottom: 8 }}>
+            <Checkbox checked={isSftp && deployRestart} disabled={!isSftp} onChange={e => setDeployRestart(e.target.checked)}>
+              Stop the server before upload and start it again after
+            </Checkbox>
+            {!isSftp && <div><Text type="secondary" style={{ fontSize: 11 }}>Needs an SFTP connection</Text></div>}
           </Form.Item>
           <Form.Item label="Lock company (users on this server cannot switch)" style={{ marginBottom: 4 }}>
             <Select
@@ -616,9 +695,94 @@ const FTPManager: React.FC = () => {
           </Form.Item>
         </Form>
         <Text type="secondary" style={{ fontSize: 11 }}>
-          On the server (as Administrator): first deploy — run <Text code>1-setup.bat</Text> then{' '}
-          <Text code>3-install-autostart.bat</Text>. After later deploys — just <Text code>4-restart.bat</Text>.
+          First deploy to a new server: run <Text code>1-setup.bat</Text> there once (as Administrator).
+          After that, use <b>Server Control</b> here to stop / start / check the server.
         </Text>
+      </Modal>
+
+      {/* ── Server Control modal ── */}
+      <Modal
+        title={<Space><DashboardOutlined style={{ color: REDWOOD.info }} /> Server Control — {connLabel}</Space>}
+        open={srvOpen}
+        onCancel={() => setSrvOpen(false)}
+        footer={<Button onClick={() => setSrvOpen(false)}>Close</Button>}
+        width={640}
+      >
+        <Form layout="vertical">
+          <Form.Item label="Re-ERP folder on the server" style={{ marginBottom: 12 }}>
+            <Input value={deployDir} onChange={e => setDeployDir(e.target.value)} placeholder="C:/reerp"
+              onPressEnter={() => serverAction('status')} />
+          </Form.Item>
+        </Form>
+
+        {srvError && <Alert type="error" showIcon message={srvError} style={{ marginBottom: 12 }} closable onClose={() => setSrvError(null)} />}
+
+        <Card size="small" loading={srvBusy === 'status' && !srvStatus} style={{ marginBottom: 12 }}>
+          {srvStatus ? (
+            <Descriptions size="small" column={2} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 12 }}>
+              <Descriptions.Item label="Server" span={2}>
+                {srvStatus.running
+                  ? <Badge status="success" text={<b style={{ color: REDWOOD.success }}>Running</b>} />
+                  : srvStatus.portBusyByOther
+                    ? <Badge status="warning" text={`Port used by ${srvStatus.process}`} />
+                    : <Badge status="error" text={<b style={{ color: REDWOOD.primary }}>Stopped</b>} />}
+              </Descriptions.Item>
+              <Descriptions.Item label="Port">{srvStatus.port} <Text type="secondary" style={{ fontSize: 11 }}>(port.txt)</Text></Descriptions.Item>
+              <Descriptions.Item label="Process">{srvStatus.pid ? `${srvStatus.process} · PID ${srvStatus.pid}` : '—'}</Descriptions.Item>
+              <Descriptions.Item label="Web check">
+                {srvStatus.http.ok
+                  ? <Tag color="green">HTTP {srvStatus.http.statusCode} · {srvStatus.http.ms} ms</Tag>
+                  : <Tag color="red">{srvStatus.http.error || `HTTP ${srvStatus.http.statusCode}`}</Tag>}
+              </Descriptions.Item>
+              <Descriptions.Item label="Startup task">
+                {srvStatus.taskInstalled ? <Tag>{srvStatus.taskStatus || 'Installed'}</Tag> : <Tag color="orange">Not installed</Tag>}
+              </Descriptions.Item>
+              <Descriptions.Item label="Checked" span={2}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{fmtDate(srvStatus.checkedAt)}</Text>
+              </Descriptions.Item>
+            </Descriptions>
+          ) : !srvBusy && <Text type="secondary" style={{ fontSize: 12 }}>Press Refresh to check the server.</Text>}
+        </Card>
+
+        <Space wrap>
+          <Button icon={<SyncOutlined spin={srvBusy === 'status'} />} disabled={!!srvBusy} onClick={() => serverAction('status')}>
+            Refresh
+          </Button>
+          <Button type="primary" icon={<PlayCircleOutlined />} loading={srvBusy === 'start'}
+            disabled={!!srvBusy || !!srvStatus?.running}
+            style={{ background: REDWOOD.success, borderColor: REDWOOD.success }}
+            onClick={() => serverAction('start')}>
+            Start
+          </Button>
+          <Popconfirm title="Stop the Re-ERP web server?" description="Users on this server lose access until it is started again."
+            okText="Stop" okButtonProps={{ danger: true }} onConfirm={() => serverAction('stop')}>
+            <Button danger icon={<PoweroffOutlined />} loading={srvBusy === 'stop'} disabled={!!srvBusy || srvStatus?.running === false}>
+              Stop
+            </Button>
+          </Popconfirm>
+          <Popconfirm title="Restart the Re-ERP web server?" okText="Restart" onConfirm={() => serverAction('restart')}>
+            <Button icon={<ReloadOutlined />} loading={srvBusy === 'restart'} disabled={!!srvBusy}>
+              Restart
+            </Button>
+          </Popconfirm>
+          <Tooltip title="Only needed when package.json dependencies changed (same as 1-setup.bat)">
+            <Button loading={srvBusy === 'npm'} disabled={!!srvBusy} onClick={() => serverAction('npm')}>
+              npm install
+            </Button>
+          </Tooltip>
+        </Space>
+
+        {srvNpmOutput && (
+          <pre style={{ marginTop: 12, maxHeight: 180, overflow: 'auto', fontSize: 11, background: '#fafafa', padding: 8, border: `1px solid ${REDWOOD.border}` }}>
+            {srvNpmOutput}
+          </pre>
+        )}
+        <div style={{ marginTop: 12 }}>
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            Runs Windows commands over this SSH connection. Stop ends only the Re-ERP process on the web port;
+            Start uses the <Text code>ReERP-Web</Text> startup task (creates it if missing — SSH user must be an Administrator).
+          </Text>
+        </div>
       </Modal>
 
       <FloatingMenu />

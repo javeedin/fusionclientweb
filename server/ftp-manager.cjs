@@ -11,7 +11,15 @@
 //   POST /api/ftp/local/list     {path}                -> {path, sep, roots, items:[...]}
 //   POST /api/ftp/transfer       {sessionId, direction:'upload'|'download', localPath, remotePath}
 //                                -> {jobId}  (directories transfer recursively)
-//   GET  /api/ftp/job/:id        -> {status, filesDone, totalFiles, currentFile, error}
+//   GET  /api/ftp/job/:id        -> {status, filesDone, totalFiles, currentFile, error, note}
+//   POST /api/ftp/deploy-runtime {sessionId, remoteDir, lockCompany?, restartServer?} -> {jobId}
+//   POST /api/ftp/server/status  {sessionId, remoteDir} -> {running, pid, port, task, http, ...}
+//   POST /api/ftp/server/stop    {sessionId, remoteDir}
+//   POST /api/ftp/server/start   {sessionId, remoteDir}
+//   POST /api/ftp/server/npm-install {sessionId, remoteDir} -> {code, output}
+// Server control needs SFTP: it runs Windows commands (netstat, tasklist,
+// schtasks, taskkill) over the same SSH connection, so the hosting server can
+// be managed without Remote Desktop.
 
 const fs = require('fs');
 const path = require('path');
@@ -88,8 +96,134 @@ const makeSftp = async (cfg) => {
       try { return await client.downloadDir(remote, local); }
       finally { onDownload = null; }
     },
+    readFile: async (remote) => (await client.get(remote)).toString('utf8'),
+    // run a command on the server over SSH (Windows OpenSSH: cmd.exe or PowerShell)
+    exec: (cmd, timeoutMs = 60000) => new Promise((resolve, reject) => {
+      client.client.exec(cmd, (err, stream) => {
+        if (err) return reject(err);
+        let stdout = '';
+        let stderr = '';
+        const timer = setTimeout(() => {
+          try { stream.close(); } catch { /* ignore */ }
+          reject(new Error(`Command timed out after ${Math.round(timeoutMs / 1000)}s: ${cmd}`));
+        }, timeoutMs);
+        stream.on('data', d => { stdout += d; });
+        stream.stderr.on('data', d => { stderr += d; });
+        stream.on('close', (code) => { clearTimeout(timer); resolve({ code: code ?? 0, stdout, stderr }); });
+      });
+    }),
     end: () => client.end().catch(() => {}),
   };
+};
+
+// ── hosting-server control (SFTP sessions only) ─────────────────────────────
+
+const TASK_NAME = 'ReERP-Web';
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// "C:/reerp" or "/C:/reerp" (SFTP form) -> "C:\reerp" (cmd form)
+const toWinPath = (p) => p.replace(/^\/+(?=[A-Za-z]:)/, '').replace(/\//g, '\\');
+
+// port.txt already on the server decides the web port (default 80)
+const readServerPort = async (client, remoteDir) => {
+  try {
+    const n = parseInt((await client.readFile(`${remoteDir}/port.txt`)).trim(), 10);
+    if (n > 0 && n < 65536) return n;
+  } catch { /* no port.txt */ }
+  return 80;
+};
+
+// PIDs listening on a TCP port, from `netstat -ano` (parsed here, so it works
+// whether the SSH default shell is cmd.exe or PowerShell)
+const pidsOnPort = (netstatOut, port) => {
+  const pids = new Set();
+  for (const line of netstatOut.split(/\r?\n/)) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 5 || cols[0].toUpperCase() !== 'TCP' || !/LISTEN/i.test(cols[3])) continue;
+    if (cols[1].endsWith(`:${port}`)) pids.add(Number(cols[4]));
+  }
+  return [...pids].filter(n => n > 0);
+};
+
+const processName = async (client, pid) => {
+  const r = await client.exec(`tasklist /fi "PID eq ${pid}" /fo csv /nh`, 20000);
+  const m = r.stdout.match(/^"([^"]+)"/m);
+  return m ? m[1] : null;
+};
+
+// quick HTTP probe from this machine to the hosted app
+const httpProbe = (host, port) => new Promise((resolve) => {
+  const http = require('http');
+  const started = Date.now();
+  const req = http.get({ host, port, path: '/', timeout: 5000 }, (res) => {
+    res.resume();
+    resolve({ ok: res.statusCode < 500, statusCode: res.statusCode, ms: Date.now() - started });
+  });
+  req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+  req.on('error', (e) => resolve({ ok: false, error: e.code || e.message }));
+});
+
+const serverStatus = async (s, remoteDir) => {
+  const c = s.client;
+  const port = await readServerPort(c, remoteDir);
+  const net = await c.exec('netstat -ano -p tcp', 30000);
+  const pids = pidsOnPort(net.stdout, port);
+  const pid = pids[0] || null;
+  const proc = pid ? await processName(c, pid) : null;
+  const q = await c.exec(`schtasks /query /tn ${TASK_NAME} /fo LIST`, 20000);
+  const taskInstalled = q.code === 0;
+  const taskStatus = taskInstalled ? ((q.stdout.match(/Status:\s*(.+)/i) || [])[1] || '').trim() : null;
+  const http = await httpProbe(s.cfg.host, port);
+  return {
+    port, pid, process: proc,
+    running: !!pid && /node/i.test(proc || ''),
+    portBusyByOther: !!pid && !/node/i.test(proc || ''),
+    taskInstalled, taskStatus, http,
+    checkedAt: new Date().toISOString(),
+  };
+};
+
+const stopServer = async (s, remoteDir) => {
+  const st = await serverStatus(s, remoteDir);
+  if (st.portBusyByOther) throw new Error(`Port ${st.port} is used by ${st.process} (PID ${st.pid}), not Re-ERP — not stopping it`);
+  if (st.taskInstalled) await s.client.exec(`schtasks /end /tn ${TASK_NAME}`, 20000);
+  if (st.pid) {
+    // only the Re-ERP node process tree on the web port — other node apps keep running
+    const k = await s.client.exec(`taskkill /f /t /pid ${st.pid}`, 20000);
+    if (k.code !== 0 && !/not found/i.test(k.stderr + k.stdout)) {
+      throw new Error(`taskkill failed: ${(k.stderr || k.stdout).trim()}`);
+    }
+  }
+  for (let i = 0; i < 10; i++) {
+    await sleep(1000);
+    const again = await serverStatus(s, remoteDir);
+    if (!again.running) return again;
+  }
+  throw new Error('Server is still running after stop');
+};
+
+const startServer = async (s, remoteDir) => {
+  let st = await serverStatus(s, remoteDir);
+  if (st.running) return st;
+  if (st.portBusyByOther) throw new Error(`Port ${st.port} is used by ${st.process} (PID ${st.pid}) — free it first`);
+  if (!st.taskInstalled) {
+    // same task 3-install-autostart.bat creates: starts at boot as SYSTEM
+    const dir = toWinPath(remoteDir);
+    const cmd = `schtasks /create /f /tn ${TASK_NAME} /sc onstart /ru SYSTEM `
+      + `/tr "cmd /c cd /d ${dir} && set REERP_PORT=${st.port} && node server\\proxy.cjs"`;
+    const c = await s.client.exec(cmd, 30000);
+    if (c.code !== 0) {
+      throw new Error(`Could not create the startup task (the SSH user must be an Administrator): ${(c.stderr || c.stdout).trim()}`);
+    }
+  }
+  const r = await s.client.exec(`schtasks /run /tn ${TASK_NAME}`, 20000);
+  if (r.code !== 0) throw new Error(`schtasks /run failed: ${(r.stderr || r.stdout).trim()}`);
+  for (let i = 0; i < 20; i++) {
+    await sleep(1500);
+    st = await serverStatus(s, remoteDir);
+    if (st.running) return st;
+  }
+  throw new Error(`Server did not start listening on port ${st.port} within 30s — check the server folder and run 1-setup.bat once`);
 };
 
 const makeFtp = async (cfg) => {
@@ -259,8 +393,8 @@ module.exports = function registerFtpRoutes(app) {
     const s = getSession(req, res); if (!s) return;
     const remoteDir = String(req.body?.remoteDir || '').trim().replace(/[\\/]+$/, '');
     if (!remoteDir) return fail(res, 'remoteDir is required', 400);
-    const webPort = Number(req.body?.webPort) || 80;
-    if (webPort < 1 || webPort > 65535) return fail(res, 'webPort must be 1-65535', 400);
+    const restartServer = !!req.body?.restartServer;
+    if (restartServer && !s.client.exec) return fail(res, 'Stop/start during deploy needs an SFTP connection', 400);
     const lockCompany = String(req.body?.lockCompany || '').trim().toUpperCase();
     if (lockCompany && !/^[A-Z0-9_]{1,40}$/.test(lockCompany)) return fail(res, 'invalid lockCompany', 400);
 
@@ -274,7 +408,7 @@ module.exports = function registerFtpRoutes(app) {
     if (!fs.existsSync(pkgFile)) return fail(res, 'package.json not found in app folder', 400);
 
     const jobId = newId();
-    const job = { status: 'running', filesDone: 0, totalFiles: null, currentFile: '', error: null, startedAt: Date.now() };
+    const job = { status: 'running', filesDone: 0, totalFiles: null, currentFile: '', error: null, note: null, startedAt: Date.now() };
     jobs.set(jobId, job);
     const onFile = (name) => { job.filesDone += 1; job.currentFile = name; };
 
@@ -283,7 +417,15 @@ module.exports = function registerFtpRoutes(app) {
     enqueue(s, async () => {
       try {
         const batCount = fs.existsSync(batDir) ? countLocalFiles(batDir) : 0;
-        try { job.totalFiles = countLocalFiles(distDir) + countLocalFiles(serverDir) + 2 + batCount; } catch { /* best effort */ }
+        try { job.totalFiles = countLocalFiles(distDir) + countLocalFiles(serverDir) + 1 + batCount; } catch { /* best effort */ }
+        if (restartServer) {
+          job.currentFile = 'Stopping server…';
+          try {
+            if ((await serverStatus(s, remoteDir)).running) await stopServer(s, remoteDir);
+          } catch (e) {
+            throw new Error(`Could not stop the server before upload: ${e instanceof Error ? e.message : e}`);
+          }
+        }
         try { await s.client.mkdir(remoteDir); } catch { /* may already exist */ }
         await s.client.uploadDir(distDir, `${remoteDir}/dist`, onFile);
         await s.client.uploadDir(serverDir, `${remoteDir}/server`, onFile);
@@ -296,20 +438,25 @@ module.exports = function registerFtpRoutes(app) {
             onFile(f);
           }
         }
-        // port.txt tells the server-side scripts which port to serve on;
-        // deploy-config.json carries per-deployment app settings (company lock)
-        const portTmp = path.join(os.tmpdir(), `reerp-port-${jobId}.txt`);
+        // deploy-config.json carries per-deployment app settings (company lock).
+        // port.txt is NOT uploaded — the server keeps its own.
         const cfgTmp = path.join(os.tmpdir(), `reerp-cfg-${jobId}.json`);
-        fs.writeFileSync(portTmp, `${webPort}\r\n`);
         fs.writeFileSync(cfgTmp, JSON.stringify(lockCompany ? { lockCompany } : {}, null, 2));
         try {
-          await s.client.uploadFile(portTmp, `${remoteDir}/port.txt`);
-          onFile('port.txt');
           await s.client.uploadFile(cfgTmp, `${remoteDir}/deploy-config.json`);
           onFile('deploy-config.json');
         } finally {
-          try { fs.unlinkSync(portTmp); } catch { /* ignore */ }
           try { fs.unlinkSync(cfgTmp); } catch { /* ignore */ }
+        }
+        if (restartServer) {
+          job.currentFile = 'Starting server…';
+          try {
+            const st = await startServer(s, remoteDir);
+            job.note = `Server running on port ${st.port} (PID ${st.pid})`;
+          } catch (e) {
+            // files are deployed; report the start problem without failing the upload
+            job.note = `Files deployed, but the server did not start: ${e instanceof Error ? e.message : e}`;
+          }
         }
         job.status = 'done';
       } catch (e) {
@@ -319,6 +466,27 @@ module.exports = function registerFtpRoutes(app) {
     });
 
     ok(res, { jobId });
+  });
+
+  // ── hosting-server control over SSH ────────────────────────────────────────
+  const serverRoute = (name, fn) => app.post(`/api/ftp/server/${name}`, async (req, res) => {
+    const s = getSession(req, res); if (!s) return;
+    if (!s.client.exec) return fail(res, 'Server control needs an SFTP (SSH) connection — FTP cannot run commands', 400);
+    const remoteDir = String(req.body?.remoteDir || '').trim().replace(/[\\/]+$/, '');
+    if (!remoteDir) return fail(res, 'remoteDir is required', 400);
+    try { ok(res, await enqueue(s, () => fn(s, remoteDir))); }
+    catch (e) { fail(res, e); }
+  });
+
+  serverRoute('status', serverStatus);
+  serverRoute('stop', stopServer);
+  serverRoute('start', startServer);
+  serverRoute('npm-install', async (s, remoteDir) => {
+    // needed only when package.json dependencies changed (same as 1-setup.bat)
+    const r = await s.client.exec(`cd /d ${toWinPath(remoteDir)} && npm install --omit=dev`, 10 * 60000);
+    const output = (r.stdout + (r.stderr ? `\n${r.stderr}` : '')).trim().slice(-4000);
+    if (r.code !== 0) throw new Error(`npm install failed (exit ${r.code}): ${output.slice(-800)}`);
+    return { code: r.code, output };
   });
 
   app.get('/api/ftp/job/:id', (req, res) => {
