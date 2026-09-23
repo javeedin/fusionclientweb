@@ -45,8 +45,8 @@ const COMPANIES: Record<CompanyCode, CompanyConfig> = {
 // App branding — BUIMERC ships as "Re-ERP", other companies keep FusionClient
 export function getAppBranding(): { name: string; version: string; tagline: string } {
   return getCurrentCompany().code === 'BUIMERC'
-    ? { name: 'Re-ERP', version: '3.2.0', tagline: 'Enterprise Resource Planning' }
-    : { name: 'FusionClient', version: '3.2.0', tagline: 'Multi-Tenant ERP Platform' };
+    ? { name: 'Re-ERP', version: '3.2.1', tagline: 'Enterprise Resource Planning' }
+    : { name: 'FusionClient', version: '3.2.1', tagline: 'Multi-Tenant ERP Platform' };
 }
 
 // Per-deployment lock injected by the hosting proxy into index.html

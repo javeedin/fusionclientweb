@@ -413,7 +413,8 @@ const mapApexToPaymentRecord = (item: any, index: number): PaymentRecord => ({
   businessUnit: item.BusinessUnit || '',
   legalEntity: item.LegalEntity || '',
   paymentMethod: item.PaymentMethod || '',
-  accountingStatus: item.AccountingStatus || '',
+  // Fusion Synced payments are accounted in Oracle Fusion → always POSTED
+  accountingStatus: (item.SyncStatus || '') === 'SYNCED' ? 'POSTED' : (item.AccountingStatus || ''),
   paymentType: item.PaymentType || '',
   supplierNumber: item.SupplierNumber || '',
   payeeSite: item.PayeeSite || '',
@@ -1864,13 +1865,15 @@ const ManagePayments: React.FC = () => {
         }
         // Accounting Status from GL: CHECK_ID present as reference2 on
         // AP-PAYMENT journal lines → POSTED, else DRAFT.
+        // Fusion Synced payments are accounted in Oracle Fusion → always POSTED,
+        // even when no journal exists in the local GL.
         if (useApex) {
           debugLog('REQUEST', `GET ${GL_AP_PAYMENT_LINES_URL} (accounting status check)`);
           const postedIds = await fetchGlPostedCheckIds();
           if (postedIds) {
             mappedPayments = mappedPayments.map(p => ({
               ...p,
-              accountingStatus: postedIds.has(String(p.checkId)) ? 'POSTED' : 'DRAFT',
+              accountingStatus: p.isSynced || postedIds.has(String(p.checkId)) ? 'POSTED' : 'DRAFT',
             }));
             debugLog('RESPONSE', `GL check: ${postedIds.size} check-ids have AP-PAYMENT journal lines; ${mappedPayments.filter(p => p.accountingStatus === 'POSTED').length} of ${mappedPayments.length} payments POSTED`);
           } else {
@@ -3065,6 +3068,10 @@ const ManagePayments: React.FC = () => {
 
   // ── Create Accounting for Payment ────────────────────────────────────────
   const handleCreateAccounting = async (record: PaymentRecord) => {
+    if (record.isSynced) {
+      message.warning('Fusion Synced payment — accounting is done in Oracle Fusion, not created here.');
+      return;
+    }
     setAcctPayment(record);
     setAcctResults([]);
     setAcctLoading(true);
@@ -3259,8 +3266,9 @@ const ManagePayments: React.FC = () => {
     return { status: 'success', message: `Posted — GL batch ${retBatchName}` };
   };
 
-  const openBulkAccounting = (rows: PaymentRecord[]) => {
-    if (!rows.length) { message.warning('No Draft payments selected.'); return; }
+  const openBulkAccounting = (allRows: PaymentRecord[]) => {
+    const rows = allRows.filter(r => !r.isSynced);
+    if (!rows.length) { message.warning('No Draft payments selected (Fusion Synced payments are excluded).'); return; }
     setBulkAcctRows(rows);
     const init: Record<string, { status: string; message: string }> = {};
     rows.forEach(r => { init[r.key] = { status: 'pending', message: '' }; });
@@ -3598,9 +3606,18 @@ const ManagePayments: React.FC = () => {
                   Detach
                 </Button>
                 {(() => {
-                  const selectedDraft = payments.filter(p => selectedRowKeys.includes(p.key) && (p.accountingStatus || '').toUpperCase() === 'DRAFT');
+                  // Fusion Synced payments are accounted in Oracle Fusion — never create accounting here,
+                  // even when no journal exists in the local GL
+                  const selectedRows  = payments.filter(p => selectedRowKeys.includes(p.key));
+                  const selectedDraft = selectedRows.filter(p => !p.isSynced && (p.accountingStatus || '').toUpperCase() === 'DRAFT');
+                  const syncedSkipped = selectedRows.filter(p => p.isSynced).length;
+                  const tip = selectedDraft.length > 0
+                    ? `Create accounting for ${selectedDraft.length} Draft payment(s)${syncedSkipped ? ` — ${syncedSkipped} Fusion Synced skipped` : ''}`
+                    : syncedSkipped
+                      ? 'Fusion Synced payments are accounted in Oracle Fusion — Create Accounting is not allowed'
+                      : 'Select one or more Draft payments';
                   return (
-                    <Tooltip title={selectedDraft.length === 0 ? 'Select one or more Draft payments' : `Create accounting for ${selectedDraft.length} Draft payment(s)`}>
+                    <Tooltip title={tip}>
                       <Button
                         size="small"
                         type="primary"
