@@ -17,6 +17,9 @@
 //   POST /api/ftp/server/stop    {sessionId, remoteDir}
 //   POST /api/ftp/server/start   {sessionId, remoteDir}
 //   POST /api/ftp/server/npm-install {sessionId, remoteDir} -> {code, output}
+//   GET  /api/ftp/local/build-info  -> {canBuild, distBuiltAt, running}
+//   POST /api/ftp/local/build       -> {jobId}   runs `npm run build` in the app folder
+//   GET  /api/ftp/local/build/:id   -> {status, exitCode, startedAt, finishedAt, log}
 // Server control needs SFTP: it runs Windows commands (netstat, tasklist,
 // schtasks, taskkill) over the same SSH connection, so the hosting server can
 // be managed without Remote Desktop.
@@ -262,6 +265,66 @@ const makeFtp = async (cfg) => {
   };
 };
 
+// ── local build (npm run build in this machine's app folder) ─────────────────
+
+const { spawn } = require('child_process');
+const APP_ROOT = path.join(__dirname, '..');
+const buildJobs = new Map(); // id -> { status, exitCode, startedAt, finishedAt, log: string[] }
+let activeBuildId = null;
+
+const distBuiltAt = () => {
+  try { return fs.statSync(path.join(APP_ROOT, 'dist', 'index.html')).mtime.toISOString(); }
+  catch { return null; }
+};
+
+// a source checkout with a build script (not a packaged desktop install)
+const canBuild = () => {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8'));
+    return !!pkg.scripts?.build && fs.existsSync(path.join(APP_ROOT, 'src'))
+      && fs.existsSync(path.join(APP_ROOT, 'node_modules'));
+  } catch { return false; }
+};
+
+// start `npm run build`; resolves when it finishes (job keeps the log either way)
+const startBuild = () => {
+  if (activeBuildId) {
+    const running = buildJobs.get(activeBuildId);
+    if (running?.status === 'running') return { id: activeBuildId, done: running.done };
+  }
+  const id = newId();
+  const job = { status: 'running', exitCode: null, startedAt: Date.now(), finishedAt: null, log: [] };
+  const push = (chunk) => {
+    // strip ANSI colours; keep the last 500 lines
+    for (const line of String(chunk).replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/)) {
+      if (line.trim()) job.log.push(line);
+    }
+    if (job.log.length > 500) job.log.splice(0, job.log.length - 500);
+  };
+  job.done = new Promise((resolve) => {
+    push(`> npm run build   (in ${APP_ROOT})`);
+    let child;
+    try {
+      child = spawn('npm', ['run', 'build'], { cwd: APP_ROOT, shell: true, env: process.env, windowsHide: true });
+    } catch (e) {
+      push(`Could not start npm: ${e.message}`);
+      Object.assign(job, { status: 'error', exitCode: -1, finishedAt: Date.now() });
+      return resolve(job);
+    }
+    child.stdout.on('data', push);
+    child.stderr.on('data', push);
+    child.on('error', (e) => push(`npm error: ${e.message}`));
+    child.on('close', (code) => {
+      Object.assign(job, { status: code === 0 ? 'done' : 'error', exitCode: code, finishedAt: Date.now() });
+      push(code === 0 ? `Build finished in ${Math.round((job.finishedAt - job.startedAt) / 1000)}s` : `Build failed (exit code ${code})`);
+      resolve(job);
+    });
+  });
+  buildJobs.set(id, job);
+  activeBuildId = id;
+  return { id, done: job.done };
+};
+
 // ── express wiring ──────────────────────────────────────────────────────────
 
 module.exports = function registerFtpRoutes(app) {
@@ -394,6 +457,8 @@ module.exports = function registerFtpRoutes(app) {
     const remoteDir = String(req.body?.remoteDir || '').trim().replace(/[\\/]+$/, '');
     if (!remoteDir) return fail(res, 'remoteDir is required', 400);
     const restartServer = !!req.body?.restartServer;
+    const buildFirst = !!req.body?.buildFirst;
+    if (buildFirst && !canBuild()) return fail(res, 'Build is not available here (needs the source folder with node_modules)', 400);
     if (restartServer && !s.client.exec) return fail(res, 'Stop/start during deploy needs an SFTP connection', 400);
     const lockCompany = String(req.body?.lockCompany || '').trim().toUpperCase();
     if (lockCompany && !/^[A-Z0-9_]{1,40}$/.test(lockCompany)) return fail(res, 'invalid lockCompany', 400);
@@ -402,7 +467,7 @@ module.exports = function registerFtpRoutes(app) {
     const distDir = path.join(appRoot, 'dist');
     const serverDir = path.join(appRoot, 'server');
     const pkgFile = path.join(appRoot, 'package.json');
-    if (!fs.existsSync(path.join(distDir, 'index.html'))) {
+    if (!buildFirst && !fs.existsSync(path.join(distDir, 'index.html'))) {
       return fail(res, 'dist/index.html not found — run "npm run build" first, then deploy', 400);
     }
     if (!fs.existsSync(pkgFile)) return fail(res, 'package.json not found in app folder', 400);
@@ -416,6 +481,11 @@ module.exports = function registerFtpRoutes(app) {
 
     enqueue(s, async () => {
       try {
+        if (buildFirst) {
+          job.currentFile = 'Building (npm run build)…';
+          const b = await startBuild().done;
+          if (b.status !== 'done') throw new Error(`Build failed — nothing was deployed. ${b.log.slice(-3).join(' | ')}`);
+        }
         const batCount = fs.existsSync(batDir) ? countLocalFiles(batDir) : 0;
         try { job.totalFiles = countLocalFiles(distDir) + countLocalFiles(serverDir) + 1 + batCount; } catch { /* best effort */ }
         if (restartServer) {
@@ -487,6 +557,24 @@ module.exports = function registerFtpRoutes(app) {
     const output = (r.stdout + (r.stderr ? `\n${r.stderr}` : '')).trim().slice(-4000);
     if (r.code !== 0) throw new Error(`npm install failed (exit ${r.code}): ${output.slice(-800)}`);
     return { code: r.code, output };
+  });
+
+  // ── local build ────────────────────────────────────────────────────────────
+  app.get('/api/ftp/local/build-info', (_req, res) => {
+    const running = activeBuildId && buildJobs.get(activeBuildId)?.status === 'running' ? activeBuildId : null;
+    ok(res, { canBuild: canBuild(), distBuiltAt: distBuiltAt(), running });
+  });
+
+  app.post('/api/ftp/local/build', (_req, res) => {
+    if (!canBuild()) return fail(res, 'Build is not available here (needs the source folder with node_modules — run npm install first)', 400);
+    ok(res, { jobId: startBuild().id });
+  });
+
+  app.get('/api/ftp/local/build/:id', (req, res) => {
+    const job = buildJobs.get(req.params.id);
+    if (!job) return fail(res, 'Unknown build', 404);
+    const { done: _done, ...rest } = job;
+    ok(res, { ...rest, distBuiltAt: distBuiltAt() });
   });
 
   app.get('/api/ftp/job/:id', (req, res) => {

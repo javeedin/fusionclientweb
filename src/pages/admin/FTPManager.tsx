@@ -16,7 +16,7 @@ import {
   DoubleLeftOutlined, DoubleRightOutlined, LinkOutlined, DisconnectOutlined,
   LaptopOutlined, SaveOutlined, CheckCircleOutlined, CloseCircleOutlined,
   LoadingOutlined, RocketOutlined, PoweroffOutlined, PlayCircleOutlined,
-  SyncOutlined, DashboardOutlined,
+  SyncOutlined, DashboardOutlined, BuildOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { PROXY_CONFIG } from '../../config/api.config';
@@ -274,6 +274,64 @@ const FTPManager: React.FC = () => {
     try { return localStorage.getItem('reerp_ftp_deploy_restart') !== 'N'; } catch { return true; }
   });
   const isSftp = connProtocol === 'sftp';
+  const [deployBuildFirst, setDeployBuildFirst] = useState<boolean>(() => {
+    try { return localStorage.getItem('reerp_ftp_deploy_build') === 'Y'; } catch { return false; }
+  });
+
+  // ── local build (npm run build on this machine) ────────────────────────────
+  const [buildInfo, setBuildInfo] = useState<{ canBuild: boolean; distBuiltAt: string | null } | null>(null);
+  const [buildOpen, setBuildOpen] = useState(false);
+  const [buildJob, setBuildJob] = useState<{ id: string; status: 'running' | 'done' | 'error'; log: string[]; startedAt: number; finishedAt: number | null } | null>(null);
+  const buildLogRef = useRef<HTMLPreElement>(null);
+
+  const loadBuildInfo = useCallback(async () => {
+    try {
+      const d = await (await fetch(`${API}/local/build-info`)).json();
+      if (d.success) {
+        setBuildInfo({ canBuild: d.canBuild, distBuiltAt: d.distBuiltAt });
+        if (d.running) setBuildJob(prev => prev?.id === d.running ? prev : { id: d.running, status: 'running', log: [], startedAt: Date.now(), finishedAt: null });
+      }
+    } catch { /* proxy not reachable */ }
+  }, []);
+  useEffect(() => { loadBuildInfo(); }, [loadBuildInfo]);
+
+  const startBuild = async () => {
+    setBuildOpen(true);
+    try {
+      const d = await post(`${API}/local/build`, {});
+      setBuildJob({ id: d.jobId, status: 'running', log: [], startedAt: Date.now(), finishedAt: null });
+    } catch (e: any) {
+      message.error(`Build failed to start: ${e.message}`);
+    }
+  };
+
+  // poll the running build
+  useEffect(() => {
+    if (!buildJob || buildJob.status !== 'running') return;
+    const t = setInterval(async () => {
+      try {
+        const d = await (await fetch(`${API}/local/build/${buildJob.id}`)).json();
+        if (!d.success) return;
+        setBuildJob(prev => prev && prev.id === buildJob.id
+          ? { ...prev, status: d.status, log: d.log, startedAt: d.startedAt, finishedAt: d.finishedAt }
+          : prev);
+        if (d.status !== 'running') {
+          setBuildInfo(prev => ({ canBuild: prev?.canBuild ?? true, distBuiltAt: d.distBuiltAt }));
+          if (d.status === 'done') message.success('Build finished — dist/ is ready to deploy');
+          else message.error('Build failed — see the build log');
+        }
+      } catch { /* poll again */ }
+    }, 1500);
+    return () => clearInterval(t);
+  }, [buildJob?.id, buildJob?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // keep the log scrolled to the newest line
+  useEffect(() => {
+    if (buildLogRef.current) buildLogRef.current.scrollTop = buildLogRef.current.scrollHeight;
+  }, [buildJob?.log.length]);
+
+  const buildRunning = buildJob?.status === 'running';
+  const lastBuiltLabel = buildInfo?.distBuiltAt ? fmtDate(buildInfo.distBuiltAt) : 'never';
   const [deployLockCompany, setDeployLockCompany] = useState<string>(() => {
     try { return localStorage.getItem('reerp_ftp_deploy_lock_company') || ''; } catch { return ''; }
   });
@@ -285,19 +343,19 @@ const FTPManager: React.FC = () => {
     try {
       localStorage.setItem('reerp_ftp_deploy_dir', dir);
       localStorage.setItem('reerp_ftp_deploy_restart', deployRestart ? 'Y' : 'N');
+      localStorage.setItem('reerp_ftp_deploy_build', deployBuildFirst ? 'Y' : 'N');
       localStorage.setItem('reerp_ftp_deploy_lock_company', deployLockCompany);
     } catch { /* ignore */ }
     try {
-      const d = await post(`${API}/deploy-runtime`, { sessionId, remoteDir: dir, restartServer, lockCompany: deployLockCompany || undefined });
+      const d = await post(`${API}/deploy-runtime`, { sessionId, remoteDir: dir, restartServer, buildFirst: deployBuildFirst && !!buildInfo?.canBuild, lockCompany: deployLockCompany || undefined });
       setJobs(prev => [{
         jobId: d.jobId,
         label: `Deploy runtime → ${dir}`,
         direction: 'upload', status: 'running', filesDone: 0, totalFiles: null, currentFile: '',
       }, ...prev]);
       setDeployOpen(false);
-      message.info(restartServer
-        ? 'Deploying: stop server → upload → start server…'
-        : 'Deploying runtime (dist + server + package.json)…');
+      const steps = [deployBuildFirst && buildInfo?.canBuild ? 'build' : '', restartServer ? 'stop server' : '', 'upload', restartServer ? 'start server' : ''].filter(Boolean);
+      message.info(`Deploying: ${steps.join(' → ')}…`);
     } catch (e: any) {
       message.error(`Deploy failed to start: ${e.message}`);
     }
@@ -365,6 +423,7 @@ const FTPManager: React.FC = () => {
               : p));
             if (d.status === 'done') {
               message.success(`Transfer complete: ${j.label}`);
+              loadBuildInfo(); // a deploy may have run a build first
               if (d.note) {
                 if (/did not start/i.test(d.note)) message.warning(d.note, 8);
                 else message.success(d.note, 5);
@@ -590,6 +649,15 @@ const FTPManager: React.FC = () => {
                 Download
               </Button>
             </Tooltip>
+            <Tooltip placement="left" title={buildInfo?.canBuild === false
+              ? 'Build needs the source folder with node_modules (not available in the packaged desktop app)'
+              : `Run npm run build on this machine — last built: ${lastBuiltLabel}`}>
+              <Button icon={buildRunning ? <LoadingOutlined /> : <BuildOutlined />}
+                disabled={buildInfo?.canBuild === false}
+                onClick={() => (buildRunning ? setBuildOpen(true) : startBuild())}>
+                {buildRunning ? 'Building…' : 'Build'}
+              </Button>
+            </Tooltip>
             <Tooltip title="Push the web runtime (dist + server + package.json) from this machine's app folder to the server" placement="left">
               <Button icon={<RocketOutlined />} danger
                 disabled={!sessionId}
@@ -675,6 +743,12 @@ const FTPManager: React.FC = () => {
           <Form.Item label="Remote target folder" style={{ marginBottom: 8 }}>
             <Input value={deployDir} onChange={e => setDeployDir(e.target.value)} placeholder="C:/reerp" />
           </Form.Item>
+          <Form.Item style={{ marginBottom: 4 }}>
+            <Checkbox checked={deployBuildFirst && !!buildInfo?.canBuild} disabled={!buildInfo?.canBuild}
+              onChange={e => setDeployBuildFirst(e.target.checked)}>
+              Build first (<Text code>npm run build</Text>) — last built: <b>{lastBuiltLabel}</b>
+            </Checkbox>
+          </Form.Item>
           <Form.Item style={{ marginBottom: 8 }}>
             <Checkbox checked={isSftp && deployRestart} disabled={!isSftp} onChange={e => setDeployRestart(e.target.checked)}>
               Stop the server before upload and start it again after
@@ -697,6 +771,47 @@ const FTPManager: React.FC = () => {
         <Text type="secondary" style={{ fontSize: 11 }}>
           First deploy to a new server: run <Text code>1-setup.bat</Text> there once (as Administrator).
           After that, use <b>Server Control</b> here to stop / start / check the server.
+        </Text>
+      </Modal>
+
+      {/* ── Build modal ── */}
+      <Modal
+        title={<Space><BuildOutlined style={{ color: REDWOOD.info }} /> Build web app (npm run build)</Space>}
+        open={buildOpen}
+        onCancel={() => setBuildOpen(false)}
+        width={760}
+        footer={[
+          <Button key="again" icon={<BuildOutlined />} disabled={buildRunning || buildInfo?.canBuild === false} onClick={startBuild}>
+            Build again
+          </Button>,
+          <Button key="deploy" type="primary" icon={<RocketOutlined />}
+            disabled={buildRunning || buildJob?.status !== 'done' || !sessionId}
+            style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}
+            onClick={() => { setBuildOpen(false); setDeployOpen(true); }}>
+            {sessionId ? 'Deploy now…' : 'Connect to deploy'}
+          </Button>,
+          <Button key="close" onClick={() => setBuildOpen(false)}>Close</Button>,
+        ]}
+      >
+        <Space style={{ marginBottom: 8 }} wrap>
+          {buildRunning && <Tag icon={<LoadingOutlined />} color="processing">Building…</Tag>}
+          {buildJob?.status === 'done' && <Tag icon={<CheckCircleOutlined />} color="success">Build succeeded</Tag>}
+          {buildJob?.status === 'error' && <Tag icon={<CloseCircleOutlined />} color="error">Build failed</Tag>}
+          {buildJob && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {Math.round(((buildJob.finishedAt ?? Date.now()) - buildJob.startedAt) / 1000)}s
+            </Text>
+          )}
+          <Text type="secondary" style={{ fontSize: 12 }}>dist/ last built: <b>{lastBuiltLabel}</b></Text>
+        </Space>
+        <pre ref={buildLogRef} style={{
+          height: 320, overflow: 'auto', margin: 0, padding: 10, fontSize: 11, lineHeight: 1.45,
+          background: '#1e1e1e', color: '#d4d4d4', borderRadius: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+        }}>
+          {buildJob?.log.length ? buildJob.log.join('\n') : (buildRunning ? 'Starting npm run build…' : 'No build output yet.')}
+        </pre>
+        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
+          Runs in this machine's app folder. Pull the latest code first (<Text code>git pull</Text>) — the build uses whatever source is on disk.
         </Text>
       </Modal>
 
