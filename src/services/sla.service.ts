@@ -701,8 +701,49 @@ export interface ApPaymentSlaOptions {
 }
 
 /**
+ * Move negative Dr/Cr amounts to the opposite side so no journal line carries a
+ * negative amount (GL rejects/drops them). A credit memo paid in a payment is
+ * stored as DR Liability -450 → becomes CR Liability 450. Lines without any
+ * negative amount are returned unchanged.
+ */
+export function normalizeSlaLineSides<T extends Record<string, any>>(line: T): T {
+  const num = (v: any) => (v == null || v === '' ? null : Number(v));
+  const eDr = num(line.enteredDr), eCr = num(line.enteredCr);
+  const aDr = num(line.accountedDr), aCr = num(line.accountedCr);
+  const amt = num(line.amount);
+  const hasEntered = eDr != null || eCr != null;
+
+  // amount-only line (no entered/accounted split): flip the side on a negative amount
+  if (!hasEntered && aDr == null && aCr == null) {
+    if (amt != null && amt < 0) {
+      return { ...line, amount: -amt, lineType: line.lineType === 'DR' ? 'CR' : 'DR' };
+    }
+    return line;
+  }
+  if (![eDr, eCr, aDr, aCr].some(v => v != null && v < 0)) return line;
+
+  const pos = (v: number | null) => (v != null && v > 0 ? v : 0);
+  const neg = (v: number | null) => (v != null && v < 0 ? -v : 0);
+  const newEDr = pos(eDr) + neg(eCr);
+  const newECr = pos(eCr) + neg(eDr);
+  const newADr = pos(aDr) + neg(aCr);
+  const newACr = pos(aCr) + neg(aDr);
+  const isDr = newEDr + newADr > 0 && newECr + newACr === 0;
+  const isCr = newECr + newACr > 0 && newEDr + newADr === 0;
+  return {
+    ...line,
+    enteredDr: newEDr, enteredCr: newECr,
+    accountedDr: newADr, accountedCr: newACr,
+    ...(amt != null ? { amount: Math.abs(amt) } : {}),
+    lineType: isDr ? 'DR' : isCr ? 'CR' : line.lineType,
+  };
+}
+
+/**
  * Build one SLA payload per applied invoice for a payment.
  * Pattern per invoice: DR AP Liability / CR Cash Clearing.
+ * Credit memos (negative amount paid) reverse it: CR AP Liability / DR Cash Clearing,
+ * so every line carries a positive amount and the payment journal nets to the cash paid.
  */
 export function buildApPaymentSlaPayloads(opts: ApPaymentSlaOptions): SlaCreatePayload[] {
   const today      = new Date();
@@ -715,7 +756,11 @@ export function buildApPaymentSlaPayloads(opts: ApPaymentSlaOptions): SlaCreateP
   const docNum = opts.paperDocumentNumber || opts.paymentNumber;
 
   return opts.appliedInvoices.map((inv) => {
-    const amt = inv.amountPaid;
+    const signed = Number(inv.amountPaid) || 0;
+    const isCreditMemo = signed < 0;
+    const amt = Math.abs(signed);
+    const liabDr = isCreditMemo ? 0 : amt;
+    const liabCr = isCreditMemo ? amt : 0;
     return {
       header: {
         moduleName:       'AP',
@@ -741,13 +786,13 @@ export function buildApPaymentSlaPayloads(opts: ApPaymentSlaOptions): SlaCreateP
       lines: [
         {
           lineNumber:         1,
-          lineType:           'DR',
+          lineType:           isCreditMemo ? 'CR' : 'DR',
           accountingClass:    'LIABILITY',
           accountCombination: inv.liabilityDistribution,
-          enteredDr:          amt,
-          enteredCr:          0,
-          accountedDr:        amt * exRate,
-          accountedCr:        0,
+          enteredDr:          liabDr,
+          enteredCr:          liabCr,
+          accountedDr:        liabDr * exRate,
+          accountedCr:        liabCr * exRate,
           currencyCode:       currency,
           exchangeRate:       exRate,
           description:        `AP Liability – Payment ${docNum} / Invoice ${inv.invoiceNumber}`,
@@ -755,13 +800,13 @@ export function buildApPaymentSlaPayloads(opts: ApPaymentSlaOptions): SlaCreateP
         },
         {
           lineNumber:         2,
-          lineType:           'CR',
+          lineType:           isCreditMemo ? 'DR' : 'CR',
           accountingClass:    opts.accountingClass ?? 'CASH',
           accountCombination: opts.cashClearingAccount,
-          enteredDr:          0,
-          enteredCr:          amt,
-          accountedDr:        0,
-          accountedCr:        amt * exRate,
+          enteredDr:          liabCr,
+          enteredCr:          liabDr,
+          accountedDr:        liabCr * exRate,
+          accountedCr:        liabDr * exRate,
           currencyCode:       currency,
           exchangeRate:       exRate,
           description:        `Cash Clearing – Payment ${docNum} / Invoice ${inv.invoiceNumber}`,

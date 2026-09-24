@@ -85,6 +85,7 @@ import {
   postToLedger,
   fetchLedgerByBusinessUnit,
   buildApPaymentSlaPayloads,
+  normalizeSlaLineSides,
   getAccounting,
   getLinesByHeaderId,
   getAccountingLinesBySourceId,
@@ -2892,7 +2893,8 @@ const ManagePayments: React.FC = () => {
     setPostGLFetchingLines(true);
     try {
       // viewAcctData.lines already loaded by View Accounting — use directly, no second fetch needed
-      const lines = viewAcctData.lines || [];
+      // credit memos: negative Dr/Cr moved to the opposite side before totals/mapping
+      const lines = (viewAcctData.lines || []).map(normalizeSlaLineSides);
       setPostGLRawCount(lines.length);
       setPostModalHeadId(viewAcctData.headerId);
 
@@ -3174,7 +3176,7 @@ const ManagePayments: React.FC = () => {
     if (String(acctData.accountingStatus || '').toUpperCase() === 'POSTED') {
       return { status: 'skipped', message: 'Already posted' };
     }
-    const lines: any[] = acctData.lines || [];
+    const lines: any[] = (acctData.lines || []).map(normalizeSlaLineSides);
     if (!lines.length) return { status: 'error', message: 'SLA header has no lines' };
 
     const ledgerInfo = await fetchLedgerByBusinessUnit(record.businessUnit || '');

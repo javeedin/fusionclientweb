@@ -198,6 +198,7 @@ import {
   postToLedger,
   fetchLedgerByBusinessUnit,
   buildApPaymentSlaPayloads,
+  normalizeSlaLineSides,
   getAccounting,
   getLinesByHeaderId,
   checkGLJournalExists,
@@ -924,7 +925,8 @@ const PaymentDetail: React.FC<PaymentDetailProps> = ({ payment, onClose }) => {
       const acctUrl = `${APEX_DB_CONFIG.baseUrl}/sla/accounting?sourceTable=AP_PAYMENTS&sourceId=${payment.checkId}`;
       setPostGLLinesUrl(acctUrl);
 
-      const lines = acctData.lines || [];
+      // credit memos: negative Dr/Cr moved to the opposite side before totals/mapping
+      const lines = (acctData.lines || []).map(normalizeSlaLineSides);
       setPostGLRawCount(lines.length);
 
       const ledgerInfo = await fetchLedgerByBusinessUnit(payment.businessUnit || '');
