@@ -20,6 +20,7 @@
 //   GET  /api/ftp/local/build-info  -> {canBuild, distBuiltAt, running}
 //   POST /api/ftp/local/build       -> {jobId}   runs `npm run build` in the app folder
 //   GET  /api/ftp/local/build/:id   -> {status, exitCode, startedAt, finishedAt, log}
+//   POST /api/ftp/open-browser      {url} -> opens http(s) url in this PC's default browser
 // Server control needs SFTP: it runs Windows commands (netstat, tasklist,
 // schtasks, taskkill) over the same SSH connection, so the hosting server can
 // be managed without Remote Desktop.
@@ -557,6 +558,23 @@ module.exports = function registerFtpRoutes(app) {
     const output = (r.stdout + (r.stderr ? `\n${r.stderr}` : '')).trim().slice(-4000);
     if (r.code !== 0) throw new Error(`npm install failed (exit ${r.code}): ${output.slice(-800)}`);
     return { code: r.code, output };
+  });
+
+  // Open a URL in the default browser of the machine running this proxy.
+  // Local callers only — a hosted proxy must not pop browsers on the server.
+  app.post('/api/ftp/open-browser', (req, res) => {
+    const url = String(req.body?.url || '');
+    if (!/^https?:\/\/[^\s"'<>^&|]+$/i.test(url)) return fail(res, 'Only plain http(s) URLs can be opened', 400);
+    const ip = req.socket?.remoteAddress || '';
+    if (!/^(::1|127\.|::ffff:127\.)/.test(ip)) return fail(res, 'Not a local request', 403);
+    const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+      : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+    try {
+      const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true });
+      child.on('error', (e) => console.warn(`[open-browser] ${e.message}`)); // e.g. no xdg-open — never crash the proxy
+      child.unref();
+      ok(res, {});
+    } catch (e) { fail(res, e); }
   });
 
   // ── local build ────────────────────────────────────────────────────────────

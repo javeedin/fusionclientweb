@@ -16,7 +16,7 @@ import {
   DoubleLeftOutlined, DoubleRightOutlined, LinkOutlined, DisconnectOutlined,
   LaptopOutlined, SaveOutlined, CheckCircleOutlined, CloseCircleOutlined,
   LoadingOutlined, RocketOutlined, PoweroffOutlined, PlayCircleOutlined,
-  SyncOutlined, DashboardOutlined, BuildOutlined,
+  SyncOutlined, DashboardOutlined, BuildOutlined, GlobalOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { PROXY_CONFIG } from '../../config/api.config';
@@ -86,6 +86,7 @@ const FTPManager: React.FC = () => {
   const [connecting, setConnecting] = useState(false);
   const [connLabel, setConnLabel] = useState('');
   const [connProtocol, setConnProtocol] = useState('');
+  const [connHost, setConnHost] = useState('');
   const [saved, setSaved] = useState<SavedConn[]>(() => {
     try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); } catch { return []; }
   });
@@ -190,6 +191,7 @@ const FTPManager: React.FC = () => {
       setSessionId(d.sessionId);
       setConnLabel(`${v.protocol.toUpperCase()} ${v.username}@${v.host}`);
       setConnProtocol(v.protocol);
+      setConnHost(v.host.trim());
       // remember the full connection (incl. password and port) on every
       // successful connect, so next time one click reconnects
       persistConnection(v);
@@ -203,7 +205,7 @@ const FTPManager: React.FC = () => {
 
   const handleDisconnect = async () => {
     if (sessionId) { try { await post(`${API}/disconnect`, { sessionId }); } catch { /* gone */ } }
-    setSessionId(null); setConnLabel(''); setConnProtocol(''); setSrvStatus(null);
+    setSessionId(null); setConnLabel(''); setConnProtocol(''); setConnHost(''); setSrvStatus(null);
     setRemoteItems([]); setRemotePath('/'); setRemotePathInput('/'); setRemoteSel([]);
   };
 
@@ -401,6 +403,24 @@ const FTPManager: React.FC = () => {
     }
     setSrvBusy(null);
   }, [sessionId, deployDir]);
+
+  // ── open the hosted Re-ERP web portal in the browser ────────────────────────
+  const portalUrl = (port: number) => `http://${connHost}${port && port !== 80 ? `:${port}` : ''}/`;
+  const openPortal = async () => {
+    if (!connHost) { message.warning('Connect to the server first'); return; }
+    let port = srvStatus?.port;
+    if (!port && isSftp && sessionId && deployDir.trim()) {
+      // port.txt on the server decides the port — ask once
+      try { port = (await post(`${API}/server/status`, { sessionId, remoteDir: deployDir.trim() })).port; } catch { /* default 80 */ }
+    }
+    const url = portalUrl(port || 80);
+    try {
+      await post(`${API}/open-browser`, { url });   // system default browser (works in the desktop app)
+      message.success(`Opening ${url}`);
+    } catch {
+      window.open(url, '_blank', 'noopener');
+    }
+  };
 
   const openServerControl = () => {
     setSrvOpen(true);
@@ -672,6 +692,11 @@ const FTPManager: React.FC = () => {
                 Server Control
               </Button>
             </Tooltip>
+            <Tooltip title={connHost ? `Open the Re-ERP web portal (${portalUrl(srvStatus?.port || 80)}) in the browser` : 'Connect to the server first'} placement="left">
+              <Button icon={<GlobalOutlined />} disabled={!connHost} onClick={openPortal}>
+                Open Re-ERP Web Portal
+              </Button>
+            </Tooltip>
           </div>
 
           {pane('local')}
@@ -880,6 +905,9 @@ const FTPManager: React.FC = () => {
               Restart
             </Button>
           </Popconfirm>
+          <Button icon={<GlobalOutlined />} disabled={!srvStatus?.running} onClick={openPortal}>
+            Open Web Portal
+          </Button>
           <Tooltip title="Only needed when package.json dependencies changed (same as 1-setup.bat)">
             <Button loading={srvBusy === 'npm'} disabled={!!srvBusy} onClick={() => serverAction('npm')}>
               npm install
