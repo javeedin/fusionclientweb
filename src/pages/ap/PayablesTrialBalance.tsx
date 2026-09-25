@@ -110,6 +110,7 @@ const PENDING_LABEL: Record<PendingRow['type'], string> = {
 export default function PayablesTrialBalance() {
   const [form] = Form.useForm();
   const [businessUnits, setBusinessUnits] = useState<string[]>([]);
+  const [ledgers, setLedgers] = useState<string[]>([]);
   const [liabAccounts, setLiabAccounts] = useState<LiabilityAccount[]>([]);
   const [liabLoading, setLiabLoading] = useState(false);
   const selectedBu = Form.useWatch('businessUnit', form) as string | undefined;
@@ -145,6 +146,13 @@ export default function PayablesTrialBalance() {
   const [txView, setTxView] = useState<'recon' | 'invoices'>('recon');
   const [reconFilter, setReconFilter] = useState<'all' | ReconStatus>('all');
   const [aaAccount, setAaAccount] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    fetch(`${APEX_DB_CONFIG.baseUrl}/gl/getledgername`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => setLedgers([...new Set(((d?.items || []) as any[]).map(i => i.ledger_name).filter(Boolean))] as string[]))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch(`${APEX_DB_CONFIG.baseUrl}/gl/businessunits`)
@@ -218,6 +226,7 @@ export default function PayablesTrialBalance() {
     if (v.account?.trim()) p.set('P_LIABILITY_ACCOUNT', v.account.trim());
     if (v.supplier?.trim()) p.set('P_SUPPLIER_NUMBER', v.supplier.trim());
     if (v.currency) p.set('P_CURRENCY', v.currency);
+    if (v.ledger) p.set('P_LEDGER', v.ledger);
     const url = `${APEX_DB_CONFIG.baseUrl}/ap/reports/trial-balance?${p}`;
     setLoading(true); setError(null); setDrill(null); setInvSearch('');
     try {
@@ -737,6 +746,11 @@ export default function PayablesTrialBalance() {
           <Form.Item name="businessUnit" label="Business Unit">
             <Select allowClear showSearch placeholder="All" style={{ width: 240 }}
               options={businessUnits.map(b => ({ value: b, label: b }))} />
+          </Form.Item>
+          <Form.Item name="ledger" label="Ledger"
+            tooltip="GL ledger compared (as in the GL Trial Balance / Account Analysis). Empty = the business unit's primary ledger.">
+            <Select allowClear showSearch placeholder="BU's ledger" style={{ width: 200 }}
+              options={ledgers.map(l => ({ value: l, label: l }))} />
           </Form.Item>
           <Form.Item name="account" label="Liability Account"
             tooltip="Full combination (01-00-00-2313101-…) or the natural account only (2313101)">

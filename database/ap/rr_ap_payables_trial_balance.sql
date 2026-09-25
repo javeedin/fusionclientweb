@@ -58,6 +58,8 @@
 --                       account only (2313101 = 4th segment)
 --   P_SUPPLIER_NUMBER   optional
 --   P_CURRENCY          optional invoice currency (AED, USD, …)
+--   P_LEDGER            optional GL ledger name (default: the business unit's primary
+--                       ledger; all ledgers when none can be resolved)
 --   P_PERIOD            optional YYYY-MM → PTD mode: closing = last day of the month,
 --                       opening = day before it starts; per account/supplier/invoice:
 --                       opening + invoices − payments − prepayments = closing, and the
@@ -260,6 +262,18 @@ BEGIN
             WHERE  bu.BUSINESS_UNIT_NAME = l_bu
             AND    ROWNUM = 1;
         EXCEPTION WHEN OTHERS THEN l_ledger := NULL;   -- unknown: all ledgers
+        END;
+    END IF;
+    -- use the ledger name exactly as the journals carry it (case/spacing may differ);
+    -- a name no journal uses would zero the GL side, so then compare all ledgers
+    IF l_ledger IS NOT NULL THEN
+        BEGIN
+            SELECT LEDGER_NAME INTO l_ledger
+            FROM (SELECT h.LEDGER_NAME FROM RR_GL_JE_HEADERS h
+                  WHERE  UPPER(TRIM(h.LEDGER_NAME)) = UPPER(TRIM(l_ledger))
+                  ORDER BY CASE WHEN h.LEDGER_NAME = l_ledger THEN 0 ELSE 1 END)
+            WHERE ROWNUM = 1;
+        EXCEPTION WHEN NO_DATA_FOUND THEN l_ledger := NULL;
         END;
     END IF;
 
