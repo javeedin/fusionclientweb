@@ -130,6 +130,7 @@ export default function PayablesTrialBalance() {
   const [glSearch, setGlSearch] = useState('');
   const [txView, setTxView] = useState<'recon' | 'invoices'>('recon');
   const [reconFilter, setReconFilter] = useState<'all' | ReconStatus>('all');
+  const [aaAccount, setAaAccount] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     fetch(`${APEX_DB_CONFIG.baseUrl}/gl/businessunits`)
@@ -342,6 +343,44 @@ export default function PayablesTrialBalance() {
   }, [recon, drill, reconFilter, invSearch]);
   const reconCount = (st: ReconStatus) => recon.filter(r => r.status === st).length;
 
+  // PTD headline figures are the totals of the details, so cards, grid and GL tab always agree
+  const ptdAp = recon.reduce((t2, r) => t2 + (r.ap ?? 0), 0);
+  const ptdGl = data?.glLinesCapped
+    ? Number(data?.totals.gl_ptd) || 0
+    : (data?.glLines || []).reduce((t2, g) => t2 + (Number(g.net) || 0), 0);
+  const rollForward = data ? (Number(data.totals.tb_total) || 0) - (Number(data.totals.tb_opening) || 0) : 0;
+  const rollGap = rollForward - ptdAp;
+
+  // ── Account Analysis (PTD): GL opening, every line of the period, running balance, closing
+  type AaRow = { key: string; kind: 'open' | 'line' | 'total' | 'close'; date: string | null; journal: string | null;
+    source: string | null; reference: string | null; description: string | null;
+    dr: number | null; cr: number | null; balance: number | null; from_ap?: boolean };
+  const aaAccounts = useMemo(() => (data?.accounts || []).map(a => a.account), [data]);
+  const aaSelected = aaAccount && aaAccounts.includes(aaAccount) ? aaAccount : aaAccounts[0];
+  const aaRows = useMemo<AaRow[]>(() => {
+    if (!data || data.mode !== 'PTD' || !aaSelected) return [];
+    const acc = data.accounts.find(a => a.account === aaSelected);
+    const opening = Number(acc?.gl_opening) || 0;
+    const lines = (data.glLines || []).filter(g => g.account === aaSelected)
+      .slice().sort((a, b) => String(a.gl_date).localeCompare(String(b.gl_date)) || a.je_header_id - b.je_header_id);
+    let bal = opening;
+    let tDr = 0; let tCr = 0;
+    const rows: AaRow[] = [{ key: 'open', kind: 'open', date: data.openingDate || null, journal: 'Opening balance', source: null,
+      reference: null, description: null, dr: null, cr: null, balance: opening }];
+    lines.forEach((g, i) => {
+      const dr = Number(g.dr) || 0; const cr = Number(g.cr) || 0;
+      tDr += dr; tCr += cr; bal += cr - dr;
+      rows.push({ key: `l${i}`, kind: 'line', date: g.gl_date, journal: g.journal, source: g.source, reference: g.reference1,
+        description: g.description, dr: dr || null, cr: cr || null, balance: bal, from_ap: g.from_ap });
+    });
+    const lbl = data.periodStart ? dayjs(data.periodStart).format('MMM-YY') : '';
+    rows.push({ key: 'total', kind: 'total', date: null, journal: `Period ${lbl}: ${lines.length} line(s)`, source: null,
+      reference: null, description: `Net movement ${fmt(tCr - tDr)} (Cr − Dr)`, dr: tDr, cr: tCr, balance: null });
+    rows.push({ key: 'close', kind: 'close', date: data.asOfDate, journal: 'Closing balance', source: null,
+      reference: null, description: null, dr: null, cr: null, balance: bal });
+    return rows;
+  }, [data, aaSelected]);
+
   const openInvoices = (account?: string, supplier?: string) => {
     setDrill({ account, supplier });
     setTab('invoices');
@@ -363,7 +402,7 @@ export default function PayablesTrialBalance() {
     { title: isPtd ? 'Invoices' : 'Open Invoices', dataIndex: 'invoice_count', key: 'invoice_count', align: 'right', width: 100,
       render: (v, r) => (v ? <a onClick={() => openInvoices(r.account)}>{v}</a> : 0) },
     ...(isPtd ? [
-      { title: `Payables ${periodLabel}`, key: 'payables', children: [
+      { title: `Payables ${periodLabel} (balance roll-forward)`, key: 'payables', children: [
         amt<AccountRow>('Opening', 'tb_opening'), amt<AccountRow>('+ Invoices', 'invoices_ptd'),
         amt<AccountRow>('− Payments', 'payments_ptd'), amt<AccountRow>('− Prepayments', 'prepayments_ptd'),
         amt<AccountRow>('Closing', 'tb_total', 140),
@@ -574,7 +613,7 @@ export default function PayablesTrialBalance() {
 
   return (
     <div style={{ padding: 16, background: REDWOOD.neutral100, minHeight: '100%' }}>
-      <style>{`.tb-recon-issue > td { background: #fff8f6 !important; }`}</style>
+      <style>{`.tb-recon-issue > td { background: #fff8f6 !important; } .tb-aa-strong > td { background: #f5f5f5 !important; font-weight: 600; }`}</style>
       <Space align="center" style={{ marginBottom: 12 }}>
         <ReconciliationOutlined style={{ fontSize: 22, color: REDWOOD.primary }} />
         <Title level={4} style={{ margin: 0, color: REDWOOD.primary }}>Payables Trial Balance</Title>
@@ -642,13 +681,25 @@ export default function PayablesTrialBalance() {
           <Row gutter={12} style={{ marginBottom: 12 }} wrap={false}>
             {isPtd ? (
               <>
-                <Col flex="1"><Card size="small"><Statistic title={`Payables activity ${periodLabel}`} value={(t.tb_total - (t.tb_opening || 0))} precision={2} /></Card></Col>
-                <Col flex="1"><Card size="small"><Statistic title={`GL movement ${periodLabel}`} value={t.gl_ptd || 0} precision={2} /></Card></Col>
+                <Col flex="1">
+                  <Tooltip title="Total of the Payables column in Transactions (invoices, payments and prepayments of the period)">
+                    <Card size="small" hoverable onClick={() => { setTab('invoices'); setTxView('recon'); }}>
+                      <Statistic title={`Payables activity ${periodLabel}`} value={ptdAp} precision={2} />
+                    </Card>
+                  </Tooltip>
+                </Col>
+                <Col flex="1">
+                  <Tooltip title="Net (Cr − Dr) of the GL lines of the period on the liability account(s) — see Account Analysis">
+                    <Card size="small" hoverable onClick={() => setTab('analysis')}>
+                      <Statistic title={`GL movement ${periodLabel}`} value={ptdGl} precision={2} />
+                    </Card>
+                  </Tooltip>
+                </Col>
                 <Col flex="1">
                   <Card size="small">
-                    <Statistic title="Period difference" value={t.difference_ptd || 0} precision={2}
-                      valueStyle={{ color: isZero(t.difference_ptd || 0) ? REDWOOD.success : REDWOOD.primary }}
-                      prefix={isZero(t.difference_ptd || 0) ? <CheckCircleOutlined /> : <WarningOutlined />} />
+                    <Statistic title="Period difference" value={ptdAp - ptdGl} precision={2}
+                      valueStyle={{ color: isZero(ptdAp - ptdGl) ? REDWOOD.success : REDWOOD.primary }}
+                      prefix={isZero(ptdAp - ptdGl) ? <CheckCircleOutlined /> : <WarningOutlined />} />
                   </Card>
                 </Col>
                 <Col flex="1">
@@ -682,6 +733,12 @@ export default function PayablesTrialBalance() {
               </Tooltip>
             </Col>
           </Row>
+
+          {isPtd && !isZero(rollGap) && (
+            <Alert type="info" showIcon style={{ marginBottom: 12 }}
+              message={`Balance roll-forward activity is ${fmt(rollForward)} — ${fmt(rollGap)} different from the ${periodLabel} transactions (${fmt(ptdAp)})`}
+              description={`The roll-forward (closing ${fmt(t.tb_total)} − opening ${fmt(t.tb_opening || 0)}) only counts payments and prepayments on invoices that are themselves in the balance at period end. Payments or prepayments in ${periodLabel} against invoices accounted after ${data.asOfDate} (or not accounted yet) are in the transactions and in GL but not in the roll-forward — that is the ${fmt(rollGap)}.`} />
+          )}
 
           <Card size="small" styles={{ body: { paddingTop: 0 } }}>
             <Tabs activeKey={tab} onChange={setTab} items={[
@@ -806,6 +863,34 @@ export default function PayablesTrialBalance() {
                       message={`GL entries dated in ${periodLabel} on the liability account(s). Lines not from Payables (manual journals, other sources) are the usual cause of a period difference.`} />
                     <Table<GlLine> size="small" rowKey={(r, i) => `${r.je_header_id}-${i}`} columns={glCols} dataSource={glLines}
                       scroll={{ x: 1700 }} pagination={{ pageSize: 50, showSizeChanger: false }} />
+                  </>
+                ),
+              }, {
+                key: 'analysis', label: 'Account Analysis',
+                children: (
+                  <>
+                    <Space style={{ marginBottom: 8 }} wrap>
+                      <Text strong>Account</Text>
+                      <Select style={{ width: 360 }} value={aaSelected} onChange={setAaAccount}
+                        options={aaAccounts.map(a => ({ value: a, label: a }))} />
+                      <Text type="secondary">GL opening, every {periodLabel} line with running balance (Cr − Dr), closing</Text>
+                    </Space>
+                    {data.glLinesCapped && <Alert type="warning" showIcon style={{ marginBottom: 8 }} message="GL lines are capped at 20,000 — pick a single liability account for a complete analysis." />}
+                    <Table<AaRow> size="small" rowKey="key" dataSource={aaRows} pagination={false}
+                      scroll={{ x: 1400, y: 560 }} sticky
+                      rowClassName={r => (r.kind === 'line' ? '' : 'tb-aa-strong')}
+                      columns={[
+                        { title: 'Date', dataIndex: 'date', width: 105 },
+                        { title: 'Journal', dataIndex: 'journal', width: 260, ellipsis: true },
+                        { title: 'Source', dataIndex: 'source', width: 130, ellipsis: true,
+                          render: (v, r) => (r.kind !== 'line' ? null : <Space size={4}>{v || '—'}{r.from_ap ? <Tag color="blue" style={{ fontSize: 10 }}>AP</Tag> : <Tag color="orange" style={{ fontSize: 10 }}>Other</Tag>}</Space>) },
+                        { title: 'Reference', dataIndex: 'reference', width: 150, ellipsis: true },
+                        { title: 'Description', dataIndex: 'description', ellipsis: true },
+                        { title: 'Debit', dataIndex: 'dr', align: 'right', width: 140, render: (v: number | null) => (v ? fmt(v) : '') },
+                        { title: 'Credit', dataIndex: 'cr', align: 'right', width: 140, render: (v: number | null) => (v ? fmt(v) : '') },
+                        { title: 'Balance', dataIndex: 'balance', align: 'right', width: 150,
+                          render: (v: number | null) => (v === null ? '' : money(v)) },
+                      ]} />
                   </>
                 ),
               }] : []),
