@@ -4,10 +4,15 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
 import { installOrdsFetchInterceptor } from './services/ordsFetchInterceptor'
+import { installGlJournalGuard } from './services/glJournalGuard'
 import { getAppBranding } from './config/company.config'
 
 // ORDS token security — no-op while REACT_APP_ORDS_USE_TOKEN=NO in .env.local
 installOrdsFetchInterceptor()
+
+// GL journals: a rejected /journals/create (unbalanced, company mismatch, …)
+// becomes a real HTTP error everywhere and is shown on screen
+installGlJournalGuard()
 
 // Window/tab title follows the company branding (BUIMERC → Re-ERP A3.0.0)
 const brand = getAppBranding()
