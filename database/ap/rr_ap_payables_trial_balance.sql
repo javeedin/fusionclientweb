@@ -101,6 +101,8 @@
 --   As-of mode only — monthly Account Analysis (roll-forward up to D):
 --   glMonthly:   [{ account, month 'YYYY-MM', dr, cr, lines }]          GL lines per month
 --   apMonthly:   [{ account, month, invoices, cancellations, payments, prepayments }]
+--   apMonthlyAll: same, accounting status ignored (every document on its own
+--                accounting/document date) — ends at the total outstanding
 --                Payables movement per month, functional. Each invoice's events
 --                (accounted, paid, void, prepaid, cancelled) land in the month they
 --                took effect — never before the invoice itself was accounted — and a
@@ -152,6 +154,8 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     l_docs     CLOB;               -- PTD mode: payment / prepayment documents with period activity
     l_mgl      CLOB;               -- as-of mode: GL debits/credits per account and month
     l_map      CLOB;               -- as-of mode: Payables movement per account and month
+    l_mapall   CLOB;               -- same, total-outstanding basis (accounting status ignored)
+    l_txt      VARCHAR2(4000);
     l_mg_first BOOLEAN := TRUE;
     l_doc_first BOOLEAN := TRUE;
     l_active   BOOLEAN;
@@ -334,6 +338,7 @@ BEGIN
     DBMS_LOB.CREATETEMPORARY(l_docs, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_mgl, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_map, TRUE);
+    DBMS_LOB.CREATETEMPORARY(l_mapall, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_sup, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_supinv, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_unl, TRUE);
@@ -502,7 +507,10 @@ BEGIN
     -- accounted counts from the invoice's month (the trial balance only sees
     -- it from then); events on/after the cancellation are dropped and the
     -- cancellation reverses everything still open, as the trial balance does.
+    -- Run twice: l_bi = 1 accounted basis (apMonthly); l_bi = 2 total-outstanding basis
+    -- (apMonthlyAll): accounting status ignored, every document on its own date.
     IF l_start IS NULL THEN
+      FOR l_bi IN 1 .. 2 LOOP
         l_first := TRUE;
         FOR m IN (
             WITH gl_post AS (
@@ -520,11 +528,11 @@ BEGIN
                        CASE WHEN NVL(i.INVOICE_CURRENCY, 'AED') = 'AED' THEN 1
                             ELSE NVL(NULLIF(i.CONVERSION_RATE, 0), 1) END AS rate,
                        NVL(i.INVOICE_AMOUNT, 0) AS amt,
-                       CASE WHEN i.SYNC_STATUS = 'SYNCED'
+                       CASE WHEN i.SYNC_STATUS = 'SYNCED' OR l_bi = 2
                             THEN TRUNC(NVL(i.ACCOUNTING_DATE, i.INVOICE_DATE))
                             ELSE gi.gl_date END AS acct_date,
                        CASE WHEN NVL(i.CANCELED_FLAG, 'N') = 'Y' THEN
-                            CASE WHEN i.SYNC_STATUS = 'SYNCED'
+                            CASE WHEN i.SYNC_STATUS = 'SYNCED' OR l_bi = 2
                                  THEN TRUNC(COALESCE(i.CANCELED_DATE, i.CANCELLATION_DATE, i.INVOICE_DATE))
                                  ELSE gc.gl_date END
                        END AS cancel_date
@@ -538,13 +546,16 @@ BEGIN
             pr AS (
                 SELECT ri.INVOICE_ID,
                        NVL(ri.AMOUNT_PAID_INVOICE_CURRENCY, 0) + NVL(ri.DISCOUNT_TAKEN, 0) AS amt,
-                       CASE WHEN p.SYNC_STATUS = 'SYNCED'
+                       CASE WHEN p.SYNC_STATUS = 'SYNCED' OR l_bi = 2
                             THEN TRUNC(NVL(p.ACCOUNTING_DATE, p.PAYMENT_DATE))
                             ELSE gp.gl_date END AS eff_date,
                        CASE WHEN NVL(p.PAYMENT_STATUS, 'x') = 'Voided' THEN
-                            CASE WHEN p.SYNC_STATUS = 'SYNCED'
+                            CASE WHEN p.SYNC_STATUS = 'SYNCED' OR l_bi = 2
                                  THEN TRUNC(COALESCE(p.VOID_ACCOUNTING_DATE, p.VOID_DATE, p.PAYMENT_DATE))
                                  ELSE gv.gl_date END
+                            -- total-outstanding basis: a line voided on its own counts as not paid
+                            WHEN l_bi = 2 AND NVL(ri.INVOICE_PAYMENT_STATUS, 'Active') = 'Voided'
+                            THEN TRUNC(NVL(p.ACCOUNTING_DATE, p.PAYMENT_DATE))
                        END AS void_date
                 FROM   RR_AP_PAYMENTS_RELATED_INVOICES ri
                 JOIN   RR_AP_PAYMENTS_ALL p ON p.CHECK_ID = ri.CHECK_ID
@@ -554,7 +565,7 @@ BEGIN
             apl AS (
                 SELECT COALESCE(ap.INVOICE_ID, inv_r.INVOICE_ID) AS INVOICE_ID,
                        NVL(ap.APPLIED_AMOUNT, 0) AS amt,
-                       CASE WHEN NVL(ap.SYNC_STATUS, 'NEW') = 'SYNCED' OR tgt.SYNC_STATUS = 'SYNCED'
+                       CASE WHEN NVL(ap.SYNC_STATUS, 'NEW') = 'SYNCED' OR tgt.SYNC_STATUS = 'SYNCED' OR l_bi = 2
                             THEN TRUNC(COALESCE(ap.APPLICATION_ACCOUNTING_DATE, tgt.ACCOUNTING_DATE, tgt.INVOICE_DATE))
                             ELSE ga.gl_date END AS eff_date
                 FROM   RR_AP_APPLIED_PREPAYMENTS ap
@@ -611,18 +622,22 @@ BEGIN
             IF acct_ok(CASE WHEN m.acct = '(no liability account)' THEN NULL ELSE m.acct END)
                AND (ROUND(m.inv_fa, 2) != 0 OR ROUND(m.can_fa, 2) != 0
                     OR ROUND(m.pay_fa, 2) != 0 OR ROUND(m.app_fa, 2) != 0) THEN
-                IF NOT l_first THEN lob_add(l_map, ','); END IF;
+                IF NOT l_first THEN
+                    IF l_bi = 1 THEN lob_add(l_map, ','); ELSE lob_add(l_mapall, ','); END IF;
+                END IF;
                 l_first := FALSE;
-                lob_add(l_map,
+                l_txt :=
                     '{"account":'        || js(m.acct)
                  || ',"month":'          || js(m.mon)
                  || ',"invoices":'       || jn(ROUND(m.inv_fa, 2))
                  || ',"cancellations":'  || jn(ROUND(m.can_fa, 2))
                  || ',"payments":'       || jn(ROUND(m.pay_fa, 2))
                  || ',"prepayments":'    || jn(ROUND(m.app_fa, 2))
-                 || '}');
+                 || '}';
+                IF l_bi = 1 THEN lob_add(l_map, l_txt); ELSE lob_add(l_mapall, l_txt); END IF;
             END IF;
         END LOOP;
+      END LOOP;
     END IF;
 
     -- the account filter can name an account that no invoice uses: still compare it
@@ -1327,6 +1342,8 @@ BEGIN
     lob_out(l_mgl);
     HTP.PRN('],"apMonthly":[');
     lob_out(l_map);
+    HTP.PRN('],"apMonthlyAll":[');
+    lob_out(l_mapall);
     HTP.PRN('],"supplierOutstanding":');
     lob_out(l_sup);
     HTP.PRN(',"supplierInvoicesCapped":' || CASE WHEN l_si_cnt >= l_si_cap THEN 'true' ELSE 'false' END);

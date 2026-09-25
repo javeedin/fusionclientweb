@@ -58,7 +58,7 @@ interface TbResponse {
     outstanding?: number } & Partial<PtdFields>;
   accounts: AccountRow[]; invoices: InvoiceRow[]; unaccounted: PendingRow[];
   glLines?: GlLine[]; glLinesCapped?: boolean; ptdDocs?: PtdDoc[];
-  glMonthly?: GlMonth[]; apMonthly?: ApMonth[];
+  glMonthly?: GlMonth[]; apMonthly?: ApMonth[]; apMonthlyAll?: ApMonth[];
   ledger?: string | null; glByLedger?: { ledger: string; balance: number }[];
   supplierOutstanding?: SupOut[]; supplierInvoices?: SupInv[]; supplierInvoicesCapped?: boolean;
   accountOutstanding?: { account: string; outstanding: number }[];
@@ -175,6 +175,8 @@ export default function PayablesTrialBalance() {
   const [reconFilter, setReconFilter] = useState<'all' | ReconStatus>('all');
   const [aaAccount, setAaAccount] = useState<string | undefined>(undefined);
   const [soSearch, setSoSearch] = useState('');
+  // Account Analysis: Payables side on the total-outstanding basis (default) or accounted only
+  const [aaBasis, setAaBasis] = useState<'all' | 'acc'>('all');
   const [soFilter, setSoFilter] = useState<'gl' | 'diff' | 'all'>('gl');
   const [dashCheck, setDashCheck] = useState<{ balance: number; bu: string | null } | null>(null);
 
@@ -470,7 +472,8 @@ export default function PayablesTrialBalance() {
       const r = get(g.month);
       r.dr += Number(g.dr) || 0; r.cr += Number(g.cr) || 0; r.lines += Number(g.lines) || 0;
     }
-    for (const a of data.apMonthly || []) {
+    const apM = aaBasis === 'all' && data.apMonthlyAll ? data.apMonthlyAll : (data.apMonthly || []);
+    for (const a of apM) {
       if (!pick(a.account)) continue;
       const r = get(a.month);
       r.invoices += Number(a.invoices) || 0; r.cancellations += Number(a.cancellations) || 0;
@@ -484,7 +487,7 @@ export default function PayablesTrialBalance() {
       r.diff = r.apNet - r.glNet; r.cumDiff = r.apBal - r.glBal;
     }
     return rows;
-  }, [data, aaAsofSelected]);
+  }, [data, aaAsofSelected, aaBasis]);
   const monthTot = useMemo(() => monthRows.reduce((t2, r) => ({
     dr: t2.dr + r.dr, cr: t2.cr + r.cr, lines: t2.lines + r.lines, invoices: t2.invoices + r.invoices,
     cancellations: t2.cancellations + r.cancellations, payments: t2.payments + r.payments, prepayments: t2.prepayments + r.prepayments,
@@ -493,12 +496,16 @@ export default function PayablesTrialBalance() {
   // trial balance / GL balance of the selected account(s) — what the months must add up to
   const aaTarget = useMemo(() => {
     const acc = (data?.accounts || []).filter(a => aaAsofSelected === ALL || a.account === aaAsofSelected);
+    const outRows = (data?.accountOutstanding || []).filter(a => aaAsofSelected === ALL || a.account === aaAsofSelected);
+    const useOut = aaBasis === 'all' && !!data?.accountOutstanding;
     return {
-      tb: acc.reduce((s2, a) => s2 + (Number(a.tb_total) || 0), 0),
+      tb: useOut
+        ? outRows.reduce((s2, a) => s2 + (Number(a.outstanding) || 0), 0)
+        : acc.reduce((s2, a) => s2 + (Number(a.tb_total) || 0), 0),
       gl: acc.reduce((s2, a) => s2 + (Number(a.gl_balance) || 0), 0),
       byDate: acc.some(a => a.gl_by_date != null) ? acc.reduce((s2, a) => s2 + (Number(a.gl_by_date) || 0), 0) : null,
     };
-  }, [data, aaAsofSelected]);
+  }, [data, aaAsofSelected, aaBasis]);
   // months where Payables and GL moved differently, biggest first
   const gapMonths = useMemo(() => monthRows.filter(r => !isZero(r.diff))
     .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)), [monthRows]);
@@ -1346,6 +1353,10 @@ export default function PayablesTrialBalance() {
                           ...(aaAccounts.length > 1 ? [{ value: ALL, label: `All liability accounts (${aaAccounts.length})` }] : []),
                           ...aaAccounts.map(a => ({ value: a, label: a })),
                         ]} />
+                      <Text strong style={{ marginLeft: 8 }}>Payables basis</Text>
+                      <Segmented value={aaBasis} onChange={v => setAaBasis(v as 'all' | 'acc')} options={[
+                        { label: 'Total outstanding', value: 'all' }, { label: 'Accounted only', value: 'acc' },
+                      ]} />
                       <Text type="secondary">Month by month up to {dayjs(data.asOfDate).format('DD-MMM-YYYY')}: GL debits, credits and running balance (Cr − Dr) vs Payables movement</Text>
                     </Space>
                     <Alert type="info" showIcon style={{ marginBottom: 8 }}
@@ -1371,7 +1382,7 @@ export default function PayablesTrialBalance() {
                         { title: 'GL Debits', v: monthTot.dr },
                         { title: 'GL Credits', v: monthTot.cr },
                         { title: 'GL Balance (Cr − Dr)', v: cents(monthTot.cr - monthTot.dr) },
-                        { title: 'Payables Balance (open invoices)', v: aaTarget.tb },
+                        { title: aaBasis === 'all' ? 'Payables Balance (total outstanding)' : 'Payables Balance (accounted only)', v: aaTarget.tb },
                         { title: 'Difference', v: cents(aaTarget.tb - (monthTot.cr - monthTot.dr)), diff: true },
                       ].map(c => (
                         <Col flex="1" key={c.title}>
@@ -1400,7 +1411,9 @@ export default function PayablesTrialBalance() {
                     )}
                     {monthRows.length > 0 && !isZero((monthRows[monthRows.length - 1]?.apBal || 0) - aaTarget.tb) && (
                       <Alert type="info" showIcon style={{ marginBottom: 8 }}
-                        message={`Monthly Payables movement adds up to ${fmt(monthRows[monthRows.length - 1].apBal)}; the trial balance is ${fmt(aaTarget.tb)} (${fmt(aaTarget.tb - monthRows[monthRows.length - 1].apBal)} from per-document rounding at the invoice rate).`} />
+                        message={`Monthly Payables movement adds up to ${fmt(monthRows[monthRows.length - 1].apBal)}; the Payables Balance is ${fmt(aaTarget.tb)} (${fmt(aaTarget.tb - monthRows[monthRows.length - 1].apBal)} ${aaBasis === 'all'
+                          ? 'from overpaid invoices the outstanding shows as 0, documents dated after the as-of date, and rounding'
+                          : 'from per-document rounding at the invoice rate'}).`} />
                     )}
                     {monthRows.length > 1 && (
                       <Card size="small" style={{ marginBottom: 8 }} title={<Text type="secondary" style={{ fontSize: 12 }}>Payables − GL: monthly difference (bars) and cumulative difference (line)</Text>}>
