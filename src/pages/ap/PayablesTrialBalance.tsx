@@ -57,6 +57,7 @@ interface TbResponse {
   accounts: AccountRow[]; invoices: InvoiceRow[]; unaccounted: PendingRow[];
   glLines?: GlLine[]; glLinesCapped?: boolean; ptdDocs?: PtdDoc[];
   glMonthly?: GlMonth[]; apMonthly?: ApMonth[];
+  ledger?: string | null; glByLedger?: { ledger: string; balance: number }[];
 }
 interface GlMonth { account: string; month: string; dr: number; cr: number; lines: number }
 interface ApMonth {
@@ -502,7 +503,7 @@ export default function PayablesTrialBalance() {
         { title: 'Closing', dataIndex: 'difference', key: 'difference', align: 'right' as const, width: 130, render: diffTag },
       ] },
     ] : [
-      amt<AccountRow>('Trial Balance (AED)', 'tb_total', 170),
+      amt<AccountRow>('Payables Balance (AED)', 'tb_total', 170),
       amt<AccountRow>('GL Balance (AED)', 'gl_balance', 170),
       { title: 'Difference', dataIndex: 'difference', key: 'difference', align: 'right' as const, width: 170, render: diffTag },
     ]),
@@ -644,7 +645,7 @@ export default function PayablesTrialBalance() {
           data.totals.tb_total, data.totals.gl_opening, data.totals.gl_ptd, data.totals.gl_balance,
           data.totals.difference_opening, data.totals.difference_ptd, data.totals.difference],
       ] : [
-        ['Liability Account', 'Suppliers', 'Open Invoices', 'Trial Balance (AED)', 'GL Balance (AED)', 'Difference'],
+        ['Liability Account', 'Suppliers', 'Open Invoices', 'Payables Balance (AED)', 'GL Balance (AED)', 'Difference'],
         ...data.accounts.map(a => [a.account, a.supplier_count, a.invoice_count, a.tb_total, a.gl_balance, a.difference]),
         ['TOTAL', '', '', data.totals.tb_total, data.totals.gl_balance, data.totals.difference],
       ]),
@@ -808,7 +809,13 @@ export default function PayablesTrialBalance() {
               </>
             ) : (
               <>
-                <Col flex="1"><Card size="small"><Statistic title="Trial Balance (AED)" value={t.tb_total} precision={2} /></Card></Col>
+                <Col flex="1">
+                  <Tooltip title="Payables side: open balance of the accounted invoices (invoice − payments − prepayments applied), i.e. the supplier balances. Compare with GL Balance.">
+                    <Card size="small" hoverable onClick={() => setTab('suppliers')}>
+                      <Statistic title="Payables Balance (AED)" value={t.tb_total} precision={2} />
+                    </Card>
+                  </Tooltip>
+                </Col>
                 <Col flex="1">
                   <Tooltip title="GL Trial Balance basis: every combination of the liability account(s), lines by GL period — click for the month-by-month Account Analysis">
                     <Card size="small" hoverable onClick={() => setTab('analysis')}>
@@ -1008,16 +1015,29 @@ export default function PayablesTrialBalance() {
                       <Text type="secondary">Month by month up to {dayjs(data.asOfDate).format('DD-MMM-YYYY')}: GL debits, credits and running balance (Cr − Dr) vs Payables movement</Text>
                     </Space>
                     <Alert type="info" showIcon style={{ marginBottom: 8 }}
-                      message={`GL is on the GL Trial Balance basis: lines by GL period (valid, non-adjusting periods of a ledger), through ${dayjs(data.asOfDate).format('MMM-YY')}${dayjs(data.asOfDate).isSame(dayjs(data.asOfDate).endOf('month'), 'day') ? '' : ` (${dayjs(data.asOfDate).format('MMM-YY')} only up to ${dayjs(data.asOfDate).format('DD-MMM')} — pick the month end to match the GL TB exactly)`}. The balance equals the GL TB closing for the same account and company.`}
+                      message={`GL is on the GL Trial Balance basis${data.ledger ? ` for ledger ${data.ledger}` : ' (all ledgers — no business unit ledger found)'}: lines by GL period (valid, non-adjusting periods), through ${dayjs(data.asOfDate).format('MMM-YY')}${dayjs(data.asOfDate).isSame(dayjs(data.asOfDate).endOf('month'), 'day') ? '' : ` (${dayjs(data.asOfDate).format('MMM-YY')} only up to ${dayjs(data.asOfDate).format('DD-MMM')} — pick the month end to match the GL TB exactly)`}. The balance equals the GL TB closing for the same account and company.`}
                       description={aaTarget.byDate != null && !isZero(aaTarget.byDate - aaTarget.gl)
                         ? `By accounting date instead of GL period the balance would be ${fmt(aaTarget.byDate)} (${fmt(aaTarget.byDate - aaTarget.gl)} different): journals whose period differs from their date, or with no valid period / ledger — the GL Trial Balance leaves them out or counts them in their period.`
                         : undefined} />
+                    {(data.glByLedger || []).filter(l => !isZero(l.balance)).length > 1 && (
+                      <Alert type="warning" showIcon style={{ marginBottom: 8 }}
+                        message="More than one ledger posts to the liability account(s) — only the business unit's ledger is compared, as in the GL Trial Balance"
+                        description={(
+                          <Space wrap size={[6, 6]}>
+                            {(data.glByLedger || []).filter(l => !isZero(l.balance)).map(l => (
+                              <Tag key={l.ledger} color={l.ledger === data.ledger ? 'blue' : 'orange'}>
+                                {l.ledger}{l.ledger === data.ledger ? ' (used)' : ''}: {fmt(l.balance)}
+                              </Tag>
+                            ))}
+                          </Space>
+                        )} />
+                    )}
                     <Row gutter={12} style={{ marginBottom: 8 }}>
                       {[
                         { title: 'GL Debits', v: monthTot.dr },
                         { title: 'GL Credits', v: monthTot.cr },
                         { title: 'GL Balance (Cr − Dr)', v: cents(monthTot.cr - monthTot.dr) },
-                        { title: 'Payables (trial balance)', v: aaTarget.tb },
+                        { title: 'Payables Balance (open invoices)', v: aaTarget.tb },
                         { title: 'Difference', v: cents(aaTarget.tb - (monthTot.cr - monthTot.dr)), diff: true },
                       ].map(c => (
                         <Col flex="1" key={c.title}>

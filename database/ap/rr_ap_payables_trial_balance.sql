@@ -37,6 +37,9 @@
 --     when D is the last day of the month (= the GL TB for that period), else
 --     its lines dated <= D;
 --   * PTD: the lines of that period (= the GL TB period activity).
+--   * the business unit's ledger only (RR_GL_BUSINESS_UNITS.PRIMARY_LEDGER_ID →
+--     RR_LEDGERS.LEDGER_NAME, or P_LEDGER), as the GL TB filters ledger_name;
+--     glByLedger shows the balance per ledger so another ledger is visible.
 -- Lines without a valid period/ledger, or whose period differs from their date,
 -- are reported as glByDate (the old date-based balance) so the gap is visible.
 -- GL balance (accounted CR − DR) of every
@@ -106,7 +109,8 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     p_liability_account IN VARCHAR2 DEFAULT NULL,
     p_supplier_number   IN VARCHAR2 DEFAULT NULL,
     p_currency          IN VARCHAR2 DEFAULT NULL,
-    p_period            IN VARCHAR2 DEFAULT NULL   -- 'YYYY-MM': PTD mode (opening/activity/closing)
+    p_period            IN VARCHAR2 DEFAULT NULL,  -- 'YYYY-MM': PTD mode (opening/activity/closing)
+    p_ledger            IN VARCHAR2 DEFAULT NULL   -- GL ledger name; default = the BU's primary ledger
 ) AS
     l_asof      DATE;                -- closing date (as-of date, or period end)
     l_open      DATE;                -- opening cutoff (day before period start); far past when no period
@@ -149,6 +153,9 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     l_full_yn  VARCHAR2(1);     -- l_full_acct for use inside SQL (no BOOLEAN in SQL)
     l_gl_bydate NUMBER;          -- GL by accounting date only (pre-TB-basis figure, diagnostic)
     l_gl_bdtot  NUMBER := 0;
+    l_ledger   VARCHAR2(240) := TRIM(p_ledger);
+    l_by_ledger t_num;          -- ledger -> GL balance (TB basis, all ledgers) of the accounts
+    l_lg_key   VARCHAR2(240);
     a_key      VARCHAR2(240);
     l_gl       NUMBER;
     l_gl_open  NUMBER;
@@ -244,6 +251,17 @@ BEGIN
     END IF;
     l_full_acct := INSTR(NVL(l_acct, 'x'), '-') > 0;
     l_full_yn   := CASE WHEN INSTR(NVL(l_acct, 'x'), '-') > 0 THEN 'Y' ELSE 'N' END;
+    -- GL ledger: the BU's primary ledger (as the GL Trial Balance is run per ledger)
+    IF l_ledger IS NULL AND l_bu IS NOT NULL THEN
+        BEGIN
+            SELECT l.LEDGER_NAME INTO l_ledger
+            FROM   RR_GL_BUSINESS_UNITS bu
+            JOIN   RR_LEDGERS l ON l.LEDGER_ID = bu.PRIMARY_LEDGER_ID
+            WHERE  bu.BUSINESS_UNIT_NAME = l_bu
+            AND    ROWNUM = 1;
+        EXCEPTION WHEN OTHERS THEN l_ledger := NULL;   -- unknown: all ledgers
+        END;
+    END IF;
 
     DBMS_LOB.CREATETEMPORARY(l_inv, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_una, TRUE);
@@ -598,6 +616,7 @@ BEGIN
         FROM (
             SELECT NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0) AS raw_net,
                    CASE WHEN h.LEDGER_NAME IS NOT NULL AND fp.PERIOD_NAME IS NOT NULL
+                         AND (l_ledger IS NULL OR h.LEDGER_NAME = l_ledger)
                         THEN NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0) END AS net,
                    TRUNC(h.DEFAULT_EFFECTIVE_DATE) AS d,
                    TO_DATE('01-' || h.PERIOD_NAME DEFAULT NULL ON CONVERSION ERROR,
@@ -610,6 +629,25 @@ BEGIN
             WHERE  l.ACCOUNT_COMBINATION = a_key
         ) x;
         l_gl_bdtot := l_gl_bdtot + l_gl_bydate;
+        -- same basis, every ledger: shows whether another ledger posts to the account
+        FOR lg IN (
+            SELECT NVL(h.LEDGER_NAME, '(no ledger)') AS ledger,
+                   SUM(NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0)) AS bal
+            FROM   RR_GL_JE_LINES_ALL l
+            JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
+            WHERE  l.ACCOUNT_COMBINATION = a_key
+            AND    h.PERIOD_NAME IN (SELECT PERIOD_NAME FROM RR_V_GL_FISCAL_PERIODS
+                                     WHERE TO_CHAR(APPLICATION) = 'GL' AND TO_CHAR(ADJ_FLAG) = 'N')
+            AND   (TO_DATE('01-' || h.PERIOD_NAME DEFAULT NULL ON CONVERSION ERROR,
+                           'DD-Mon-RR', 'NLS_DATE_LANGUAGE=ENGLISH') < TRUNC(l_asof, 'MM')
+               OR (TO_DATE('01-' || h.PERIOD_NAME DEFAULT NULL ON CONVERSION ERROR,
+                           'DD-Mon-RR', 'NLS_DATE_LANGUAGE=ENGLISH') = TRUNC(l_asof, 'MM')
+                   AND (l_asof = LAST_DAY(l_asof) OR TRUNC(h.DEFAULT_EFFECTIVE_DATE) <= l_asof)))
+            GROUP BY NVL(h.LEDGER_NAME, '(no ledger)')
+        ) LOOP
+            IF NOT l_by_ledger.EXISTS(lg.ledger) THEN l_by_ledger(lg.ledger) := 0; END IF;
+            l_by_ledger(lg.ledger) := l_by_ledger(lg.ledger) + NVL(lg.bal, 0);
+        END LOOP;
 
         l_tb_tot  := l_tb_tot  + a_total(a_key);
         l_tb_open := l_tb_open + a_open(a_key);
@@ -652,6 +690,7 @@ BEGIN
                     JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
                     WHERE  l.ACCOUNT_COMBINATION = a_key
                     AND    h.LEDGER_NAME IS NOT NULL
+                    AND    (l_ledger IS NULL OR h.LEDGER_NAME = l_ledger)
                     AND    h.PERIOD_NAME IN (SELECT PERIOD_NAME FROM RR_V_GL_FISCAL_PERIODS
                                              WHERE TO_CHAR(APPLICATION) = 'GL' AND TO_CHAR(ADJ_FLAG) = 'N')
                 ) x
@@ -687,6 +726,7 @@ BEGIN
                 WHERE  l.ACCOUNT_COMBINATION = a_key
                 -- the lines of the GL period (GL Trial Balance basis)
                 AND    h.LEDGER_NAME IS NOT NULL
+                AND    (l_ledger IS NULL OR h.LEDGER_NAME = l_ledger)
                 AND    TO_DATE('01-' || h.PERIOD_NAME DEFAULT NULL ON CONVERSION ERROR,
                                'DD-Mon-RR', 'NLS_DATE_LANGUAGE=ENGLISH') = l_start
                 AND    h.PERIOD_NAME IN (SELECT PERIOD_NAME FROM RR_V_GL_FISCAL_PERIODS
@@ -917,6 +957,7 @@ BEGIN
          || ',"periodStart":' || jd(l_start)
          || ',"openingDate":' || CASE WHEN l_start IS NULL THEN 'null' ELSE jd(l_open) END
          || ',"businessUnit":' || js(l_bu)
+         || ',"ledger":' || js(l_ledger)
          || ',"totals":{"tb_total":' || jn(l_tb_tot)
          || ',"gl_balance":'         || jn(l_gl_tot)
          || ',"gl_by_date":'         || jn(l_gl_bdtot)
@@ -945,6 +986,15 @@ BEGIN
     lob_out(l_mgl);
     HTP.PRN('],"apMonthly":[');
     lob_out(l_map);
+    HTP.PRN('],"glByLedger":[');
+    l_first := TRUE;
+    l_lg_key := l_by_ledger.FIRST;
+    WHILE l_lg_key IS NOT NULL LOOP
+        IF NOT l_first THEN HTP.PRN(','); END IF;
+        l_first := FALSE;
+        HTP.PRN('{"ledger":' || js(l_lg_key) || ',"balance":' || jn(l_by_ledger(l_lg_key)) || '}');
+        l_lg_key := l_by_ledger.NEXT(l_lg_key);
+    END LOOP;
     HTP.PRN(']');
     HTP.PRN('}');
 
@@ -985,7 +1035,8 @@ BEGIN
         p_liability_account => :P_LIABILITY_ACCOUNT,
         p_supplier_number   => :P_SUPPLIER_NUMBER,
         p_currency          => :P_CURRENCY,
-        p_period            => :P_PERIOD
+        p_period            => :P_PERIOD,
+        p_ledger            => :P_LEDGER
     );
 END;
 ]'
