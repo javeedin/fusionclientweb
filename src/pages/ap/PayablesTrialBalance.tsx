@@ -52,6 +52,12 @@ interface TbResponse {
   mode?: 'ASOF' | 'PTD'; periodStart?: string | null; openingDate?: string | null;
   totals: { tb_total: number; gl_balance: number; difference: number; unaccounted_effect: number } & Partial<PtdFields>;
   accounts: AccountRow[]; invoices: InvoiceRow[]; unaccounted: PendingRow[];
+  glLines?: GlLine[]; glLinesCapped?: boolean;
+}
+interface GlLine {
+  account: string; gl_date: string | null; journal: string | null; je_header_id: number;
+  source: string | null; category: string | null; reference1: string | null; reference2: string | null;
+  reference5: string | null; description: string | null; dr: number; cr: number; net: number; from_ap: boolean;
 }
 interface ApiCall {
   id: number; label: string; url: string; at: number;
@@ -109,6 +115,8 @@ export default function PayablesTrialBalance() {
   const [tab, setTab] = useState('summary');
   const [invSearch, setInvSearch] = useState('');
   const [drill, setDrill] = useState<{ account?: string; supplier?: string } | null>(null);
+  const [glFilter, setGlFilter] = useState<'all' | 'ap' | 'other'>('all');
+  const [glSearch, setGlSearch] = useState('');
 
   useEffect(() => {
     fetch(`${APEX_DB_CONFIG.baseUrl}/gl/businessunits`)
@@ -287,11 +295,40 @@ export default function PayablesTrialBalance() {
     { title: isPtd ? 'Invoices' : 'Open Invoices', dataIndex: 'invoice_count', align: 'right', width: 110,
       render: (v, r) => <a onClick={() => openInvoices(r.account, r.supplier_number)}>{v}</a> },
     ...(isPtd ? [
-      amt<SupplierRow>('Opening', 'opening_functional'), amt<SupplierRow>('+ Invoices', 'invoices_ptd'),
+      amt<SupplierRow>('+ Invoices', 'invoices_ptd'),
       amt<SupplierRow>('− Payments', 'payments_ptd'), amt<SupplierRow>('− Prepayments', 'prepayments_ptd'),
-    ] : []),
-    { title: isPtd ? 'Closing (AED)' : 'Open Balance (AED)', dataIndex: 'open_functional', align: 'right', width: 150,
-      sorter: (a, b) => a.open_functional - b.open_functional, render: money },
+      { title: `Net activity ${periodLabel}`, key: 'net', align: 'right' as const, width: 150,
+        sorter: (a: SupplierRow, b: SupplierRow) => (a.invoices_ptd - a.payments_ptd - a.prepayments_ptd) - (b.invoices_ptd - b.payments_ptd - b.prepayments_ptd),
+        render: (_: unknown, r: SupplierRow) => money(r.invoices_ptd - r.payments_ptd - r.prepayments_ptd) },
+    ] : [
+      { title: 'Open Balance (AED)', dataIndex: 'open_functional', align: 'right' as const, width: 150,
+        sorter: (a: SupplierRow, b: SupplierRow) => a.open_functional - b.open_functional, render: money },
+    ]),
+  ];
+
+  // PTD: GL lines behind the period movement
+  const glLines = useMemo(() => {
+    let rows = data?.glLines || [];
+    if (glFilter === 'ap') rows = rows.filter(r => r.from_ap);
+    if (glFilter === 'other') rows = rows.filter(r => !r.from_ap);
+    const q = glSearch.trim().toLowerCase();
+    if (q) rows = rows.filter(r => [r.journal, r.source, r.category, r.reference1, r.reference5, r.description, r.account]
+      .some(x => String(x ?? '').toLowerCase().includes(q)));
+    return rows;
+  }, [data, glFilter, glSearch]);
+  const glCols: ColumnsType<GlLine> = [
+    { title: 'GL Date', dataIndex: 'gl_date', width: 105, sorter: (a, b) => String(a.gl_date).localeCompare(String(b.gl_date)) },
+    { title: 'Journal', dataIndex: 'journal', width: 240, ellipsis: true },
+    { title: 'Source', dataIndex: 'source', width: 130, ellipsis: true,
+      render: (v, r) => <Space size={4}>{v || '—'}{r.from_ap ? <Tag color="blue" style={{ fontSize: 10 }}>AP</Tag> : <Tag color="orange" style={{ fontSize: 10 }}>Other</Tag>}</Space> },
+    { title: 'Category', dataIndex: 'category', width: 130, ellipsis: true },
+    { title: 'Reference', dataIndex: 'reference1', width: 150, ellipsis: true },
+    { title: 'Event', dataIndex: 'reference5', width: 190, ellipsis: true },
+    { title: 'Description', dataIndex: 'description', ellipsis: true },
+    { title: 'Dr', dataIndex: 'dr', align: 'right', width: 120, render: (v: number) => (v ? money(v) : '') },
+    { title: 'Cr', dataIndex: 'cr', align: 'right', width: 120, render: (v: number) => (v ? money(v) : '') },
+    { title: 'Net (Cr − Dr)', dataIndex: 'net', align: 'right', width: 130, render: money,
+      sorter: (a, b) => a.net - b.net },
   ];
 
   const invoiceCols: ColumnsType<InvoiceRow> = [
@@ -362,10 +399,10 @@ export default function PayablesTrialBalance() {
       'Liability Account': s.account, Supplier: s.supplier_name, 'Supplier #': s.supplier_number,
       'Invoices': s.invoice_count,
       ...(data.mode === 'PTD' ? {
-        'Opening (AED)': Math.round(s.opening_functional * 100) / 100, '+ Invoices': Math.round(s.invoices_ptd * 100) / 100,
+        '+ Invoices': Math.round(s.invoices_ptd * 100) / 100,
         '- Payments': Math.round(s.payments_ptd * 100) / 100, '- Prepayments': Math.round(s.prepayments_ptd * 100) / 100,
-      } : {}),
-      [data.mode === 'PTD' ? 'Closing (AED)' : 'Open Balance (AED)']: Math.round(s.open_functional * 100) / 100,
+        'Net activity': Math.round((s.invoices_ptd - s.payments_ptd - s.prepayments_ptd) * 100) / 100,
+      } : { 'Open Balance (AED)': Math.round(s.open_functional * 100) / 100 }),
     }))), 'By Supplier');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.invoices.map(r => ({
       'Liability Account': r.account, Supplier: r.supplier_name, 'Supplier #': r.supplier_number,
@@ -384,6 +421,13 @@ export default function PayablesTrialBalance() {
       'Supplier #': u.supplier_number, Date: u.doc_date, Currency: u.currency,
       'Amount (AED)': u.amount_functional, 'Effect once posted': u.effect,
     }))), 'Pending Accounting');
+    if (data.mode === 'PTD') {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((data.glLines || []).map(g => ({
+        'Liability Account': g.account, 'GL Date': g.gl_date, Journal: g.journal, Source: g.source,
+        Category: g.category, 'From Payables': g.from_ap ? 'Yes' : 'No', Reference: g.reference1,
+        Event: g.reference5, Description: g.description, Dr: g.dr, Cr: g.cr, 'Net (Cr-Dr)': g.net,
+      }))), 'GL Lines');
+    }
     XLSX.writeFile(wb, `Payables_Trial_Balance_${data.mode === 'PTD' ? `PTD_${dayjs(data.periodStart).format('MMM-YY')}` : data.asOfDate}.xlsx`);
   };
 
@@ -528,7 +572,7 @@ export default function PayablesTrialBalance() {
                 ),
               },
               {
-                key: 'invoices', label: `Invoices (${data.invoices.length})`,
+                key: 'invoices', label: isPtd ? `Transactions ${periodLabel} (${data.invoices.length})` : `Invoices (${data.invoices.length})`,
                 children: (
                   <>
                     <Space style={{ marginBottom: 8 }} wrap>
@@ -548,12 +592,36 @@ export default function PayablesTrialBalance() {
                   </>
                 ),
               },
+              ...(isPtd ? [{
+                key: 'gl', label: `GL Lines ${periodLabel} (${(data.glLines || []).length})`,
+                children: (
+                  <>
+                    <Space style={{ marginBottom: 8 }} wrap>
+                      <Segmented value={glFilter} onChange={v => setGlFilter(v as 'all' | 'ap' | 'other')} options={[
+                        { label: 'All', value: 'all' },
+                        { label: 'From Payables', value: 'ap' },
+                        { label: 'Not from Payables', value: 'other' },
+                      ]} />
+                      <Input.Search allowClear placeholder="Search journal, reference, description…" style={{ width: 300 }}
+                        value={glSearch} onChange={e => setGlSearch(e.target.value)} />
+                      <Text type="secondary">
+                        {glLines.length} line(s) · net {fmt(glLines.reduce((s2, r) => s2 + (Number(r.net) || 0), 0))} AED
+                      </Text>
+                    </Space>
+                    {data.glLinesCapped && <Alert type="warning" showIcon style={{ marginBottom: 8 }} message="Showing the first 20,000 GL lines — filter by Liability Account to see all." />}
+                    <Alert type="info" showIcon style={{ marginBottom: 8 }}
+                      message={`GL entries dated in ${periodLabel} on the liability account(s). Lines not from Payables (manual journals, other sources) are the usual cause of a period difference.`} />
+                    <Table<GlLine> size="small" rowKey={(r, i) => `${r.je_header_id}-${i}`} columns={glCols} dataSource={glLines}
+                      scroll={{ x: 1700 }} pagination={{ pageSize: 50, showSizeChanger: false }} />
+                  </>
+                ),
+              }] : []),
               {
                 key: 'pending', label: `Pending Accounting (${data.unaccounted.length})`,
                 children: (
                   <>
                     <Alert type="info" showIcon style={{ marginBottom: 8 }}
-                      message="Not yet accounted — excluded from both the trial balance and GL"
+                      message={isPtd ? `Dated in ${periodLabel} but not yet accounted — excluded from both Payables and GL` : 'Not yet accounted — excluded from both the trial balance and GL'}
                       description="Create and post accounting for these to bring them into the liability. Invoices increase it; payments and prepayment applications reduce it." />
                     <Table<PendingRow> size="small" rowKey={r => `${r.type}-${r.id}`} columns={pendingCols}
                       dataSource={data.unaccounted} pagination={{ pageSize: 50, showSizeChanger: false }} />

@@ -48,7 +48,9 @@
 --                       opening = day before it starts; per account/supplier/invoice:
 --                       opening + invoices − payments − prepayments = closing, and the
 --                       GL opening / period movement / closing for the same account.
---                       When given, P_AS_OF_DATE is ignored.
+--                       When given, P_AS_OF_DATE is ignored. Invoice rows, pending items
+--                       and glLines are limited to the period; opening/closing
+--                       totals still cover everything open at those dates.
 --
 -- Response:
 -- { success, asOfDate, businessUnit,
@@ -99,6 +101,10 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     l_inv      CLOB;
     l_una      CLOB;
     l_acc      CLOB;
+    l_gll      CLOB;               -- PTD mode: GL lines of the period on the liability accounts
+    l_gl_cnt   PLS_INTEGER := 0;
+    l_gl_cap   CONSTANT PLS_INTEGER := 20000;
+    l_active   BOOLEAN;
     l_first    BOOLEAN;
     l_chunk    CONSTANT INTEGER := 8000;    -- chars; keeps each HTP chunk < 32767 bytes even for multibyte text
 
@@ -210,6 +216,7 @@ BEGIN
     DBMS_LOB.CREATETEMPORARY(l_inv, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_una, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_acc, TRUE);
+    DBMS_LOB.CREATETEMPORARY(l_gll, TRUE);
 
     -- ── 1. open accounted invoices ─────────────────────────────────────────
     lob_add(l_inv, '[');
@@ -326,12 +333,17 @@ BEGIN
         -- as-of mode: open invoices only; PTD mode: anything open at either end or moved in the period
         l_show := ROUND(r.open_entered, 2) != 0
                OR (l_start IS NOT NULL AND (o_fn != 0 OR i_fn != 0 OR p_fn != 0 OR a_fn != 0));
+        -- PTD mode lists only invoices with activity IN the period (invoice accounted,
+        -- paid, prepaid, cancelled or voided in it); opening/closing totals still use all
+        l_active := l_start IS NULL OR i_fn != 0 OR p_fn != 0 OR a_fn != 0;
         IF l_show AND acct_ok(r.acct) THEN
             a_total(a_key) := a_total(a_key) + c_fn;
             a_open(a_key)  := a_open(a_key)  + o_fn;
             a_inv(a_key)   := a_inv(a_key)   + i_fn;
             a_pay(a_key)   := a_pay(a_key)   + p_fn;
             a_app(a_key)   := a_app(a_key)   + a_fn;
+        END IF;
+        IF l_show AND l_active AND acct_ok(r.acct) THEN
             a_invcnt(a_key) := a_invcnt(a_key) + 1;
             IF NOT s_seen.EXISTS(a_key || '|' || r.SUPPLIER_NUMBER) THEN
                 s_seen(a_key || '|' || r.SUPPLIER_NUMBER) := 1;
@@ -410,6 +422,41 @@ BEGIN
          || ',"invoice_count":'   || jn(a_invcnt(a_key))
          || ',"supplier_count":'  || jn(a_suppcnt(a_key))
          || '}');
+        -- PTD: the GL lines behind the period movement, tagged by source
+        IF l_start IS NOT NULL THEN
+            FOR g IN (
+                SELECT TRUNC(h.DEFAULT_EFFECTIVE_DATE) AS gl_date, h.JOURNAL_NAME, h.JE_SOURCE, h.JE_CATEGORY,
+                       l.JE_HEADER_ID, l.REFERENCE1, l.REFERENCE2, l.REFERENCE5, l.DESCRIPTION,
+                       NVL(l.ACCOUNTED_DR, 0) AS dr, NVL(l.ACCOUNTED_CR, 0) AS cr
+                FROM   RR_GL_JE_LINES_ALL l
+                JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
+                WHERE  l.ACCOUNT_COMBINATION = a_key
+                AND    TRUNC(h.DEFAULT_EFFECTIVE_DATE) BETWEEN l_start AND l_asof
+                ORDER  BY h.DEFAULT_EFFECTIVE_DATE, l.JE_HEADER_ID
+            ) LOOP
+                EXIT WHEN l_gl_cnt >= l_gl_cap;
+                IF l_gl_cnt > 0 THEN lob_add(l_gll, ','); END IF;
+                l_gl_cnt := l_gl_cnt + 1;
+                lob_add(l_gll,
+                    '{"account":'      || js(a_key)
+                 || ',"gl_date":'      || jd(g.gl_date)
+                 || ',"journal":'      || js(g.JOURNAL_NAME)
+                 || ',"je_header_id":' || jn(g.JE_HEADER_ID)
+                 || ',"source":'       || js(g.JE_SOURCE)
+                 || ',"category":'     || js(g.JE_CATEGORY)
+                 || ',"reference1":'   || js(g.REFERENCE1)
+                 || ',"reference2":'   || js(g.REFERENCE2)
+                 || ',"reference5":'   || js(g.REFERENCE5)
+                 || ',"description":'  || js(SUBSTR(g.DESCRIPTION, 1, 400))
+                 || ',"dr":'           || jn(g.dr)
+                 || ',"cr":'           || jn(g.cr)
+                 || ',"net":'          || jn(g.cr - g.dr)
+                 || ',"from_ap":'      || CASE WHEN g.REFERENCE5 LIKE 'AP-%'
+                                                 OR UPPER(g.JE_SOURCE) LIKE '%PAYABLE%'
+                                               THEN 'true' ELSE 'false' END
+                 || '}');
+            END LOOP;
+        END IF;
         a_key := a_total.NEXT(a_key);
     END LOOP;
     lob_add(l_acc, ']');
@@ -489,7 +536,8 @@ BEGIN
         AND    (l_ccy  IS NULL OR NVL(ap.CURRENCY, 'AED') = l_ccy)
         ORDER BY 6, 1, 3
     ) LOOP
-        IF u.acct IS NULL OR acct_ok(u.acct) THEN
+        IF (u.acct IS NULL OR acct_ok(u.acct))
+           AND (l_start IS NULL OR u.doc_date >= l_start) THEN   -- PTD: only items dated in the period
             l_una_tot := l_una_tot + ROUND(u.sgn * u.amt_fn, 2);
             IF NOT l_first THEN lob_add(l_una, ','); END IF;
             l_first := FALSE;
@@ -532,6 +580,10 @@ BEGIN
     lob_out(l_inv);
     HTP.PRN(',"unaccounted":');
     lob_out(l_una);
+    HTP.PRN(',"glLinesCapped":' || CASE WHEN l_gl_cnt >= l_gl_cap THEN 'true' ELSE 'false' END);
+    HTP.PRN(',"glLines":[');
+    lob_out(l_gll);
+    HTP.PRN(']');
     HTP.PRN('}');
 
 EXCEPTION WHEN OTHERS THEN
