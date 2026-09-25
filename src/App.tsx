@@ -71,6 +71,7 @@ const ManageMultiperiod       = lazy(() => import('./pages/ap/ManageMultiperiod'
 const CheckMigration          = lazy(() => import('./pages/ap/CheckMigration'));
 const DownloadInvoiceAttachments = lazy(() => import('./pages/ap/DownloadInvoiceAttachments'));
 const APGLReconcile           = lazy(() => import('./pages/ap/APGLReconcile'));
+const PayablesTrialBalance    = lazy(() => import('./pages/ap/PayablesTrialBalance'));
 const ManageSuppliers         = lazy(() => import('./pages/suppliers/ManageSuppliers'));
 const APManageSuppliers       = lazy(() => import('./pages/ap/APManageSuppliers'));
 const ManagePayablesOptions   = lazy(() => import('./pages/ap/setup/ManagePayablesOptions'));
@@ -294,6 +295,7 @@ function App() {
               <Route path="ap/multiperiod" element={<ManageMultiperiod />} />
               <Route path="ap/check-migration" element={<CheckMigration />} />
               <Route path="ap/gl-reconcile" element={<APGLReconcile />} />
+              <Route path="ap/payables-trial-balance" element={<PayablesTrialBalance />} />
               <Route path="ap/reports" element={<APReports />} />
               <Route path="ap/distribution-combinations" element={<ManageDistCombinations />} />
               <Route path="ap/attachments" element={<DownloadInvoiceAttachments />} />

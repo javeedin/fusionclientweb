@@ -137,6 +137,7 @@ const administrationItems: MenuItemType[] = [
 
 // Reports items
 const reportsItems: MenuItemType[] = [
+  { key: 'payables-trial-balance', icon: <ReconciliationOutlined />, label: 'Payables Trial Balance', description: 'Open accounted liability by account, supplier and invoice as of a date, compared with GL', color: REDWOOD.reportGreen, path: '/ap/payables-trial-balance' },
   { key: 'ap-reports', icon: <BarChartOutlined />, label: 'Payables Reports', description: 'Suppliers listing, balance, payment register, aging report', color: REDWOOD.reportGreen, path: '/ap/reports' },
   { key: 'check-migration', icon: <ApiOutlined />, label: 'Check Migration', description: 'Verify AP invoice headers vs lines integrity — missing lines, amount mismatches, truncated', color: REDWOOD.info, path: '/ap/check-migration' },
   { key: 'manage-revaluation', icon: <RetweetOutlined />, label: 'Manage Revaluation', description: 'View and manage FX revaluation entries', color: '#722ed1', path: '/gl/revaluation' },
