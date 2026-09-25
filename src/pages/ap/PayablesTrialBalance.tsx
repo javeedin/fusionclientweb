@@ -4,15 +4,15 @@
 // Pending (not yet accounted) invoices, payments and prepayment applications are
 // listed separately: they are in neither the trial balance nor GL until posted.
 // Data: GET reerp/ap/reports/trial-balance (database/ap/rr_ap_payables_trial_balance.sql)
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
 import {
   Card, Form, Select, Button, Table, Tag, Statistic, Row, Col, Space, Typography,
-  Alert, Tooltip, Input, Tabs, DatePicker, Popover,
+  Alert, Tooltip, Input, Tabs, DatePicker, AutoComplete, Drawer, Collapse, Empty,
 } from 'antd';
 import {
   SearchOutlined, DownloadOutlined, ApiOutlined, CheckCircleOutlined, WarningOutlined,
-  ReconciliationOutlined,
+  ReconciliationOutlined, PlayCircleOutlined, ReloadOutlined, DeleteOutlined, ExportOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
@@ -47,6 +47,13 @@ interface TbResponse {
   totals: { tb_total: number; gl_balance: number; difference: number; unaccounted_effect: number };
   accounts: AccountRow[]; invoices: InvoiceRow[]; unaccounted: PendingRow[];
 }
+interface ApiCall {
+  id: number; label: string; url: string; at: number;
+  status: number | null; ms: number | null; response: string; error: string | null;
+}
+interface LiabilityAccount {
+  account: string; natural_account: string | null; description: string | null; invoice_count: number;
+}
 interface SupplierRow {
   key: string; account: string; supplier_number: string; supplier_name: string;
   invoice_count: number; open_functional: number;
@@ -65,10 +72,32 @@ const PENDING_LABEL: Record<PendingRow['type'], string> = {
 export default function PayablesTrialBalance() {
   const [form] = Form.useForm();
   const [businessUnits, setBusinessUnits] = useState<string[]>([]);
+  const [liabAccounts, setLiabAccounts] = useState<LiabilityAccount[]>([]);
+  const [liabLoading, setLiabLoading] = useState(false);
+  const selectedBu = Form.useWatch('businessUnit', form) as string | undefined;
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<TbResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [apiUrl, setApiUrl] = useState('');
+  // ── API inspector: every call this screen makes, with status, time and response
+  const [calls, setCalls] = useState<ApiCall[]>([]);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const callSeq = useRef(0);
+  const callApi = useCallback(async (label: string, url: string): Promise<{ status: number; text: string }> => {
+    const id = ++callSeq.current;
+    const started = Date.now();
+    setCalls(prev => [{ id, label, url, at: started, status: null, ms: null, response: '', error: null }, ...prev].slice(0, 30));
+    const patch = (p: Partial<ApiCall>) => setCalls(prev => prev.map(c => (c.id === id ? { ...c, ...p } : c)));
+    try {
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      const text = await res.text();
+      patch({ status: res.status, ms: Date.now() - started, response: text.slice(0, 50000) });
+      return { status: res.status, text };
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      patch({ ms: Date.now() - started, error: `Network error: ${msg}` });
+      throw new Error(`Network error calling the report service: ${msg}`);
+    }
+  }, []);
   const [tab, setTab] = useState('summary');
   const [invSearch, setInvSearch] = useState('');
   const [drill, setDrill] = useState<{ account?: string; supplier?: string } | null>(null);
@@ -83,6 +112,58 @@ export default function PayablesTrialBalance() {
       .catch(() => { /* BU list optional */ });
   }, []);
 
+  // liability accounts used by the selected BU's invoices (all BUs when none)
+  useEffect(() => {
+    const p = new URLSearchParams();
+    if (selectedBu) p.set('P_BUSINESS_UNIT', selectedBu);
+    setLiabLoading(true);
+    callApi('Liability accounts', `${APEX_DB_CONFIG.baseUrl}/ap/reports/liability-accounts${p.toString() ? `?${p}` : ''}`)
+      .then(r => { try { return r.status < 400 ? JSON.parse(r.text) : null; } catch { return null; } })
+      .then(d => {
+        const items: LiabilityAccount[] = (d?.items || []).map((x: any) => ({
+          account: x.account, natural_account: x.natural_account ?? null,
+          description: x.description ?? null, invoice_count: Number(x.invoice_count) || 0,
+        })).filter((x: LiabilityAccount) => !!x.account);
+        setLiabAccounts(items);
+        // drop a picked full combination that the new BU does not use
+        const cur = form.getFieldValue('account') as string | undefined;
+        if (cur && cur.includes('-') && !items.some(a => a.account === cur)) form.setFieldValue('account', undefined);
+      })
+      .catch(() => setLiabAccounts([]))   // service not deployed: typing still works
+      .finally(() => setLiabLoading(false));
+  }, [selectedBu, form, callApi]);
+
+  // picker options: each natural account ("all companies") first, then every full combination
+  const liabOptions = useMemo(() => {
+    const naturals = new Map<string, { desc: string | null; count: number }>();
+    for (const a of liabAccounts) {
+      if (!a.natural_account) continue;
+      const n = naturals.get(a.natural_account) || { desc: a.description, count: 0 };
+      n.count += a.invoice_count;
+      naturals.set(a.natural_account, n);
+    }
+    const row = (value: string, title: string, desc: string | null, count: number) => ({
+      value,
+      search: `${value} ${desc || ''}`.toLowerCase(),
+      label: (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <span><Text code style={{ fontSize: 12 }}>{title}</Text>{desc ? <Text type="secondary" style={{ fontSize: 12 }}> {desc}</Text> : null}</span>
+          <Text type="secondary" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{count.toLocaleString()} inv</Text>
+        </div>
+      ),
+    });
+    return [
+      ...(naturals.size ? [{
+        label: 'Natural account (all combinations)',
+        options: [...naturals.entries()].map(([nat, n]) => row(nat, nat, n.desc, n.count)),
+      }] : []),
+      ...(liabAccounts.length ? [{
+        label: 'Account combination',
+        options: liabAccounts.map(a => row(a.account, a.account, a.description, a.invoice_count)),
+      }] : []),
+    ];
+  }, [liabAccounts]);
+
   const run = useCallback(async () => {
     const v = await form.validateFields();
     const p = new URLSearchParams({ P_AS_OF_DATE: (v.asOfDate as Dayjs).format('YYYY-MM-DD') });
@@ -91,14 +172,20 @@ export default function PayablesTrialBalance() {
     if (v.supplier?.trim()) p.set('P_SUPPLIER_NUMBER', v.supplier.trim());
     if (v.currency) p.set('P_CURRENCY', v.currency);
     const url = `${APEX_DB_CONFIG.baseUrl}/ap/reports/trial-balance?${p}`;
-    setApiUrl(url);
     setLoading(true); setError(null); setDrill(null); setInvSearch('');
     try {
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
-      const text = await res.text();
-      if (!text.trim()) throw new Error(`Empty response (HTTP ${res.status}) — is the trial balance service deployed?`);
-      const d = JSON.parse(text) as TbResponse;
+      const { status, text } = await callApi('Trial balance', url);
+      if (!text.trim()) throw new Error(`Empty response (HTTP ${status}) — is the trial balance service deployed?`);
+      let d: TbResponse & { code?: string; message?: string };
+      try { d = JSON.parse(text); }
+      catch { throw new Error(`HTTP ${status}: the service did not return JSON — open the API Inspector to see the response.`); }
+      if (status === 404 || d.code === 'NotFound') {
+        throw new Error('The trial balance service is not deployed (HTTP 404). Run database/ap/rr_ap_payables_trial_balance.sql in the bcldifc schema.');
+      }
       if (d.success === 'false' || d.success === false) throw new Error(d.error || 'Report failed');
+      if (status >= 400 || !d.totals || !Array.isArray(d.accounts)) {
+        throw new Error(`HTTP ${status}: unexpected response${d.message ? ` — ${d.message}` : ''}. Open the API Inspector to see it.`);
+      }
       setData(d);
     } catch (e: any) {
       setData(null);
@@ -106,7 +193,7 @@ export default function PayablesTrialBalance() {
     } finally {
       setLoading(false);
     }
-  }, [form]);
+  }, [form, callApi]);
 
   // supplier summary is derived from the invoice-level rows
   const suppliers = useMemo<SupplierRow[]>(() => {
@@ -236,11 +323,9 @@ export default function PayablesTrialBalance() {
       <Space align="center" style={{ marginBottom: 12 }}>
         <ReconciliationOutlined style={{ fontSize: 22, color: REDWOOD.primary }} />
         <Title level={4} style={{ margin: 0, color: REDWOOD.primary }}>Payables Trial Balance</Title>
-        {apiUrl && (
-          <Popover trigger="click" title="API" content={<Text copyable style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', maxWidth: 520, display: 'block' }}>{apiUrl}</Text>}>
-            <ApiOutlined style={{ color: REDWOOD.info, cursor: 'pointer' }} />
-          </Popover>
-        )}
+        <Button size="small" icon={<ApiOutlined />} onClick={() => setInspectorOpen(true)}>
+          API Inspector{calls.length ? ` (${calls.length})` : ''}
+        </Button>
       </Space>
 
       <Card size="small" style={{ marginBottom: 12 }}>
@@ -254,7 +339,18 @@ export default function PayablesTrialBalance() {
           </Form.Item>
           <Form.Item name="account" label="Liability Account"
             tooltip="Full combination (01-00-00-2313101-…) or the natural account only (2313101)">
-            <Input allowClear placeholder="e.g. 2313101" style={{ width: 200 }} />
+            <AutoComplete
+              allowClear
+              style={{ width: 340 }}
+              popupMatchSelectWidth={520}
+              placeholder={liabLoading ? 'Loading accounts…' : 'All — pick or type, e.g. 2313101'}
+              options={liabOptions}
+              filterOption={(input, opt) => {
+                const o = opt as { search?: string; options?: unknown[] } | undefined;
+                if (!o || o.options) return true; // group headers
+                return !input || (o.search || '').includes(input.toLowerCase());
+              }}
+            />
           </Form.Item>
           <Form.Item name="supplier" label="Supplier #">
             <Input allowClear placeholder="All" style={{ width: 120 }} />
@@ -358,6 +454,58 @@ export default function PayablesTrialBalance() {
           </Card>
         </>
       )}
+
+      <Drawer
+        title={<Space><ApiOutlined style={{ color: REDWOOD.info }} />API Inspector</Space>}
+        open={inspectorOpen}
+        onClose={() => setInspectorOpen(false)}
+        width={760}
+        extra={
+          <Space>
+            <Button type="primary" icon={<PlayCircleOutlined />} loading={loading}
+              style={{ background: REDWOOD.primary, borderColor: REDWOOD.primary }}
+              onClick={() => form.submit()}>Run report</Button>
+            <Button icon={<DeleteOutlined />} disabled={!calls.length} onClick={() => setCalls([])}>Clear</Button>
+          </Space>
+        }
+      >
+        {!calls.length
+          ? <Empty description="No calls yet — press Run report" />
+          : (
+            <Collapse
+              defaultActiveKey={[String(calls[0].id)]}
+              items={calls.map(c => ({
+                key: String(c.id),
+                label: (
+                  <Space wrap size={6}>
+                    <Tag color="green">GET</Tag>
+                    <Text strong>{c.label}</Text>
+                    {c.status === null && !c.error && <Tag color="processing">running…</Tag>}
+                    {c.status !== null && <Tag color={c.status < 400 ? 'success' : 'error'}>HTTP {c.status}</Tag>}
+                    {c.error && <Tag color="error">failed</Tag>}
+                    {c.ms !== null && <Text type="secondary">{c.ms.toLocaleString()} ms</Text>}
+                    <Text type="secondary" style={{ fontSize: 11 }}>{dayjs(c.at).format('HH:mm:ss')}</Text>
+                  </Space>
+                ),
+                children: (
+                  <>
+                    <Text copyable style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', display: 'block', marginBottom: 8 }}>{c.url}</Text>
+                    <Space style={{ marginBottom: 8 }}>
+                      <Button size="small" icon={<ReloadOutlined />} onClick={() => { callApi(`${c.label} (re-run)`, c.url).catch(() => {}); }}>Call again</Button>
+                      <Button size="small" icon={<ExportOutlined />} onClick={() => window.open(c.url, '_blank', 'noopener')}>Open in browser</Button>
+                    </Space>
+                    {c.error && <Alert type="error" showIcon message={c.error} style={{ marginBottom: 8 }} />}
+                    <pre style={{ maxHeight: 360, overflow: 'auto', margin: 0, padding: 8, fontSize: 11, background: '#1e1e1e', color: '#d4d4d4', borderRadius: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {c.status === null && !c.error ? 'Waiting for response…' : (() => {
+                        try { return JSON.stringify(JSON.parse(c.response), null, 2).slice(0, 50000); } catch { return c.response || '(empty response)'; }
+                      })()}
+                    </pre>
+                  </>
+                ),
+              }))}
+            />
+          )}
+      </Drawer>
     </div>
   );
 }
