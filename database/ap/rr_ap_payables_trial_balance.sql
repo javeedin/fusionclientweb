@@ -184,6 +184,7 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     so_tb      t_num;           -- payables balance (functional)
     so_out     t_num;           -- total outstanding: dashboard formula, liability account filter, AED
     l_out_tot  NUMBER := 0;
+    a_out      t_num;           -- liability account -> total outstanding (AED)
     l_out_fn   NUMBER;
     l_sk       VARCHAR2(240);
     l_bucket   VARCHAR2(20);
@@ -1126,6 +1127,9 @@ BEGIN
                 l_out_fn := ROUND(v.dash_rem * v.rate, 2);
                 so_out(l_sk) := so_out(l_sk) + l_out_fn;
                 l_out_tot    := l_out_tot + l_out_fn;
+                a_key := NVL(v.acct, '(no liability account)');
+                IF NOT a_out.EXISTS(a_key) THEN a_out(a_key) := 0; END IF;
+                a_out(a_key) := a_out(a_key) + l_out_fn;
             END IF;
             so_cnt(l_sk)  := so_cnt(l_sk) + 1;
             so_dash(l_sk) := so_dash(l_sk) + v.dash_rem;
@@ -1221,6 +1225,15 @@ BEGIN
     HTP.PRN(',"supplierInvoicesCapped":' || CASE WHEN l_si_cnt >= l_si_cap THEN 'true' ELSE 'false' END);
     HTP.PRN(',"supplierInvoices":[');
     lob_out(l_supinv);
+    HTP.PRN('],"accountOutstanding":[');
+    l_first := TRUE;
+    a_key := a_out.FIRST;
+    WHILE a_key IS NOT NULL LOOP
+        IF NOT l_first THEN HTP.PRN(','); END IF;
+        l_first := FALSE;
+        HTP.PRN('{"account":' || js(a_key) || ',"outstanding":' || jn(a_out(a_key)) || '}');
+        a_key := a_out.NEXT(a_key);
+    END LOOP;
     HTP.PRN('],"glByLedger":[');
     l_first := TRUE;
     l_lg_key := l_by_ledger.FIRST;

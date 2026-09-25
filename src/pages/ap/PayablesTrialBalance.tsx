@@ -35,6 +35,7 @@ interface PtdFields {
 interface AccountRow extends Partial<PtdFields> {
   account: string; tb_total: number; gl_balance: number; difference: number;
   invoice_count: number; supplier_count: number; gl_by_date?: number;
+  outstanding?: number; diff_out?: number; not_accounted_only?: boolean;
 }
 interface InvoiceRow {
   account: string; supplier_number: string; supplier_name: string;
@@ -60,6 +61,7 @@ interface TbResponse {
   glMonthly?: GlMonth[]; apMonthly?: ApMonth[];
   ledger?: string | null; glByLedger?: { ledger: string; balance: number }[];
   supplierOutstanding?: SupOut[]; supplierInvoices?: SupInv[]; supplierInvoicesCapped?: boolean;
+  accountOutstanding?: { account: string; outstanding: number }[];
 }
 interface SupOut {
   supplier_number: string; supplier_name: string | null; invoice_count: number;
@@ -542,7 +544,12 @@ export default function PayablesTrialBalance() {
       render: (v, r) => (
         <Space size={4}>
           <Text code style={{ fontSize: 12 }}>{v}</Text>
-          {!r.invoice_count && isZero(r.tb_total) && isZero(r.tb_opening || 0) && (
+          {r.not_accounted_only && (
+            <Tooltip title="Only unaccounted invoices use this account: they are outstanding, but nothing is in GL yet (GL not compared)">
+              <Tag color="gold" style={{ fontSize: 10 }}>Not accounted</Tag>
+            </Tooltip>
+          )}
+          {!r.not_accounted_only && !r.invoice_count && isZero(r.tb_total) && isZero(r.tb_opening || 0) && (
             <Tooltip title="No invoice uses this combination as liability account, but GL has entries on it (same company and natural account). The GL Trial Balance includes it, so it is compared here too.">
               <Tag color="orange" style={{ fontSize: 10 }}>GL only</Tag>
             </Tooltip>
@@ -567,15 +574,19 @@ export default function PayablesTrialBalance() {
         { title: 'Closing', dataIndex: 'difference', key: 'difference', align: 'right' as const, width: 130, render: diffTag },
       ] },
     ] : [
-      amt<AccountRow>('Payables Balance (AED)', 'tb_total', 170),
+      { ...amt<AccountRow>('Payables Balance (AED)', 'outstanding', 170),
+        title: <Tooltip title="Total outstanding regardless of accounting status (as the Payables dashboard)">Payables Balance (AED)</Tooltip> },
+      { ...amt<AccountRow>('Accounted only', 'tb_total', 150),
+        title: <Tooltip title="Only what is accounted by the as-of date — the part GL can contain"><Text type="secondary">Accounted only</Text></Tooltip>,
+        render: (v: number) => <Text type="secondary">{fmt(v)}</Text> },
       amt<AccountRow>('GL Balance (AED)', 'gl_balance', 170),
-      { title: 'Difference', dataIndex: 'difference', key: 'difference', align: 'right' as const, width: 170, render: diffTag },
+      { title: 'Difference', dataIndex: 'diff_out', key: 'diff_out', align: 'right' as const, width: 170, render: diffTag },
     ]),
   ];
   // total row follows the leaf columns after the first three
   const accountTotalKeys: string[] = isPtd
     ? ['tb_opening', 'invoices_ptd', 'payments_ptd', 'prepayments_ptd', 'tb_total', 'gl_opening', 'gl_ptd', 'gl_balance', 'difference_opening', 'difference_ptd', 'difference']
-    : ['tb_total', 'gl_balance', 'difference'];
+    : ['outstanding', 'tb_total', 'gl_balance', 'diff_out'];
 
   const supplierCols: ColumnsType<SupplierRow> = [
     { title: 'Liability Account', dataIndex: 'account', width: 290, render: v => <Text code style={{ fontSize: 12 }}>{v}</Text> },
@@ -709,9 +720,10 @@ export default function PayablesTrialBalance() {
           data.totals.tb_total, data.totals.gl_opening, data.totals.gl_ptd, data.totals.gl_balance,
           data.totals.difference_opening, data.totals.difference_ptd, data.totals.difference],
       ] : [
-        ['Liability Account', 'Suppliers', 'Open Invoices', 'Payables Balance (AED)', 'GL Balance (AED)', 'Difference'],
-        ...data.accounts.map(a => [a.account, a.supplier_count, a.invoice_count, a.tb_total, a.gl_balance, a.difference]),
-        ['TOTAL', '', '', data.totals.tb_total, data.totals.gl_balance, data.totals.difference],
+        ['Liability Account', 'Suppliers', 'Open Invoices', 'Payables Balance (AED)', 'Accounted only', 'GL Balance (AED)', 'Difference'],
+        ...accountRows.map(a => [a.account, a.supplier_count, a.invoice_count, a.outstanding ?? a.tb_total, a.tb_total, a.gl_balance,
+          a.diff_out ?? a.difference]),
+        ['TOTAL', '', '', outstanding, data.totals.tb_total, data.totals.gl_balance, outDiff],
       ]),
     ]);
     XLSX.utils.book_append_sheet(wb, summary, 'Summary');
@@ -788,6 +800,26 @@ export default function PayablesTrialBalance() {
   const outstanding = t ? (t.outstanding ?? t.tb_total) : 0;
   const outDiff = t ? outstanding - t.gl_balance : 0;
   const reconciled = t && (isPtd ? isZero(t.difference) : isZero(outDiff));
+  // Summary by Account (as of): total outstanding per account next to accounted and GL.
+  // Accounts whose invoices are all unaccounted appear too, so the total equals the card.
+  const accountRows = useMemo<AccountRow[]>(() => {
+    if (!data) return [];
+    if (data.mode === 'PTD' || !data.accountOutstanding) return data.accounts;
+    const out = new Map(data.accountOutstanding.map(a => [a.account, Number(a.outstanding) || 0]));
+    const rows: AccountRow[] = data.accounts.map(a => {
+      const o = out.get(a.account) ?? 0;
+      return { ...a, outstanding: o, diff_out: o - (Number(a.gl_balance) || 0) };
+    });
+    for (const [account, o] of out) {
+      if (!isZero(o) && !data.accounts.some(a => a.account === account)) {
+        rows.push({ account, tb_total: 0, gl_balance: 0, difference: 0, invoice_count: 0, supplier_count: 0,
+          outstanding: o, diff_out: o, not_accounted_only: true });
+      }
+    }
+    return rows;
+  }, [data]);
+  const accountTotals: Record<string, number> = t ? { ...(t as unknown as Record<string, number>),
+    outstanding, diff_out: outDiff } : {};
 
   return (
     <div style={{ padding: 16, background: REDWOOD.neutral100, minHeight: '100%' }}>
@@ -945,14 +977,14 @@ export default function PayablesTrialBalance() {
               {
                 key: 'summary', label: 'Summary by Account',
                 children: (
-                  <Table<AccountRow> size="small" rowKey="account" columns={accountCols} dataSource={data.accounts}
+                  <Table<AccountRow> size="small" rowKey="account" columns={accountCols} dataSource={accountRows}
                     pagination={false} bordered={isPtd} scroll={isPtd ? { x: 1900 } : undefined}
                     summary={() => (
                       <Table.Summary.Row style={{ fontWeight: 600, background: REDWOOD.neutral100 }}>
                         <Table.Summary.Cell index={0} colSpan={3}>Total</Table.Summary.Cell>
                         {accountTotalKeys.map((k, i) => (
                           <Table.Summary.Cell key={k} index={3 + i} align="right">
-                            {fmt((t as unknown as Record<string, number>)[k])}
+                            {fmt(accountTotals[k])}
                           </Table.Summary.Cell>
                         ))}
                       </Table.Summary.Row>
