@@ -78,6 +78,18 @@
 --   unaccounted: [{ type, id, number, supplier_number, supplier_name, doc_date,
 --                   currency, amount_functional, effect }],
 --   totals:      { tb_total, gl_balance, difference, unaccounted_effect },
+--   supplierOutstanding: per supplier, the Payables dashboard "Total Outstanding"
+--                (suppliers/balance/outstanding formula: all non-cancelled invoices,
+--                every payment/prepayment, invoice currency, today) bridged to the
+--                Payables Balance of this report:
+--                  dashboard − not_accounted − other_accounts − timing + fx = payables_balance
+--                  not_accounted : invoices with no accounting (or accounted after D)
+--                  other_accounts: accounted invoices on another liability account
+--                  timing        : payments / prepayments / voids / cancellations not
+--                                  accounted by D, overpaid invoices the dashboard floors at 0
+--                  fx            : functional (AED at the invoice rate) − invoice currency
+--   supplierInvoices: the invoices behind each supplier row (dashboard remaining vs
+--                Payables open) with the bucket they fall in,
 --   As-of mode only — monthly Account Analysis (roll-forward up to D):
 --   glMonthly:   [{ account, month 'YYYY-MM', dr, cr, lines }]          GL lines per month
 --   apMonthly:   [{ account, month, invoices, cancellations, payments, prepayments }]
@@ -158,6 +170,24 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     l_ledger   VARCHAR2(240) := TRIM(p_ledger);
     l_by_ledger t_num;          -- ledger -> GL balance (TB basis, all ledgers) of the accounts
     l_lg_key   VARCHAR2(240);
+    -- 4. supplier outstanding bridge (dashboard formula → Payables Balance)
+    TYPE t_str IS TABLE OF VARCHAR2(400) INDEX BY VARCHAR2(240);
+    so_name    t_str;
+    so_cnt     t_num;
+    so_dash    t_num;
+    so_na      t_num;           -- not accounted
+    so_oa      t_num;           -- other liability accounts
+    so_tm      t_num;           -- timing / floors
+    so_fx      t_num;           -- functional − entered
+    so_tb      t_num;           -- payables balance (functional)
+    l_sk       VARCHAR2(240);
+    l_bucket   VARCHAR2(20);
+    l_open_e   NUMBER;
+    l_open_f   NUMBER;
+    l_sup      CLOB;
+    l_supinv   CLOB;
+    l_si_cnt   PLS_INTEGER := 0;
+    l_si_cap   CONSTANT PLS_INTEGER := 30000;
     a_key      VARCHAR2(240);
     l_gl       NUMBER;
     l_gl_open  NUMBER;
@@ -284,6 +314,8 @@ BEGIN
     DBMS_LOB.CREATETEMPORARY(l_docs, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_mgl, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_map, TRUE);
+    DBMS_LOB.CREATETEMPORARY(l_sup, TRUE);
+    DBMS_LOB.CREATETEMPORARY(l_supinv, TRUE);
 
     -- ── 1. open accounted invoices ─────────────────────────────────────────
     lob_add(l_inv, '[');
@@ -965,6 +997,176 @@ BEGIN
     END LOOP;
     lob_add(l_una, ']');
 
+    -- ── 4. supplier outstanding: dashboard formula vs this report, per invoice ──
+    FOR v IN (
+        WITH gl_post AS (
+            SELECT l.REFERENCE5 AS ref5, l.REFERENCE2 AS ref2,
+                   MIN(TRUNC(h.DEFAULT_EFFECTIVE_DATE)) AS gl_date
+            FROM   RR_GL_JE_LINES_ALL l
+            JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
+            WHERE  l.REFERENCE5 IN ('AP-INVOICE-CREATION','AP-INVOICE-CANCELLATION',
+                                    'AP-PAYMENT','AP-PAYMENT-VOID','AP-PREPAYMENT-APPLICATION')
+            GROUP BY l.REFERENCE5, l.REFERENCE2
+        ),
+        pay AS (
+            SELECT x.INVOICE_ID,
+                   SUM(CASE WHEN x.eff_date <= l_asof AND (x.void_date IS NULL OR x.void_date > l_asof)
+                            THEN x.amt ELSE 0 END) AS paid_tb,
+                   SUM(CASE WHEN x.p_status != 'Voided' AND x.ip_status != 'Voided'
+                            THEN x.amt ELSE 0 END) AS paid_dash
+            FROM (
+                SELECT ri.INVOICE_ID,
+                       NVL(ri.AMOUNT_PAID_INVOICE_CURRENCY, 0) + NVL(ri.DISCOUNT_TAKEN, 0) AS amt,
+                       NVL(p.PAYMENT_STATUS, 'Active')          AS p_status,
+                       NVL(ri.INVOICE_PAYMENT_STATUS, 'Active') AS ip_status,
+                       CASE WHEN p.SYNC_STATUS = 'SYNCED'
+                            THEN TRUNC(NVL(p.ACCOUNTING_DATE, p.PAYMENT_DATE))
+                            ELSE gp.gl_date END AS eff_date,
+                       CASE WHEN NVL(p.PAYMENT_STATUS, 'x') = 'Voided' THEN
+                            CASE WHEN p.SYNC_STATUS = 'SYNCED'
+                                 THEN TRUNC(COALESCE(p.VOID_ACCOUNTING_DATE, p.VOID_DATE, p.PAYMENT_DATE))
+                                 ELSE gv.gl_date END
+                       END AS void_date
+                FROM   RR_AP_PAYMENTS_RELATED_INVOICES ri
+                JOIN   RR_AP_PAYMENTS_ALL p ON p.CHECK_ID = ri.CHECK_ID
+                LEFT JOIN gl_post gp ON gp.ref5 = 'AP-PAYMENT'      AND gp.ref2 = TO_CHAR(p.CHECK_ID)
+                LEFT JOIN gl_post gv ON gv.ref5 = 'AP-PAYMENT-VOID' AND gv.ref2 = TO_CHAR(p.CHECK_ID)
+            ) x
+            GROUP BY x.INVOICE_ID
+        ),
+        app AS (            -- prepayments applied TO an invoice
+            SELECT COALESCE(ap.INVOICE_ID, inv_r.INVOICE_ID) AS INVOICE_ID,
+                   SUM(NVL(ap.APPLIED_AMOUNT, 0)) AS applied_dash,
+                   SUM(CASE WHEN (CASE WHEN NVL(ap.SYNC_STATUS, 'NEW') = 'SYNCED' OR tgt.SYNC_STATUS = 'SYNCED'
+                                       THEN TRUNC(COALESCE(ap.APPLICATION_ACCOUNTING_DATE, tgt.ACCOUNTING_DATE, tgt.INVOICE_DATE))
+                                       ELSE ga.gl_date END) <= l_asof
+                            THEN NVL(ap.APPLIED_AMOUNT, 0) ELSE 0 END) AS applied_tb
+            FROM   RR_AP_APPLIED_PREPAYMENTS ap
+            LEFT JOIN RR_AP_INVOICES_ALL inv_r
+                   ON ap.INVOICE_ID IS NULL AND inv_r.INVOICE_NUMBER = ap.INVOICE_NUMBER
+            LEFT JOIN RR_AP_INVOICES_ALL tgt
+                   ON tgt.INVOICE_ID = COALESCE(ap.INVOICE_ID, inv_r.INVOICE_ID)
+            LEFT JOIN gl_post ga ON ga.ref5 = 'AP-PREPAYMENT-APPLICATION' AND ga.ref2 = TO_CHAR(ap.APPLICATION_ID)
+            WHERE  NVL(ap.STATUS, 'Applied') != 'Cancelled'
+            GROUP BY COALESCE(ap.INVOICE_ID, inv_r.INVOICE_ID)
+        ),
+        app_out AS (        -- applied OUT of a prepayment invoice (dashboard only)
+            SELECT COALESCE(ap.PREPAYMENT_INVOICE_ID, prep_r.INVOICE_ID) AS INVOICE_ID,
+                   SUM(NVL(ap.APPLIED_AMOUNT, 0)) AS applied_out
+            FROM   RR_AP_APPLIED_PREPAYMENTS ap
+            LEFT JOIN RR_AP_INVOICES_ALL prep_r
+                   ON ap.PREPAYMENT_INVOICE_ID IS NULL AND prep_r.INVOICE_NUMBER = ap.PREPAYMENT_NUMBER
+            WHERE  NVL(ap.STATUS, 'Applied') != 'Cancelled'
+            GROUP BY COALESCE(ap.PREPAYMENT_INVOICE_ID, prep_r.INVOICE_ID)
+        )
+        SELECT i.INVOICE_ID, i.INVOICE_NUMBER, i.INVOICE_TYPE, i.INVOICE_DATE,
+               NVL(i.SUPPLIER_NUMBER, '(none)') AS supp_no, i.SUPPLIER AS supp_name,
+               i.LIABILITY_DISTRIBUTION AS acct,
+               NVL(i.INVOICE_CURRENCY, 'AED') AS ccy,
+               CASE WHEN NVL(i.INVOICE_CURRENCY, 'AED') = 'AED' THEN 1
+                    ELSE NVL(NULLIF(i.CONVERSION_RATE, 0), 1) END AS rate,
+               NVL(i.INVOICE_AMOUNT, 0) AS amt,
+               CASE WHEN i.SYNC_STATUS = 'SYNCED'
+                    THEN TRUNC(NVL(i.ACCOUNTING_DATE, i.INVOICE_DATE))
+                    ELSE gi.gl_date END AS acct_date,
+               CASE WHEN NVL(i.CANCELED_FLAG, 'N') = 'Y' THEN
+                    CASE WHEN i.SYNC_STATUS = 'SYNCED'
+                         THEN TRUNC(COALESCE(i.CANCELED_DATE, i.CANCELLATION_DATE, i.INVOICE_DATE))
+                         ELSE gc.gl_date END
+               END AS cancel_date,
+               NVL(pay.paid_tb, 0) AS paid_tb, NVL(app.applied_tb, 0) AS applied_tb,
+               -- dashboard remaining (suppliers/balance/outstanding)
+               CASE WHEN NVL(i.CANCELED_FLAG, 'N') = 'Y' THEN 0
+                    WHEN NVL(i.INVOICE_AMOUNT, 0) < 0 THEN
+                         NVL(i.INVOICE_AMOUNT, 0) - NVL(pay.paid_dash, 0)
+                       - NVL(app.applied_dash, 0) - NVL(ao.applied_out, 0)
+                    ELSE GREATEST(0, NVL(i.INVOICE_AMOUNT, 0) - NVL(pay.paid_dash, 0)
+                       - NVL(app.applied_dash, 0) - NVL(ao.applied_out, 0))
+               END AS dash_rem
+        FROM   RR_AP_INVOICES_ALL i
+        LEFT JOIN gl_post gi ON gi.ref5 = 'AP-INVOICE-CREATION'     AND gi.ref2 = TO_CHAR(i.INVOICE_ID)
+        LEFT JOIN gl_post gc ON gc.ref5 = 'AP-INVOICE-CANCELLATION' AND gc.ref2 = TO_CHAR(i.INVOICE_ID)
+        LEFT JOIN pay     ON pay.INVOICE_ID = i.INVOICE_ID
+        LEFT JOIN app     ON app.INVOICE_ID = i.INVOICE_ID
+        LEFT JOIN app_out ao ON ao.INVOICE_ID = i.INVOICE_ID
+        WHERE  (l_bu   IS NULL OR i.BUSINESS_UNIT   = l_bu)
+        AND    (l_supp IS NULL OR i.SUPPLIER_NUMBER = l_supp)
+        AND    (l_ccy  IS NULL OR NVL(i.INVOICE_CURRENCY, 'AED') = l_ccy)
+        ORDER  BY 5, i.INVOICE_DATE, i.INVOICE_NUMBER
+    ) LOOP
+        -- Payables open as this report computes it (section 1, as of D)
+        IF v.acct_date <= l_asof AND (v.cancel_date IS NULL OR v.cancel_date > l_asof) THEN
+            l_open_e := v.amt - v.paid_tb - v.applied_tb;
+        ELSE
+            l_open_e := 0;
+        END IF;
+        l_open_f := ROUND(l_open_e * v.rate, 2);
+        IF v.acct_date IS NULL OR v.acct_date > l_asof THEN
+            l_bucket := 'NOT_ACCOUNTED';
+        ELSIF NOT NVL(acct_ok(v.acct), FALSE) THEN   -- NULL (no account, filter set) = not in the report
+            l_bucket := 'OTHER_ACCOUNT';
+        ELSE
+            l_bucket := 'IN_REPORT';
+        END IF;
+        IF ROUND(v.dash_rem, 2) != 0 OR (l_bucket = 'IN_REPORT' AND l_open_f != 0) THEN
+            l_sk := v.supp_no;
+            IF NOT so_dash.EXISTS(l_sk) THEN
+                so_name(l_sk) := SUBSTR(v.supp_name, 1, 400);
+                so_cnt(l_sk) := 0; so_dash(l_sk) := 0; so_na(l_sk) := 0; so_oa(l_sk) := 0;
+                so_tm(l_sk) := 0;  so_fx(l_sk) := 0;   so_tb(l_sk) := 0;
+            END IF;
+            so_cnt(l_sk)  := so_cnt(l_sk) + 1;
+            so_dash(l_sk) := so_dash(l_sk) + v.dash_rem;
+            IF l_bucket = 'NOT_ACCOUNTED' THEN
+                so_na(l_sk) := so_na(l_sk) + v.dash_rem;
+            ELSIF l_bucket = 'OTHER_ACCOUNT' THEN
+                so_oa(l_sk) := so_oa(l_sk) + v.dash_rem;
+            ELSE
+                so_tm(l_sk) := so_tm(l_sk) + (v.dash_rem - l_open_e);
+                so_fx(l_sk) := so_fx(l_sk) + (l_open_f - l_open_e);
+                so_tb(l_sk) := so_tb(l_sk) + l_open_f;
+            END IF;
+            IF l_si_cnt < l_si_cap THEN
+                IF l_si_cnt > 0 THEN lob_add(l_supinv, ','); END IF;
+                l_si_cnt := l_si_cnt + 1;
+                lob_add(l_supinv,
+                    '{"supplier_number":'   || js(v.supp_no)
+                 || ',"invoice_id":'        || jn(v.INVOICE_ID)
+                 || ',"invoice_number":'    || js(v.INVOICE_NUMBER)
+                 || ',"invoice_type":'      || js(v.INVOICE_TYPE)
+                 || ',"invoice_date":'      || jd(v.INVOICE_DATE)
+                 || ',"accounting_date":'   || jd(v.acct_date)
+                 || ',"account":'           || js(v.acct)
+                 || ',"currency":'          || js(v.ccy)
+                 || ',"invoice_amount":'    || jn(v.amt)
+                 || ',"dashboard_remaining":' || jn(v.dash_rem)
+                 || ',"payables_open":'     || jn(CASE WHEN l_bucket = 'IN_REPORT' THEN l_open_f ELSE 0 END)
+                 || ',"bucket":'            || js(l_bucket)
+                 || '}');
+            END IF;
+        END IF;
+    END LOOP;
+    lob_add(l_sup, '[');
+    l_first := TRUE;
+    l_sk := so_dash.FIRST;
+    WHILE l_sk IS NOT NULL LOOP
+        IF NOT l_first THEN lob_add(l_sup, ','); END IF;
+        l_first := FALSE;
+        lob_add(l_sup,
+            '{"supplier_number":'  || js(l_sk)
+         || ',"supplier_name":'    || js(so_name(l_sk))
+         || ',"invoice_count":'    || jn(so_cnt(l_sk))
+         || ',"dashboard":'        || jn(so_dash(l_sk))
+         || ',"not_accounted":'    || jn(so_na(l_sk))
+         || ',"other_accounts":'   || jn(so_oa(l_sk))
+         || ',"timing":'           || jn(so_tm(l_sk))
+         || ',"fx":'               || jn(so_fx(l_sk))
+         || ',"payables_balance":' || jn(so_tb(l_sk))
+         || '}');
+        l_sk := so_dash.NEXT(l_sk);
+    END LOOP;
+    lob_add(l_sup, ']');
+
     OWA_UTIL.MIME_HEADER('application/json', TRUE);
     HTP.PRN('{"success":"true","asOfDate":"' || TO_CHAR(l_asof, 'YYYY-MM-DD') || '"'
          || ',"mode":"' || CASE WHEN l_start IS NULL THEN 'ASOF' ELSE 'PTD' END || '"'
@@ -1000,6 +1202,11 @@ BEGIN
     lob_out(l_mgl);
     HTP.PRN('],"apMonthly":[');
     lob_out(l_map);
+    HTP.PRN('],"supplierOutstanding":');
+    lob_out(l_sup);
+    HTP.PRN(',"supplierInvoicesCapped":' || CASE WHEN l_si_cnt >= l_si_cap THEN 'true' ELSE 'false' END);
+    HTP.PRN(',"supplierInvoices":[');
+    lob_out(l_supinv);
     HTP.PRN('],"glByLedger":[');
     l_first := TRUE;
     l_lg_key := l_by_ledger.FIRST;

@@ -58,7 +58,23 @@ interface TbResponse {
   glLines?: GlLine[]; glLinesCapped?: boolean; ptdDocs?: PtdDoc[];
   glMonthly?: GlMonth[]; apMonthly?: ApMonth[];
   ledger?: string | null; glByLedger?: { ledger: string; balance: number }[];
+  supplierOutstanding?: SupOut[]; supplierInvoices?: SupInv[]; supplierInvoicesCapped?: boolean;
 }
+interface SupOut {
+  supplier_number: string; supplier_name: string | null; invoice_count: number;
+  dashboard: number; not_accounted: number; other_accounts: number; timing: number; fx: number; payables_balance: number;
+}
+type SupBucket = 'NOT_ACCOUNTED' | 'OTHER_ACCOUNT' | 'IN_REPORT';
+interface SupInv {
+  supplier_number: string; invoice_id: number; invoice_number: string; invoice_type: string | null;
+  invoice_date: string | null; accounting_date: string | null; account: string | null; currency: string;
+  invoice_amount: number; dashboard_remaining: number; payables_open: number; bucket: SupBucket;
+}
+const BUCKET_TAG: Record<SupBucket, { label: string; color: string; tip: string }> = {
+  NOT_ACCOUNTED: { label: 'Not accounted', color: 'gold', tip: 'No accounting yet (or accounted after the as-of date): in the dashboard, not in Payables Balance / GL' },
+  OTHER_ACCOUNT: { label: 'Other account', color: 'purple', tip: 'Accounted on a liability account outside the Liability Account filter' },
+  IN_REPORT: { label: 'In report', color: 'blue', tip: 'In the Payables Balance; any difference is payment/prepayment timing, a floor at 0 or FX' },
+};
 interface GlMonth { account: string; month: string; dr: number; cr: number; lines: number }
 interface ApMonth {
   account: string; month: string; invoices: number; cancellations: number; payments: number; prepayments: number;
@@ -146,6 +162,9 @@ export default function PayablesTrialBalance() {
   const [txView, setTxView] = useState<'recon' | 'invoices'>('recon');
   const [reconFilter, setReconFilter] = useState<'all' | ReconStatus>('all');
   const [aaAccount, setAaAccount] = useState<string | undefined>(undefined);
+  const [soSearch, setSoSearch] = useState('');
+  const [soFilter, setSoFilter] = useState<'all' | 'diff'>('diff');
+  const [dashCheck, setDashCheck] = useState<{ balance: number; bu: string | null } | null>(null);
 
   useEffect(() => {
     fetch(`${APEX_DB_CONFIG.baseUrl}/gl/getledgername`)
@@ -243,6 +262,17 @@ export default function PayablesTrialBalance() {
         throw new Error(`HTTP ${status}: unexpected response${d.message ? ` — ${d.message}` : ''}. Open the API Inspector to see it.`);
       }
       setData(d);
+      // the Payables dashboard card figure, to prove the Suppliers Outstanding tab uses the same formula
+      setDashCheck(null);
+      const dp = new URLSearchParams();
+      if (v.businessUnit) dp.set('P_BUSINESS_UNIT', v.businessUnit);
+      if (v.supplier?.trim()) dp.set('P_SUPPLIER_NUMBER', v.supplier.trim());
+      callApi('Payables dashboard outstanding', `${APEX_DB_CONFIG.baseUrl}/suppliers/balance/outstanding?${dp}`)
+        .then(({ text }) => {
+          const j = JSON.parse(text);
+          if (j?.balance_summary) setDashCheck({ balance: Number(j.balance_summary.balance) || 0, bu: v.businessUnit || null });
+        })
+        .catch(() => {});
     } catch (e: any) {
       setData(null);
       setError(e.message || String(e));
@@ -467,6 +497,29 @@ export default function PayablesTrialBalance() {
     setTab('invoices'); setTxView('recon'); setReconFilter('all');
     setTimeout(() => form.submit(), 50); // let the Period field mount first
   };
+
+  // ── Suppliers Outstanding: Payables dashboard formula bridged to the Payables Balance
+  const supOut = useMemo(() => {
+    const q = soSearch.trim().toLowerCase();
+    return (data?.supplierOutstanding || [])
+      .filter(r => !q || (r.supplier_name || '').toLowerCase().includes(q) || r.supplier_number.toLowerCase().includes(q))
+      .filter(r => soFilter === 'all' || !isZero(r.dashboard - r.payables_balance))
+      .slice().sort((a, b) => Math.abs(b.dashboard - b.payables_balance) - Math.abs(a.dashboard - a.payables_balance)
+        || b.dashboard - a.dashboard);
+  }, [data, soSearch, soFilter]);
+  const supTot = useMemo(() => (data?.supplierOutstanding || []).reduce((t2, r) => ({
+    dashboard: t2.dashboard + r.dashboard, not_accounted: t2.not_accounted + r.not_accounted,
+    other_accounts: t2.other_accounts + r.other_accounts, timing: t2.timing + r.timing, fx: t2.fx + r.fx,
+    payables_balance: t2.payables_balance + r.payables_balance,
+  }), { dashboard: 0, not_accounted: 0, other_accounts: 0, timing: 0, fx: 0, payables_balance: 0 }), [data]);
+  const supInvBySupplier = useMemo(() => {
+    const m = new Map<string, SupInv[]>();
+    for (const r of data?.supplierInvoices || []) {
+      const a = m.get(r.supplier_number) || [];
+      a.push(r); m.set(r.supplier_number, a);
+    }
+    return m;
+  }, [data]);
 
   const openInvoices = (account?: string, supplier?: string) => {
     setDrill({ account, supplier });
@@ -701,6 +754,20 @@ export default function PayablesTrialBalance() {
         Event: g.reference5, Description: g.description, Dr: g.dr, Cr: g.cr, 'Net (Cr-Dr)': g.net,
       }))), 'GL Lines');
     }
+    if ((data.supplierOutstanding || []).length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((data.supplierOutstanding || []).map(r => ({
+        Supplier: r.supplier_name, 'Supplier #': r.supplier_number, Invoices: r.invoice_count,
+        'Dashboard outstanding': r.dashboard, '- Not accounted': r.not_accounted, '- Other accounts': r.other_accounts,
+        '- Timing': r.timing, '+ FX': r.fx, '= Payables Balance': r.payables_balance,
+        Difference: Math.round((r.dashboard - r.payables_balance) * 100) / 100,
+      }))), 'Suppliers Outstanding');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((data.supplierInvoices || []).map(r => ({
+        'Supplier #': r.supplier_number, Invoice: r.invoice_number, Type: r.invoice_type, 'Invoice Date': r.invoice_date,
+        'Accounted': r.accounting_date || 'not yet', Currency: r.currency, Amount: r.invoice_amount,
+        'Dashboard remaining': r.dashboard_remaining, 'Payables open (AED)': r.payables_open,
+        Why: BUCKET_TAG[r.bucket]?.label || r.bucket, 'Liability Account': r.account,
+      }))), 'Supplier Invoices');
+    }
     if (data.mode !== 'PTD' && monthRows.length) {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(monthRows.map(r => ({
         Period: monLabel(r.month), 'GL Lines': r.lines, 'GL Debit': r.dr, 'GL Credit': r.cr,
@@ -887,6 +954,108 @@ export default function PayablesTrialBalance() {
                   <Table<SupplierRow> size="small" rowKey="key" columns={supplierCols} dataSource={suppliers}
                     scroll={isPtd ? { x: 1400 } : undefined}
                     pagination={{ pageSize: 50, showSizeChanger: false, showTotal: n => `${n} suppliers` }} />
+                ),
+              },
+              {
+                key: 'supout', label: `Suppliers Outstanding (${(data.supplierOutstanding || []).length})`,
+                children: (
+                  <>
+                    <Alert type="info" showIcon style={{ marginBottom: 8 }}
+                      message="Payables dashboard “Total Outstanding” vs this report's Payables Balance, per supplier"
+                      description="The dashboard adds every non-cancelled invoice less every payment and prepayment, today, in invoice currency, on any liability account (overpaid invoices count as 0). This report counts only what is accounted by the as-of date, on the selected liability account, in AED at the invoice rate. The columns in between explain the gap." />
+                    <Row gutter={8} style={{ marginBottom: 8 }} wrap={false}>
+                      {[
+                        { t: 'Dashboard outstanding', v: supTot.dashboard, strong: true,
+                          tip: dashCheck ? `Payables dashboard service: ${fmt(dashCheck.balance)}${isZero(dashCheck.balance - supTot.dashboard) ? ' ✓ same' : ` (differs by ${fmt(dashCheck.balance - supTot.dashboard)} — the Currency filter or an as-of date in the past changes this column; the dashboard is today, all currencies)`}` : 'Same formula as the Payables dashboard card' },
+                        { t: '− Not accounted', v: -supTot.not_accounted, tip: BUCKET_TAG.NOT_ACCOUNTED.tip },
+                        { t: '− Other liability accounts', v: -supTot.other_accounts, tip: BUCKET_TAG.OTHER_ACCOUNT.tip },
+                        { t: '− Timing / not accounted payments', v: -supTot.timing, tip: 'Payments, prepayment applications, voids or cancellations not accounted by the as-of date; overpaid invoices the dashboard shows as 0' },
+                        { t: '+ FX (AED at invoice rate)', v: supTot.fx, tip: 'The dashboard adds invoice-currency amounts; the report converts to AED' },
+                        { t: '= Payables Balance', v: supTot.payables_balance, strong: true,
+                          tip: isZero(supTot.payables_balance - t.tb_total) ? 'Equals the Payables Balance card ✓' : `Payables Balance card: ${fmt(t.tb_total)}` },
+                      ].map(c => (
+                        <Col flex="1" key={c.t}>
+                          <Tooltip title={c.tip}>
+                            <Card size="small" style={c.strong ? { borderColor: REDWOOD.info } : undefined}>
+                              <Statistic title={<span style={{ fontSize: 12 }}>{c.t}</span>} value={c.v} precision={2}
+                                valueStyle={{ fontSize: c.strong ? 20 : 16, fontWeight: c.strong ? 600 : 400,
+                                  color: !c.strong && !isZero(c.v) ? REDWOOD.warning : undefined }} />
+                            </Card>
+                          </Tooltip>
+                        </Col>
+                      ))}
+                    </Row>
+                    {dashCheck && (
+                      <div style={{ marginBottom: 8 }}>
+                        {isZero(dashCheck.balance - supTot.dashboard)
+                          ? <Tag icon={<CheckCircleOutlined />} color="success">Dashboard column = Payables dashboard card ({fmt(dashCheck.balance)})</Tag>
+                          : <Tag icon={<WarningOutlined />} color="warning">Payables dashboard card shows {fmt(dashCheck.balance)} (today, all currencies) — this column {fmt(supTot.dashboard)}</Tag>}
+                      </div>
+                    )}
+                    <Space style={{ marginBottom: 8 }} wrap>
+                      <Segmented value={soFilter} onChange={v => setSoFilter(v as 'all' | 'diff')} options={[
+                        { label: 'With a difference', value: 'diff' }, { label: 'All suppliers', value: 'all' },
+                      ]} />
+                      <Input.Search allowClear placeholder="Supplier name or number" style={{ width: 260 }}
+                        value={soSearch} onChange={e => setSoSearch(e.target.value)} />
+                      <Text type="secondary">{supOut.length} supplier(s) · click a row to see its invoices</Text>
+                    </Space>
+                    {data.supplierInvoicesCapped && <Alert type="warning" showIcon style={{ marginBottom: 8 }} message="Invoice detail is capped at 30,000 rows — filter by Supplier # for the full list." />}
+                    <Table<SupOut> size="small" rowKey="supplier_number" dataSource={supOut} bordered
+                      scroll={{ x: 1500 }} pagination={{ pageSize: 50, showSizeChanger: false }}
+                      rowClassName={r => (isZero(r.dashboard - r.payables_balance) ? '' : 'tb-recon-issue')}
+                      expandable={{
+                        expandRowByClick: true,
+                        expandedRowRender: r => {
+                          const rows = (supInvBySupplier.get(r.supplier_number) || [])
+                            .slice().sort((a, b) => Math.abs(b.dashboard_remaining - b.payables_open) - Math.abs(a.dashboard_remaining - a.payables_open));
+                          return (
+                            <Table<SupInv> size="small" rowKey="invoice_id" dataSource={rows} pagination={rows.length > 20 ? { pageSize: 20 } : false}
+                              columns={[
+                                { title: 'Invoice', dataIndex: 'invoice_number', width: 180 },
+                                { title: 'Type', dataIndex: 'invoice_type', width: 110 },
+                                { title: 'Invoice Date', dataIndex: 'invoice_date', width: 105 },
+                                { title: 'Accounted', dataIndex: 'accounting_date', width: 105, render: (v: string | null) => v || <Text type="warning">not yet</Text> },
+                                { title: 'CCY', dataIndex: 'currency', width: 60 },
+                                { title: 'Amount', dataIndex: 'invoice_amount', align: 'right', width: 130, render: money },
+                                { title: 'Dashboard remaining', dataIndex: 'dashboard_remaining', align: 'right', width: 150, render: money },
+                                { title: 'Payables open (AED)', dataIndex: 'payables_open', align: 'right', width: 150, render: money },
+                                { title: 'Why', dataIndex: 'bucket', width: 130,
+                                  render: (b: SupBucket) => <Tooltip title={BUCKET_TAG[b].tip}><Tag color={BUCKET_TAG[b].color}>{BUCKET_TAG[b].label}</Tag></Tooltip> },
+                                { title: 'Liability Account', dataIndex: 'account', ellipsis: true },
+                              ]} />
+                          );
+                        },
+                      }}
+                      columns={[
+                        { title: 'Supplier', dataIndex: 'supplier_name', fixed: 'left', width: 260, ellipsis: true,
+                          render: (v, r) => <Space direction="vertical" size={0}><Text>{v || '—'}</Text><Text type="secondary" style={{ fontSize: 11 }}>{r.supplier_number}</Text></Space> },
+                        { title: 'Invoices', dataIndex: 'invoice_count', align: 'right', width: 80 },
+                        { title: 'Dashboard outstanding', dataIndex: 'dashboard', align: 'right', width: 160, render: (v: number) => <Text strong>{money(v)}</Text> },
+                        { title: '− Not accounted', dataIndex: 'not_accounted', align: 'right', width: 140, render: (v: number) => (isZero(v) ? '' : money(v)) },
+                        { title: '− Other accounts', dataIndex: 'other_accounts', align: 'right', width: 140, render: (v: number) => (isZero(v) ? '' : money(v)) },
+                        { title: '− Timing', dataIndex: 'timing', align: 'right', width: 130, render: (v: number) => (isZero(v) ? '' : money(v)) },
+                        { title: '+ FX', dataIndex: 'fx', align: 'right', width: 110, render: (v: number) => (isZero(v) ? '' : money(v)) },
+                        { title: '= Payables Balance', dataIndex: 'payables_balance', align: 'right', width: 160, render: (v: number) => <Text strong>{money(v)}</Text> },
+                        { title: 'Difference', key: 'd', align: 'right', width: 140, render: (_, r) => diffTag(r.dashboard - r.payables_balance) },
+                      ]}
+                      summary={() => (
+                        <Table.Summary fixed>
+                          <Table.Summary.Row className="tb-aa-strong">
+                            <Table.Summary.Cell index={0} />
+                            <Table.Summary.Cell index={1}>Total (all suppliers)</Table.Summary.Cell>
+                            <Table.Summary.Cell index={2} />
+                            <Table.Summary.Cell index={3} align="right">{fmt(supTot.dashboard)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={4} align="right">{fmt(supTot.not_accounted)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={5} align="right">{fmt(supTot.other_accounts)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={6} align="right">{fmt(supTot.timing)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={7} align="right">{fmt(supTot.fx)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={8} align="right">{fmt(supTot.payables_balance)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={9} align="right">{fmt(supTot.dashboard - supTot.payables_balance)}</Table.Summary.Cell>
+                          </Table.Summary.Row>
+                        </Table.Summary>
+                      )} />
+                  </>
                 ),
               },
               {
