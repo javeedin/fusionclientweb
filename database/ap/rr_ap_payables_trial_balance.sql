@@ -38,12 +38,17 @@
 -- when this script runs (see the user_errors check) instead of as ORDS-25001.
 --
 -- Parameters:
---   P_AS_OF_DATE        (required) YYYY-MM-DD
+--   P_AS_OF_DATE        YYYY-MM-DD (required unless P_PERIOD is given)
 --   P_BUSINESS_UNIT     optional, exact BU name
 --   P_LIABILITY_ACCOUNT optional, full combination (01-00-00-2313101-…) or natural
 --                       account only (2313101 = 4th segment)
 --   P_SUPPLIER_NUMBER   optional
 --   P_CURRENCY          optional invoice currency (AED, USD, …)
+--   P_PERIOD            optional YYYY-MM → PTD mode: closing = last day of the month,
+--                       opening = day before it starts; per account/supplier/invoice:
+--                       opening + invoices − payments − prepayments = closing, and the
+--                       GL opening / period movement / closing for the same account.
+--                       When given, P_AS_OF_DATE is ignored.
 --
 -- Response:
 -- { success, asOfDate, businessUnit,
@@ -79,9 +84,12 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     p_business_unit     IN VARCHAR2 DEFAULT NULL,
     p_liability_account IN VARCHAR2 DEFAULT NULL,
     p_supplier_number   IN VARCHAR2 DEFAULT NULL,
-    p_currency          IN VARCHAR2 DEFAULT NULL
+    p_currency          IN VARCHAR2 DEFAULT NULL,
+    p_period            IN VARCHAR2 DEFAULT NULL   -- 'YYYY-MM': PTD mode (opening/activity/closing)
 ) AS
-    l_asof      DATE;
+    l_asof      DATE;                -- closing date (as-of date, or period end)
+    l_open      DATE;                -- opening cutoff (day before period start); far past when no period
+    l_start     DATE;                -- period start (NULL = as-of mode)
     l_bu        VARCHAR2(240) := TRIM(p_business_unit);
     l_acct      VARCHAR2(240) := TRIM(p_liability_account);
     l_supp      VARCHAR2(100) := TRIM(p_supplier_number);
@@ -96,13 +104,25 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
 
     TYPE t_num  IS TABLE OF NUMBER INDEX BY VARCHAR2(240);
     TYPE t_set  IS TABLE OF NUMBER INDEX BY VARCHAR2(400);
-    a_total    t_num;           -- account -> TB total (functional)
+    a_total    t_num;           -- account -> TB closing (functional)
+    a_open     t_num;           -- account -> TB opening (functional)
+    a_inv      t_num;           -- account -> invoices in period
+    a_pay      t_num;           -- account -> payments in period
+    a_app      t_num;           -- account -> prepayments applied in period
     a_invcnt   t_num;           -- account -> open invoice count
     a_suppcnt  t_num;           -- account -> distinct supplier count
     s_seen     t_set;           -- account|supplier seen
     a_key      VARCHAR2(240);
     l_gl       NUMBER;
+    l_gl_open  NUMBER;
     l_tb_tot   NUMBER := 0;
+    l_tb_open  NUMBER := 0;
+    l_gl_otot  NUMBER := 0;
+    l_inv_tot  NUMBER := 0;
+    l_pay_tot  NUMBER := 0;
+    l_app_tot  NUMBER := 0;
+    l_show     BOOLEAN;
+    o_fn NUMBER; c_fn NUMBER; i_fn NUMBER; p_fn NUMBER; a_fn NUMBER;
     l_gl_tot   NUMBER := 0;
     l_una_tot  NUMBER := 0;
 
@@ -160,14 +180,30 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
         RETURN REGEXP_SUBSTR(p_combo, '[^-]+', 1, 4) = l_acct;
     END;
 BEGIN
-    BEGIN
-        l_asof := TO_DATE(TRIM(p_as_of_date), 'YYYY-MM-DD');
-    EXCEPTION WHEN OTHERS THEN l_asof := NULL;
-    END;
-    IF l_asof IS NULL THEN
-        OWA_UTIL.MIME_HEADER('application/json', TRUE);
-        HTP.PRN('{"success":"false","error":"P_AS_OF_DATE (YYYY-MM-DD) is required"}');
-        RETURN;
+    IF TRIM(p_period) IS NOT NULL THEN
+        -- PTD mode: period = calendar month; closing = last day, opening = day before
+        BEGIN
+            l_start := TO_DATE(TRIM(p_period) || '-01', 'YYYY-MM-DD');
+        EXCEPTION WHEN OTHERS THEN l_start := NULL;
+        END;
+        IF l_start IS NULL THEN
+            OWA_UTIL.MIME_HEADER('application/json', TRUE);
+            HTP.PRN('{"success":"false","error":"P_PERIOD must be YYYY-MM"}');
+            RETURN;
+        END IF;
+        l_asof := LAST_DAY(l_start);
+        l_open := l_start - 1;
+    ELSE
+        BEGIN
+            l_asof := TO_DATE(TRIM(p_as_of_date), 'YYYY-MM-DD');
+        EXCEPTION WHEN OTHERS THEN l_asof := NULL;
+        END;
+        IF l_asof IS NULL THEN
+            OWA_UTIL.MIME_HEADER('application/json', TRUE);
+            HTP.PRN('{"success":"false","error":"P_AS_OF_DATE (YYYY-MM-DD) or P_PERIOD (YYYY-MM) is required"}');
+            RETURN;
+        END IF;
+        l_open := DATE '1000-01-01';   -- nothing is open that early: opening = 0
     END IF;
     l_full_acct := INSTR(NVL(l_acct, 'x'), '-') > 0;
 
@@ -211,25 +247,38 @@ BEGIN
             AND    (l_supp IS NULL OR i.SUPPLIER_NUMBER = l_supp)
             AND    (l_ccy  IS NULL OR NVL(i.INVOICE_CURRENCY, 'AED') = l_ccy)
         ),
-        pay AS (
+        pay_rows AS (
+            -- one row per invoice-payment: amount, when it took effect, when it was voided
             SELECT ri.INVOICE_ID,
-                   SUM(NVL(ri.AMOUNT_PAID_INVOICE_CURRENCY, 0) + NVL(ri.DISCOUNT_TAKEN, 0)) AS paid
+                   NVL(ri.AMOUNT_PAID_INVOICE_CURRENCY, 0) + NVL(ri.DISCOUNT_TAKEN, 0) AS amt,
+                   CASE WHEN p.SYNC_STATUS = 'SYNCED'
+                        THEN TRUNC(NVL(p.ACCOUNTING_DATE, p.PAYMENT_DATE))
+                        ELSE gp.gl_date END AS eff_date,
+                   CASE WHEN NVL(p.PAYMENT_STATUS, 'x') = 'Voided' THEN
+                        CASE WHEN p.SYNC_STATUS = 'SYNCED'
+                             THEN TRUNC(COALESCE(p.VOID_ACCOUNTING_DATE, p.VOID_DATE, p.PAYMENT_DATE))
+                             ELSE gv.gl_date END
+                   END AS void_date
             FROM   RR_AP_PAYMENTS_RELATED_INVOICES ri
             JOIN   RR_AP_PAYMENTS_ALL p ON p.CHECK_ID = ri.CHECK_ID
             LEFT JOIN gl_post gp ON gp.ref5 = 'AP-PAYMENT'      AND gp.ref2 = TO_CHAR(p.CHECK_ID)
             LEFT JOIN gl_post gv ON gv.ref5 = 'AP-PAYMENT-VOID' AND gv.ref2 = TO_CHAR(p.CHECK_ID)
-            WHERE  (CASE WHEN p.SYNC_STATUS = 'SYNCED'
-                         THEN TRUNC(NVL(p.ACCOUNTING_DATE, p.PAYMENT_DATE))
-                         ELSE gp.gl_date END) <= l_asof
-            AND    NOT (NVL(p.PAYMENT_STATUS, 'x') = 'Voided'
-                        AND NVL(CASE WHEN p.SYNC_STATUS = 'SYNCED'
-                                     THEN TRUNC(COALESCE(p.VOID_ACCOUNTING_DATE, p.VOID_DATE, p.PAYMENT_DATE))
-                                     ELSE gv.gl_date END, l_asof + 1) <= l_asof)
-            GROUP BY ri.INVOICE_ID
+        ),
+        pay AS (
+            SELECT INVOICE_ID,
+                   SUM(CASE WHEN eff_date <= l_asof AND (void_date IS NULL OR void_date > l_asof) THEN amt ELSE 0 END) AS paid,
+                   SUM(CASE WHEN eff_date <= l_open AND (void_date IS NULL OR void_date > l_open) THEN amt ELSE 0 END) AS paid_open
+            FROM   pay_rows
+            WHERE  eff_date <= l_asof
+            GROUP BY INVOICE_ID
         ),
         app AS (
             SELECT COALESCE(ap.INVOICE_ID, inv_r.INVOICE_ID) AS INVOICE_ID,
-                   SUM(NVL(ap.APPLIED_AMOUNT, 0)) AS applied
+                   SUM(NVL(ap.APPLIED_AMOUNT, 0)) AS applied,
+                   SUM(CASE WHEN (CASE WHEN NVL(ap.SYNC_STATUS, 'NEW') = 'SYNCED' OR tgt.SYNC_STATUS = 'SYNCED'
+                                       THEN TRUNC(COALESCE(ap.APPLICATION_ACCOUNTING_DATE, tgt.ACCOUNTING_DATE, tgt.INVOICE_DATE))
+                                       ELSE ga.gl_date END) <= l_open
+                            THEN NVL(ap.APPLIED_AMOUNT, 0) ELSE 0 END) AS applied_open
             FROM   RR_AP_APPLIED_PREPAYMENTS ap
             LEFT JOIN RR_AP_INVOICES_ALL inv_r
                    ON ap.INVOICE_ID IS NULL AND inv_r.INVOICE_NUMBER = ap.INVOICE_NUMBER
@@ -242,22 +291,47 @@ BEGIN
                          ELSE ga.gl_date END) <= l_asof
             GROUP BY COALESCE(ap.INVOICE_ID, inv_r.INVOICE_ID)
         )
-        SELECT inv.*, NVL(pay.paid, 0) AS paid, NVL(app.applied, 0) AS applied,
-               inv.amt - NVL(pay.paid, 0) - NVL(app.applied, 0) AS open_entered
-        FROM   inv
-        LEFT JOIN pay ON pay.INVOICE_ID = inv.INVOICE_ID
-        LEFT JOIN app ON app.INVOICE_ID = inv.INVOICE_ID
-        WHERE  inv.acct_date <= l_asof
-        AND    (inv.cancel_date IS NULL OR inv.cancel_date > l_asof)
-        ORDER  BY inv.acct, inv.SUPPLIER, inv.INVOICE_DATE, inv.INVOICE_NUMBER
+        , flags AS (
+            SELECT inv.*,
+                   CASE WHEN inv.acct_date <= l_asof AND (inv.cancel_date IS NULL OR inv.cancel_date > l_asof) THEN 1 ELSE 0 END AS in_close,
+                   CASE WHEN inv.acct_date <= l_open AND (inv.cancel_date IS NULL OR inv.cancel_date > l_open) THEN 1 ELSE 0 END AS in_open,
+                   NVL(pay.paid, 0) AS paid,         NVL(pay.paid_open, 0)   AS paid_open,
+                   NVL(app.applied, 0) AS applied,   NVL(app.applied_open, 0) AS applied_open
+            FROM   inv
+            LEFT JOIN pay ON pay.INVOICE_ID = inv.INVOICE_ID
+            LEFT JOIN app ON app.INVOICE_ID = inv.INVOICE_ID
+            WHERE  inv.acct_date <= l_asof
+        )
+        SELECT f.*,
+               f.in_close * (f.amt - f.paid - f.applied)                     AS open_entered,
+               f.in_open  * (f.amt - f.paid_open - f.applied_open)           AS opening_entered,
+               f.in_close * f.amt     - f.in_open * f.amt                    AS inv_ptd,
+               f.in_close * f.paid    - f.in_open * f.paid_open              AS pay_ptd,
+               f.in_close * f.applied - f.in_open * f.applied_open           AS app_ptd
+        FROM   flags f
+        WHERE  f.in_close = 1 OR f.in_open = 1
+        ORDER  BY f.acct, f.SUPPLIER, f.INVOICE_DATE, f.INVOICE_NUMBER
     ) LOOP
         a_key := NVL(r.acct, '(no liability account)');
         -- account list for the GL comparison: every account in scope, even with 0 open
         IF NOT a_total.EXISTS(a_key) AND acct_ok(r.acct) THEN
-            a_total(a_key) := 0; a_invcnt(a_key) := 0; a_suppcnt(a_key) := 0;
+            a_total(a_key) := 0; a_open(a_key) := 0; a_inv(a_key) := 0; a_pay(a_key) := 0; a_app(a_key) := 0;
+            a_invcnt(a_key) := 0; a_suppcnt(a_key) := 0;
         END IF;
-        IF ROUND(r.open_entered, 2) != 0 AND acct_ok(r.acct) THEN
-            a_total(a_key)  := a_total(a_key)  + ROUND(r.open_entered * r.rate, 2);
+        c_fn := ROUND(r.open_entered    * r.rate, 2);
+        o_fn := ROUND(r.opening_entered * r.rate, 2);
+        i_fn := ROUND(r.inv_ptd * r.rate, 2);
+        p_fn := ROUND(r.pay_ptd * r.rate, 2);
+        a_fn := ROUND(r.app_ptd * r.rate, 2);
+        -- as-of mode: open invoices only; PTD mode: anything open at either end or moved in the period
+        l_show := ROUND(r.open_entered, 2) != 0
+               OR (l_start IS NOT NULL AND (o_fn != 0 OR i_fn != 0 OR p_fn != 0 OR a_fn != 0));
+        IF l_show AND acct_ok(r.acct) THEN
+            a_total(a_key) := a_total(a_key) + c_fn;
+            a_open(a_key)  := a_open(a_key)  + o_fn;
+            a_inv(a_key)   := a_inv(a_key)   + i_fn;
+            a_pay(a_key)   := a_pay(a_key)   + p_fn;
+            a_app(a_key)   := a_app(a_key)   + a_fn;
             a_invcnt(a_key) := a_invcnt(a_key) + 1;
             IF NOT s_seen.EXISTS(a_key || '|' || r.SUPPLIER_NUMBER) THEN
                 s_seen(a_key || '|' || r.SUPPLIER_NUMBER) := 1;
@@ -266,22 +340,26 @@ BEGIN
             IF NOT l_first THEN lob_add(l_inv, ','); END IF;
             l_first := FALSE;
             lob_add(l_inv,
-                '{"account":'          || js(a_key)
-             || ',"supplier_number":'  || js(r.SUPPLIER_NUMBER)
-             || ',"supplier_name":'    || js(r.SUPPLIER)
-             || ',"invoice_id":'       || jn(r.INVOICE_ID)
-             || ',"invoice_number":'   || js(r.INVOICE_NUMBER)
-             || ',"invoice_type":'     || js(r.INVOICE_TYPE)
-             || ',"invoice_date":'     || jd(r.INVOICE_DATE)
-             || ',"accounting_date":'  || jd(r.acct_date)
-             || ',"currency":'         || js(r.ccy)
-             || ',"rate":'             || jr(r.rate)
-             || ',"invoice_amount":'   || jn(r.amt)
-             || ',"paid_amount":'      || jn(r.paid)
-             || ',"prepaid_amount":'   || jn(r.applied)
-             || ',"open_entered":'     || jn(r.open_entered)
-             || ',"open_functional":'  || jn(r.open_entered * r.rate)
-             || ',"synced":'           || CASE WHEN r.synced = 'Y' THEN 'true' ELSE 'false' END
+                '{"account":'             || js(a_key)
+             || ',"supplier_number":'     || js(r.SUPPLIER_NUMBER)
+             || ',"supplier_name":'       || js(r.SUPPLIER)
+             || ',"invoice_id":'          || jn(r.INVOICE_ID)
+             || ',"invoice_number":'      || js(r.INVOICE_NUMBER)
+             || ',"invoice_type":'        || js(r.INVOICE_TYPE)
+             || ',"invoice_date":'        || jd(r.INVOICE_DATE)
+             || ',"accounting_date":'     || jd(r.acct_date)
+             || ',"currency":'            || js(r.ccy)
+             || ',"rate":'                || jr(r.rate)
+             || ',"invoice_amount":'      || jn(r.amt)
+             || ',"paid_amount":'         || jn(r.in_close * r.paid)
+             || ',"prepaid_amount":'      || jn(r.in_close * r.applied)
+             || ',"open_entered":'        || jn(r.open_entered)
+             || ',"open_functional":'     || jn(c_fn)
+             || ',"opening_functional":'  || jn(o_fn)
+             || ',"invoices_ptd":'        || jn(i_fn)
+             || ',"payments_ptd":'        || jn(p_fn)
+             || ',"prepayments_ptd":'     || jn(a_fn)
+             || ',"synced":'              || CASE WHEN r.synced = 'Y' THEN 'true' ELSE 'false' END
              || '}');
         END IF;
     END LOOP;
@@ -289,7 +367,8 @@ BEGIN
 
     -- the account filter can name an account that no invoice uses: still compare it
     IF l_acct IS NOT NULL AND l_full_acct AND NOT a_total.EXISTS(l_acct) THEN
-        a_total(l_acct) := 0; a_invcnt(l_acct) := 0; a_suppcnt(l_acct) := 0;
+        a_total(l_acct) := 0; a_open(l_acct) := 0; a_inv(l_acct) := 0; a_pay(l_acct) := 0; a_app(l_acct) := 0;
+        a_invcnt(l_acct) := 0; a_suppcnt(l_acct) := 0;
     END IF;
 
     -- ── 2. GL balance per liability account ────────────────────────────────
@@ -297,15 +376,22 @@ BEGIN
     l_first := TRUE;
     a_key := a_total.FIRST;
     WHILE a_key IS NOT NULL LOOP
-        SELECT NVL(SUM(NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0)), 0)
-        INTO   l_gl
+        SELECT NVL(SUM(NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0)), 0),
+               NVL(SUM(CASE WHEN TRUNC(h.DEFAULT_EFFECTIVE_DATE) <= l_open
+                            THEN NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0) END), 0)
+        INTO   l_gl, l_gl_open
         FROM   RR_GL_JE_LINES_ALL l
         JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
         WHERE  l.ACCOUNT_COMBINATION = a_key
         AND    TRUNC(h.DEFAULT_EFFECTIVE_DATE) <= l_asof;
 
-        l_tb_tot := l_tb_tot + a_total(a_key);
-        l_gl_tot := l_gl_tot + l_gl;
+        l_tb_tot  := l_tb_tot  + a_total(a_key);
+        l_tb_open := l_tb_open + a_open(a_key);
+        l_gl_tot  := l_gl_tot  + l_gl;
+        l_gl_otot := l_gl_otot + l_gl_open;
+        l_inv_tot := l_inv_tot + a_inv(a_key);
+        l_pay_tot := l_pay_tot + a_pay(a_key);
+        l_app_tot := l_app_tot + a_app(a_key);
         IF NOT l_first THEN lob_add(l_acc, ','); END IF;
         l_first := FALSE;
         lob_add(l_acc,
@@ -313,6 +399,14 @@ BEGIN
          || ',"tb_total":'        || jn(a_total(a_key))
          || ',"gl_balance":'      || jn(l_gl)
          || ',"difference":'      || jn(a_total(a_key) - l_gl)
+         || ',"tb_opening":'      || jn(a_open(a_key))
+         || ',"invoices_ptd":'    || jn(a_inv(a_key))
+         || ',"payments_ptd":'    || jn(a_pay(a_key))
+         || ',"prepayments_ptd":' || jn(a_app(a_key))
+         || ',"gl_opening":'      || jn(l_gl_open)
+         || ',"gl_ptd":'          || jn(l_gl - l_gl_open)
+         || ',"difference_opening":' || jn(a_open(a_key) - l_gl_open)
+         || ',"difference_ptd":'  || jn((a_total(a_key) - a_open(a_key)) - (l_gl - l_gl_open))
          || ',"invoice_count":'   || jn(a_invcnt(a_key))
          || ',"supplier_count":'  || jn(a_suppcnt(a_key))
          || '}');
@@ -416,11 +510,22 @@ BEGIN
 
     OWA_UTIL.MIME_HEADER('application/json', TRUE);
     HTP.PRN('{"success":"true","asOfDate":"' || TO_CHAR(l_asof, 'YYYY-MM-DD') || '"'
+         || ',"mode":"' || CASE WHEN l_start IS NULL THEN 'ASOF' ELSE 'PTD' END || '"'
+         || ',"periodStart":' || jd(l_start)
+         || ',"openingDate":' || CASE WHEN l_start IS NULL THEN 'null' ELSE jd(l_open) END
          || ',"businessUnit":' || js(l_bu)
          || ',"totals":{"tb_total":' || jn(l_tb_tot)
          || ',"gl_balance":'         || jn(l_gl_tot)
          || ',"difference":'         || jn(l_tb_tot - l_gl_tot)
-         || ',"unaccounted_effect":' || jn(l_una_tot) || '}'
+         || ',"unaccounted_effect":' || jn(l_una_tot)
+         || ',"tb_opening":'         || jn(l_tb_open)
+         || ',"invoices_ptd":'       || jn(l_inv_tot)
+         || ',"payments_ptd":'       || jn(l_pay_tot)
+         || ',"prepayments_ptd":'    || jn(l_app_tot)
+         || ',"gl_opening":'         || jn(l_gl_otot)
+         || ',"gl_ptd":'             || jn(l_gl_tot - l_gl_otot)
+         || ',"difference_opening":' || jn(l_tb_open - l_gl_otot)
+         || ',"difference_ptd":'     || jn((l_tb_tot - l_tb_open) - (l_gl_tot - l_gl_otot)) || '}'
          || ',"accounts":');
     lob_out(l_acc);
     HTP.PRN(',"invoices":');
@@ -465,7 +570,8 @@ BEGIN
         p_business_unit     => :P_BUSINESS_UNIT,
         p_liability_account => :P_LIABILITY_ACCOUNT,
         p_supplier_number   => :P_SUPPLIER_NUMBER,
-        p_currency          => :P_CURRENCY
+        p_currency          => :P_CURRENCY,
+        p_period            => :P_PERIOD
     );
 END;
 ]'

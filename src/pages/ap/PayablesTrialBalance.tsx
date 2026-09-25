@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
 import {
   Card, Form, Select, Button, Table, Tag, Statistic, Row, Col, Space, Typography,
-  Alert, Tooltip, Input, Tabs, DatePicker, AutoComplete, Drawer, Collapse, Empty,
+  Alert, Tooltip, Input, Tabs, DatePicker, AutoComplete, Drawer, Collapse, Empty, Segmented,
 } from 'antd';
 import {
   SearchOutlined, DownloadOutlined, ApiOutlined, CheckCircleOutlined, WarningOutlined,
@@ -25,7 +25,11 @@ const REDWOOD = {
   neutral100: '#F8F8F8', neutral200: '#E0E0E0', neutral600: '#6B6B6B',
 };
 
-interface AccountRow {
+interface PtdFields {
+  tb_opening: number; invoices_ptd: number; payments_ptd: number; prepayments_ptd: number;
+  gl_opening: number; gl_ptd: number; difference_opening: number; difference_ptd: number;
+}
+interface AccountRow extends Partial<PtdFields> {
   account: string; tb_total: number; gl_balance: number; difference: number;
   invoice_count: number; supplier_count: number;
 }
@@ -36,6 +40,7 @@ interface InvoiceRow {
   currency: string; rate: number;
   invoice_amount: number; paid_amount: number; prepaid_amount: number;
   open_entered: number; open_functional: number; synced: boolean;
+  opening_functional?: number; invoices_ptd?: number; payments_ptd?: number; prepayments_ptd?: number;
 }
 interface PendingRow {
   type: 'INVOICE' | 'PAYMENT' | 'PREPAYMENT_APPLICATION'; id: number; number: string;
@@ -44,7 +49,8 @@ interface PendingRow {
 }
 interface TbResponse {
   success: string | boolean; error?: string; asOfDate: string; businessUnit: string | null;
-  totals: { tb_total: number; gl_balance: number; difference: number; unaccounted_effect: number };
+  mode?: 'ASOF' | 'PTD'; periodStart?: string | null; openingDate?: string | null;
+  totals: { tb_total: number; gl_balance: number; difference: number; unaccounted_effect: number } & Partial<PtdFields>;
   accounts: AccountRow[]; invoices: InvoiceRow[]; unaccounted: PendingRow[];
 }
 interface ApiCall {
@@ -57,6 +63,7 @@ interface LiabilityAccount {
 interface SupplierRow {
   key: string; account: string; supplier_number: string; supplier_name: string;
   invoice_count: number; open_functional: number;
+  opening_functional: number; invoices_ptd: number; payments_ptd: number; prepayments_ptd: number;
 }
 
 const fmt = (n: number | null | undefined) =>
@@ -75,6 +82,7 @@ export default function PayablesTrialBalance() {
   const [liabAccounts, setLiabAccounts] = useState<LiabilityAccount[]>([]);
   const [liabLoading, setLiabLoading] = useState(false);
   const selectedBu = Form.useWatch('businessUnit', form) as string | undefined;
+  const formMode = (Form.useWatch('mode', form) as 'ASOF' | 'PTD' | undefined) || 'ASOF';
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<TbResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -166,7 +174,9 @@ export default function PayablesTrialBalance() {
 
   const run = useCallback(async () => {
     const v = await form.validateFields();
-    const p = new URLSearchParams({ P_AS_OF_DATE: (v.asOfDate as Dayjs).format('YYYY-MM-DD') });
+    const p = v.mode === 'PTD'
+      ? new URLSearchParams({ P_PERIOD: (v.period as Dayjs).format('YYYY-MM') })
+      : new URLSearchParams({ P_AS_OF_DATE: (v.asOfDate as Dayjs).format('YYYY-MM-DD') });
     if (v.businessUnit) p.set('P_BUSINESS_UNIT', v.businessUnit);
     if (v.account?.trim()) p.set('P_LIABILITY_ACCOUNT', v.account.trim());
     if (v.supplier?.trim()) p.set('P_SUPPLIER_NUMBER', v.supplier.trim());
@@ -200,9 +210,16 @@ export default function PayablesTrialBalance() {
     const m = new Map<string, SupplierRow>();
     for (const r of data?.invoices || []) {
       const key = `${r.account}|${r.supplier_number}`;
-      const s = m.get(key) || { key, account: r.account, supplier_number: r.supplier_number, supplier_name: r.supplier_name, invoice_count: 0, open_functional: 0 };
+      const s = m.get(key) || {
+        key, account: r.account, supplier_number: r.supplier_number, supplier_name: r.supplier_name,
+        invoice_count: 0, open_functional: 0, opening_functional: 0, invoices_ptd: 0, payments_ptd: 0, prepayments_ptd: 0,
+      };
       s.invoice_count += 1;
       s.open_functional += Number(r.open_functional) || 0;
+      s.opening_functional += Number(r.opening_functional) || 0;
+      s.invoices_ptd += Number(r.invoices_ptd) || 0;
+      s.payments_ptd += Number(r.payments_ptd) || 0;
+      s.prepayments_ptd += Number(r.prepayments_ptd) || 0;
       m.set(key, s);
     }
     return [...m.values()].sort((a, b) => a.account.localeCompare(b.account) || a.supplier_name.localeCompare(b.supplier_name));
@@ -224,26 +241,56 @@ export default function PayablesTrialBalance() {
   };
 
   // ── columns ────────────────────────────────────────────────────────────────
+  const isPtd = data?.mode === 'PTD';
+  const periodLabel = data?.periodStart ? dayjs(data.periodStart).format('MMM-YY') : '';
+  const diffTag = (v: number) => (isZero(v)
+    ? <Tag icon={<CheckCircleOutlined />} color="success">0.00</Tag>
+    : <Tag icon={<WarningOutlined />} color="error">{fmt(v)}</Tag>);
+  const amt = <T,>(title: string, key: keyof T & string, width = 130) =>
+    ({ title, dataIndex: key, key, align: 'right' as const, width, render: (v: number) => money(Number(v) || 0) });
+
   const accountCols: ColumnsType<AccountRow> = [
-    { title: 'Liability Account', dataIndex: 'account', render: v => <Text code style={{ fontSize: 12 }}>{v}</Text> },
-    { title: 'Suppliers', dataIndex: 'supplier_count', align: 'right', width: 100 },
-    { title: 'Open Invoices', dataIndex: 'invoice_count', align: 'right', width: 120,
+    { title: 'Liability Account', dataIndex: 'account', key: 'account', fixed: 'left', width: 290,
+      render: v => <Text code style={{ fontSize: 12 }}>{v}</Text> },
+    { title: 'Suppliers', dataIndex: 'supplier_count', key: 'supplier_count', align: 'right', width: 90 },
+    { title: isPtd ? 'Invoices' : 'Open Invoices', dataIndex: 'invoice_count', key: 'invoice_count', align: 'right', width: 100,
       render: (v, r) => (v ? <a onClick={() => openInvoices(r.account)}>{v}</a> : 0) },
-    { title: 'Trial Balance (AED)', dataIndex: 'tb_total', align: 'right', width: 170, render: money },
-    { title: 'GL Balance (AED)', dataIndex: 'gl_balance', align: 'right', width: 170, render: money },
-    { title: 'Difference', dataIndex: 'difference', align: 'right', width: 170,
-      render: (v: number) => (isZero(v)
-        ? <Tag icon={<CheckCircleOutlined />} color="success">0.00</Tag>
-        : <Tag icon={<WarningOutlined />} color="error">{fmt(v)}</Tag>) },
+    ...(isPtd ? [
+      { title: `Payables ${periodLabel}`, key: 'payables', children: [
+        amt<AccountRow>('Opening', 'tb_opening'), amt<AccountRow>('+ Invoices', 'invoices_ptd'),
+        amt<AccountRow>('− Payments', 'payments_ptd'), amt<AccountRow>('− Prepayments', 'prepayments_ptd'),
+        amt<AccountRow>('Closing', 'tb_total', 140),
+      ] },
+      { title: `GL ${periodLabel}`, key: 'gl', children: [
+        amt<AccountRow>('Opening', 'gl_opening'), amt<AccountRow>('Movement', 'gl_ptd'), amt<AccountRow>('Closing', 'gl_balance', 140),
+      ] },
+      { title: 'Difference (Payables − GL)', key: 'diff', children: [
+        { title: 'Opening', dataIndex: 'difference_opening', key: 'difference_opening', align: 'right' as const, width: 130, render: diffTag },
+        { title: 'Period', dataIndex: 'difference_ptd', key: 'difference_ptd', align: 'right' as const, width: 130, render: diffTag },
+        { title: 'Closing', dataIndex: 'difference', key: 'difference', align: 'right' as const, width: 130, render: diffTag },
+      ] },
+    ] : [
+      amt<AccountRow>('Trial Balance (AED)', 'tb_total', 170),
+      amt<AccountRow>('GL Balance (AED)', 'gl_balance', 170),
+      { title: 'Difference', dataIndex: 'difference', key: 'difference', align: 'right' as const, width: 170, render: diffTag },
+    ]),
   ];
+  // total row follows the leaf columns after the first three
+  const accountTotalKeys: string[] = isPtd
+    ? ['tb_opening', 'invoices_ptd', 'payments_ptd', 'prepayments_ptd', 'tb_total', 'gl_opening', 'gl_ptd', 'gl_balance', 'difference_opening', 'difference_ptd', 'difference']
+    : ['tb_total', 'gl_balance', 'difference'];
 
   const supplierCols: ColumnsType<SupplierRow> = [
     { title: 'Liability Account', dataIndex: 'account', width: 290, render: v => <Text code style={{ fontSize: 12 }}>{v}</Text> },
     { title: 'Supplier', dataIndex: 'supplier_name', sorter: (a, b) => a.supplier_name.localeCompare(b.supplier_name) },
     { title: 'Supplier #', dataIndex: 'supplier_number', width: 120 },
-    { title: 'Open Invoices', dataIndex: 'invoice_count', align: 'right', width: 120,
+    { title: isPtd ? 'Invoices' : 'Open Invoices', dataIndex: 'invoice_count', align: 'right', width: 110,
       render: (v, r) => <a onClick={() => openInvoices(r.account, r.supplier_number)}>{v}</a> },
-    { title: 'Open Balance (AED)', dataIndex: 'open_functional', align: 'right', width: 170,
+    ...(isPtd ? [
+      amt<SupplierRow>('Opening', 'opening_functional'), amt<SupplierRow>('+ Invoices', 'invoices_ptd'),
+      amt<SupplierRow>('− Payments', 'payments_ptd'), amt<SupplierRow>('− Prepayments', 'prepayments_ptd'),
+    ] : []),
+    { title: isPtd ? 'Closing (AED)' : 'Open Balance (AED)', dataIndex: 'open_functional', align: 'right', width: 150,
       sorter: (a, b) => a.open_functional - b.open_functional, render: money },
   ];
 
@@ -261,7 +308,11 @@ export default function PayablesTrialBalance() {
     { title: 'Paid', dataIndex: 'paid_amount', align: 'right', width: 120, render: money },
     { title: 'Prepaid', dataIndex: 'prepaid_amount', align: 'right', width: 110, render: money },
     { title: 'Open (Entered)', dataIndex: 'open_entered', align: 'right', width: 130, render: money },
-    { title: 'Open (AED)', dataIndex: 'open_functional', align: 'right', width: 130, render: money,
+    ...(isPtd ? [
+      amt<InvoiceRow>('Opening (AED)', 'opening_functional'), amt<InvoiceRow>('+ Invoices', 'invoices_ptd', 120),
+      amt<InvoiceRow>('− Payments', 'payments_ptd', 120), amt<InvoiceRow>('− Prepayments', 'prepayments_ptd', 120),
+    ] : []),
+    { title: isPtd ? 'Closing (AED)' : 'Open (AED)', dataIndex: 'open_functional', align: 'right', width: 130, render: money,
       sorter: (a, b) => a.open_functional - b.open_functional },
     { title: 'Liability Account', dataIndex: 'account', width: 270, render: v => <Text code style={{ fontSize: 11 }}>{v}</Text> },
   ];
@@ -284,27 +335,48 @@ export default function PayablesTrialBalance() {
     const wb = XLSX.utils.book_new();
     const hdr = [
       ['Payables Trial Balance'],
-      ['As of', data.asOfDate],
+      ...(data.mode === 'PTD'
+        ? [['Period', `${data.periodStart} to ${data.asOfDate}`], ['Opening balance as of', data.openingDate || '']]
+        : [['As of', data.asOfDate]]),
       ['Business Unit', data.businessUnit || 'All'],
       [],
     ];
     const summary = XLSX.utils.aoa_to_sheet([
       ...hdr,
-      ['Liability Account', 'Suppliers', 'Open Invoices', 'Trial Balance (AED)', 'GL Balance (AED)', 'Difference'],
-      ...data.accounts.map(a => [a.account, a.supplier_count, a.invoice_count, a.tb_total, a.gl_balance, a.difference]),
-      ['TOTAL', '', '', data.totals.tb_total, data.totals.gl_balance, data.totals.difference],
+      ...(data.mode === 'PTD' ? [
+        ['Liability Account', 'Suppliers', 'Invoices', 'Payables Opening', '+ Invoices', '- Payments', '- Prepayments', 'Payables Closing',
+         'GL Opening', 'GL Movement', 'GL Closing', 'Diff Opening', 'Diff Period', 'Diff Closing'],
+        ...data.accounts.map(a => [a.account, a.supplier_count, a.invoice_count, a.tb_opening, a.invoices_ptd, a.payments_ptd, a.prepayments_ptd,
+          a.tb_total, a.gl_opening, a.gl_ptd, a.gl_balance, a.difference_opening, a.difference_ptd, a.difference]),
+        ['TOTAL', '', '', data.totals.tb_opening, data.totals.invoices_ptd, data.totals.payments_ptd, data.totals.prepayments_ptd,
+          data.totals.tb_total, data.totals.gl_opening, data.totals.gl_ptd, data.totals.gl_balance,
+          data.totals.difference_opening, data.totals.difference_ptd, data.totals.difference],
+      ] : [
+        ['Liability Account', 'Suppliers', 'Open Invoices', 'Trial Balance (AED)', 'GL Balance (AED)', 'Difference'],
+        ...data.accounts.map(a => [a.account, a.supplier_count, a.invoice_count, a.tb_total, a.gl_balance, a.difference]),
+        ['TOTAL', '', '', data.totals.tb_total, data.totals.gl_balance, data.totals.difference],
+      ]),
     ]);
     XLSX.utils.book_append_sheet(wb, summary, 'Summary');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(suppliers.map(s => ({
       'Liability Account': s.account, Supplier: s.supplier_name, 'Supplier #': s.supplier_number,
-      'Open Invoices': s.invoice_count, 'Open Balance (AED)': Math.round(s.open_functional * 100) / 100,
+      'Invoices': s.invoice_count,
+      ...(data.mode === 'PTD' ? {
+        'Opening (AED)': Math.round(s.opening_functional * 100) / 100, '+ Invoices': Math.round(s.invoices_ptd * 100) / 100,
+        '- Payments': Math.round(s.payments_ptd * 100) / 100, '- Prepayments': Math.round(s.prepayments_ptd * 100) / 100,
+      } : {}),
+      [data.mode === 'PTD' ? 'Closing (AED)' : 'Open Balance (AED)']: Math.round(s.open_functional * 100) / 100,
     }))), 'By Supplier');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.invoices.map(r => ({
       'Liability Account': r.account, Supplier: r.supplier_name, 'Supplier #': r.supplier_number,
       Invoice: r.invoice_number, Type: r.invoice_type, 'Invoice Date': r.invoice_date,
       'Accounting Date': r.accounting_date, Currency: r.currency, Rate: r.rate,
       'Invoice Amount': r.invoice_amount, Paid: r.paid_amount, Prepaid: r.prepaid_amount,
-      'Open (Entered)': r.open_entered, 'Open (AED)': r.open_functional,
+      'Open (Entered)': r.open_entered,
+      ...(data.mode === 'PTD' ? {
+        'Opening (AED)': r.opening_functional, '+ Invoices': r.invoices_ptd, '- Payments': r.payments_ptd, '- Prepayments': r.prepayments_ptd,
+      } : {}),
+      [data.mode === 'PTD' ? 'Closing (AED)' : 'Open (AED)']: r.open_functional,
       Source: r.synced ? 'Oracle Fusion' : 'Re-ERP',
     }))), 'Invoices');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.unaccounted.map(u => ({
@@ -312,7 +384,7 @@ export default function PayablesTrialBalance() {
       'Supplier #': u.supplier_number, Date: u.doc_date, Currency: u.currency,
       'Amount (AED)': u.amount_functional, 'Effect once posted': u.effect,
     }))), 'Pending Accounting');
-    XLSX.writeFile(wb, `Payables_Trial_Balance_${data.asOfDate}.xlsx`);
+    XLSX.writeFile(wb, `Payables_Trial_Balance_${data.mode === 'PTD' ? `PTD_${dayjs(data.periodStart).format('MMM-YY')}` : data.asOfDate}.xlsx`);
   };
 
   const t = data?.totals;
@@ -329,10 +401,21 @@ export default function PayablesTrialBalance() {
       </Space>
 
       <Card size="small" style={{ marginBottom: 12 }}>
-        <Form form={form} layout="inline" initialValues={{ asOfDate: dayjs() }} onFinish={run} style={{ rowGap: 8 }}>
-          <Form.Item name="asOfDate" label="As of Date" rules={[{ required: true, message: 'Required' }]}>
-            <DatePicker format="DD-MMM-YYYY" allowClear={false} />
+        <Form form={form} layout="inline" initialValues={{ mode: 'ASOF', asOfDate: dayjs(), period: dayjs().subtract(1, 'month') }}
+          onFinish={run} style={{ rowGap: 8 }}>
+          <Form.Item name="mode">
+            <Segmented options={[{ label: 'As of Date', value: 'ASOF' }, { label: 'Period (PTD)', value: 'PTD' }]} />
           </Form.Item>
+          {formMode === 'PTD' ? (
+            <Form.Item name="period" label="Period" rules={[{ required: true, message: 'Required' }]}
+              tooltip="Opening balance at the day before the period, activity in the period, closing at period end — compared with the GL movement of the same period">
+              <DatePicker picker="month" format="MMM-YY" allowClear={false} />
+            </Form.Item>
+          ) : (
+            <Form.Item name="asOfDate" label="As of Date" rules={[{ required: true, message: 'Required' }]}>
+              <DatePicker format="DD-MMM-YYYY" allowClear={false} />
+            </Form.Item>
+          )}
           <Form.Item name="businessUnit" label="Business Unit">
             <Select allowClear showSearch placeholder="All" style={{ width: 240 }}
               options={businessUnits.map(b => ({ value: b, label: b }))} />
@@ -373,18 +456,42 @@ export default function PayablesTrialBalance() {
 
       {data && t && (
         <>
-          <Row gutter={12} style={{ marginBottom: 12 }}>
-            <Col span={6}><Card size="small"><Statistic title="Trial Balance (AED)" value={t.tb_total} precision={2} /></Card></Col>
-            <Col span={6}><Card size="small"><Statistic title="GL Balance (AED)" value={t.gl_balance} precision={2} /></Card></Col>
-            <Col span={6}>
-              <Card size="small">
-                <Statistic title="Difference" value={t.difference} precision={2}
-                  valueStyle={{ color: reconciled ? REDWOOD.success : REDWOOD.primary }}
-                  prefix={reconciled ? <CheckCircleOutlined /> : <WarningOutlined />} />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Tooltip title="Invoices, payments and prepayment applications dated on or before the as-of date that have no posted GL journal yet. They are in neither the trial balance nor GL; posting them changes both by this amount.">
+          <Row gutter={12} style={{ marginBottom: 12 }} wrap={false}>
+            {isPtd ? (
+              <>
+                <Col flex="1"><Card size="small"><Statistic title={`Payables activity ${periodLabel}`} value={(t.tb_total - (t.tb_opening || 0))} precision={2} /></Card></Col>
+                <Col flex="1"><Card size="small"><Statistic title={`GL movement ${periodLabel}`} value={t.gl_ptd || 0} precision={2} /></Card></Col>
+                <Col flex="1">
+                  <Card size="small">
+                    <Statistic title="Period difference" value={t.difference_ptd || 0} precision={2}
+                      valueStyle={{ color: isZero(t.difference_ptd || 0) ? REDWOOD.success : REDWOOD.primary }}
+                      prefix={isZero(t.difference_ptd || 0) ? <CheckCircleOutlined /> : <WarningOutlined />} />
+                  </Card>
+                </Col>
+                <Col flex="1">
+                  <Tooltip title={`Payables closing ${fmt(t.tb_total)} vs GL closing ${fmt(t.gl_balance)} at ${data.asOfDate}`}>
+                    <Card size="small">
+                      <Statistic title="Closing difference" value={t.difference} precision={2}
+                        valueStyle={{ color: reconciled ? REDWOOD.success : REDWOOD.primary }} />
+                    </Card>
+                  </Tooltip>
+                </Col>
+              </>
+            ) : (
+              <>
+                <Col flex="1"><Card size="small"><Statistic title="Trial Balance (AED)" value={t.tb_total} precision={2} /></Card></Col>
+                <Col flex="1"><Card size="small"><Statistic title="GL Balance (AED)" value={t.gl_balance} precision={2} /></Card></Col>
+                <Col flex="1">
+                  <Card size="small">
+                    <Statistic title="Difference" value={t.difference} precision={2}
+                      valueStyle={{ color: reconciled ? REDWOOD.success : REDWOOD.primary }}
+                      prefix={reconciled ? <CheckCircleOutlined /> : <WarningOutlined />} />
+                  </Card>
+                </Col>
+              </>
+            )}
+            <Col flex="1">
+              <Tooltip title="Invoices, payments and prepayment applications dated on or before the closing date that have no posted GL journal yet. They are in neither the trial balance nor GL; posting them changes both by this amount.">
                 <Card size="small" hoverable onClick={() => setTab('pending')}>
                   <Statistic title={`Pending accounting (${data.unaccounted.length})`} value={t.unaccounted_effect} precision={2}
                     valueStyle={{ color: data.unaccounted.length ? REDWOOD.warning : undefined }} />
@@ -399,13 +506,15 @@ export default function PayablesTrialBalance() {
                 key: 'summary', label: 'Summary by Account',
                 children: (
                   <Table<AccountRow> size="small" rowKey="account" columns={accountCols} dataSource={data.accounts}
-                    pagination={false}
+                    pagination={false} bordered={isPtd} scroll={isPtd ? { x: 1900 } : undefined}
                     summary={() => (
                       <Table.Summary.Row style={{ fontWeight: 600, background: REDWOOD.neutral100 }}>
                         <Table.Summary.Cell index={0} colSpan={3}>Total</Table.Summary.Cell>
-                        <Table.Summary.Cell index={3} align="right">{fmt(t.tb_total)}</Table.Summary.Cell>
-                        <Table.Summary.Cell index={4} align="right">{fmt(t.gl_balance)}</Table.Summary.Cell>
-                        <Table.Summary.Cell index={5} align="right">{fmt(t.difference)}</Table.Summary.Cell>
+                        {accountTotalKeys.map((k, i) => (
+                          <Table.Summary.Cell key={k} index={3 + i} align="right">
+                            {fmt((t as unknown as Record<string, number>)[k])}
+                          </Table.Summary.Cell>
+                        ))}
                       </Table.Summary.Row>
                     )} />
                 ),
@@ -414,6 +523,7 @@ export default function PayablesTrialBalance() {
                 key: 'suppliers', label: `By Supplier (${suppliers.length})`,
                 children: (
                   <Table<SupplierRow> size="small" rowKey="key" columns={supplierCols} dataSource={suppliers}
+                    scroll={isPtd ? { x: 1400 } : undefined}
                     pagination={{ pageSize: 50, showSizeChanger: false, showTotal: n => `${n} suppliers` }} />
                 ),
               },
@@ -434,7 +544,7 @@ export default function PayablesTrialBalance() {
                       </Text>
                     </Space>
                     <Table<InvoiceRow> size="small" rowKey="invoice_id" columns={invoiceCols} dataSource={invoices}
-                      scroll={{ x: 1800 }} pagination={{ pageSize: 50, showSizeChanger: false }} />
+                      scroll={{ x: isPtd ? 2300 : 1800 }} pagination={{ pageSize: 50, showSizeChanger: false }} />
                   </>
                 ),
               },
