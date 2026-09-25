@@ -62,7 +62,15 @@ interface TbResponse {
   ledger?: string | null; glByLedger?: { ledger: string; balance: number }[];
   supplierOutstanding?: SupOut[]; supplierInvoices?: SupInv[]; supplierInvoicesCapped?: boolean;
   accountOutstanding?: { account: string; outstanding: number }[];
+  glBySupplier?: { supplier_number: string; supplier_name: string | null; gl: number; lines: number }[];
+  glUnlinked?: GlUnlinked[]; glUnlinkedTotal?: number; glUnlinkedCapped?: boolean;
 }
+interface GlUnlinked {
+  account: string; gl_date: string | null; journal: string | null; je_header_id: number; source: string | null;
+  category: string | null; reference1: string | null; reference2: string | null; reference5: string | null;
+  description: string | null; net: number;
+}
+type SupRow = SupOut & { gl: number; gl_lines: number; gap: number; gl_only?: boolean };
 interface SupOut {
   supplier_number: string; supplier_name: string | null; invoice_count: number;
   dashboard: number; not_accounted: number; other_accounts: number; timing: number; fx: number; payables_balance: number;
@@ -167,7 +175,7 @@ export default function PayablesTrialBalance() {
   const [reconFilter, setReconFilter] = useState<'all' | ReconStatus>('all');
   const [aaAccount, setAaAccount] = useState<string | undefined>(undefined);
   const [soSearch, setSoSearch] = useState('');
-  const [soFilter, setSoFilter] = useState<'all' | 'diff'>('diff');
+  const [soFilter, setSoFilter] = useState<'gl' | 'diff' | 'all'>('gl');
   const [dashCheck, setDashCheck] = useState<{ balance: number; bu: string | null } | null>(null);
 
   useEffect(() => {
@@ -503,14 +511,38 @@ export default function PayablesTrialBalance() {
   };
 
   // ── Suppliers Outstanding: Payables dashboard formula bridged to the Payables Balance
+  // supplier rows: dashboard bridge + GL linked to the supplier (glBySupplier)
+  const supAll = useMemo<SupRow[]>(() => {
+    if (!data) return [];
+    const gl = new Map((data.glBySupplier || []).map(g => [g.supplier_number, g]));
+    const rows: SupRow[] = (data.supplierOutstanding || []).map(r => {
+      const g = gl.get(r.supplier_number);
+      const o = r.outstanding ?? r.dashboard;
+      return { ...r, gl: Number(g?.gl) || 0, gl_lines: g?.lines || 0, gap: o - (Number(g?.gl) || 0) };
+    });
+    const seen = new Set(rows.map(r => r.supplier_number));
+    for (const g of data.glBySupplier || []) {
+      if (seen.has(g.supplier_number) || isZero(g.gl)) continue;
+      rows.push({ supplier_number: g.supplier_number, supplier_name: g.supplier_name, invoice_count: 0, dashboard: 0,
+        not_accounted: 0, other_accounts: 0, timing: 0, fx: 0, payables_balance: 0, outstanding: 0,
+        gl: Number(g.gl) || 0, gl_lines: g.lines, gap: -(Number(g.gl) || 0), gl_only: true });
+    }
+    return rows;
+  }, [data]);
   const supOut = useMemo(() => {
     const q = soSearch.trim().toLowerCase();
-    return (data?.supplierOutstanding || [])
+    return supAll
       .filter(r => !q || (r.supplier_name || '').toLowerCase().includes(q) || r.supplier_number.toLowerCase().includes(q))
-      .filter(r => soFilter === 'all' || !isZero(r.dashboard - r.payables_balance))
-      .slice().sort((a, b) => Math.abs(b.dashboard - b.payables_balance) - Math.abs(a.dashboard - a.payables_balance)
-        || b.dashboard - a.dashboard);
-  }, [data, soSearch, soFilter]);
+      .filter(r => soFilter === 'all'
+        || (soFilter === 'gl' ? !isZero(r.gap) : !isZero(r.dashboard - r.payables_balance)))
+      .slice().sort((a, b) => (soFilter === 'diff'
+        ? Math.abs(b.dashboard - b.payables_balance) - Math.abs(a.dashboard - a.payables_balance)
+        : Math.abs(b.gap) - Math.abs(a.gap)) || b.dashboard - a.dashboard);
+  }, [supAll, soSearch, soFilter]);
+  const gapTot = useMemo(() => supAll.reduce((t2, r) => ({
+    out: t2.out + (r.outstanding ?? r.dashboard), gl: t2.gl + r.gl, gap: t2.gap + r.gap,
+    n: t2.n + (isZero(r.gap) ? 0 : 1),
+  }), { out: 0, gl: 0, gap: 0, n: 0 }), [supAll]);
   const supTot = useMemo(() => (data?.supplierOutstanding || []).reduce((t2, r) => ({
     dashboard: t2.dashboard + r.dashboard, not_accounted: t2.not_accounted + r.not_accounted,
     other_accounts: t2.other_accounts + r.other_accounts, timing: t2.timing + r.timing, fx: t2.fx + r.fx,
@@ -775,6 +807,16 @@ export default function PayablesTrialBalance() {
         '- Timing': r.timing, '+ FX': r.fx, '= Payables Balance': r.payables_balance,
         Difference: Math.round((r.dashboard - r.payables_balance) * 100) / 100,
       }))), 'Suppliers Outstanding');
+      if (data.glBySupplier) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(supAll.map(r => ({
+          Supplier: r.supplier_name, 'Supplier #': r.supplier_number, 'Outstanding (AED)': r.outstanding ?? r.dashboard,
+          'GL (AED)': r.gl, 'GL lines': r.gl_lines, 'Outstanding - GL': Math.round(r.gap * 100) / 100,
+        }))), 'Outstanding vs GL');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((data.glUnlinked || []).map(g => ({
+          'Liability Account': g.account, 'GL Date': g.gl_date, Journal: g.journal, Source: g.source, Category: g.category,
+          Reference: g.reference1, Event: g.reference5, Description: g.description, 'Net (Cr-Dr)': g.net,
+        }))), 'GL not linked');
+      }
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((data.supplierInvoices || []).map(r => ({
         'Supplier #': r.supplier_number, Invoice: r.invoice_number, Type: r.invoice_type, 'Invoice Date': r.invoice_date,
         'Accounted': r.accounting_date || 'not yet', Currency: r.currency, Amount: r.invoice_amount,
@@ -1035,18 +1077,47 @@ export default function PayablesTrialBalance() {
                           : <Tag icon={<WarningOutlined />} color="warning">Payables dashboard card shows {fmt(dashCheck.balance)} (today, all currencies) — this column {fmt(supTot.dashboard)}</Tag>}
                       </div>
                     )}
+                    {data.glBySupplier && (
+                      <Card size="small" style={{ marginBottom: 8, borderColor: REDWOOD.primary }}
+                        title={<Space><WarningOutlined style={{ color: REDWOOD.primary }} /><Text strong>Find the difference: Payables Balance vs GL, per supplier</Text></Space>}>
+                        <Row gutter={8} wrap={false}>
+                          {[
+                            { t: 'Σ Outstanding − GL of suppliers', v: gapTot.gap, tip: `${gapTot.n} supplier(s) where total outstanding ≠ the GL lines linked to them (by journal tag, invoice number or payment number)` },
+                            { t: '− GL not linked to a supplier', v: -(data.glUnlinkedTotal || 0), tip: 'Manual journals, adjustments and lines whose references match no invoice or payment — listed below' },
+                            { t: '= Difference (card)', v: gapTot.gap - (data.glUnlinkedTotal || 0), strong: true,
+                              tip: `Payables Balance ${fmt(outstanding)} − GL ${fmt(t.gl_balance)} = ${fmt(outDiff)}` },
+                          ].map(c => (
+                            <Col flex="1" key={c.t}>
+                              <Tooltip title={c.tip}>
+                                <Card size="small">
+                                  <Statistic title={<span style={{ fontSize: 12 }}>{c.t}</span>} value={c.v} precision={2}
+                                    valueStyle={{ fontSize: c.strong ? 20 : 16, fontWeight: c.strong ? 600 : 400,
+                                      color: isZero(c.v) ? REDWOOD.success : REDWOOD.primary }} />
+                                </Card>
+                              </Tooltip>
+                            </Col>
+                          ))}
+                        </Row>
+                        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+                          The suppliers below with a non-zero <b>Outstanding − GL</b> carry the difference: expand one to compare its invoices, then check its payments / journals.
+                          GL lines linked to no supplier are listed at the bottom.
+                        </Text>
+                      </Card>
+                    )}
                     <Space style={{ marginBottom: 8 }} wrap>
-                      <Segmented value={soFilter} onChange={v => setSoFilter(v as 'all' | 'diff')} options={[
-                        { label: 'With a difference', value: 'diff' }, { label: 'All suppliers', value: 'all' },
+                      <Segmented value={soFilter} onChange={v => setSoFilter(v as 'gl' | 'diff' | 'all')} options={[
+                        { label: 'Outstanding ≠ GL', value: 'gl' },
+                        { label: 'Dashboard ≠ accounted', value: 'diff' },
+                        { label: 'All suppliers', value: 'all' },
                       ]} />
                       <Input.Search allowClear placeholder="Supplier name or number" style={{ width: 260 }}
                         value={soSearch} onChange={e => setSoSearch(e.target.value)} />
                       <Text type="secondary">{supOut.length} supplier(s) · click a row to see its invoices</Text>
                     </Space>
                     {data.supplierInvoicesCapped && <Alert type="warning" showIcon style={{ marginBottom: 8 }} message="Invoice detail is capped at 30,000 rows — filter by Supplier # for the full list." />}
-                    <Table<SupOut> size="small" rowKey="supplier_number" dataSource={supOut} bordered
-                      scroll={{ x: 1500 }} pagination={{ pageSize: 50, showSizeChanger: false }}
-                      rowClassName={r => (isZero(r.dashboard - r.payables_balance) ? '' : 'tb-recon-issue')}
+                    <Table<SupRow> size="small" rowKey="supplier_number" dataSource={supOut} bordered
+                      scroll={{ x: 1900 }} pagination={{ pageSize: 50, showSizeChanger: false }}
+                      rowClassName={r => ((soFilter === 'diff' ? isZero(r.dashboard - r.payables_balance) : isZero(r.gap)) ? '' : 'tb-recon-issue')}
                       expandable={{
                         expandRowByClick: true,
                         expandedRowRender: r => {
@@ -1081,6 +1152,16 @@ export default function PayablesTrialBalance() {
                         { title: '+ FX', dataIndex: 'fx', align: 'right', width: 110, render: (v: number) => (isZero(v) ? '' : money(v)) },
                         { title: '= Payables Balance', dataIndex: 'payables_balance', align: 'right', width: 160, render: (v: number) => <Text strong>{money(v)}</Text> },
                         { title: 'Difference', key: 'd', align: 'right', width: 140, render: (_, r) => diffTag(r.dashboard - r.payables_balance) },
+                        { title: 'vs GL', key: 'vgl', children: [
+                          { title: 'Outstanding (AED)', dataIndex: 'outstanding', key: 'outstanding', align: 'right', width: 140,
+                            render: (v: number | undefined, r) => money(v ?? r.dashboard) },
+                          { title: 'GL (AED)', dataIndex: 'gl', key: 'gl', align: 'right', width: 140,
+                            render: (v: number, r) => (
+                              <Tooltip title={`${r.gl_lines} GL line(s) linked to this supplier`}>
+                                <span>{money(v)}{r.gl_only ? <Tag color="orange" style={{ fontSize: 10, marginLeft: 4 }}>GL only</Tag> : null}</span>
+                              </Tooltip>) },
+                          { title: 'Outstanding − GL', dataIndex: 'gap', key: 'gap', align: 'right', width: 150, render: diffTag },
+                        ] },
                       ]}
                       summary={() => (
                         <Table.Summary fixed>
@@ -1095,9 +1176,36 @@ export default function PayablesTrialBalance() {
                             <Table.Summary.Cell index={7} align="right">{fmt(supTot.fx)}</Table.Summary.Cell>
                             <Table.Summary.Cell index={8} align="right">{fmt(supTot.payables_balance)}</Table.Summary.Cell>
                             <Table.Summary.Cell index={9} align="right">{fmt(supTot.dashboard - supTot.payables_balance)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={10} align="right">{fmt(gapTot.out)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={11} align="right">{fmt(gapTot.gl)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={12} align="right">{fmt(gapTot.gap)}</Table.Summary.Cell>
                           </Table.Summary.Row>
                         </Table.Summary>
                       )} />
+                    {(data.glUnlinked || []).length > 0 && (
+                      <Collapse style={{ marginTop: 12 }} items={[{
+                        key: 'unl',
+                        label: <Space><Text strong>GL lines not linked to a supplier</Text>
+                          <Tag color={isZero(data.glUnlinkedTotal || 0) ? 'default' : 'orange'}>{(data.glUnlinked || []).length} line(s) · net {fmt(data.glUnlinkedTotal || 0)}</Tag></Space>,
+                        children: (
+                          <>
+                            {data.glUnlinkedCapped && <Alert type="warning" showIcon style={{ marginBottom: 8 }} message="Showing the first 5,000 lines — the net above covers all." />}
+                            <Table<GlUnlinked> size="small" rowKey={(r, i) => `${r.je_header_id}-${i}`} dataSource={data.glUnlinked}
+                              scroll={{ x: 1500 }} pagination={{ pageSize: 20, showSizeChanger: false }}
+                              columns={[
+                                { title: 'GL Date', dataIndex: 'gl_date', width: 105 },
+                                { title: 'Journal', dataIndex: 'journal', width: 240, ellipsis: true },
+                                { title: 'Source', dataIndex: 'source', width: 120, ellipsis: true },
+                                { title: 'Category', dataIndex: 'category', width: 170, ellipsis: true },
+                                { title: 'Reference', dataIndex: 'reference1', width: 150, ellipsis: true },
+                                { title: 'Event', dataIndex: 'reference5', width: 170, ellipsis: true },
+                                { title: 'Description', dataIndex: 'description', ellipsis: true },
+                                { title: 'Net (Cr − Dr)', dataIndex: 'net', align: 'right', width: 140, render: money },
+                              ]} />
+                          </>
+                        ),
+                      }]} />
+                    )}
                   </>
                 ),
               },

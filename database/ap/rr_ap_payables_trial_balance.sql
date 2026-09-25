@@ -90,6 +90,12 @@
 --                  timing        : payments / prepayments / voids / cancellations not
 --                                  accounted by D, overpaid invoices the dashboard floors at 0
 --                  fx            : functional (AED at the invoice rate) − invoice currency
+--   glBySupplier: GL balance of the liability account(s) (same basis as gl_balance)
+--                per supplier — a line is linked through its REFERENCE5/REFERENCE2
+--                tag (invoice / payment / prepayment application), else through
+--                REFERENCE1 = an invoice or payment number; glUnlinked lists the
+--                rest (manual journals, adjustments). Σ(outstanding − GL) per
+--                supplier − Σ unlinked = outstanding − GL balance.
 --   supplierInvoices: the invoices behind each supplier row (dashboard remaining vs
 --                Payables open) with the bucket they fall in,
 --   As-of mode only — monthly Account Analysis (roll-forward up to D):
@@ -185,6 +191,14 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     so_out     t_num;           -- total outstanding: dashboard formula, liability account filter, AED
     l_out_tot  NUMBER := 0;
     a_out      t_num;           -- liability account -> total outstanding (AED)
+    -- 5. GL per supplier
+    gs_net     t_num;           -- supplier -> GL balance (Cr − Dr)
+    gs_cnt     t_num;
+    gs_name    t_str;
+    l_unl      CLOB;
+    l_unl_cnt  PLS_INTEGER := 0;
+    l_unl_cap  CONSTANT PLS_INTEGER := 5000;
+    l_unl_tot  NUMBER := 0;
     l_out_fn   NUMBER;
     l_sk       VARCHAR2(240);
     l_bucket   VARCHAR2(20);
@@ -322,6 +336,7 @@ BEGIN
     DBMS_LOB.CREATETEMPORARY(l_map, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_sup, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_supinv, TRUE);
+    DBMS_LOB.CREATETEMPORARY(l_unl, TRUE);
 
     -- ── 1. open accounted invoices ─────────────────────────────────────────
     lob_add(l_inv, '[');
@@ -1184,6 +1199,98 @@ BEGIN
     END LOOP;
     lob_add(l_sup, ']');
 
+    -- ── 5. GL balance of the liability account(s) per supplier ─────────────
+    a_key := a_total.FIRST;
+    WHILE a_key IS NOT NULL LOOP
+        FOR g IN (
+            SELECT x.*,
+                   COALESCE(x.s_tag, x.s_inv, x.s_pay) AS supp_no,
+                   CASE WHEN x.s_tag IS NOT NULL THEN 'TAG'
+                        WHEN x.s_inv IS NOT NULL THEN 'INVOICE_NUMBER'
+                        WHEN x.s_pay IS NOT NULL THEN 'PAYMENT_NUMBER' END AS link
+            FROM (
+                SELECT TRUNC(h.DEFAULT_EFFECTIVE_DATE) AS gl_date, h.JOURNAL_NAME, h.USER_JE_CATEGORY_NAME AS category,
+                       b.USER_JE_SOURCE_NAME AS source, l.JE_HEADER_ID,
+                       l.REFERENCE1, l.REFERENCE2, l.REFERENCE5, l.DESCRIPTION,
+                       NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0) AS net,
+                       CASE
+                         WHEN l.REFERENCE5 IN ('AP-INVOICE-CREATION','AP-INVOICE-CANCELLATION') THEN
+                              (SELECT MAX(i.SUPPLIER_NUMBER) FROM RR_AP_INVOICES_ALL i
+                               WHERE TO_CHAR(i.INVOICE_ID) = l.REFERENCE2)
+                         WHEN l.REFERENCE5 IN ('AP-PAYMENT','AP-PAYMENT-VOID') THEN
+                              (SELECT MAX(p.SUPPLIER_NUMBER) FROM RR_AP_PAYMENTS_ALL p
+                               WHERE TO_CHAR(p.CHECK_ID) = l.REFERENCE2)
+                         WHEN l.REFERENCE5 = 'AP-PREPAYMENT-APPLICATION' THEN
+                              (SELECT MAX(i.SUPPLIER_NUMBER) FROM RR_AP_APPLIED_PREPAYMENTS ap
+                               JOIN RR_AP_INVOICES_ALL i ON i.INVOICE_ID = ap.INVOICE_ID
+                                                         OR i.INVOICE_NUMBER = ap.INVOICE_NUMBER
+                               WHERE TO_CHAR(ap.APPLICATION_ID) = l.REFERENCE2)
+                       END AS s_tag,
+                       CASE WHEN l.REFERENCE1 IS NOT NULL THEN
+                              (SELECT MAX(i.SUPPLIER_NUMBER) FROM RR_AP_INVOICES_ALL i
+                               WHERE i.INVOICE_NUMBER = l.REFERENCE1
+                               AND   (l_bu IS NULL OR i.BUSINESS_UNIT = l_bu)) END AS s_inv,
+                       CASE WHEN l.REFERENCE1 IS NOT NULL THEN
+                              (SELECT MAX(p.SUPPLIER_NUMBER) FROM RR_AP_PAYMENTS_ALL p
+                               WHERE p.PAYMENT_NUMBER = l.REFERENCE1
+                               AND   (l_bu IS NULL OR p.BUSINESS_UNIT = l_bu)) END AS s_pay
+                FROM   RR_GL_JE_LINES_ALL l
+                JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
+                LEFT JOIN RR_GL_JOURNAL_BATCHES b ON b.JE_BATCH_ID = l.BATCH_ID
+                WHERE  l.ACCOUNT_COMBINATION = a_key
+                -- same basis as the GL balance (section 2)
+                AND    h.LEDGER_NAME IS NOT NULL
+                AND    (l_ledger IS NULL OR h.LEDGER_NAME = l_ledger)
+                AND    h.PERIOD_NAME IN (SELECT PERIOD_NAME FROM RR_V_GL_FISCAL_PERIODS
+                                         WHERE TO_CHAR(APPLICATION) = 'GL' AND TO_CHAR(ADJ_FLAG) = 'N')
+                AND   (TO_DATE('01-' || h.PERIOD_NAME DEFAULT NULL ON CONVERSION ERROR,
+                               'DD-Mon-RR', 'NLS_DATE_LANGUAGE=ENGLISH') < TRUNC(l_asof, 'MM')
+                   OR (TO_DATE('01-' || h.PERIOD_NAME DEFAULT NULL ON CONVERSION ERROR,
+                               'DD-Mon-RR', 'NLS_DATE_LANGUAGE=ENGLISH') = TRUNC(l_asof, 'MM')
+                       AND (l_asof = LAST_DAY(l_asof) OR TRUNC(h.DEFAULT_EFFECTIVE_DATE) <= l_asof)))
+            ) x
+        ) LOOP
+            IF g.supp_no IS NOT NULL THEN
+                IF NOT gs_net.EXISTS(g.supp_no) THEN gs_net(g.supp_no) := 0; gs_cnt(g.supp_no) := 0; END IF;
+                gs_net(g.supp_no) := gs_net(g.supp_no) + g.net;
+                gs_cnt(g.supp_no) := gs_cnt(g.supp_no) + 1;
+            ELSE
+                l_unl_tot := l_unl_tot + g.net;
+                IF l_unl_cnt < l_unl_cap THEN
+                    IF l_unl_cnt > 0 THEN lob_add(l_unl, ','); END IF;
+                    l_unl_cnt := l_unl_cnt + 1;
+                    lob_add(l_unl,
+                        '{"account":'      || js(a_key)
+                     || ',"gl_date":'      || jd(g.gl_date)
+                     || ',"journal":'      || js(g.JOURNAL_NAME)
+                     || ',"je_header_id":' || jn(g.JE_HEADER_ID)
+                     || ',"source":'       || js(g.source)
+                     || ',"category":'     || js(g.category)
+                     || ',"reference1":'   || js(g.REFERENCE1)
+                     || ',"reference2":'   || js(g.REFERENCE2)
+                     || ',"reference5":'   || js(g.REFERENCE5)
+                     || ',"description":'  || js(SUBSTR(g.DESCRIPTION, 1, 400))
+                     || ',"net":'          || jn(g.net)
+                     || '}');
+                END IF;
+            END IF;
+        END LOOP;
+        a_key := a_total.NEXT(a_key);
+    END LOOP;
+    -- supplier names for suppliers that only appear in GL
+    l_sk := gs_net.FIRST;
+    WHILE l_sk IS NOT NULL LOOP
+        IF so_name.EXISTS(l_sk) THEN
+            gs_name(l_sk) := so_name(l_sk);
+        ELSE
+            BEGIN
+                SELECT MAX(SUPPLIER) INTO gs_name(l_sk) FROM RR_AP_INVOICES_ALL WHERE SUPPLIER_NUMBER = l_sk;
+            EXCEPTION WHEN OTHERS THEN gs_name(l_sk) := NULL;
+            END;
+        END IF;
+        l_sk := gs_net.NEXT(l_sk);
+    END LOOP;
+
     OWA_UTIL.MIME_HEADER('application/json', TRUE);
     HTP.PRN('{"success":"true","asOfDate":"' || TO_CHAR(l_asof, 'YYYY-MM-DD') || '"'
          || ',"mode":"' || CASE WHEN l_start IS NULL THEN 'ASOF' ELSE 'PTD' END || '"'
@@ -1225,6 +1332,20 @@ BEGIN
     HTP.PRN(',"supplierInvoicesCapped":' || CASE WHEN l_si_cnt >= l_si_cap THEN 'true' ELSE 'false' END);
     HTP.PRN(',"supplierInvoices":[');
     lob_out(l_supinv);
+    HTP.PRN('],"glBySupplier":[');
+    l_first := TRUE;
+    l_sk := gs_net.FIRST;
+    WHILE l_sk IS NOT NULL LOOP
+        IF NOT l_first THEN HTP.PRN(','); END IF;
+        l_first := FALSE;
+        HTP.PRN('{"supplier_number":' || js(l_sk) || ',"supplier_name":' || js(gs_name(l_sk))
+             || ',"gl":' || jn(gs_net(l_sk)) || ',"lines":' || jn(gs_cnt(l_sk)) || '}');
+        l_sk := gs_net.NEXT(l_sk);
+    END LOOP;
+    HTP.PRN('],"glUnlinkedTotal":' || jn(l_unl_tot));
+    HTP.PRN(',"glUnlinkedCapped":' || CASE WHEN l_unl_cnt >= l_unl_cap THEN 'true' ELSE 'false' END);
+    HTP.PRN(',"glUnlinked":[');
+    lob_out(l_unl);
     HTP.PRN('],"accountOutstanding":[');
     l_first := TRUE;
     a_key := a_out.FIRST;
