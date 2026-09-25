@@ -30,7 +30,16 @@
 -- Prepayment invoices are liabilities only until paid (an application debits the
 -- target invoice's liability and credits the prepayment asset, not this liability).
 --
--- GL comparison: GL balance (accounted CR − DR, DEFAULT_EFFECTIVE_DATE <= D) of every
+-- GL comparison uses the SAME basis as the GL Trial Balance (RR_V_STANDARD_TB):
+--   * a line counts by its journal PERIOD (RR_GL_JE_HEADERS.PERIOD_NAME), a GL,
+--     non-adjusting period of the fiscal calendar, on a journal with a ledger;
+--   * as of D: every period before D's month, plus D's own period — all of it
+--     when D is the last day of the month (= the GL TB for that period), else
+--     its lines dated <= D;
+--   * PTD: the lines of that period (= the GL TB period activity).
+-- Lines without a valid period/ledger, or whose period differs from their date,
+-- are reported as glByDate (the old date-based balance) so the gap is visible.
+-- GL balance (accounted CR − DR) of every
 -- liability account used by invoices in scope, PLUS every other GL combination of the
 -- same company + natural account (or matching the account filter) — the GL Trial
 -- Balance adds up all combinations of a natural account, so this report does too.
@@ -138,6 +147,8 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     l_seg1     VARCHAR2(60);
     l_seg4     VARCHAR2(60);
     l_full_yn  VARCHAR2(1);     -- l_full_acct for use inside SQL (no BOOLEAN in SQL)
+    l_gl_bydate NUMBER;          -- GL by accounting date only (pre-TB-basis figure, diagnostic)
+    l_gl_bdtot  NUMBER := 0;
     a_key      VARCHAR2(240);
     l_gl       NUMBER;
     l_gl_open  NUMBER;
@@ -575,14 +586,30 @@ BEGIN
     l_first := TRUE;
     a_key := a_total.FIRST;
     WHILE a_key IS NOT NULL LOOP
-        SELECT NVL(SUM(NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0)), 0),
-               NVL(SUM(CASE WHEN TRUNC(h.DEFAULT_EFFECTIVE_DATE) <= l_open
-                            THEN NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0) END), 0)
-        INTO   l_gl, l_gl_open
-        FROM   RR_GL_JE_LINES_ALL l
-        JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
-        WHERE  l.ACCOUNT_COMBINATION = a_key
-        AND    TRUNC(h.DEFAULT_EFFECTIVE_DATE) <= l_asof;
+        -- GL Trial Balance basis (see header): by journal period, valid periods only
+        SELECT NVL(SUM(CASE WHEN x.pm < TRUNC(l_asof, 'MM')
+                              OR (x.pm = TRUNC(l_asof, 'MM') AND (l_asof = LAST_DAY(l_asof) OR x.d <= l_asof))
+                            THEN x.net END), 0),
+               NVL(SUM(CASE WHEN x.pm < TRUNC(l_open, 'MM')
+                              OR (x.pm = TRUNC(l_open, 'MM') AND (l_open = LAST_DAY(l_open) OR x.d <= l_open))
+                            THEN x.net END), 0),
+               NVL(SUM(CASE WHEN x.d <= l_asof THEN x.raw_net END), 0)
+        INTO   l_gl, l_gl_open, l_gl_bydate
+        FROM (
+            SELECT NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0) AS raw_net,
+                   CASE WHEN h.LEDGER_NAME IS NOT NULL AND fp.PERIOD_NAME IS NOT NULL
+                        THEN NVL(l.ACCOUNTED_CR, 0) - NVL(l.ACCOUNTED_DR, 0) END AS net,
+                   TRUNC(h.DEFAULT_EFFECTIVE_DATE) AS d,
+                   TO_DATE('01-' || h.PERIOD_NAME DEFAULT NULL ON CONVERSION ERROR,
+                           'DD-Mon-RR', 'NLS_DATE_LANGUAGE=ENGLISH') AS pm
+            FROM   RR_GL_JE_LINES_ALL l
+            JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
+            LEFT JOIN (SELECT DISTINCT PERIOD_NAME FROM RR_V_GL_FISCAL_PERIODS
+                       WHERE TO_CHAR(APPLICATION) = 'GL' AND TO_CHAR(ADJ_FLAG) = 'N') fp
+                   ON fp.PERIOD_NAME = h.PERIOD_NAME
+            WHERE  l.ACCOUNT_COMBINATION = a_key
+        ) x;
+        l_gl_bdtot := l_gl_bdtot + l_gl_bydate;
 
         l_tb_tot  := l_tb_tot  + a_total(a_key);
         l_tb_open := l_tb_open + a_open(a_key);
@@ -597,6 +624,7 @@ BEGIN
             '{"account":'         || js(a_key)
          || ',"tb_total":'        || jn(a_total(a_key))
          || ',"gl_balance":'      || jn(l_gl)
+         || ',"gl_by_date":'      || jn(l_gl_bydate)
          || ',"difference":'      || jn(a_total(a_key) - l_gl)
          || ',"tb_opening":'      || jn(a_open(a_key))
          || ',"invoices_ptd":'    || jn(a_inv(a_key))
@@ -612,16 +640,25 @@ BEGIN
         -- as-of: GL debits/credits per month (monthly Account Analysis)
         IF l_start IS NULL THEN
             FOR g IN (
-                SELECT TO_CHAR(TRUNC(h.DEFAULT_EFFECTIVE_DATE, 'MM'), 'YYYY-MM') AS mon,
-                       SUM(NVL(l.ACCOUNTED_DR, 0)) AS dr,
-                       SUM(NVL(l.ACCOUNTED_CR, 0)) AS cr,
-                       COUNT(*) AS cnt
-                FROM   RR_GL_JE_LINES_ALL l
-                JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
-                WHERE  l.ACCOUNT_COMBINATION = a_key
-                AND    TRUNC(h.DEFAULT_EFFECTIVE_DATE) <= l_asof
-                GROUP BY TRUNC(h.DEFAULT_EFFECTIVE_DATE, 'MM')
-                ORDER BY TRUNC(h.DEFAULT_EFFECTIVE_DATE, 'MM')
+                -- by GL period, same basis as the GL balance above
+                SELECT TO_CHAR(x.pm, 'YYYY-MM') AS mon,
+                       SUM(x.dr) AS dr, SUM(x.cr) AS cr, COUNT(*) AS cnt
+                FROM (
+                    SELECT NVL(l.ACCOUNTED_DR, 0) AS dr, NVL(l.ACCOUNTED_CR, 0) AS cr,
+                           TRUNC(h.DEFAULT_EFFECTIVE_DATE) AS d,
+                           TO_DATE('01-' || h.PERIOD_NAME DEFAULT NULL ON CONVERSION ERROR,
+                                   'DD-Mon-RR', 'NLS_DATE_LANGUAGE=ENGLISH') AS pm
+                    FROM   RR_GL_JE_LINES_ALL l
+                    JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
+                    WHERE  l.ACCOUNT_COMBINATION = a_key
+                    AND    h.LEDGER_NAME IS NOT NULL
+                    AND    h.PERIOD_NAME IN (SELECT PERIOD_NAME FROM RR_V_GL_FISCAL_PERIODS
+                                             WHERE TO_CHAR(APPLICATION) = 'GL' AND TO_CHAR(ADJ_FLAG) = 'N')
+                ) x
+                WHERE  x.pm < TRUNC(l_asof, 'MM')
+                   OR (x.pm = TRUNC(l_asof, 'MM') AND (l_asof = LAST_DAY(l_asof) OR x.d <= l_asof))
+                GROUP BY x.pm
+                ORDER BY x.pm
             ) LOOP
                 IF NOT l_mg_first THEN lob_add(l_mgl, ','); END IF;
                 l_mg_first := FALSE;
@@ -648,7 +685,12 @@ BEGIN
                 JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
                 LEFT JOIN RR_GL_JOURNAL_BATCHES b ON b.JE_BATCH_ID = l.BATCH_ID
                 WHERE  l.ACCOUNT_COMBINATION = a_key
-                AND    TRUNC(h.DEFAULT_EFFECTIVE_DATE) BETWEEN l_start AND l_asof
+                -- the lines of the GL period (GL Trial Balance basis)
+                AND    h.LEDGER_NAME IS NOT NULL
+                AND    TO_DATE('01-' || h.PERIOD_NAME DEFAULT NULL ON CONVERSION ERROR,
+                               'DD-Mon-RR', 'NLS_DATE_LANGUAGE=ENGLISH') = l_start
+                AND    h.PERIOD_NAME IN (SELECT PERIOD_NAME FROM RR_V_GL_FISCAL_PERIODS
+                                         WHERE TO_CHAR(APPLICATION) = 'GL' AND TO_CHAR(ADJ_FLAG) = 'N')
                 ORDER  BY h.DEFAULT_EFFECTIVE_DATE, l.JE_HEADER_ID
             ) LOOP
                 EXIT WHEN l_gl_cnt >= l_gl_cap;
@@ -877,6 +919,7 @@ BEGIN
          || ',"businessUnit":' || js(l_bu)
          || ',"totals":{"tb_total":' || jn(l_tb_tot)
          || ',"gl_balance":'         || jn(l_gl_tot)
+         || ',"gl_by_date":'         || jn(l_gl_bdtot)
          || ',"difference":'         || jn(l_tb_tot - l_gl_tot)
          || ',"unaccounted_effect":' || jn(l_una_tot)
          || ',"tb_opening":'         || jn(l_tb_open)

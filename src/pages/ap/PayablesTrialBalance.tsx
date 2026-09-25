@@ -34,7 +34,7 @@ interface PtdFields {
 }
 interface AccountRow extends Partial<PtdFields> {
   account: string; tb_total: number; gl_balance: number; difference: number;
-  invoice_count: number; supplier_count: number;
+  invoice_count: number; supplier_count: number; gl_by_date?: number;
 }
 interface InvoiceRow {
   account: string; supplier_number: string; supplier_name: string;
@@ -53,7 +53,7 @@ interface PendingRow {
 interface TbResponse {
   success: string | boolean; error?: string; asOfDate: string; businessUnit: string | null;
   mode?: 'ASOF' | 'PTD'; periodStart?: string | null; openingDate?: string | null;
-  totals: { tb_total: number; gl_balance: number; difference: number; unaccounted_effect: number } & Partial<PtdFields>;
+  totals: { tb_total: number; gl_balance: number; difference: number; unaccounted_effect: number; gl_by_date?: number } & Partial<PtdFields>;
   accounts: AccountRow[]; invoices: InvoiceRow[]; unaccounted: PendingRow[];
   glLines?: GlLine[]; glLinesCapped?: boolean; ptdDocs?: PtdDoc[];
   glMonthly?: GlMonth[]; apMonthly?: ApMonth[];
@@ -444,6 +444,7 @@ export default function PayablesTrialBalance() {
     return {
       tb: acc.reduce((s2, a) => s2 + (Number(a.tb_total) || 0), 0),
       gl: acc.reduce((s2, a) => s2 + (Number(a.gl_balance) || 0), 0),
+      byDate: acc.some(a => a.gl_by_date != null) ? acc.reduce((s2, a) => s2 + (Number(a.gl_by_date) || 0), 0) : null,
     };
   }, [data, aaAsofSelected]);
   // months where Payables and GL moved differently, biggest first
@@ -809,7 +810,7 @@ export default function PayablesTrialBalance() {
               <>
                 <Col flex="1"><Card size="small"><Statistic title="Trial Balance (AED)" value={t.tb_total} precision={2} /></Card></Col>
                 <Col flex="1">
-                  <Tooltip title="Every GL combination of the liability account(s), same as the GL Trial Balance — click for the month-by-month Account Analysis">
+                  <Tooltip title="GL Trial Balance basis: every combination of the liability account(s), lines by GL period — click for the month-by-month Account Analysis">
                     <Card size="small" hoverable onClick={() => setTab('analysis')}>
                       <Statistic title="GL Balance (AED)" value={t.gl_balance} precision={2} />
                     </Card>
@@ -1006,6 +1007,11 @@ export default function PayablesTrialBalance() {
                         ]} />
                       <Text type="secondary">Month by month up to {dayjs(data.asOfDate).format('DD-MMM-YYYY')}: GL debits, credits and running balance (Cr − Dr) vs Payables movement</Text>
                     </Space>
+                    <Alert type="info" showIcon style={{ marginBottom: 8 }}
+                      message={`GL is on the GL Trial Balance basis: lines by GL period (valid, non-adjusting periods of a ledger), through ${dayjs(data.asOfDate).format('MMM-YY')}${dayjs(data.asOfDate).isSame(dayjs(data.asOfDate).endOf('month'), 'day') ? '' : ` (${dayjs(data.asOfDate).format('MMM-YY')} only up to ${dayjs(data.asOfDate).format('DD-MMM')} — pick the month end to match the GL TB exactly)`}. The balance equals the GL TB closing for the same account and company.`}
+                      description={aaTarget.byDate != null && !isZero(aaTarget.byDate - aaTarget.gl)
+                        ? `By accounting date instead of GL period the balance would be ${fmt(aaTarget.byDate)} (${fmt(aaTarget.byDate - aaTarget.gl)} different): journals whose period differs from their date, or with no valid period / ledger — the GL Trial Balance leaves them out or counts them in their period.`
+                        : undefined} />
                     <Row gutter={12} style={{ marginBottom: 8 }}>
                       {[
                         { title: 'GL Debits', v: monthTot.dr },
