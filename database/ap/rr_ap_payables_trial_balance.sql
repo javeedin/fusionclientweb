@@ -12,8 +12,9 @@
 --   * Fusion-synced (SYNC_STATUS='SYNCED')  → accounted in Oracle Fusion;
 --     effective on its own accounting date (invoice ACCOUNTING_DATE / payment
 --     ACCOUNTING_DATE, falling back to the document date), or
---   * locally created → a POSTED GL journal exists for it (RR_GL_JE_HEADERS.STATUS='P')
---     tagged REFERENCE5/REFERENCE2 by the Re-ERP posting service, with a GL date <= D:
+--   * locally created → a GL journal exists for it (the app's definition of
+--     "posted"), tagged REFERENCE5/REFERENCE2 by the Re-ERP posting service, with
+--     a GL date (RR_GL_JE_HEADERS.DEFAULT_EFFECTIVE_DATE) <= D:
 --        AP-INVOICE-CREATION       REFERENCE2 = INVOICE_ID
 --        AP-INVOICE-CANCELLATION   REFERENCE2 = INVOICE_ID
 --        AP-PAYMENT                REFERENCE2 = CHECK_ID
@@ -29,8 +30,12 @@
 -- Prepayment invoices are liabilities only until paid (an application debits the
 -- target invoice's liability and credits the prepayment asset, not this liability).
 --
--- GL comparison: posted GL balance (accounted CR − DR, date <= D) of every liability
--- account used by invoices in scope.
+-- GL comparison: GL balance (accounted CR − DR, DEFAULT_EFFECTIVE_DATE <= D) of every
+-- liability account used by invoices in scope — same journals and date as the GL
+-- Trial Balance report (no journal-status filter).
+--
+-- The logic lives in procedure RR_AP_PAYABLES_TB_JSON so compile errors show up
+-- when this script runs (see the user_errors check) instead of as ORDS-25001.
 --
 -- Parameters:
 --   P_AS_OF_DATE        (required) YYYY-MM-DD
@@ -69,28 +74,25 @@ BEGIN
 END;
 /
 
-BEGIN
-    ORDS.DEFINE_HANDLER(
-        p_module_name    => 'reerp',
-        p_pattern        => 'ap/reports/trial-balance',
-        p_method         => 'GET',
-        p_source_type    => 'plsql/block',
-        p_items_per_page => 0,
-        p_comments       => 'Open accounted AP liability as of date by account/supplier/invoice + GL balance + unaccounted items',
-        p_source         => q'[
-DECLARE
+CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
+    p_as_of_date        IN VARCHAR2,
+    p_business_unit     IN VARCHAR2 DEFAULT NULL,
+    p_liability_account IN VARCHAR2 DEFAULT NULL,
+    p_supplier_number   IN VARCHAR2 DEFAULT NULL,
+    p_currency          IN VARCHAR2 DEFAULT NULL
+) AS
     l_asof      DATE;
-    l_bu        VARCHAR2(240) := TRIM(:P_BUSINESS_UNIT);
-    l_acct      VARCHAR2(240) := TRIM(:P_LIABILITY_ACCOUNT);
-    l_supp      VARCHAR2(100) := TRIM(:P_SUPPLIER_NUMBER);
-    l_ccy       VARCHAR2(15)  := UPPER(TRIM(:P_CURRENCY));
+    l_bu        VARCHAR2(240) := TRIM(p_business_unit);
+    l_acct      VARCHAR2(240) := TRIM(p_liability_account);
+    l_supp      VARCHAR2(100) := TRIM(p_supplier_number);
+    l_ccy       VARCHAR2(15)  := UPPER(TRIM(p_currency));
     l_full_acct BOOLEAN;
 
     l_inv      CLOB;
     l_una      CLOB;
     l_acc      CLOB;
     l_first    BOOLEAN;
-    l_chunk    CONSTANT INTEGER := 32000;
+    l_chunk    CONSTANT INTEGER := 8000;    -- chars; keeps each HTP chunk < 32767 bytes even for multibyte text
 
     TYPE t_num  IS TABLE OF NUMBER INDEX BY VARCHAR2(240);
     TYPE t_set  IS TABLE OF NUMBER INDEX BY VARCHAR2(400);
@@ -121,17 +123,27 @@ DECLARE
                       CHR(13), '\r'), CHR(10), '\n'), CHR(9), '\t') || '"';
     END;
 
+    FUNCTION jr(p IN NUMBER) RETURN VARCHAR2 IS
+        v VARCHAR2(100);
+    BEGIN
+        IF p IS NULL THEN RETURN 'null'; END IF;
+        v := TO_CHAR(p, 'TM9');
+        IF v LIKE  '.%' THEN v := '0'  || v; END IF;
+        IF v LIKE '-.%' THEN v := '-0.' || SUBSTR(v, 3); END IF;
+        RETURN v;
+    END;
+
     FUNCTION jd(p IN DATE) RETURN VARCHAR2 IS
     BEGIN
         RETURN CASE WHEN p IS NULL THEN 'null' ELSE '"' || TO_CHAR(p, 'YYYY-MM-DD') || '"' END;
     END;
 
-    PROCEDURE add(p_lob IN OUT NOCOPY CLOB, p_txt IN VARCHAR2) IS
+    PROCEDURE lob_add(p_lob IN OUT NOCOPY CLOB, p_txt IN VARCHAR2) IS
     BEGIN
         DBMS_LOB.WRITEAPPEND(p_lob, LENGTH(p_txt), p_txt);
     END;
 
-    PROCEDURE out(p_lob IN CLOB) IS
+    PROCEDURE lob_out(p_lob IN CLOB) IS
         l_len INTEGER := NVL(DBMS_LOB.GETLENGTH(p_lob), 0);
         l_off INTEGER := 1;
     BEGIN
@@ -149,7 +161,7 @@ DECLARE
     END;
 BEGIN
     BEGIN
-        l_asof := TO_DATE(TRIM(:P_AS_OF_DATE), 'YYYY-MM-DD');
+        l_asof := TO_DATE(TRIM(p_as_of_date), 'YYYY-MM-DD');
     EXCEPTION WHEN OTHERS THEN l_asof := NULL;
     END;
     IF l_asof IS NULL THEN
@@ -164,16 +176,15 @@ BEGIN
     DBMS_LOB.CREATETEMPORARY(l_acc, TRUE);
 
     -- ── 1. open accounted invoices ─────────────────────────────────────────
-    add(l_inv, '[');
+    lob_add(l_inv, '[');
     l_first := TRUE;
     FOR r IN (
         WITH gl_post AS (
             SELECT l.REFERENCE5 AS ref5, l.REFERENCE2 AS ref2,
-                   MIN(TRUNC(COALESCE(h.DEFAULT_EFFECTIVE_DATE, h.ACCOUNTING_DATE))) AS gl_date
+                   MIN(TRUNC(h.DEFAULT_EFFECTIVE_DATE)) AS gl_date
             FROM   RR_GL_JE_LINES_ALL l
             JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
-            WHERE  h.STATUS = 'P'
-            AND    l.REFERENCE5 IN ('AP-INVOICE-CREATION','AP-INVOICE-CANCELLATION',
+            WHERE  l.REFERENCE5 IN ('AP-INVOICE-CREATION','AP-INVOICE-CANCELLATION',
                                     'AP-PAYMENT','AP-PAYMENT-VOID','AP-PREPAYMENT-APPLICATION')
             GROUP BY l.REFERENCE5, l.REFERENCE2
         ),
@@ -252,9 +263,9 @@ BEGIN
                 s_seen(a_key || '|' || r.SUPPLIER_NUMBER) := 1;
                 a_suppcnt(a_key) := a_suppcnt(a_key) + 1;
             END IF;
-            IF NOT l_first THEN add(l_inv, ','); END IF;
+            IF NOT l_first THEN lob_add(l_inv, ','); END IF;
             l_first := FALSE;
-            add(l_inv,
+            lob_add(l_inv,
                 '{"account":'          || js(a_key)
              || ',"supplier_number":'  || js(r.SUPPLIER_NUMBER)
              || ',"supplier_name":'    || js(r.SUPPLIER)
@@ -264,7 +275,7 @@ BEGIN
              || ',"invoice_date":'     || jd(r.INVOICE_DATE)
              || ',"accounting_date":'  || jd(r.acct_date)
              || ',"currency":'         || js(r.ccy)
-             || ',"rate":'             || TO_CHAR(r.rate, 'TM9')
+             || ',"rate":'             || jr(r.rate)
              || ',"invoice_amount":'   || jn(r.amt)
              || ',"paid_amount":'      || jn(r.paid)
              || ',"prepaid_amount":'   || jn(r.applied)
@@ -274,7 +285,7 @@ BEGIN
              || '}');
         END IF;
     END LOOP;
-    add(l_inv, ']');
+    lob_add(l_inv, ']');
 
     -- the account filter can name an account that no invoice uses: still compare it
     IF l_acct IS NOT NULL AND l_full_acct AND NOT a_total.EXISTS(l_acct) THEN
@@ -282,7 +293,7 @@ BEGIN
     END IF;
 
     -- ── 2. GL balance per liability account ────────────────────────────────
-    add(l_acc, '[');
+    lob_add(l_acc, '[');
     l_first := TRUE;
     a_key := a_total.FIRST;
     WHILE a_key IS NOT NULL LOOP
@@ -290,15 +301,14 @@ BEGIN
         INTO   l_gl
         FROM   RR_GL_JE_LINES_ALL l
         JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
-        WHERE  h.STATUS = 'P'
-        AND    l.ACCOUNT_COMBINATION = a_key
-        AND    TRUNC(COALESCE(h.DEFAULT_EFFECTIVE_DATE, h.ACCOUNTING_DATE)) <= l_asof;
+        WHERE  l.ACCOUNT_COMBINATION = a_key
+        AND    TRUNC(h.DEFAULT_EFFECTIVE_DATE) <= l_asof;
 
         l_tb_tot := l_tb_tot + a_total(a_key);
         l_gl_tot := l_gl_tot + l_gl;
-        IF NOT l_first THEN add(l_acc, ','); END IF;
+        IF NOT l_first THEN lob_add(l_acc, ','); END IF;
         l_first := FALSE;
-        add(l_acc,
+        lob_add(l_acc,
             '{"account":'         || js(a_key)
          || ',"tb_total":'        || jn(a_total(a_key))
          || ',"gl_balance":'      || jn(l_gl)
@@ -308,19 +318,18 @@ BEGIN
          || '}');
         a_key := a_total.NEXT(a_key);
     END LOOP;
-    add(l_acc, ']');
+    lob_add(l_acc, ']');
 
     -- ── 3. unaccounted items (local, dated <= D, no posted GL journal yet) ─
-    add(l_una, '[');
+    lob_add(l_una, '[');
     l_first := TRUE;
     FOR u IN (
         WITH gl_post AS (
             SELECT l.REFERENCE5 AS ref5, l.REFERENCE2 AS ref2,
-                   MIN(TRUNC(COALESCE(h.DEFAULT_EFFECTIVE_DATE, h.ACCOUNTING_DATE))) AS gl_date
+                   MIN(TRUNC(h.DEFAULT_EFFECTIVE_DATE)) AS gl_date
             FROM   RR_GL_JE_LINES_ALL l
             JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
-            WHERE  h.STATUS = 'P'
-            AND    l.REFERENCE5 IN ('AP-INVOICE-CREATION','AP-PAYMENT','AP-PREPAYMENT-APPLICATION')
+            WHERE  l.REFERENCE5 IN ('AP-INVOICE-CREATION','AP-PAYMENT','AP-PREPAYMENT-APPLICATION')
             GROUP BY l.REFERENCE5, l.REFERENCE2
         )
         -- invoices not accounted: would ADD to the liability once posted
@@ -388,9 +397,9 @@ BEGIN
     ) LOOP
         IF u.acct IS NULL OR acct_ok(u.acct) THEN
             l_una_tot := l_una_tot + ROUND(u.sgn * u.amt_fn, 2);
-            IF NOT l_first THEN add(l_una, ','); END IF;
+            IF NOT l_first THEN lob_add(l_una, ','); END IF;
             l_first := FALSE;
-            add(l_una,
+            lob_add(l_una,
                 '{"type":'              || js(u.typ)
              || ',"id":'                || jn(u.id)
              || ',"number":'            || js(u.num)
@@ -403,7 +412,7 @@ BEGIN
              || '}');
         END IF;
     END LOOP;
-    add(l_una, ']');
+    lob_add(l_una, ']');
 
     OWA_UTIL.MIME_HEADER('application/json', TRUE);
     HTP.PRN('{"success":"true","asOfDate":"' || TO_CHAR(l_asof, 'YYYY-MM-DD') || '"'
@@ -413,16 +422,51 @@ BEGIN
          || ',"difference":'         || jn(l_tb_tot - l_gl_tot)
          || ',"unaccounted_effect":' || jn(l_una_tot) || '}'
          || ',"accounts":');
-    out(l_acc);
+    lob_out(l_acc);
     HTP.PRN(',"invoices":');
-    out(l_inv);
+    lob_out(l_inv);
     HTP.PRN(',"unaccounted":');
-    out(l_una);
+    lob_out(l_una);
     HTP.PRN('}');
 
 EXCEPTION WHEN OTHERS THEN
     OWA_UTIL.MIME_HEADER('application/json', TRUE);
     HTP.PRN('{"success":"false","error":"' || REPLACE(REPLACE(SQLERRM, '"', '\"'), CHR(10), ' ') || '"}');
+END;
+/
+
+-- Compile check — must return NO rows. If it returns rows, fix those lines first.
+SELECT line, position, text FROM user_errors WHERE name = 'RR_AP_PAYABLES_TB_JSON' ORDER BY sequence;
+
+-- Optional: run it directly in SQL Developer (no ORDS) and see the JSON in Dbms Output:
+--   SET SERVEROUTPUT ON SIZE UNLIMITED
+--   DECLARE
+--     n OWA.VC_ARR; v OWA.VC_ARR;
+--   BEGIN
+--     n(1) := 'REQUEST_PROTOCOL'; v(1) := 'HTTP';
+--     OWA.INIT_CGI_ENV(1, n, v);
+--     RR_AP_PAYABLES_TB_JSON('2026-09-30', 'BUIMERC CORP_DIFC_INVST');
+--     OWA_UTIL.SHOWPAGE;
+--   END;
+--   /
+
+BEGIN
+    ORDS.DEFINE_HANDLER(
+        p_module_name    => 'reerp',
+        p_pattern        => 'ap/reports/trial-balance',
+        p_method         => 'GET',
+        p_source_type    => 'plsql/block',
+        p_items_per_page => 0,
+        p_comments       => 'Open accounted AP liability as of date by account/supplier/invoice + GL balance + unaccounted items',
+        p_source         => q'[
+BEGIN
+    RR_AP_PAYABLES_TB_JSON(
+        p_as_of_date        => :P_AS_OF_DATE,
+        p_business_unit     => :P_BUSINESS_UNIT,
+        p_liability_account => :P_LIABILITY_ACCOUNT,
+        p_supplier_number   => :P_SUPPLIER_NUMBER,
+        p_currency          => :P_CURRENCY
+    );
 END;
 ]'
     );
