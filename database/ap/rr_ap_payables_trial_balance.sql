@@ -425,11 +425,16 @@ BEGIN
         -- PTD: the GL lines behind the period movement, tagged by source
         IF l_start IS NOT NULL THEN
             FOR g IN (
-                SELECT TRUNC(h.DEFAULT_EFFECTIVE_DATE) AS gl_date, h.JOURNAL_NAME, h.JE_SOURCE, h.JE_CATEGORY,
+                -- column names as used by the live GL services (patches 58/69, view 93)
+                SELECT TRUNC(h.DEFAULT_EFFECTIVE_DATE) AS gl_date,
+                       h.JOURNAL_NAME             AS journal_name,
+                       b.USER_JE_SOURCE_NAME      AS je_source,
+                       h.USER_JE_CATEGORY_NAME    AS je_category,
                        l.JE_HEADER_ID, l.REFERENCE1, l.REFERENCE2, l.REFERENCE5, l.DESCRIPTION,
                        NVL(l.ACCOUNTED_DR, 0) AS dr, NVL(l.ACCOUNTED_CR, 0) AS cr
                 FROM   RR_GL_JE_LINES_ALL l
                 JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
+                LEFT JOIN RR_GL_JOURNAL_BATCHES b ON b.JE_BATCH_ID = l.BATCH_ID
                 WHERE  l.ACCOUNT_COMBINATION = a_key
                 AND    TRUNC(h.DEFAULT_EFFECTIVE_DATE) BETWEEN l_start AND l_asof
                 ORDER  BY h.DEFAULT_EFFECTIVE_DATE, l.JE_HEADER_ID
@@ -440,10 +445,10 @@ BEGIN
                 lob_add(l_gll,
                     '{"account":'      || js(a_key)
                  || ',"gl_date":'      || jd(g.gl_date)
-                 || ',"journal":'      || js(g.JOURNAL_NAME)
+                 || ',"journal":'      || js(g.journal_name)
                  || ',"je_header_id":' || jn(g.JE_HEADER_ID)
-                 || ',"source":'       || js(g.JE_SOURCE)
-                 || ',"category":'     || js(g.JE_CATEGORY)
+                 || ',"source":'       || js(g.je_source)
+                 || ',"category":'     || js(g.je_category)
                  || ',"reference1":'   || js(g.REFERENCE1)
                  || ',"reference2":'   || js(g.REFERENCE2)
                  || ',"reference5":'   || js(g.REFERENCE5)
@@ -452,7 +457,7 @@ BEGIN
                  || ',"cr":'           || jn(g.cr)
                  || ',"net":'          || jn(g.cr - g.dr)
                  || ',"from_ap":'      || CASE WHEN g.REFERENCE5 LIKE 'AP-%'
-                                                 OR UPPER(g.JE_SOURCE) LIKE '%PAYABLE%'
+                                                 OR UPPER(g.je_source) LIKE '%PAYABLE%'
                                                THEN 'true' ELSE 'false' END
                  || '}');
             END LOOP;
