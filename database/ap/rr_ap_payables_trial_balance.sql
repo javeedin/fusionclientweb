@@ -104,6 +104,8 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     l_gll      CLOB;               -- PTD mode: GL lines of the period on the liability accounts
     l_gl_cnt   PLS_INTEGER := 0;
     l_gl_cap   CONSTANT PLS_INTEGER := 20000;
+    l_docs     CLOB;               -- PTD mode: payment / prepayment documents with period activity
+    l_doc_first BOOLEAN := TRUE;
     l_active   BOOLEAN;
     l_first    BOOLEAN;
     l_chunk    CONSTANT INTEGER := 8000;    -- chars; keeps each HTP chunk < 32767 bytes even for multibyte text
@@ -217,6 +219,7 @@ BEGIN
     DBMS_LOB.CREATETEMPORARY(l_una, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_acc, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_gll, TRUE);
+    DBMS_LOB.CREATETEMPORARY(l_docs, TRUE);
 
     -- ── 1. open accounted invoices ─────────────────────────────────────────
     lob_add(l_inv, '[');
@@ -466,6 +469,102 @@ BEGIN
     END LOOP;
     lob_add(l_acc, ']');
 
+    -- ── 2b. PTD: payment and prepayment documents with activity in the period ──
+    -- (invoices are already in the invoice rows). Amount = effect on the liability
+    -- in the period, functional at the invoice rate: payments/applications negative,
+    -- a void in the period of an earlier payment positive. One row per document
+    -- and liability account, so each can be matched to its own GL lines.
+    IF l_start IS NOT NULL THEN
+        FOR d IN (
+            WITH gl_post AS (
+                SELECT l.REFERENCE5 AS ref5, l.REFERENCE2 AS ref2,
+                       MIN(TRUNC(h.DEFAULT_EFFECTIVE_DATE)) AS gl_date
+                FROM   RR_GL_JE_LINES_ALL l
+                JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
+                WHERE  l.REFERENCE5 IN ('AP-PAYMENT','AP-PAYMENT-VOID','AP-PREPAYMENT-APPLICATION')
+                GROUP BY l.REFERENCE5, l.REFERENCE2
+            ),
+            inv AS (
+                SELECT i.INVOICE_ID, i.INVOICE_NUMBER, i.SUPPLIER_NUMBER, i.SUPPLIER,
+                       NVL(i.LIABILITY_DISTRIBUTION, '(no liability account)') AS acct,
+                       CASE WHEN NVL(i.INVOICE_CURRENCY, 'AED') = 'AED' THEN 1
+                            ELSE NVL(NULLIF(i.CONVERSION_RATE, 0), 1) END AS rate
+                FROM   RR_AP_INVOICES_ALL i
+                WHERE  (l_bu   IS NULL OR i.BUSINESS_UNIT   = l_bu)
+                AND    (l_supp IS NULL OR i.SUPPLIER_NUMBER = l_supp)
+                AND    (l_ccy  IS NULL OR NVL(i.INVOICE_CURRENCY, 'AED') = l_ccy)
+            ),
+            pr AS (
+                SELECT ri.CHECK_ID, p.PAYMENT_NUMBER, ri.INVOICE_ID,
+                       NVL(ri.AMOUNT_PAID_INVOICE_CURRENCY, 0) + NVL(ri.DISCOUNT_TAKEN, 0) AS amt,
+                       CASE WHEN p.SYNC_STATUS = 'SYNCED'
+                            THEN TRUNC(NVL(p.ACCOUNTING_DATE, p.PAYMENT_DATE))
+                            ELSE gp.gl_date END AS eff_date,
+                       CASE WHEN NVL(p.PAYMENT_STATUS, 'x') = 'Voided' THEN
+                            CASE WHEN p.SYNC_STATUS = 'SYNCED'
+                                 THEN TRUNC(COALESCE(p.VOID_ACCOUNTING_DATE, p.VOID_DATE, p.PAYMENT_DATE))
+                                 ELSE gv.gl_date END
+                       END AS void_date
+                FROM   RR_AP_PAYMENTS_RELATED_INVOICES ri
+                JOIN   RR_AP_PAYMENTS_ALL p ON p.CHECK_ID = ri.CHECK_ID
+                LEFT JOIN gl_post gp ON gp.ref5 = 'AP-PAYMENT'      AND gp.ref2 = TO_CHAR(p.CHECK_ID)
+                LEFT JOIN gl_post gv ON gv.ref5 = 'AP-PAYMENT-VOID' AND gv.ref2 = TO_CHAR(p.CHECK_ID)
+            ),
+            ap_rows AS (
+                SELECT ap.APPLICATION_ID,
+                       ap.PREPAYMENT_NUMBER || ' -> ' || ap.INVOICE_NUMBER AS num,
+                       COALESCE(ap.INVOICE_ID, inv_r.INVOICE_ID) AS INVOICE_ID,
+                       NVL(ap.APPLIED_AMOUNT, 0) AS amt,
+                       CASE WHEN NVL(ap.SYNC_STATUS, 'NEW') = 'SYNCED' OR tgt.SYNC_STATUS = 'SYNCED'
+                            THEN TRUNC(COALESCE(ap.APPLICATION_ACCOUNTING_DATE, tgt.ACCOUNTING_DATE, tgt.INVOICE_DATE))
+                            ELSE ga.gl_date END AS eff_date
+                FROM   RR_AP_APPLIED_PREPAYMENTS ap
+                LEFT JOIN RR_AP_INVOICES_ALL inv_r
+                       ON ap.INVOICE_ID IS NULL AND inv_r.INVOICE_NUMBER = ap.INVOICE_NUMBER
+                LEFT JOIN RR_AP_INVOICES_ALL tgt
+                       ON tgt.INVOICE_ID = COALESCE(ap.INVOICE_ID, inv_r.INVOICE_ID)
+                LEFT JOIN gl_post ga ON ga.ref5 = 'AP-PREPAYMENT-APPLICATION' AND ga.ref2 = TO_CHAR(ap.APPLICATION_ID)
+                WHERE  NVL(ap.STATUS, 'Applied') != 'Cancelled'
+            )
+            SELECT 'PAYMENT' AS typ, pr.CHECK_ID AS id, MAX(pr.PAYMENT_NUMBER) AS num,
+                   inv.acct, inv.SUPPLIER_NUMBER AS supp_no, MAX(inv.SUPPLIER) AS supp_name,
+                   MIN(pr.eff_date) AS doc_date,
+                   SUM(pr.amt * inv.rate * (
+                         CASE WHEN pr.void_date BETWEEN l_start AND l_asof AND pr.eff_date <= l_asof THEN 1 ELSE 0 END
+                       - CASE WHEN pr.eff_date  BETWEEN l_start AND l_asof THEN 1 ELSE 0 END)) AS effect
+            FROM   pr
+            JOIN   inv ON inv.INVOICE_ID = pr.INVOICE_ID
+            WHERE  pr.eff_date BETWEEN l_start AND l_asof
+               OR  (pr.void_date BETWEEN l_start AND l_asof AND pr.eff_date <= l_asof)
+            GROUP BY pr.CHECK_ID, inv.acct, inv.SUPPLIER_NUMBER
+            UNION ALL
+            SELECT 'PREPAYMENT', ar.APPLICATION_ID, MAX(ar.num),
+                   inv.acct, inv.SUPPLIER_NUMBER, MAX(inv.SUPPLIER),
+                   MIN(ar.eff_date),
+                   -SUM(ar.amt * inv.rate)
+            FROM   ap_rows ar
+            JOIN   inv ON inv.INVOICE_ID = ar.INVOICE_ID
+            WHERE  ar.eff_date BETWEEN l_start AND l_asof
+            GROUP BY ar.APPLICATION_ID, inv.acct, inv.SUPPLIER_NUMBER
+            ORDER BY 7, 1, 3
+        ) LOOP
+            IF ROUND(d.effect, 2) != 0 AND acct_ok(CASE WHEN d.acct = '(no liability account)' THEN NULL ELSE d.acct END) THEN
+                IF NOT l_doc_first THEN lob_add(l_docs, ','); END IF;
+                l_doc_first := FALSE;
+                lob_add(l_docs,
+                    '{"type":'             || js(d.typ)
+                 || ',"id":'               || jn(d.id)
+                 || ',"number":'           || js(d.num)
+                 || ',"account":'          || js(d.acct)
+                 || ',"supplier_number":'  || js(d.supp_no)
+                 || ',"supplier_name":'    || js(d.supp_name)
+                 || ',"doc_date":'         || jd(d.doc_date)
+                 || ',"amount":'           || jn(d.effect)
+                 || '}');
+            END IF;
+        END LOOP;
+    END IF;
+
     -- ── 3. unaccounted items (local, dated <= D, no posted GL journal yet) ─
     lob_add(l_una, '[');
     l_first := TRUE;
@@ -588,6 +687,8 @@ BEGIN
     HTP.PRN(',"glLinesCapped":' || CASE WHEN l_gl_cnt >= l_gl_cap THEN 'true' ELSE 'false' END);
     HTP.PRN(',"glLines":[');
     lob_out(l_gll);
+    HTP.PRN('],"ptdDocs":[');
+    lob_out(l_docs);
     HTP.PRN(']');
     HTP.PRN('}');
 

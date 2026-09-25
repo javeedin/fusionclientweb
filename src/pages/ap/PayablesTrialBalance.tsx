@@ -4,7 +4,7 @@
 // Pending (not yet accounted) invoices, payments and prepayment applications are
 // listed separately: they are in neither the trial balance nor GL until posted.
 // Data: GET reerp/ap/reports/trial-balance (database/ap/rr_ap_payables_trial_balance.sql)
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
 import {
   Card, Form, Select, Button, Table, Tag, Statistic, Row, Col, Space, Typography,
@@ -52,12 +52,23 @@ interface TbResponse {
   mode?: 'ASOF' | 'PTD'; periodStart?: string | null; openingDate?: string | null;
   totals: { tb_total: number; gl_balance: number; difference: number; unaccounted_effect: number } & Partial<PtdFields>;
   accounts: AccountRow[]; invoices: InvoiceRow[]; unaccounted: PendingRow[];
-  glLines?: GlLine[]; glLinesCapped?: boolean;
+  glLines?: GlLine[]; glLinesCapped?: boolean; ptdDocs?: PtdDoc[];
 }
 interface GlLine {
   account: string; gl_date: string | null; journal: string | null; je_header_id: number;
   source: string | null; category: string | null; reference1: string | null; reference2: string | null;
   reference5: string | null; description: string | null; dr: number; cr: number; net: number; from_ap: boolean;
+}
+interface PtdDoc {
+  type: 'PAYMENT' | 'PREPAYMENT'; id: number; number: string; account: string;
+  supplier_number: string | null; supplier_name: string | null; doc_date: string | null; amount: number;
+}
+type ReconKind = 'INVOICE' | 'PAYMENT' | 'PREPAYMENT' | 'GL';
+type ReconStatus = 'matched' | 'amount' | 'no_gl' | 'no_ap';
+interface ReconRow {
+  key: string; kind: ReconKind; number: string; supplier: string; supplier_number: string | null;
+  account: string; date: string | null; ap: number | null; gl: number | null; diff: number;
+  status: ReconStatus; matchedBy: 'reference' | 'number' | null; source: string | null; lines: GlLine[];
 }
 interface ApiCall {
   id: number; label: string; url: string; at: number;
@@ -117,6 +128,8 @@ export default function PayablesTrialBalance() {
   const [drill, setDrill] = useState<{ account?: string; supplier?: string } | null>(null);
   const [glFilter, setGlFilter] = useState<'all' | 'ap' | 'other'>('all');
   const [glSearch, setGlSearch] = useState('');
+  const [txView, setTxView] = useState<'recon' | 'invoices'>('recon');
+  const [reconFilter, setReconFilter] = useState<'all' | ReconStatus>('all');
 
   useEffect(() => {
     fetch(`${APEX_DB_CONFIG.baseUrl}/gl/businessunits`)
@@ -243,6 +256,92 @@ export default function PayablesTrialBalance() {
     return rows;
   }, [data, drill, invSearch]);
 
+  // ── PTD reconciliation: each Payables document of the period against its GL lines ──
+  // Match 1: GL line tagged by the posting service (REFERENCE5 event + REFERENCE2 id).
+  // Match 2 (e.g. Fusion journals): GL REFERENCE1 = document number, same account.
+  // GL lines left over become "X in Payables" rows (manual / other-source entries).
+  const recon = useMemo<ReconRow[]>(() => {
+    if (data?.mode !== 'PTD') return [];
+    const gl = data.glLines || [];
+    const kindOf = (ref5: string | null): ReconKind | null => {
+      const r = (ref5 || '').toUpperCase();
+      if (r.startsWith('AP-INVOICE')) return 'INVOICE';
+      if (r.startsWith('AP-PREPAYMENT')) return 'PREPAYMENT';
+      if (r.startsWith('AP-PAYMENT')) return 'PAYMENT';
+      return null;
+    };
+    const byRef = new Map<string, number[]>();
+    const byNum = new Map<string, number[]>();
+    gl.forEach((g, i) => {
+      const k = kindOf(g.reference5);
+      if (k && g.reference2) {
+        const key = `${k}|${g.reference2}|${g.account}`;
+        byRef.set(key, [...(byRef.get(key) || []), i]);
+      }
+      if (g.reference1) {
+        const key = `${g.account}|${g.reference1.trim().toUpperCase()}`;
+        byNum.set(key, [...(byNum.get(key) || []), i]);
+      }
+    });
+    const used = new Set<number>();
+    const docs: Omit<ReconRow, 'gl' | 'diff' | 'status' | 'matchedBy' | 'lines' | 'source'>[] = [
+      ...data.invoices.filter(r => !isZero(Number(r.invoices_ptd) || 0)).map(r => ({
+        key: `INVOICE-${r.invoice_id}-${r.account}`, kind: 'INVOICE' as const, number: r.invoice_number,
+        supplier: r.supplier_name, supplier_number: r.supplier_number, account: r.account,
+        date: r.accounting_date, ap: Number(r.invoices_ptd) || 0, id: r.invoice_id,
+      })),
+      ...(data.ptdDocs || []).map(d => ({
+        key: `${d.type}-${d.id}-${d.account}`, kind: d.type as ReconKind, number: d.number,
+        supplier: d.supplier_name || '', supplier_number: d.supplier_number, account: d.account,
+        date: d.doc_date, ap: Number(d.amount) || 0, id: d.id,
+      })),
+    ].map(({ id, ...rest }) => ({ ...rest, _id: id } as any));
+    const rows: ReconRow[] = docs.map((d: any) => {
+      let idx = (byRef.get(`${d.kind}|${d._id}|${d.account}`) || []).filter(i => !used.has(i));
+      let matchedBy: ReconRow['matchedBy'] = idx.length ? 'reference' : null;
+      if (!idx.length && d.number) {
+        idx = (byNum.get(`${d.account}|${String(d.number).trim().toUpperCase()}`) || []).filter(i => !used.has(i));
+        if (idx.length) matchedBy = 'number';
+      }
+      idx.forEach(i => used.add(i));
+      const lines = idx.map(i => gl[i]);
+      const glAmt = lines.length ? lines.reduce((t, g) => t + (Number(g.net) || 0), 0) : null;
+      const diff = (d.ap ?? 0) - (glAmt ?? 0);
+      const status: ReconStatus = glAmt === null ? 'no_gl' : isZero(diff) ? 'matched' : 'amount';
+      const { _id, ...base } = d;
+      return { ...base, gl: glAmt, diff, status, matchedBy, source: lines[0]?.source ?? null, lines };
+    });
+    // GL lines not matched to any Payables document: group per journal + reference
+    const left = new Map<string, GlLine[]>();
+    gl.forEach((g, i) => {
+      if (used.has(i)) return;
+      const key = `${g.account}|${g.je_header_id}|${g.reference1 || ''}`;
+      left.set(key, [...(left.get(key) || []), g]);
+    });
+    left.forEach((lines, key) => {
+      const g = lines[0];
+      const glAmt = lines.reduce((t, x) => t + (Number(x.net) || 0), 0);
+      rows.push({
+        key: `GL-${key}`, kind: 'GL', number: g.reference1 || g.journal || `Journal ${g.je_header_id}`,
+        supplier: g.description || '', supplier_number: null, account: g.account, date: g.gl_date,
+        ap: null, gl: glAmt, diff: -glAmt, status: 'no_ap', matchedBy: null, source: g.source, lines,
+      });
+    });
+    return rows.sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.number.localeCompare(b.number));
+  }, [data]);
+
+  const reconShown = useMemo(() => {
+    let rows = recon;
+    if (drill?.account) rows = rows.filter(r => r.account === drill.account);
+    if (drill?.supplier) rows = rows.filter(r => r.supplier_number === drill.supplier);
+    if (reconFilter !== 'all') rows = rows.filter(r => r.status === reconFilter);
+    const q = invSearch.trim().toLowerCase();
+    if (q) rows = rows.filter(r => [r.number, r.supplier, r.account, r.source, r.kind]
+      .some(x => String(x ?? '').toLowerCase().includes(q)));
+    return rows;
+  }, [recon, drill, reconFilter, invSearch]);
+  const reconCount = (st: ReconStatus) => recon.filter(r => r.status === st).length;
+
   const openInvoices = (account?: string, supplier?: string) => {
     setDrill({ account, supplier });
     setTab('invoices');
@@ -354,6 +453,37 @@ export default function PayablesTrialBalance() {
     { title: 'Liability Account', dataIndex: 'account', width: 270, render: v => <Text code style={{ fontSize: 11 }}>{v}</Text> },
   ];
 
+  const X = <Tag color="error" style={{ fontWeight: 700 }}>X</Tag>;
+  const KIND_TAG: Record<ReconKind, { label: string; color: string }> = {
+    INVOICE: { label: 'Invoice', color: 'blue' }, PAYMENT: { label: 'Payment', color: 'green' },
+    PREPAYMENT: { label: 'Prepayment', color: 'purple' }, GL: { label: 'GL only', color: 'orange' },
+  };
+  const STATUS_TAG: Record<ReconStatus, ReactNode> = {
+    matched: <Tag icon={<CheckCircleOutlined />} color="success">Matched</Tag>,
+    amount: <Tag icon={<WarningOutlined />} color="warning">Amount differs</Tag>,
+    no_gl: <Tag color="error">Not in GL</Tag>,
+    no_ap: <Tag color="error">Not in Payables</Tag>,
+  };
+  const reconCols: ColumnsType<ReconRow> = [
+    { title: 'Type', dataIndex: 'kind', width: 110, render: (k: ReconKind) => <Tag color={KIND_TAG[k].color}>{KIND_TAG[k].label}</Tag> },
+    { title: 'Document / Reference', dataIndex: 'number', width: 210, ellipsis: true },
+    { title: 'Supplier / Description', dataIndex: 'supplier', ellipsis: true },
+    { title: 'Date', dataIndex: 'date', width: 105, sorter: (a, b) => String(a.date).localeCompare(String(b.date)) },
+    { title: `Payables ${periodLabel}`, dataIndex: 'ap', align: 'right', width: 150,
+      render: (v: number | null) => (v === null ? X : money(v)),
+      sorter: (a, b) => (a.ap ?? 0) - (b.ap ?? 0) },
+    { title: `GL ${periodLabel}`, dataIndex: 'gl', align: 'right', width: 150,
+      render: (v: number | null) => (v === null ? X : money(v)),
+      sorter: (a, b) => (a.gl ?? 0) - (b.gl ?? 0) },
+    { title: 'Difference', dataIndex: 'diff', align: 'right', width: 130,
+      render: (v: number) => (isZero(v) ? <Text type="secondary">0.00</Text> : <Text strong style={{ color: REDWOOD.primary }}>{fmt(v)}</Text>),
+      sorter: (a, b) => Math.abs(a.diff) - Math.abs(b.diff) },
+    { title: 'Status', dataIndex: 'status', width: 150, render: (st: ReconStatus, r) => (
+      <Space size={2}>{STATUS_TAG[st]}{r.matchedBy === 'number' && <Tooltip title="Matched on the document number in GL Reference 1 (no Re-ERP posting tag)"><Tag style={{ fontSize: 10 }}>by no.</Tag></Tooltip>}</Space>) },
+    { title: 'GL Source', dataIndex: 'source', width: 120, ellipsis: true },
+    { title: 'Liability Account', dataIndex: 'account', width: 270, render: v => <Text code style={{ fontSize: 11 }}>{v}</Text> },
+  ];
+
   const pendingCols: ColumnsType<PendingRow> = [
     { title: 'Type', dataIndex: 'type', width: 190, render: (v: PendingRow['type']) => <Tag>{PENDING_LABEL[v] || v}</Tag>,
       filters: Object.entries(PENDING_LABEL).map(([value, text]) => ({ text, value })),
@@ -422,6 +552,14 @@ export default function PayablesTrialBalance() {
       'Amount (AED)': u.amount_functional, 'Effect once posted': u.effect,
     }))), 'Pending Accounting');
     if (data.mode === 'PTD') {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(recon.map(r => ({
+        Type: KIND_TAG[r.kind].label, Document: r.number, 'Supplier / Description': r.supplier, Date: r.date,
+        [`Payables ${periodLabel}`]: r.ap === null ? 'X' : Math.round(r.ap * 100) / 100,
+        [`GL ${periodLabel}`]: r.gl === null ? 'X' : Math.round(r.gl * 100) / 100,
+        Difference: Math.round(r.diff * 100) / 100,
+        Status: { matched: 'Matched', amount: 'Amount differs', no_gl: 'Not in GL', no_ap: 'Not in Payables' }[r.status],
+        'Matched by': r.matchedBy || '', 'GL Source': r.source || '', 'Liability Account': r.account,
+      }))), 'Payables vs GL');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((data.glLines || []).map(g => ({
         'Liability Account': g.account, 'GL Date': g.gl_date, Journal: g.journal, Source: g.source,
         Category: g.category, 'From Payables': g.from_ap ? 'Yes' : 'No', Reference: g.reference1,
@@ -436,6 +574,7 @@ export default function PayablesTrialBalance() {
 
   return (
     <div style={{ padding: 16, background: REDWOOD.neutral100, minHeight: '100%' }}>
+      <style>{`.tb-recon-issue > td { background: #fff8f6 !important; }`}</style>
       <Space align="center" style={{ marginBottom: 12 }}>
         <ReconciliationOutlined style={{ fontSize: 22, color: REDWOOD.primary }} />
         <Title level={4} style={{ margin: 0, color: REDWOOD.primary }}>Payables Trial Balance</Title>
@@ -572,10 +711,64 @@ export default function PayablesTrialBalance() {
                 ),
               },
               {
-                key: 'invoices', label: isPtd ? `Transactions ${periodLabel} (${data.invoices.length})` : `Invoices (${data.invoices.length})`,
-                children: (
+                key: 'invoices', label: isPtd ? `Transactions ${periodLabel} (${recon.length})` : `Invoices (${data.invoices.length})`,
+                children: isPtd && txView === 'recon' ? (
                   <>
                     <Space style={{ marginBottom: 8 }} wrap>
+                      <Segmented value={txView} onChange={v => setTxView(v as 'recon' | 'invoices')}
+                        options={[{ label: 'Payables vs GL', value: 'recon' }, { label: 'Invoice detail', value: 'invoices' }]} />
+                      <Segmented value={reconFilter} onChange={v => setReconFilter(v as 'all' | ReconStatus)} options={[
+                        { label: `All (${recon.length})`, value: 'all' },
+                        { label: `Matched (${reconCount('matched')})`, value: 'matched' },
+                        { label: `Amount differs (${reconCount('amount')})`, value: 'amount' },
+                        { label: `X in GL (${reconCount('no_gl')})`, value: 'no_gl' },
+                        { label: `X in Payables (${reconCount('no_ap')})`, value: 'no_ap' },
+                      ]} />
+                      <Input.Search allowClear placeholder="Search document, supplier, account…" style={{ width: 260 }}
+                        value={invSearch} onChange={e => setInvSearch(e.target.value)} />
+                      {drill && (
+                        <Tag closable color="blue" onClose={() => setDrill(null)}>
+                          {drill.supplier ? `Supplier ${drill.supplier}` : ''}{drill.supplier && drill.account ? ' · ' : ''}{drill.account || ''}
+                        </Tag>
+                      )}
+                    </Space>
+                    <Table<ReconRow> size="small" rowKey="key" columns={reconCols} dataSource={reconShown}
+                      scroll={{ x: 1650 }} pagination={{ pageSize: 50, showSizeChanger: false }}
+                      rowClassName={r => (r.status === 'matched' ? '' : 'tb-recon-issue')}
+                      expandable={{
+                        rowExpandable: r => r.lines.length > 0,
+                        expandedRowRender: r => (
+                          <Table<GlLine> size="small" rowKey={(g, i) => `${g.je_header_id}-${i}`} pagination={false}
+                            columns={glCols} dataSource={r.lines} scroll={{ x: 1500 }} />
+                        ),
+                      }}
+                      summary={rows => {
+                        const ap = rows.reduce((t, r) => t + (r.ap ?? 0), 0);
+                        const glT = rows.reduce((t, r) => t + (r.gl ?? 0), 0);
+                        return (
+                          <Table.Summary.Row style={{ fontWeight: 600, background: REDWOOD.neutral100 }}>
+                            <Table.Summary.Cell index={0} colSpan={5}>Total (this page)</Table.Summary.Cell>
+                            <Table.Summary.Cell index={5} align="right">{fmt(ap)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={6} align="right">{fmt(glT)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={7} align="right">{fmt(ap - glT)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={8} colSpan={3} />
+                          </Table.Summary.Row>
+                        );
+                      }}
+                    />
+                    <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>
+                      All rows ({reconShown.length}): Payables {fmt(reconShown.reduce((t, r) => t + (r.ap ?? 0), 0))}
+                      {' · '}GL {fmt(reconShown.reduce((t, r) => t + (r.gl ?? 0), 0))}
+                      {' · '}Difference {fmt(reconShown.reduce((t, r) => t + (r.ap ?? 0) - (r.gl ?? 0), 0))} AED
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Space style={{ marginBottom: 8 }} wrap>
+                      {isPtd && (
+                        <Segmented value={txView} onChange={v => setTxView(v as 'recon' | 'invoices')}
+                          options={[{ label: 'Payables vs GL', value: 'recon' }, { label: 'Invoice detail', value: 'invoices' }]} />
+                      )}
                       <Input.Search allowClear placeholder="Search invoice, supplier, account…" style={{ width: 300 }}
                         value={invSearch} onChange={e => setInvSearch(e.target.value)} />
                       {drill && (
