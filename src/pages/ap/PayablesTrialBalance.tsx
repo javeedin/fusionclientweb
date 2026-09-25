@@ -16,6 +16,9 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
+import {
+  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer, ReferenceLine, Cell,
+} from 'recharts';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 
 const { Text, Title } = Typography;
@@ -53,6 +56,16 @@ interface TbResponse {
   totals: { tb_total: number; gl_balance: number; difference: number; unaccounted_effect: number } & Partial<PtdFields>;
   accounts: AccountRow[]; invoices: InvoiceRow[]; unaccounted: PendingRow[];
   glLines?: GlLine[]; glLinesCapped?: boolean; ptdDocs?: PtdDoc[];
+  glMonthly?: GlMonth[]; apMonthly?: ApMonth[];
+}
+interface GlMonth { account: string; month: string; dr: number; cr: number; lines: number }
+interface ApMonth {
+  account: string; month: string; invoices: number; cancellations: number; payments: number; prepayments: number;
+}
+interface MonthRow {
+  key: string; month: string; dr: number; cr: number; glNet: number; glBal: number; lines: number;
+  invoices: number; cancellations: number; payments: number; prepayments: number; apNet: number; apBal: number;
+  diff: number; cumDiff: number;
 }
 interface GlLine {
   account: string; gl_date: string | null; journal: string | null; je_header_id: number;
@@ -195,7 +208,8 @@ export default function PayablesTrialBalance() {
   }, [liabAccounts]);
 
   const run = useCallback(async () => {
-    const v = await form.validateFields();
+    await form.validateFields();
+    const v = form.getFieldsValue(true); // all stored values, incl. a field that has just mounted
     const p = v.mode === 'PTD'
       ? new URLSearchParams({ P_PERIOD: (v.period as Dayjs).format('YYYY-MM') })
       : new URLSearchParams({ P_AS_OF_DATE: (v.asOfDate as Dayjs).format('YYYY-MM-DD') });
@@ -381,6 +395,68 @@ export default function PayablesTrialBalance() {
     return rows;
   }, [data, aaSelected]);
 
+  // ── Account Analysis (as of): month-by-month GL debits / credits / running balance
+  // next to the Payables movement of the same month, so the month a gap opened shows.
+  const ALL = '__ALL__';
+  const aaAsofSelected = aaAccount === ALL || (aaAccount && aaAccounts.includes(aaAccount))
+    ? aaAccount : (aaAccounts.length > 1 ? ALL : aaAccounts[0]);
+  const monthRows = useMemo<MonthRow[]>(() => {
+    if (!data || data.mode === 'PTD') return [];
+    const pick = (a: string) => aaAsofSelected === ALL || a === aaAsofSelected;
+    const m = new Map<string, MonthRow>();
+    const get = (month: string) => {
+      let r = m.get(month);
+      if (!r) {
+        r = { key: month, month, dr: 0, cr: 0, glNet: 0, glBal: 0, lines: 0, invoices: 0, cancellations: 0,
+          payments: 0, prepayments: 0, apNet: 0, apBal: 0, diff: 0, cumDiff: 0 };
+        m.set(month, r);
+      }
+      return r;
+    };
+    for (const g of data.glMonthly || []) {
+      if (!pick(g.account)) continue;
+      const r = get(g.month);
+      r.dr += Number(g.dr) || 0; r.cr += Number(g.cr) || 0; r.lines += Number(g.lines) || 0;
+    }
+    for (const a of data.apMonthly || []) {
+      if (!pick(a.account)) continue;
+      const r = get(a.month);
+      r.invoices += Number(a.invoices) || 0; r.cancellations += Number(a.cancellations) || 0;
+      r.payments += Number(a.payments) || 0; r.prepayments += Number(a.prepayments) || 0;
+    }
+    const rows = [...m.values()].sort((a, b) => a.month.localeCompare(b.month));
+    let gl = 0; let ap = 0;
+    for (const r of rows) {
+      r.glNet = r.cr - r.dr; gl += r.glNet; r.glBal = gl;
+      r.apNet = r.invoices + r.cancellations + r.payments + r.prepayments; ap += r.apNet; r.apBal = ap;
+      r.diff = r.apNet - r.glNet; r.cumDiff = r.apBal - r.glBal;
+    }
+    return rows;
+  }, [data, aaAsofSelected]);
+  const monthTot = useMemo(() => monthRows.reduce((t2, r) => ({
+    dr: t2.dr + r.dr, cr: t2.cr + r.cr, lines: t2.lines + r.lines, invoices: t2.invoices + r.invoices,
+    cancellations: t2.cancellations + r.cancellations, payments: t2.payments + r.payments, prepayments: t2.prepayments + r.prepayments,
+  }), { dr: 0, cr: 0, lines: 0, invoices: 0, cancellations: 0, payments: 0, prepayments: 0 }), [monthRows]);
+  const cents = (n: number) => Math.round(n * 100) / 100;
+  // trial balance / GL balance of the selected account(s) — what the months must add up to
+  const aaTarget = useMemo(() => {
+    const acc = (data?.accounts || []).filter(a => aaAsofSelected === ALL || a.account === aaAsofSelected);
+    return {
+      tb: acc.reduce((s2, a) => s2 + (Number(a.tb_total) || 0), 0),
+      gl: acc.reduce((s2, a) => s2 + (Number(a.gl_balance) || 0), 0),
+    };
+  }, [data, aaAsofSelected]);
+  // months where Payables and GL moved differently, biggest first
+  const gapMonths = useMemo(() => monthRows.filter(r => !isZero(r.diff))
+    .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)), [monthRows]);
+  const monLabel = (mm: string) => dayjs(`${mm}-01`).format('MMM-YY');
+  // drill: re-run the report in Period (PTD) mode for that month, straight to its Transactions
+  const drillMonth = (mm: string) => {
+    form.setFieldsValue({ mode: 'PTD', period: dayjs(`${mm}-01`) });
+    setTab('invoices'); setTxView('recon'); setReconFilter('all');
+    setTimeout(() => form.submit(), 50); // let the Period field mount first
+  };
+
   const openInvoices = (account?: string, supplier?: string) => {
     setDrill({ account, supplier });
     setTab('invoices');
@@ -397,7 +473,16 @@ export default function PayablesTrialBalance() {
 
   const accountCols: ColumnsType<AccountRow> = [
     { title: 'Liability Account', dataIndex: 'account', key: 'account', fixed: 'left', width: 290,
-      render: v => <Text code style={{ fontSize: 12 }}>{v}</Text> },
+      render: (v, r) => (
+        <Space size={4}>
+          <Text code style={{ fontSize: 12 }}>{v}</Text>
+          {!r.invoice_count && isZero(r.tb_total) && isZero(r.tb_opening || 0) && (
+            <Tooltip title="No invoice uses this combination as liability account, but GL has entries on it (same company and natural account). The GL Trial Balance includes it, so it is compared here too.">
+              <Tag color="orange" style={{ fontSize: 10 }}>GL only</Tag>
+            </Tooltip>
+          )}
+        </Space>
+      ) },
     { title: 'Suppliers', dataIndex: 'supplier_count', key: 'supplier_count', align: 'right', width: 90 },
     { title: isPtd ? 'Invoices' : 'Open Invoices', dataIndex: 'invoice_count', key: 'invoice_count', align: 'right', width: 100,
       render: (v, r) => (v ? <a onClick={() => openInvoices(r.account)}>{v}</a> : 0) },
@@ -605,6 +690,15 @@ export default function PayablesTrialBalance() {
         Event: g.reference5, Description: g.description, Dr: g.dr, Cr: g.cr, 'Net (Cr-Dr)': g.net,
       }))), 'GL Lines');
     }
+    if (data.mode !== 'PTD' && monthRows.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(monthRows.map(r => ({
+        Period: monLabel(r.month), 'GL Lines': r.lines, 'GL Debit': r.dr, 'GL Credit': r.cr,
+        'GL Net (Cr-Dr)': Math.round(r.glNet * 100) / 100, 'GL Balance': Math.round(r.glBal * 100) / 100,
+        '+ Invoices': r.invoices, '- Cancelled': r.cancellations, '- Payments': r.payments, '- Prepayments': r.prepayments,
+        'Payables Net': Math.round(r.apNet * 100) / 100, 'Payables Balance': Math.round(r.apBal * 100) / 100,
+        'Difference (month)': Math.round(r.diff * 100) / 100, 'Difference (cumulative)': Math.round(r.cumDiff * 100) / 100,
+      }))), 'Account Analysis');
+    }
     XLSX.writeFile(wb, `Payables_Trial_Balance_${data.mode === 'PTD' ? `PTD_${dayjs(data.periodStart).format('MMM-YY')}` : data.asOfDate}.xlsx`);
   };
 
@@ -714,7 +808,13 @@ export default function PayablesTrialBalance() {
             ) : (
               <>
                 <Col flex="1"><Card size="small"><Statistic title="Trial Balance (AED)" value={t.tb_total} precision={2} /></Card></Col>
-                <Col flex="1"><Card size="small"><Statistic title="GL Balance (AED)" value={t.gl_balance} precision={2} /></Card></Col>
+                <Col flex="1">
+                  <Tooltip title="Every GL combination of the liability account(s), same as the GL Trial Balance — click for the month-by-month Account Analysis">
+                    <Card size="small" hoverable onClick={() => setTab('analysis')}>
+                      <Statistic title="GL Balance (AED)" value={t.gl_balance} precision={2} />
+                    </Card>
+                  </Tooltip>
+                </Col>
                 <Col flex="1">
                   <Card size="small">
                     <Statistic title="Difference" value={t.difference} precision={2}
@@ -893,7 +993,124 @@ export default function PayablesTrialBalance() {
                       ]} />
                   </>
                 ),
-              }] : []),
+              }] : [{
+                key: 'analysis', label: 'Account Analysis',
+                children: (
+                  <>
+                    <Space style={{ marginBottom: 8 }} wrap>
+                      <Text strong>Account</Text>
+                      <Select style={{ width: 380 }} value={aaAsofSelected} onChange={setAaAccount}
+                        options={[
+                          ...(aaAccounts.length > 1 ? [{ value: ALL, label: `All liability accounts (${aaAccounts.length})` }] : []),
+                          ...aaAccounts.map(a => ({ value: a, label: a })),
+                        ]} />
+                      <Text type="secondary">Month by month up to {dayjs(data.asOfDate).format('DD-MMM-YYYY')}: GL debits, credits and running balance (Cr − Dr) vs Payables movement</Text>
+                    </Space>
+                    <Row gutter={12} style={{ marginBottom: 8 }}>
+                      {[
+                        { title: 'GL Debits', v: monthTot.dr },
+                        { title: 'GL Credits', v: monthTot.cr },
+                        { title: 'GL Balance (Cr − Dr)', v: cents(monthTot.cr - monthTot.dr) },
+                        { title: 'Payables (trial balance)', v: aaTarget.tb },
+                        { title: 'Difference', v: cents(aaTarget.tb - (monthTot.cr - monthTot.dr)), diff: true },
+                      ].map(c => (
+                        <Col flex="1" key={c.title}>
+                          <Card size="small">
+                            <Statistic title={c.title} value={c.v} precision={2}
+                              valueStyle={c.diff ? { color: isZero(c.v) ? REDWOOD.success : REDWOOD.primary } : undefined}
+                              prefix={c.diff ? (isZero(c.v) ? <CheckCircleOutlined /> : <WarningOutlined />) : undefined} />
+                          </Card>
+                        </Col>
+                      ))}
+                    </Row>
+                    {gapMonths.length > 0 ? (
+                      <Alert type="warning" showIcon style={{ marginBottom: 8 }}
+                        message={`The difference built up in ${gapMonths.length} month(s) — ${monLabel(monthRows.find(r => !isZero(r.diff))!.month)} is the first. Click a month to open its Payables vs GL transactions (Period mode).`}
+                        description={(
+                          <Space wrap size={[6, 6]}>
+                            {gapMonths.slice(0, 12).map(r => (
+                              <Tag key={r.month} color="error" style={{ cursor: 'pointer' }} onClick={() => drillMonth(r.month)}>
+                                {monLabel(r.month)}: {fmt(r.diff)}
+                              </Tag>
+                            ))}
+                          </Space>
+                        )} />
+                    ) : monthRows.length > 0 && (
+                      <Alert type="success" showIcon style={{ marginBottom: 8 }} message="Payables and GL moved by the same amount every month." />
+                    )}
+                    {monthRows.length > 0 && !isZero((monthRows[monthRows.length - 1]?.apBal || 0) - aaTarget.tb) && (
+                      <Alert type="info" showIcon style={{ marginBottom: 8 }}
+                        message={`Monthly Payables movement adds up to ${fmt(monthRows[monthRows.length - 1].apBal)}; the trial balance is ${fmt(aaTarget.tb)} (${fmt(aaTarget.tb - monthRows[monthRows.length - 1].apBal)} from per-document rounding at the invoice rate).`} />
+                    )}
+                    {monthRows.length > 1 && (
+                      <Card size="small" style={{ marginBottom: 8 }} title={<Text type="secondary" style={{ fontSize: 12 }}>Payables − GL: monthly difference (bars) and cumulative difference (line)</Text>}>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <ComposedChart data={monthRows.map(r => ({ ...r, label: monLabel(r.month) }))}
+                            onClick={(e: any) => { const mm = e?.activePayload?.[0]?.payload?.month; if (mm) drillMonth(mm); }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                            <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                            <YAxis tick={{ fontSize: 11 }} width={80} tickFormatter={(v: number) => v.toLocaleString('en-US', { notation: 'compact' })} />
+                            <RTooltip formatter={(v: any) => fmt(Number(v))} />
+                            <ReferenceLine y={0} stroke="#999" />
+                            <Bar dataKey="diff" name="Month difference" cursor="pointer">
+                              {monthRows.map(r => <Cell key={r.month} fill={isZero(r.diff) ? REDWOOD.success : REDWOOD.primary} />)}
+                            </Bar>
+                            <Line dataKey="cumDiff" name="Cumulative difference" stroke={REDWOOD.info} dot={false} strokeWidth={2} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </Card>
+                    )}
+                    <Table<MonthRow> size="small" rowKey="key" dataSource={monthRows} pagination={false} bordered
+                      scroll={{ x: 1700, y: 520 }} sticky
+                      rowClassName={r => (isZero(r.diff) ? '' : 'tb-recon-issue')}
+                      onRow={r => ({ onDoubleClick: () => drillMonth(r.month) })}
+                      columns={[
+                        { title: 'Period', dataIndex: 'month', key: 'month', fixed: 'left', width: 90,
+                          render: (v: string) => <Tooltip title="Open this month in Period (PTD) mode"><a onClick={() => drillMonth(v)}>{monLabel(v)}</a></Tooltip> },
+                        { title: 'GL', key: 'gl', children: [
+                          { title: 'Lines', dataIndex: 'lines', key: 'lines', align: 'right', width: 70 },
+                          { title: 'Debit', dataIndex: 'dr', key: 'dr', align: 'right', width: 140, render: (v: number) => (v ? fmt(v) : '') },
+                          { title: 'Credit', dataIndex: 'cr', key: 'cr', align: 'right', width: 140, render: (v: number) => (v ? fmt(v) : '') },
+                          { title: 'Net (Cr − Dr)', dataIndex: 'glNet', key: 'glNet', align: 'right', width: 140, render: money },
+                          { title: 'Balance', dataIndex: 'glBal', key: 'glBal', align: 'right', width: 150, render: (v: number) => <Text strong>{money(v)}</Text> },
+                        ] },
+                        { title: 'Payables', key: 'ap', children: [
+                          { title: '+ Invoices', dataIndex: 'invoices', key: 'invoices', align: 'right', width: 130, render: (v: number) => (isZero(v) ? '' : money(v)) },
+                          { title: '− Cancelled', dataIndex: 'cancellations', key: 'cancellations', align: 'right', width: 120, render: (v: number) => (isZero(v) ? '' : money(v)) },
+                          { title: '− Payments', dataIndex: 'payments', key: 'payments', align: 'right', width: 130, render: (v: number) => (isZero(v) ? '' : money(v)) },
+                          { title: '− Prepayments', dataIndex: 'prepayments', key: 'prepayments', align: 'right', width: 130, render: (v: number) => (isZero(v) ? '' : money(v)) },
+                          { title: 'Net', dataIndex: 'apNet', key: 'apNet', align: 'right', width: 140, render: money },
+                          { title: 'Balance', dataIndex: 'apBal', key: 'apBal', align: 'right', width: 150, render: (v: number) => <Text strong>{money(v)}</Text> },
+                        ] },
+                        { title: 'Payables − GL', key: 'd', children: [
+                          { title: 'Month', dataIndex: 'diff', key: 'diff', align: 'right', width: 130, render: diffTag },
+                          { title: 'Cumulative', dataIndex: 'cumDiff', key: 'cumDiff', align: 'right', width: 140, render: diffTag },
+                        ] },
+                      ]}
+                      summary={() => monthRows.length ? (
+                        <Table.Summary fixed>
+                          <Table.Summary.Row className="tb-aa-strong">
+                            <Table.Summary.Cell index={0}>Total</Table.Summary.Cell>
+                            <Table.Summary.Cell index={1} align="right">{monthTot.lines.toLocaleString()}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={2} align="right">{fmt(monthTot.dr)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={3} align="right">{fmt(monthTot.cr)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={4} align="right">{money(monthTot.cr - monthTot.dr)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={5} align="right"><Text strong>{money(monthTot.cr - monthTot.dr)}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell index={6} align="right">{money(monthTot.invoices)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={7} align="right">{money(monthTot.cancellations)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={8} align="right">{money(monthTot.payments)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={9} align="right">{money(monthTot.prepayments)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={10} align="right">{money(monthRows[monthRows.length - 1].apBal)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={11} align="right"><Text strong>{money(monthRows[monthRows.length - 1].apBal)}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell index={12} align="right">{diffTag(monthRows[monthRows.length - 1].cumDiff)}</Table.Summary.Cell>
+                            <Table.Summary.Cell index={13} align="right">{diffTag(monthRows[monthRows.length - 1].cumDiff)}</Table.Summary.Cell>
+                          </Table.Summary.Row>
+                        </Table.Summary>
+                      ) : null} />
+                    {!monthRows.length && <Empty description="No GL or Payables activity for this account — re-deploy rr_ap_payables_trial_balance.sql if this persists" />}
+                  </>
+                ),
+              }]),
               {
                 key: 'pending', label: `Pending Accounting (${data.unaccounted.length})`,
                 children: (

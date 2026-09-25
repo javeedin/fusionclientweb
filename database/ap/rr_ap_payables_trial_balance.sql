@@ -31,8 +31,10 @@
 -- target invoice's liability and credits the prepayment asset, not this liability).
 --
 -- GL comparison: GL balance (accounted CR − DR, DEFAULT_EFFECTIVE_DATE <= D) of every
--- liability account used by invoices in scope — same journals and date as the GL
--- Trial Balance report (no journal-status filter).
+-- liability account used by invoices in scope, PLUS every other GL combination of the
+-- same company + natural account (or matching the account filter) — the GL Trial
+-- Balance adds up all combinations of a natural account, so this report does too.
+-- Same journals and date as the GL Trial Balance report (no journal-status filter).
 --
 -- The logic lives in procedure RR_AP_PAYABLES_TB_JSON so compile errors show up
 -- when this script runs (see the user_errors check) instead of as ORDS-25001.
@@ -61,7 +63,15 @@
 --                   open_functional, synced }],
 --   unaccounted: [{ type, id, number, supplier_number, supplier_name, doc_date,
 --                   currency, amount_functional, effect }],
---   totals:      { tb_total, gl_balance, difference, unaccounted_effect } }
+--   totals:      { tb_total, gl_balance, difference, unaccounted_effect },
+--   As-of mode only — monthly Account Analysis (roll-forward up to D):
+--   glMonthly:   [{ account, month 'YYYY-MM', dr, cr, lines }]          GL lines per month
+--   apMonthly:   [{ account, month, invoices, cancellations, payments, prepayments }]
+--                Payables movement per month, functional. Each invoice's events
+--                (accounted, paid, void, prepaid, cancelled) land in the month they
+--                took effect — never before the invoice itself was accounted — and a
+--                cancellation reverses what was still open, so the months add up to
+--                the trial balance (up to cent rounding). }
 -- =============================================================================
 
 BEGIN
@@ -105,6 +115,9 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     l_gl_cnt   PLS_INTEGER := 0;
     l_gl_cap   CONSTANT PLS_INTEGER := 20000;
     l_docs     CLOB;               -- PTD mode: payment / prepayment documents with period activity
+    l_mgl      CLOB;               -- as-of mode: GL debits/credits per account and month
+    l_map      CLOB;               -- as-of mode: Payables movement per account and month
+    l_mg_first BOOLEAN := TRUE;
     l_doc_first BOOLEAN := TRUE;
     l_active   BOOLEAN;
     l_first    BOOLEAN;
@@ -120,6 +133,11 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     a_invcnt   t_num;           -- account -> open invoice count
     a_suppcnt  t_num;           -- account -> distinct supplier count
     s_seen     t_set;           -- account|supplier seen
+    s_comp     t_set;           -- companies (segment 1) of the invoice liability accounts
+    s_pair     t_set;           -- company|natural account of the invoice liability accounts
+    l_seg1     VARCHAR2(60);
+    l_seg4     VARCHAR2(60);
+    l_full_yn  VARCHAR2(1);     -- l_full_acct for use inside SQL (no BOOLEAN in SQL)
     a_key      VARCHAR2(240);
     l_gl       NUMBER;
     l_gl_open  NUMBER;
@@ -214,12 +232,15 @@ BEGIN
         l_open := DATE '1000-01-01';   -- nothing is open that early: opening = 0
     END IF;
     l_full_acct := INSTR(NVL(l_acct, 'x'), '-') > 0;
+    l_full_yn   := CASE WHEN INSTR(NVL(l_acct, 'x'), '-') > 0 THEN 'Y' ELSE 'N' END;
 
     DBMS_LOB.CREATETEMPORARY(l_inv, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_una, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_acc, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_gll, TRUE);
     DBMS_LOB.CREATETEMPORARY(l_docs, TRUE);
+    DBMS_LOB.CREATETEMPORARY(l_mgl, TRUE);
+    DBMS_LOB.CREATETEMPORARY(l_map, TRUE);
 
     -- ── 1. open accounted invoices ─────────────────────────────────────────
     lob_add(l_inv, '[');
@@ -380,11 +401,174 @@ BEGIN
     END LOOP;
     lob_add(l_inv, ']');
 
+    -- ── 1b. as-of mode: Payables movement per account and month ────────────
+    -- Same effective dates as section 1. An event before its invoice was
+    -- accounted counts from the invoice's month (the trial balance only sees
+    -- it from then); events on/after the cancellation are dropped and the
+    -- cancellation reverses everything still open, as the trial balance does.
+    IF l_start IS NULL THEN
+        l_first := TRUE;
+        FOR m IN (
+            WITH gl_post AS (
+                SELECT l.REFERENCE5 AS ref5, l.REFERENCE2 AS ref2,
+                       MIN(TRUNC(h.DEFAULT_EFFECTIVE_DATE)) AS gl_date
+                FROM   RR_GL_JE_LINES_ALL l
+                JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
+                WHERE  l.REFERENCE5 IN ('AP-INVOICE-CREATION','AP-INVOICE-CANCELLATION',
+                                        'AP-PAYMENT','AP-PAYMENT-VOID','AP-PREPAYMENT-APPLICATION')
+                GROUP BY l.REFERENCE5, l.REFERENCE2
+            ),
+            inv AS (
+                SELECT i.INVOICE_ID,
+                       NVL(i.LIABILITY_DISTRIBUTION, '(no liability account)') AS acct,
+                       CASE WHEN NVL(i.INVOICE_CURRENCY, 'AED') = 'AED' THEN 1
+                            ELSE NVL(NULLIF(i.CONVERSION_RATE, 0), 1) END AS rate,
+                       NVL(i.INVOICE_AMOUNT, 0) AS amt,
+                       CASE WHEN i.SYNC_STATUS = 'SYNCED'
+                            THEN TRUNC(NVL(i.ACCOUNTING_DATE, i.INVOICE_DATE))
+                            ELSE gi.gl_date END AS acct_date,
+                       CASE WHEN NVL(i.CANCELED_FLAG, 'N') = 'Y' THEN
+                            CASE WHEN i.SYNC_STATUS = 'SYNCED'
+                                 THEN TRUNC(COALESCE(i.CANCELED_DATE, i.CANCELLATION_DATE, i.INVOICE_DATE))
+                                 ELSE gc.gl_date END
+                       END AS cancel_date
+                FROM   RR_AP_INVOICES_ALL i
+                LEFT JOIN gl_post gi ON gi.ref5 = 'AP-INVOICE-CREATION'     AND gi.ref2 = TO_CHAR(i.INVOICE_ID)
+                LEFT JOIN gl_post gc ON gc.ref5 = 'AP-INVOICE-CANCELLATION' AND gc.ref2 = TO_CHAR(i.INVOICE_ID)
+                WHERE  (l_bu   IS NULL OR i.BUSINESS_UNIT   = l_bu)
+                AND    (l_supp IS NULL OR i.SUPPLIER_NUMBER = l_supp)
+                AND    (l_ccy  IS NULL OR NVL(i.INVOICE_CURRENCY, 'AED') = l_ccy)
+            ),
+            pr AS (
+                SELECT ri.INVOICE_ID,
+                       NVL(ri.AMOUNT_PAID_INVOICE_CURRENCY, 0) + NVL(ri.DISCOUNT_TAKEN, 0) AS amt,
+                       CASE WHEN p.SYNC_STATUS = 'SYNCED'
+                            THEN TRUNC(NVL(p.ACCOUNTING_DATE, p.PAYMENT_DATE))
+                            ELSE gp.gl_date END AS eff_date,
+                       CASE WHEN NVL(p.PAYMENT_STATUS, 'x') = 'Voided' THEN
+                            CASE WHEN p.SYNC_STATUS = 'SYNCED'
+                                 THEN TRUNC(COALESCE(p.VOID_ACCOUNTING_DATE, p.VOID_DATE, p.PAYMENT_DATE))
+                                 ELSE gv.gl_date END
+                       END AS void_date
+                FROM   RR_AP_PAYMENTS_RELATED_INVOICES ri
+                JOIN   RR_AP_PAYMENTS_ALL p ON p.CHECK_ID = ri.CHECK_ID
+                LEFT JOIN gl_post gp ON gp.ref5 = 'AP-PAYMENT'      AND gp.ref2 = TO_CHAR(p.CHECK_ID)
+                LEFT JOIN gl_post gv ON gv.ref5 = 'AP-PAYMENT-VOID' AND gv.ref2 = TO_CHAR(p.CHECK_ID)
+            ),
+            apl AS (
+                SELECT COALESCE(ap.INVOICE_ID, inv_r.INVOICE_ID) AS INVOICE_ID,
+                       NVL(ap.APPLIED_AMOUNT, 0) AS amt,
+                       CASE WHEN NVL(ap.SYNC_STATUS, 'NEW') = 'SYNCED' OR tgt.SYNC_STATUS = 'SYNCED'
+                            THEN TRUNC(COALESCE(ap.APPLICATION_ACCOUNTING_DATE, tgt.ACCOUNTING_DATE, tgt.INVOICE_DATE))
+                            ELSE ga.gl_date END AS eff_date
+                FROM   RR_AP_APPLIED_PREPAYMENTS ap
+                LEFT JOIN RR_AP_INVOICES_ALL inv_r
+                       ON ap.INVOICE_ID IS NULL AND inv_r.INVOICE_NUMBER = ap.INVOICE_NUMBER
+                LEFT JOIN RR_AP_INVOICES_ALL tgt
+                       ON tgt.INVOICE_ID = COALESCE(ap.INVOICE_ID, inv_r.INVOICE_ID)
+                LEFT JOIN gl_post ga ON ga.ref5 = 'AP-PREPAYMENT-APPLICATION' AND ga.ref2 = TO_CHAR(ap.APPLICATION_ID)
+                WHERE  NVL(ap.STATUS, 'Applied') != 'Cancelled'
+            ),
+            ev AS (
+                SELECT inv.INVOICE_ID, inv.acct, inv.rate, inv.cancel_date, 'INV' AS typ,
+                       inv.acct_date AS ev_date, inv.amt AS a
+                FROM   inv
+                WHERE  inv.acct_date IS NOT NULL
+                UNION ALL
+                SELECT inv.INVOICE_ID, inv.acct, inv.rate, inv.cancel_date, 'PAY',
+                       GREATEST(pr.eff_date, inv.acct_date), -pr.amt
+                FROM   pr JOIN inv ON inv.INVOICE_ID = pr.INVOICE_ID
+                WHERE  inv.acct_date IS NOT NULL AND pr.eff_date IS NOT NULL
+                UNION ALL
+                SELECT inv.INVOICE_ID, inv.acct, inv.rate, inv.cancel_date, 'PAY',
+                       GREATEST(pr.void_date, pr.eff_date, inv.acct_date), pr.amt
+                FROM   pr JOIN inv ON inv.INVOICE_ID = pr.INVOICE_ID
+                WHERE  inv.acct_date IS NOT NULL AND pr.eff_date IS NOT NULL AND pr.void_date IS NOT NULL
+                UNION ALL
+                SELECT inv.INVOICE_ID, inv.acct, inv.rate, inv.cancel_date, 'APP',
+                       GREATEST(apl.eff_date, inv.acct_date), -apl.amt
+                FROM   apl JOIN inv ON inv.INVOICE_ID = apl.INVOICE_ID
+                WHERE  inv.acct_date IS NOT NULL AND apl.eff_date IS NOT NULL
+            ),
+            kept AS (
+                SELECT * FROM ev
+                WHERE  ev_date <= l_asof
+                AND    (cancel_date IS NULL OR ev_date < cancel_date)
+            ),
+            all_ev AS (
+                SELECT acct, typ, ev_date, a * rate AS fa FROM kept
+                UNION ALL
+                SELECT acct, 'CAN', cancel_date, -SUM(a) * rate
+                FROM   kept
+                WHERE  cancel_date <= l_asof
+                GROUP BY INVOICE_ID, acct, rate, cancel_date
+            )
+            SELECT acct, TO_CHAR(TRUNC(ev_date, 'MM'), 'YYYY-MM') AS mon,
+                   SUM(CASE WHEN typ = 'INV' THEN fa ELSE 0 END) AS inv_fa,
+                   SUM(CASE WHEN typ = 'CAN' THEN fa ELSE 0 END) AS can_fa,
+                   SUM(CASE WHEN typ = 'PAY' THEN fa ELSE 0 END) AS pay_fa,
+                   SUM(CASE WHEN typ = 'APP' THEN fa ELSE 0 END) AS app_fa
+            FROM   all_ev
+            GROUP BY acct, TRUNC(ev_date, 'MM')
+            ORDER BY acct, TRUNC(ev_date, 'MM')
+        ) LOOP
+            IF acct_ok(CASE WHEN m.acct = '(no liability account)' THEN NULL ELSE m.acct END)
+               AND (ROUND(m.inv_fa, 2) != 0 OR ROUND(m.can_fa, 2) != 0
+                    OR ROUND(m.pay_fa, 2) != 0 OR ROUND(m.app_fa, 2) != 0) THEN
+                IF NOT l_first THEN lob_add(l_map, ','); END IF;
+                l_first := FALSE;
+                lob_add(l_map,
+                    '{"account":'        || js(m.acct)
+                 || ',"month":'          || js(m.mon)
+                 || ',"invoices":'       || jn(ROUND(m.inv_fa, 2))
+                 || ',"cancellations":'  || jn(ROUND(m.can_fa, 2))
+                 || ',"payments":'       || jn(ROUND(m.pay_fa, 2))
+                 || ',"prepayments":'    || jn(ROUND(m.app_fa, 2))
+                 || '}');
+            END IF;
+        END LOOP;
+    END IF;
+
     -- the account filter can name an account that no invoice uses: still compare it
     IF l_acct IS NOT NULL AND l_full_acct AND NOT a_total.EXISTS(l_acct) THEN
         a_total(l_acct) := 0; a_open(l_acct) := 0; a_inv(l_acct) := 0; a_pay(l_acct) := 0; a_app(l_acct) := 0;
         a_invcnt(l_acct) := 0; a_suppcnt(l_acct) := 0;
     END IF;
+
+    -- GL-only combinations: the GL Trial Balance adds up EVERY combination of a
+    -- natural account (e.g. all 01-…-2313101-… rows), not only the ones invoices use
+    -- as liability account. Payments, voids or manual journals booked to another
+    -- combination of the same account would otherwise be missing from the GL side.
+    -- Included: same company + natural account as an invoice liability account, or,
+    -- with the account filter, every combination matching it (in those companies).
+    a_key := a_total.FIRST;
+    WHILE a_key IS NOT NULL LOOP
+        IF a_key != '(no liability account)' THEN
+            l_seg1 := REGEXP_SUBSTR(a_key, '[^-]+', 1, 1);
+            l_seg4 := REGEXP_SUBSTR(a_key, '[^-]+', 1, 4);
+            s_comp(NVL(l_seg1, '?')) := 1;
+            s_pair(NVL(l_seg1, '?') || '|' || NVL(l_seg4, '?')) := 1;
+        END IF;
+        a_key := a_total.NEXT(a_key);
+    END LOOP;
+    FOR c IN (
+        SELECT DISTINCT l.ACCOUNT_COMBINATION AS combo
+        FROM   RR_GL_JE_LINES_ALL l
+        WHERE  l.ACCOUNT_COMBINATION IS NOT NULL
+        AND    (l_acct IS NULL
+                OR (l_full_yn = 'Y' AND l.ACCOUNT_COMBINATION = l_acct)
+                OR (l_full_yn = 'N' AND REGEXP_SUBSTR(l.ACCOUNT_COMBINATION, '[^-]+', 1, 4) = l_acct))
+    ) LOOP
+        IF NOT a_total.EXISTS(c.combo) THEN
+            l_seg1 := NVL(REGEXP_SUBSTR(c.combo, '[^-]+', 1, 1), '?');
+            l_seg4 := NVL(REGEXP_SUBSTR(c.combo, '[^-]+', 1, 4), '?');
+            IF (l_acct IS NOT NULL AND (s_comp.COUNT = 0 OR s_comp.EXISTS(l_seg1)))
+               OR (l_acct IS NULL AND s_pair.EXISTS(l_seg1 || '|' || l_seg4)) THEN
+                a_total(c.combo) := 0; a_open(c.combo) := 0; a_inv(c.combo) := 0; a_pay(c.combo) := 0; a_app(c.combo) := 0;
+                a_invcnt(c.combo) := 0; a_suppcnt(c.combo) := 0;
+            END IF;
+        END IF;
+    END LOOP;
 
     -- ── 2. GL balance per liability account ────────────────────────────────
     lob_add(l_acc, '[');
@@ -425,6 +609,31 @@ BEGIN
          || ',"invoice_count":'   || jn(a_invcnt(a_key))
          || ',"supplier_count":'  || jn(a_suppcnt(a_key))
          || '}');
+        -- as-of: GL debits/credits per month (monthly Account Analysis)
+        IF l_start IS NULL THEN
+            FOR g IN (
+                SELECT TO_CHAR(TRUNC(h.DEFAULT_EFFECTIVE_DATE, 'MM'), 'YYYY-MM') AS mon,
+                       SUM(NVL(l.ACCOUNTED_DR, 0)) AS dr,
+                       SUM(NVL(l.ACCOUNTED_CR, 0)) AS cr,
+                       COUNT(*) AS cnt
+                FROM   RR_GL_JE_LINES_ALL l
+                JOIN   RR_GL_JE_HEADERS   h ON h.JE_HEADER_ID = l.JE_HEADER_ID
+                WHERE  l.ACCOUNT_COMBINATION = a_key
+                AND    TRUNC(h.DEFAULT_EFFECTIVE_DATE) <= l_asof
+                GROUP BY TRUNC(h.DEFAULT_EFFECTIVE_DATE, 'MM')
+                ORDER BY TRUNC(h.DEFAULT_EFFECTIVE_DATE, 'MM')
+            ) LOOP
+                IF NOT l_mg_first THEN lob_add(l_mgl, ','); END IF;
+                l_mg_first := FALSE;
+                lob_add(l_mgl,
+                    '{"account":' || js(a_key)
+                 || ',"month":'   || js(g.mon)
+                 || ',"dr":'      || jn(g.dr)
+                 || ',"cr":'      || jn(g.cr)
+                 || ',"lines":'   || jn(g.cnt)
+                 || '}');
+            END LOOP;
+        END IF;
         -- PTD: the GL lines behind the period movement, tagged by source
         IF l_start IS NOT NULL THEN
             FOR g IN (
@@ -689,6 +898,10 @@ BEGIN
     lob_out(l_gll);
     HTP.PRN('],"ptdDocs":[');
     lob_out(l_docs);
+    HTP.PRN('],"glMonthly":[');
+    lob_out(l_mgl);
+    HTP.PRN('],"apMonthly":[');
+    lob_out(l_map);
     HTP.PRN(']');
     HTP.PRN('}');
 
