@@ -53,7 +53,8 @@ interface PendingRow {
 interface TbResponse {
   success: string | boolean; error?: string; asOfDate: string; businessUnit: string | null;
   mode?: 'ASOF' | 'PTD'; periodStart?: string | null; openingDate?: string | null;
-  totals: { tb_total: number; gl_balance: number; difference: number; unaccounted_effect: number; gl_by_date?: number } & Partial<PtdFields>;
+  totals: { tb_total: number; gl_balance: number; difference: number; unaccounted_effect: number; gl_by_date?: number;
+    outstanding?: number } & Partial<PtdFields>;
   accounts: AccountRow[]; invoices: InvoiceRow[]; unaccounted: PendingRow[];
   glLines?: GlLine[]; glLinesCapped?: boolean; ptdDocs?: PtdDoc[];
   glMonthly?: GlMonth[]; apMonthly?: ApMonth[];
@@ -63,6 +64,7 @@ interface TbResponse {
 interface SupOut {
   supplier_number: string; supplier_name: string | null; invoice_count: number;
   dashboard: number; not_accounted: number; other_accounts: number; timing: number; fx: number; payables_balance: number;
+  outstanding?: number;
 }
 type SupBucket = 'NOT_ACCOUNTED' | 'OTHER_ACCOUNT' | 'IN_REPORT';
 interface SupInv {
@@ -781,7 +783,11 @@ export default function PayablesTrialBalance() {
   };
 
   const t = data?.totals;
-  const reconciled = t && isZero(t.difference);
+  // Payables Balance card: total outstanding regardless of accounting status (Payables
+  // dashboard formula, liability account filter, AED); falls back to the accounted balance
+  const outstanding = t ? (t.outstanding ?? t.tb_total) : 0;
+  const outDiff = t ? outstanding - t.gl_balance : 0;
+  const reconciled = t && (isPtd ? isZero(t.difference) : isZero(outDiff));
 
   return (
     <div style={{ padding: 16, background: REDWOOD.neutral100, minHeight: '100%' }}>
@@ -891,9 +897,14 @@ export default function PayablesTrialBalance() {
             ) : (
               <>
                 <Col flex="1">
-                  <Tooltip title="Payables side: open balance of the accounted invoices (invoice − payments − prepayments applied), i.e. the supplier balances. Compare with GL Balance.">
-                    <Card size="small" hoverable onClick={() => setTab('suppliers')}>
-                      <Statistic title="Payables Balance (AED)" value={t.tb_total} precision={2} />
+                  <Tooltip title="Total outstanding regardless of accounting status: every non-cancelled invoice less every payment and prepayment (as the Payables dashboard), on the selected liability account, in AED at the invoice rate. Click for the supplier breakdown.">
+                    <Card size="small" hoverable onClick={() => setTab('supout')}>
+                      <Statistic title="Payables Balance (AED)" value={outstanding} precision={2} />
+                      {t.outstanding != null && (
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          Accounted only: {fmt(t.tb_total)} — gap explained in Suppliers Outstanding
+                        </Text>
+                      )}
                     </Card>
                   </Tooltip>
                 </Col>
@@ -906,7 +917,7 @@ export default function PayablesTrialBalance() {
                 </Col>
                 <Col flex="1">
                   <Card size="small">
-                    <Statistic title="Difference" value={t.difference} precision={2}
+                    <Statistic title="Difference" value={outDiff} precision={2}
                       valueStyle={{ color: reconciled ? REDWOOD.success : REDWOOD.primary }}
                       prefix={reconciled ? <CheckCircleOutlined /> : <WarningOutlined />} />
                   </Card>

@@ -77,7 +77,9 @@
 --                   open_functional, synced }],
 --   unaccounted: [{ type, id, number, supplier_number, supplier_name, doc_date,
 --                   currency, amount_functional, effect }],
---   totals:      { tb_total, gl_balance, difference, unaccounted_effect },
+--   totals:      { tb_total, gl_balance, difference, unaccounted_effect,
+--                  outstanding = total outstanding regardless of accounting status
+--                  (dashboard formula on the liability account filter, AED) },
 --   supplierOutstanding: per supplier, the Payables dashboard "Total Outstanding"
 --                (suppliers/balance/outstanding formula: all non-cancelled invoices,
 --                every payment/prepayment, invoice currency, today) bridged to the
@@ -180,6 +182,9 @@ CREATE OR REPLACE PROCEDURE RR_AP_PAYABLES_TB_JSON (
     so_tm      t_num;           -- timing / floors
     so_fx      t_num;           -- functional − entered
     so_tb      t_num;           -- payables balance (functional)
+    so_out     t_num;           -- total outstanding: dashboard formula, liability account filter, AED
+    l_out_tot  NUMBER := 0;
+    l_out_fn   NUMBER;
     l_sk       VARCHAR2(240);
     l_bucket   VARCHAR2(20);
     l_open_e   NUMBER;
@@ -1113,7 +1118,14 @@ BEGIN
             IF NOT so_dash.EXISTS(l_sk) THEN
                 so_name(l_sk) := SUBSTR(v.supp_name, 1, 400);
                 so_cnt(l_sk) := 0; so_dash(l_sk) := 0; so_na(l_sk) := 0; so_oa(l_sk) := 0;
-                so_tm(l_sk) := 0;  so_fx(l_sk) := 0;   so_tb(l_sk) := 0;
+                so_tm(l_sk) := 0;  so_fx(l_sk) := 0;   so_tb(l_sk) := 0;  so_out(l_sk) := 0;
+            END IF;
+            -- total outstanding ignores accounting status (as the Payables dashboard),
+            -- but keeps the liability account filter and converts at the invoice rate
+            IF NVL(acct_ok(v.acct), FALSE) THEN
+                l_out_fn := ROUND(v.dash_rem * v.rate, 2);
+                so_out(l_sk) := so_out(l_sk) + l_out_fn;
+                l_out_tot    := l_out_tot + l_out_fn;
             END IF;
             so_cnt(l_sk)  := so_cnt(l_sk) + 1;
             so_dash(l_sk) := so_dash(l_sk) + v.dash_rem;
@@ -1162,6 +1174,7 @@ BEGIN
          || ',"timing":'           || jn(so_tm(l_sk))
          || ',"fx":'               || jn(so_fx(l_sk))
          || ',"payables_balance":' || jn(so_tb(l_sk))
+         || ',"outstanding":'      || jn(so_out(l_sk))
          || '}');
         l_sk := so_dash.NEXT(l_sk);
     END LOOP;
@@ -1179,6 +1192,7 @@ BEGIN
          || ',"gl_by_date":'         || jn(l_gl_bdtot)
          || ',"difference":'         || jn(l_tb_tot - l_gl_tot)
          || ',"unaccounted_effect":' || jn(l_una_tot)
+         || ',"outstanding":'        || jn(l_out_tot)
          || ',"tb_opening":'         || jn(l_tb_open)
          || ',"invoices_ptd":'       || jn(l_inv_tot)
          || ',"payments_ptd":'       || jn(l_pay_tot)
