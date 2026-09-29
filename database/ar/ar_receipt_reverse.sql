@@ -90,28 +90,51 @@ END;
 
 SELECT line, position, text FROM user_errors WHERE name = 'RR_AR_RECEIPT_REVERSE_CHECK' ORDER BY sequence;
 
--- ── GET receipts/:id/reverse-eligibility ────────────────────────────────────
+-- ── Endpoints ───────────────────────────────────────────────────────────────
+-- Defined in the SAME ORDS module that already serves the receipt endpoints
+-- (the one owning 'receipts/:id', e.g. module 'ar' at /reerp/ar/), so the URLs are
+--   {base}/ar/receipts/:id/reverse-eligibility   and   {base}/ar/receipts/:id/reverse
+-- The block prints the module and the full URL prefix it used.
+SET SERVEROUTPUT ON
+DECLARE
+    v_mod    VARCHAR2(255);
+    v_prefix VARCHAR2(255);
 BEGIN
-    ORDS.DELETE_TEMPLATE(p_module_name => 'ar', p_pattern => 'receipts/:id/reverse-eligibility');
-    COMMIT;
-EXCEPTION WHEN OTHERS THEN NULL;
-END;
-/
+    BEGIN
+        SELECT m.name, m.uri_prefix INTO v_mod, v_prefix
+        FROM   user_ords_modules m
+        JOIN   user_ords_templates t ON t.module_id = m.id
+        WHERE  t.uri_template IN ('receipts/:id', 'receipts/:id/delete', 'receipts/:id/accounting-status')
+        -- the app calls {…/reerp}/ar/receipts/… — prefer the module mounted there
+        ORDER  BY CASE WHEN LOWER(m.uri_prefix) LIKE '%reerp/ar/' THEN 0
+                       WHEN LOWER(m.uri_prefix) LIKE '%/ar/'      THEN 1 ELSE 2 END,
+                  CASE t.uri_template WHEN 'receipts/:id/delete' THEN 1 WHEN 'receipts/:id' THEN 2 ELSE 3 END
+        FETCH FIRST 1 ROW ONLY;
+    EXCEPTION WHEN NO_DATA_FOUND THEN
+        v_mod := 'ar';
+        SELECT MAX(uri_prefix) INTO v_prefix FROM user_ords_modules WHERE name = 'ar';
+    END;
+    DBMS_OUTPUT.PUT_LINE('Module: ' || v_mod || '   base path: ' || v_prefix);
 
-BEGIN
+    BEGIN ORDS.DELETE_TEMPLATE(p_module_name => v_mod, p_pattern => 'receipts/:id/reverse-eligibility');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ORDS.DELETE_TEMPLATE(p_module_name => v_mod, p_pattern => 'receipts/:id/reverse');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    -- GET receipts/:id/reverse-eligibility
     ORDS.DEFINE_TEMPLATE(
-        p_module_name => 'ar',
+        p_module_name => v_mod,
         p_pattern     => 'receipts/:id/reverse-eligibility',
         p_comments    => 'Can this receipt be reversed? (accounted, no applications, not reversed)'
     );
     ORDS.DEFINE_HANDLER(
-        p_module_name    => 'ar',
+        p_module_name    => v_mod,
         p_pattern        => 'receipts/:id/reverse-eligibility',
         p_method         => 'GET',
         p_source_type    => 'plsql/block',
         p_items_per_page => 0,
         p_comments       => 'Eligibility checks for a receipt reversal',
-        p_source         => q'[
+        p_source         => q'~
 DECLARE
     l_found BOOLEAN; l_no VARCHAR2(100); l_state VARCHAR2(60); l_status VARCHAR2(60);
     l_acct VARCHAR2(60); l_sync VARCHAR2(60); l_amt NUMBER; l_ccy VARCHAR2(15); l_bu VARCHAR2(240);
@@ -139,34 +162,23 @@ EXCEPTION WHEN OTHERS THEN
     OWA_UTIL.MIME_HEADER('application/json', TRUE);
     HTP.PRN('{"success":false,"error":"' || REPLACE(SQLERRM, '"', '\"') || '"}');
 END;
-]'
+~'
     );
-    COMMIT;
-END;
-/
 
--- ── POST receipts/:id/reverse ───────────────────────────────────────────────
-BEGIN
-    ORDS.DELETE_TEMPLATE(p_module_name => 'ar', p_pattern => 'receipts/:id/reverse');
-    COMMIT;
-EXCEPTION WHEN OTHERS THEN NULL;
-END;
-/
-
-BEGIN
+    -- POST receipts/:id/reverse
     ORDS.DEFINE_TEMPLATE(
-        p_module_name => 'ar',
+        p_module_name => v_mod,
         p_pattern     => 'receipts/:id/reverse',
         p_comments    => 'Mark a receipt Reversed after its reversal journal is posted'
     );
     ORDS.DEFINE_HANDLER(
-        p_module_name    => 'ar',
+        p_module_name    => v_mod,
         p_pattern        => 'receipts/:id/reverse',
         p_method         => 'POST',
         p_source_type    => 'plsql/block',
         p_mimes_allowed  => 'application/json',
         p_comments       => 'Stamp STATE/STATUS = Reversed and REVERSAL_* (requires the AR_RECEIPTS_REVERSAL journal)',
-        p_source         => q'[
+        p_source         => q'~
 DECLARE
     l_body  CLOB := :body_text;
     l_found BOOLEAN; l_no VARCHAR2(100); l_state VARCHAR2(60); l_status VARCHAR2(60);
@@ -216,15 +228,21 @@ EXCEPTION WHEN OTHERS THEN
     OWA_UTIL.MIME_HEADER('application/json', TRUE);
     HTP.PRN('{"success":false,"error":"' || REPLACE(SQLERRM, '"', '\"') || '"}');
 END;
-]'
+~'
     );
     COMMIT;
+    DBMS_OUTPUT.PUT_LINE('Created: ' || v_prefix || 'receipts/:id/reverse-eligibility  (GET)');
+    DBMS_OUTPUT.PUT_LINE('Created: ' || v_prefix || 'receipts/:id/reverse              (POST)');
 END;
 /
 
--- Verify
-SELECT t.uri_template, h.method
+-- Verify: must list 2 rows, in the same module as 'receipts/:id/delete'
+SELECT m.name AS module_name, m.uri_prefix, t.uri_template, h.method
 FROM   user_ords_modules m
 JOIN   user_ords_templates t ON t.module_id = m.id
 JOIN   user_ords_handlers  h ON h.template_id = t.id
-WHERE  m.name = 'ar' AND t.uri_template LIKE 'receipts/:id/reverse%';
+WHERE  t.uri_template IN ('receipts/:id/reverse-eligibility', 'receipts/:id/reverse', 'receipts/:id/delete')
+ORDER  BY m.name, t.uri_template;
+
+-- Test in a browser (replace 900000… with a receipt id):
+--   {…}/ords/bcldifc/reerp/ar/receipts/900000123/reverse-eligibility

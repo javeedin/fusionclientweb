@@ -94,7 +94,8 @@ export default function ReverseReceiptModal({ open, receipt, currentUser, onClos
       ]);
       const eBody = await eRes.json().catch(() => ({}));
       if (eRes.status === 404 || eBody?.code === 'NotFound') {
-        throw new Error('The reversal service is not deployed — run database/ar/ar_receipt_reverse.sql in bcldifc.');
+        throw new Error(`The reversal service is not deployed (HTTP 404 on ${BASE}/ar/receipts/${id}/reverse-eligibility) — `
+          + 'run database/ar/ar_receipt_reverse.sql in bcldifc; its last query must list receipts/:id/reverse-eligibility.');
       }
       if (eBody?.success === false) throw new Error(eBody.error || 'Eligibility check failed');
       setElig({
