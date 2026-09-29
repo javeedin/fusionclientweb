@@ -46,7 +46,7 @@ interface ServerStatus {
   http: { ok: boolean; statusCode?: number; ms?: number; error?: string };
   checkedAt: string;
 }
-interface BastionCfg { sessionOcid: string; keyPath: string; bastionHost?: string }
+interface BastionCfg { sessionOcid: string; keyPath: string; bastionHost?: string; localPort?: number }
 interface SavedConn {
   name: string; protocol: string; host: string; port?: number; username: string; password?: string;
   bastion?: BastionCfg;
@@ -61,6 +61,7 @@ const parseBastionSsh = (cmd: string) => {
   const fwdParts = (/-L\s+(\S+)/.exec(c)?.[1] || '').split(':');
   const targetPort = /^\d+$/.test(fwdParts[fwdParts.length - 1] || '') ? fwdParts[fwdParts.length - 1] : '';
   const targetHost = targetPort && fwdParts.length >= 2 && !/[<>]/.test(fwdParts[fwdParts.length - 2]) ? fwdParts[fwdParts.length - 2] : '';
+  const localPort = fwdParts.length === 3 && /^\d+$/.test(fwdParts[0]) ? fwdParts[0] : '';
   const dest = /(ocid1\.bastionsession\.[\w.-]+)@([\w.-]+)/i.exec(c);
   if (!dest) return null;
   const keyPath = key ? (key[2] || key[3] || key[4]) : '';
@@ -68,6 +69,7 @@ const parseBastionSsh = (cmd: string) => {
     keyPath: /^<.*>$/.test(keyPath) ? '' : keyPath,   // OCI's template shows <privateKey>
     targetHost,
     targetPort,
+    localPort,
     sessionOcid: dest[1],
     bastionHost: dest[2],
   };
@@ -209,7 +211,10 @@ const FTPManager: React.FC = () => {
   // ── connect / disconnect ──────────────────────────────────────────────────
   // OCI Bastion (SFTP only): the app opens the tunnel itself — no ssh.exe window
   const bastionFrom = (v: any): BastionCfg | undefined => (v.useBastion && v.protocol === 'sftp' && v.bastionOcid?.trim()
-    ? { sessionOcid: v.bastionOcid.trim(), keyPath: (v.bastionKeyPath || '').trim(), bastionHost: v.bastionHost?.trim() || undefined }
+    ? {
+      sessionOcid: v.bastionOcid.trim(), keyPath: (v.bastionKeyPath || '').trim(),
+      bastionHost: v.bastionHost?.trim() || undefined, localPort: Number(v.bastionLocalPort) || 2222,
+    }
     : undefined);
   const savedToForm = (s: SavedConn) => ({
     protocol: s.protocol, host: s.host,
@@ -217,6 +222,7 @@ const FTPManager: React.FC = () => {
     username: s.username, password: s.password,
     useBastion: !!s.bastion,
     bastionOcid: s.bastion?.sessionOcid, bastionKeyPath: s.bastion?.keyPath, bastionHost: s.bastion?.bastionHost,
+    bastionLocalPort: s.bastion?.localPort != null ? String(s.bastion.localPort) : undefined,
   });
   const useBastion = Form.useWatch('useBastion', connForm);
   const [sshPasteOpen, setSshPasteOpen] = useState(false);
@@ -227,6 +233,7 @@ const FTPManager: React.FC = () => {
     connForm.setFieldsValue({
       protocol: 'sftp', useBastion: true,
       bastionOcid: r.sessionOcid, bastionKeyPath: r.keyPath, bastionHost: r.bastionHost,
+      ...(r.localPort ? { bastionLocalPort: r.localPort } : {}),
       ...(r.targetHost ? { host: r.targetHost } : {}),
       ...(r.targetPort ? { port: r.targetPort } : {}),
     });
@@ -279,6 +286,7 @@ const FTPManager: React.FC = () => {
       // successful connect, so next time one click reconnects
       persistConnection(v);
       message.success('Connected');
+      if (d.tunnel) message.info({ content: d.tunnel, duration: 8 });
       await loadRemote('/', d.sessionId);
     } catch (e: any) {
       message.error(`Connect failed: ${e.message}`);
@@ -306,25 +314,6 @@ const FTPManager: React.FC = () => {
     };
     return () => { sessionRecover = null; };
   }, []);
-
-  // keep-alive: every 30 s the backend checks the SSH link / Bastion tunnel and
-  // reopens it if it dropped, so the next Server/Transfer action does not stall
-  useEffect(() => {
-    if (!sessionId) return undefined;
-    let stopped = false;
-    const check = async () => {
-      if (stopped) return;
-      setHealth(h => ({ ...h, state: h.state === 'lost' ? 'lost' : 'checking' }));
-      try {
-        await post(`${API}/ping`, { sessionId });
-        if (!stopped) setHealth({ state: 'ok', at: Date.now() });
-      } catch (e: any) {
-        if (!stopped) setHealth({ state: 'lost', at: Date.now(), error: e?.message || String(e) });
-      }
-    };
-    const t = setInterval(check, 30000);
-    return () => { stopped = true; clearInterval(t); };
-  }, [sessionId]);
 
   const saveConnection = async () => {
     await connForm.validateFields(['protocol', 'host', 'username']);
@@ -624,9 +613,7 @@ const FTPManager: React.FC = () => {
             <Text strong style={{ fontSize: 13 }}>{isRemote ? 'Remote Server' : 'My Files (this computer)'}</Text>
             {isRemote && (sessionId
               ? (
-                <Tooltip title={health.state === 'lost'
-                  ? `Connection check failed: ${health.error}. The next action tries to reconnect; if the Bastion session expired, create a new one and paste its OCID.`
-                  : `Connection checked ${health.at ? new Date(health.at).toLocaleTimeString() : ''} — checked every 30 s and reopened automatically (incl. the Bastion tunnel) if it drops`}>
+                <Tooltip title="Checked each time you use an action on this page — if the SSH connection or the OCI Bastion tunnel (Command Prompt window) is not open, it is reopened first">
                   <Tag color={health.state === 'lost' ? 'red' : health.state === 'checking' ? 'gold' : 'green'} style={{ fontSize: 10 }}>
                     {health.state === 'checking' ? <SyncOutlined spin /> : health.state === 'lost' ? <CloseCircleOutlined /> : <CheckCircleOutlined />} {connLabel}
                   </Tag>
@@ -782,12 +769,17 @@ const FTPManager: React.FC = () => {
                     <Input placeholder='Private key file, e.g. C:\Bastion keys\reerp-bastion.key' style={{ width: 280 }}
                       disabled={!!sessionId} allowClear />
                   </Form.Item>
+                  <Form.Item name="bastionLocalPort" style={{ margin: 0 }}
+                    rules={[{ pattern: /^\d{2,5}$/, message: 'Port number' }]}>
+                    <Input placeholder="Local port (2222)" style={{ width: 130 }} disabled={!!sessionId} />
+                  </Form.Item>
                   <Form.Item name="bastionHost" style={{ margin: 0 }}>
                     <Input placeholder="Bastion host (auto from the OCID)" style={{ width: 250 }} disabled={!!sessionId} allowClear />
                   </Form.Item>
                   <Button size="small" onClick={() => setSshPasteOpen(true)} disabled={!!sessionId}>Paste SSH command…</Button>
                   <Text type="secondary" style={{ fontSize: 11 }}>
-                    Host/Port above = the private server (e.g. 10.0.1.125 / 22). Bastion sessions expire (~3 h): paste the new OCID when it does.
+                    Host/Port above = the private server (e.g. 10.0.1.125 / 22). On Connect (and before any action, if it is closed) the app opens a
+                    Command Prompt “OCI Bastion tunnel” running the ssh command — keep it open. Bastion sessions expire (~3 h): paste the new SSH command.
                   </Text>
                 </div>
               )}

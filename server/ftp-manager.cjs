@@ -4,10 +4,12 @@
 //
 // Endpoints (all JSON):
 //   POST /api/ftp/connect        {protocol, host, port, username, password, bastion?} -> {sessionId}
-//        bastion (SFTP only) = {sessionOcid, keyPath, bastionHost?} — reach a private host
-//        (e.g. 10.0.1.125:22) through an OCI Bastion port-forwarding session, the same
-//        as `ssh -i key -N -L …:host:port -p 22 <sessionOcid>@host.bastion.<region>…`,
-//        but in-process: no ssh.exe window and no local port.
+//        bastion (SFTP only) = {sessionOcid, keyPath, bastionHost?, localPort?=2222} — reach a
+//        private host (e.g. 10.0.1.125:22) through an OCI Bastion port-forwarding session:
+//        if 127.0.0.1:<localPort> is not listening, a Command Prompt window titled
+//        "OCI Bastion tunnel" is opened running
+//          ssh -i <key> -N -L <localPort>:<host>:<port> -p 22 <sessionOcid>@host.bastion.<region>…
+//        and SFTP connects to 127.0.0.1:<localPort>. A tunnel you already opened is reused.
 //   POST /api/ftp/disconnect     {sessionId}
 //   POST /api/ftp/ping           {sessionId} -> {alive, reconnected?}  checks the SSH/SFTP
 //        connection (and the Bastion tunnel) and reopens it if it dropped.
@@ -54,12 +56,20 @@ const reconnect = async (session, why) => {
   try { session.client.end(); } catch { /* already gone */ }
   session.client = session.protocol === 'sftp' ? await makeSftp(session.cfg) : await makeFtp(session.cfg);
   session.reconnects = (session.reconnects || 0) + 1;
-  session.reconnectNotice = `${why} — reconnected${session.cfg.bastion ? ' (OCI Bastion tunnel reopened)' : ''}`;
+  session.reconnectNotice = `${why} — ${session.client.tunnel?.opened
+    ? `opened the OCI Bastion tunnel again (Command Prompt, local port ${session.client.tunnel.localPort}) and reconnected`
+    : 'reconnected'}`;
   console.log(`[ftp] ${session.cfg.username}@${session.cfg.host}: ${session.reconnectNotice}`);
 };
 
 // make sure the connection is up before an operation
+// (runs only when an action is chosen on the FTP page — no background polling)
 const ensureConnected = async (session) => {
+  const t = session.client.tunnel;
+  if (t && !(await portOpen(t.localPort))) {
+    await reconnect(session, `The OCI Bastion tunnel (local port ${t.localPort}) is not open`);
+    return;
+  }
   if (session.client.isAlive && !session.client.isAlive()) {
     await reconnect(session, session.client.lostReason?.() || 'Connection was lost');
   }
@@ -112,66 +122,80 @@ const bastionHostFor = (ocid) => {
   return m ? `host.bastion.${m[1].toLowerCase()}.oci.oraclecloud.com` : null;
 };
 
-// Connect to the Bastion as the session OCID with its private key, then open a
-// forwarded channel to targetHost:targetPort. Resolves {sock, close}; the sock is
-// handed to the SFTP client instead of a TCP connection.
-const openBastionTunnel = (bastion, targetHost, targetPort) => new Promise((resolve, reject) => {
-  const { Client } = require('ssh2'); // installed with ssh2-sftp-client
-  const sessionOcid = String(bastion.sessionOcid || '').trim();
-  const host = String(bastion.bastionHost || '').trim() || bastionHostFor(sessionOcid);
-  if (!sessionOcid) return reject(new Error('Bastion session OCID is required'));
-  if (!host) return reject(new Error('Cannot derive the Bastion host from the session OCID — enter it (e.g. host.bastion.me-dubai-1.oci.oraclecloud.com)'));
-  const keyPath = String(bastion.keyPath || '').trim().replace(/^"(.*)"$/, '$1');
-  let privateKey;
-  try { privateKey = fs.readFileSync(keyPath); }
-  catch (e) { return reject(new Error(`Cannot read the Bastion private key "${keyPath}": ${e.code || e.message}`)); }
-
-  const conn = new Client();
-  let settled = false;
-  const fail = (e) => { if (!settled) { settled = true; try { conn.end(); } catch { /* ignore */ } reject(e); } };
-  conn.on('ready', () => {
-    conn.forwardOut('127.0.0.1', 0, targetHost, Number(targetPort) || 22, (err, stream) => {
-      if (err) {
-        return fail(new Error(`Bastion reached, but it refused to forward to ${targetHost}:${targetPort} — `
-          + `the session must be a port-forwarding session for exactly this IP and port (${err.message})`));
-      }
-      settled = true;
-      const closeHandlers = [];
-      const fire = () => { while (closeHandlers.length) { try { closeHandlers.shift()(); } catch { /* ignore */ } } };
-      conn.on('close', fire);
-      stream.on('close', fire);
-      resolve({
-        sock: stream,
-        close: () => { try { conn.end(); } catch { /* ignore */ } },
-        onClose: (fn) => closeHandlers.push(fn),
-      });
-    });
-  });
-  conn.on('error', (e) => {
-    const msg = /authentication/i.test(e.message)
-      ? `Bastion login failed — the session has expired (sessions last ~3 hours) or the key does not match it. Create a new session and paste its OCID. (${e.message})`
-      : `Bastion ${host}: ${e.message}`;
-    fail(new Error(msg));
-  });
-  conn.connect({
-    host, port: Number(bastion.bastionPort) || 22, username: sessionOcid, privateKey,
-    passphrase: bastion.passphrase || undefined,
-    readyTimeout: 20000, keepaliveInterval: 20000,
-  });
+// Is something listening on 127.0.0.1:port? (the ssh -L tunnel's local end)
+const portOpen = (port, timeout = 1500) => new Promise((resolve) => {
+  const net = require('net');
+  const sock = net.connect({ host: '127.0.0.1', port });
+  const done = (v) => { sock.destroy(); resolve(v); };
+  sock.setTimeout(timeout, () => done(false));
+  sock.once('connect', () => done(true));
+  sock.once('error', () => done(false));
 });
+
+// The OCI Console's port-forwarding command, built from validated parts so nothing
+// can be injected into the Command Prompt.
+const bastionCommand = (b, targetHost, targetPort) => {
+  const ocid = String(b.sessionOcid || '').trim();
+  const host = String(b.bastionHost || '').trim() || bastionHostFor(ocid);
+  const keyPath = String(b.keyPath || '').trim().replace(/^"(.*)"$/, '$1');
+  const localPort = Number(b.localPort) || 2222;
+  if (!/^ocid1\.bastionsession\.[\w.-]+$/i.test(ocid)) throw new Error('Bastion session OCID is missing or invalid');
+  if (!host || !/^[\w.-]+$/.test(host)) throw new Error('Bastion host is invalid — e.g. host.bastion.me-dubai-1.oci.oraclecloud.com');
+  if (!keyPath || /["&|<>^%!`$]/.test(keyPath)) throw new Error('Bastion private key path is missing or contains invalid characters');
+  if (!fs.existsSync(keyPath)) throw new Error(`Bastion private key not found: ${keyPath}`);
+  if (!/^[\w.:-]+$/.test(String(targetHost))) throw new Error('Host is invalid');
+  if (!(localPort > 0 && localPort < 65536)) throw new Error('Local tunnel port is invalid');
+  const args = [
+    '-i', keyPath, '-N',
+    '-L', `${localPort}:${targetHost}:${Number(targetPort) || 22}`,
+    '-p', '22',
+    '-o', 'StrictHostKeyChecking=accept-new',   // no yes/no prompt on first use
+    '-o', 'ServerAliveInterval=30',
+    '-o', 'ExitOnForwardFailure=yes',           // local port busy -> fail instead of hanging
+    `${ocid}@${host}`,
+  ];
+  const display = `ssh -i "${keyPath}" -N -L ${localPort}:${targetHost}:${Number(targetPort) || 22} -p 22 `
+    + `-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes ${ocid}@${host}`;
+  return { args, display, localPort };
+};
+
+// Make sure the Bastion tunnel is open: if nothing listens on the local port, open a
+// Command Prompt window running the ssh command (it stays open — close it to stop the
+// tunnel) and wait for the port. Resolves {localPort, opened}.
+const ensureBastionTunnel = async (b, targetHost, targetPort) => {
+  const { args, display, localPort } = bastionCommand(b, targetHost, targetPort);
+  if (await portOpen(localPort)) return { localPort, opened: false };
+  const { spawn: spawnProc } = require('child_process');
+  if (process.platform === 'win32') {
+    // new visible console window titled "OCI Bastion tunnel"; /k keeps it open so
+    // an error (expired session, wrong key) stays readable
+    spawnProc('cmd.exe', ['/d', '/s', '/c', `"start "OCI Bastion tunnel" cmd /k ${display}"`],
+      { windowsVerbatimArguments: true, detached: true, stdio: 'ignore' }).unref();
+  } else {
+    spawnProc(process.env.REERP_SSH_BIN || 'ssh', args, { detached: true, stdio: 'ignore' }).unref();
+  }
+  const until = Date.now() + 30000;
+  while (Date.now() < until) {
+    await new Promise(r => setTimeout(r, 1000));
+    if (await portOpen(localPort)) return { localPort, opened: true };
+  }
+  throw new Error(`The OCI Bastion tunnel did not open on local port ${localPort} within 30 s — look at the "OCI Bastion tunnel" `
+    + 'Command Prompt window: an expired session (~3 h), a wrong key or a busy port shows there. '
+    + 'For an expired session create a new one and paste its SSH command.');
+};
 
 // ── protocol adapters ───────────────────────────────────────────────────────
 
 const makeSftp = async (cfg) => {
   const SftpClient = require('ssh2-sftp-client');
   const client = new SftpClient();
-  // optional OCI Bastion tunnel: the SFTP session runs inside the forwarded channel
-  const tunnel = cfg.bastion ? await openBastionTunnel(cfg.bastion, cfg.host, cfg.port || 22) : null;
-  // connection health: flips to false when the SSH connection or the tunnel closes
+  // optional OCI Bastion: the ssh -L tunnel runs in its own Command Prompt window
+  // and SFTP connects to its local end (127.0.0.1:<localPort>)
+  const tunnel = cfg.bastion ? await ensureBastionTunnel(cfg.bastion, cfg.host, cfg.port || 22) : null;
+  // connection health: flips to false when the SSH connection closes
   let alive = true;
   let lostReason = '';
   const markLost = (why) => { if (alive) { alive = false; lostReason = why; } };
-  if (tunnel) tunnel.onClose(() => markLost('OCI Bastion tunnel closed (session expired or network drop)'));
   // Some servers (notably Windows OpenSSH) may only offer keyboard-interactive
   // auth; answer its password prompt with the same password.
   client.client.on('keyboard-interactive', (_name, _instr, _lang, prompts, finish) => {
@@ -179,15 +203,14 @@ const makeSftp = async (cfg) => {
   });
   try {
     await client.connect({
-      host: cfg.host, port: cfg.port || 22,
-      ...(tunnel ? { sock: tunnel.sock } : {}),
+      host: tunnel ? '127.0.0.1' : cfg.host,
+      port: tunnel ? tunnel.localPort : (cfg.port || 22),
       username: cfg.username, password: cfg.password,
       tryKeyboard: true,
       readyTimeout: tunnel ? 25000 : 15000,
       keepaliveInterval: 15000, keepaliveCountMax: 3,   // notice a dead link within ~45 s
     });
   } catch (e) {
-    if (tunnel) tunnel.close();
     throw e;
   }
   client.client.on('close', () => markLost('SSH connection closed'));
@@ -239,9 +262,10 @@ const makeSftp = async (cfg) => {
         stream.on('close', (code) => { clearTimeout(timer); resolve({ code: code ?? 0, stdout, stderr }); });
       });
     }),
-    end: () => { alive = false; client.end().catch(() => {}).finally(() => { if (tunnel) tunnel.close(); }); },
+    end: () => { alive = false; client.end().catch(() => {}); },
     isAlive: () => alive,
     lostReason: () => lostReason,
+    tunnel,   // {localPort, opened} when connected through the OCI Bastion
   };
 };
 
@@ -482,7 +506,12 @@ module.exports = function registerFtpRoutes(app) {
       const client = protocol === 'sftp' ? await makeSftp(cfg) : await makeFtp(cfg);
       const id = newId();
       sessions.set(id, { protocol, cfg, client, queue: Promise.resolve() });
-      ok(res, { sessionId: id });
+      ok(res, {
+        sessionId: id,
+        ...(client.tunnel ? { tunnel: client.tunnel.opened
+          ? `Opened the OCI Bastion tunnel in a Command Prompt window (local port ${client.tunnel.localPort}) — keep that window open`
+          : `Using the OCI Bastion tunnel already open on local port ${client.tunnel.localPort}` } : {}),
+      });
     } catch (e) {
       fail(res, e);
     }
