@@ -46,7 +46,32 @@ interface ServerStatus {
   http: { ok: boolean; statusCode?: number; ms?: number; error?: string };
   checkedAt: string;
 }
-interface SavedConn { name: string; protocol: string; host: string; port?: number; username: string; password?: string }
+interface BastionCfg { sessionOcid: string; keyPath: string; bastionHost?: string }
+interface SavedConn {
+  name: string; protocol: string; host: string; port?: number; username: string; password?: string;
+  bastion?: BastionCfg;
+}
+
+// Parse the SSH command the OCI Console gives for a Bastion port-forwarding session:
+//   ssh -i "C:\keys\x.key" -N -L 2222:10.0.1.125:22 -p 22 ocid1.bastionsession…@host.bastion.<region>.oci.oraclecloud.com
+const parseBastionSsh = (cmd: string) => {
+  const c = cmd.replace(/\s+/g, ' ').trim();
+  const key = /-i\s+("([^"]+)"|'([^']+)'|(\S+))/.exec(c);
+  // -L [localPort:]targetHost:targetPort — the target is always the last two parts
+  const fwdParts = (/-L\s+(\S+)/.exec(c)?.[1] || '').split(':');
+  const targetPort = /^\d+$/.test(fwdParts[fwdParts.length - 1] || '') ? fwdParts[fwdParts.length - 1] : '';
+  const targetHost = targetPort && fwdParts.length >= 2 && !/[<>]/.test(fwdParts[fwdParts.length - 2]) ? fwdParts[fwdParts.length - 2] : '';
+  const dest = /(ocid1\.bastionsession\.[\w.-]+)@([\w.-]+)/i.exec(c);
+  if (!dest) return null;
+  const keyPath = key ? (key[2] || key[3] || key[4]) : '';
+  return {
+    keyPath: /^<.*>$/.test(keyPath) ? '' : keyPath,   // OCI's template shows <privateKey>
+    targetHost,
+    targetPort,
+    sessionOcid: dest[1],
+    bastionHost: dest[2],
+  };
+};
 
 const fmtSize = (n: number | null) => {
   if (n === null || n === undefined) return '';
@@ -160,14 +185,45 @@ const FTPManager: React.FC = () => {
   useEffect(() => { loadLocal(); }, [loadLocal]);
 
   // ── connect / disconnect ──────────────────────────────────────────────────
-  const persistConnection = useCallback((v: { protocol: string; host: string; port?: string | number; username: string; password?: string }) => {
+  // OCI Bastion (SFTP only): the app opens the tunnel itself — no ssh.exe window
+  const bastionFrom = (v: any): BastionCfg | undefined => (v.useBastion && v.protocol === 'sftp' && v.bastionOcid?.trim()
+    ? { sessionOcid: v.bastionOcid.trim(), keyPath: (v.bastionKeyPath || '').trim(), bastionHost: v.bastionHost?.trim() || undefined }
+    : undefined);
+  const savedToForm = (s: SavedConn) => ({
+    protocol: s.protocol, host: s.host,
+    port: s.port != null ? String(s.port) : undefined,
+    username: s.username, password: s.password,
+    useBastion: !!s.bastion,
+    bastionOcid: s.bastion?.sessionOcid, bastionKeyPath: s.bastion?.keyPath, bastionHost: s.bastion?.bastionHost,
+  });
+  const useBastion = Form.useWatch('useBastion', connForm);
+  const [sshPasteOpen, setSshPasteOpen] = useState(false);
+  const [sshPasteText, setSshPasteText] = useState('');
+  const applySshCommand = () => {
+    const r = parseBastionSsh(sshPasteText);
+    if (!r) { message.error('Not a Bastion SSH command — it must contain ocid1.bastionsession…@host.bastion…'); return; }
+    connForm.setFieldsValue({
+      protocol: 'sftp', useBastion: true,
+      bastionOcid: r.sessionOcid, bastionKeyPath: r.keyPath, bastionHost: r.bastionHost,
+      ...(r.targetHost ? { host: r.targetHost } : {}),
+      ...(r.targetPort ? { port: r.targetPort } : {}),
+    });
+    setSshPasteOpen(false); setSshPasteText('');
+    message.success(`Filled from the SSH command: ${r.targetHost}:${r.targetPort} via ${r.bastionHost}`);
+  };
+  const persistConnection = useCallback((v: {
+    protocol: string; host: string; port?: string | number; username: string; password?: string;
+    useBastion?: boolean; bastionOcid?: string; bastionKeyPath?: string; bastionHost?: string;
+  }) => {
+    const bastion = bastionFrom(v);
     const entry: SavedConn = {
-      name: `${v.username.trim()}@${v.host.trim()}`,
+      name: `${v.username.trim()}@${v.host.trim()}${bastion ? ' (bastion)' : ''}`,
       protocol: v.protocol,
       host: v.host.trim(),
       port: v.port ? Number(v.port) : undefined,
       username: v.username.trim(),
       password: v.password || undefined,
+      bastion,
     };
     setSaved(prev => {
       const next = [...prev.filter(s => s.name !== entry.name), entry];
@@ -182,14 +238,16 @@ const FTPManager: React.FC = () => {
 
   const handleConnect = async () => {
     const v = await connForm.validateFields();
+    const bastion = bastionFrom(v);
     setConnecting(true);
     try {
       const d = await post(`${API}/connect`, {
         protocol: v.protocol, host: v.host.trim(), port: v.port || undefined,
         username: v.username.trim(), password: v.password,
+        bastion,
       });
       setSessionId(d.sessionId);
-      setConnLabel(`${v.protocol.toUpperCase()} ${v.username}@${v.host}`);
+      setConnLabel(`${v.protocol.toUpperCase()} ${v.username}@${v.host}${bastion ? ' via OCI Bastion' : ''}`);
       setConnProtocol(v.protocol);
       setConnHost(v.host.trim());
       // remember the full connection (incl. password and port) on every
@@ -219,11 +277,7 @@ const FTPManager: React.FC = () => {
   const applySaved = (name: string) => {
     const s = saved.find(x => x.name === name);
     if (!s) return;
-    connForm.setFieldsValue({
-      protocol: s.protocol, host: s.host,
-      port: s.port != null ? String(s.port) : undefined,
-      username: s.username, password: s.password,
-    });
+    connForm.setFieldsValue(savedToForm(s));
     try { localStorage.setItem(`${SAVED_KEY}_last`, s.name); } catch { /* ignore */ }
   };
 
@@ -234,11 +288,7 @@ const FTPManager: React.FC = () => {
       if (!last) return;
       const all: SavedConn[] = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]');
       const s = all.find(x => x.name === last);
-      if (s) connForm.setFieldsValue({
-        protocol: s.protocol, host: s.host,
-        port: s.port != null ? String(s.port) : undefined,
-        username: s.username, password: s.password,
-      });
+      if (s) connForm.setFieldsValue(savedToForm(s));
     } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -645,7 +695,46 @@ const FTPManager: React.FC = () => {
                   </Tooltip>
                 </Space>
               </Form.Item>
+              <Form.Item name="useBastion" valuePropName="checked" style={{ marginRight: 0 }}>
+                <Checkbox disabled={!!sessionId}>
+                  <Tooltip title="Reach a private server (e.g. 10.0.1.125) through an OCI Bastion port-forwarding session — the app opens the tunnel itself when you click Connect, no Command Prompt needed">
+                    Via OCI Bastion
+                  </Tooltip>
+                </Checkbox>
+              </Form.Item>
+              {useBastion && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', width: '100%', marginTop: 8,
+                  padding: '8px 10px', background: '#F4F8FC', border: '1px solid #D6E4F2', borderRadius: 6 }}>
+                  <Form.Item name="bastionOcid" style={{ margin: 0 }}
+                    rules={[{ required: true, message: 'Session OCID required' },
+                      { pattern: /^ocid1\.bastionsession\./i, message: 'Must start with ocid1.bastionsession.' }]}>
+                    <Input placeholder="Bastion session OCID (ocid1.bastionsession.oc1.me-dubai-1…)" style={{ width: 420 }}
+                      disabled={!!sessionId} allowClear />
+                  </Form.Item>
+                  <Form.Item name="bastionKeyPath" style={{ margin: 0 }} rules={[{ required: true, message: 'Private key file required' }]}>
+                    <Input placeholder='Private key file, e.g. C:\Bastion keys\reerp-bastion.key' style={{ width: 280 }}
+                      disabled={!!sessionId} allowClear />
+                  </Form.Item>
+                  <Form.Item name="bastionHost" style={{ margin: 0 }}>
+                    <Input placeholder="Bastion host (auto from the OCID)" style={{ width: 250 }} disabled={!!sessionId} allowClear />
+                  </Form.Item>
+                  <Button size="small" onClick={() => setSshPasteOpen(true)} disabled={!!sessionId}>Paste SSH command…</Button>
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    Host/Port above = the private server (e.g. 10.0.1.125 / 22). Bastion sessions expire (~3 h): paste the new OCID when it does.
+                  </Text>
+                </div>
+              )}
             </Form>
+            <Modal open={sshPasteOpen} title="Paste the OCI Bastion SSH command" okText="Fill in"
+              onOk={applySshCommand} onCancel={() => setSshPasteOpen(false)}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                OCI Console → Bastion → Sessions → ⋮ → Copy SSH command (or the command you run in Command Prompt).
+                The key file, session OCID, Bastion host and the private host/port are filled in for you.
+              </Text>
+              <Input.TextArea rows={4} style={{ marginTop: 8, fontFamily: 'monospace', fontSize: 12 }} value={sshPasteText}
+                onChange={e => setSshPasteText(e.target.value)}
+                placeholder='ssh -i "C:\Bastion keys\reerp-bastion.key" -N -L 2222:10.0.1.125:22 -p 22 ocid1.bastionsession.oc1…@host.bastion.me-dubai-1.oci.oraclecloud.com' />
+            </Modal>
           </Card>
         </div>
 
