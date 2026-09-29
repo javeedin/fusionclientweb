@@ -441,8 +441,9 @@ const ReportPanel: React.FC<{ report: ReportDef; businessUnits: { name: string; 
 
   const fetchSupplierBalance = async (bu: string, supplierNum: string) => {
     // Use the dedicated outstanding-by-supplier endpoint — single call, server-computes
-    // outstanding_amount as SUM(GREATEST(0, invoice_amount - payments - prepayments))
-    // per unpaid invoice, grouped by supplier. Much more accurate and efficient than
+    // outstanding_amount per open invoice, grouped by supplier: positive invoices
+    // GREATEST(0, amount - payments - prepayments), credit notes keep their negative
+    // balance (a supplier can show a net credit). Much more accurate and efficient than
     // fetching invoices per supplier and computing on the frontend.
     const p = new URLSearchParams();
     if (bu)          p.set('P_BUSINESS_UNIT', bu);
