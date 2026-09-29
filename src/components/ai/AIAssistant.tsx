@@ -314,11 +314,13 @@ const PreviewPanel: React.FC<{
       {files.length > 0 && onClearAll && (
         <Popconfirm
           title={`Remove all ${files.length} file(s) from this preview?`}
-          description="They are removed from this chat's preview list only."
+          description="Removes them from this chat (preview tabs and file links in the messages)."
           okText="Clear all" okButtonProps={{ danger: true }}
           onConfirm={onClearAll}
+          // the fullscreen assistant sits at z-index 1200 — keep the confirm above it
+          zIndex={2100}
         >
-          <Tooltip title="Clear all files">
+          <Tooltip title="Clear all files" zIndex={2100}>
             <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ flexShrink: 0 }}>Clear</Button>
           </Tooltip>
         </Popconfirm>
