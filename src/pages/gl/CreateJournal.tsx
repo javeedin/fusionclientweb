@@ -1120,16 +1120,22 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
     setEditingLineKey(null);
   };
 
-  // Calculate totals — memoized
-  const lineTotals = useMemo(() => lines.reduce(
-    (acc, line) => ({
-      enteredDr: acc.enteredDr + (line.enteredDr || 0),
-      enteredCr: acc.enteredCr + (line.enteredCr || 0),
-      accountedDr: acc.accountedDr + (line.accountedDr || 0),
-      accountedCr: acc.accountedCr + (line.accountedCr || 0),
-    }),
-    { enteredDr: 0, enteredCr: 0, accountedDr: 0, accountedCr: 0 }
-  ), [lines]);
+  // Calculate totals — memoized. Rounded to cents: adding decimals in JS drifts
+  // (12354.97 + 10760.91 = 23115.879999999997), which made a balanced journal
+  // show "Unbalanced" until it was saved and reloaded.
+  const lineTotals = useMemo(() => {
+    const t = lines.reduce(
+      (acc, line) => ({
+        enteredDr: acc.enteredDr + (Number(line.enteredDr) || 0),
+        enteredCr: acc.enteredCr + (Number(line.enteredCr) || 0),
+        accountedDr: acc.accountedDr + (Number(line.accountedDr) || 0),
+        accountedCr: acc.accountedCr + (Number(line.accountedCr) || 0),
+      }),
+      { enteredDr: 0, enteredCr: 0, accountedDr: 0, accountedCr: 0 }
+    );
+    const c = (n: number) => Math.round(n * 100) / 100;
+    return { enteredDr: c(t.enteredDr), enteredCr: c(t.enteredCr), accountedDr: c(t.accountedDr), accountedCr: c(t.accountedCr) };
+  }, [lines]);
 
   // Add new line
   const handleAddLine = () => {
@@ -1201,7 +1207,8 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
 
   // Save handler
   // Check if debit and credit are balanced
-  const isBalanced = lineTotals.enteredDr === lineTotals.enteredCr;
+  // compare to the cent (never exact float equality)
+  const isBalanced = Math.abs(lineTotals.enteredDr - lineTotals.enteredCr) < 0.005;
 
   // Generate PDF Report
   const handlePrintPDF = () => {
@@ -2434,7 +2441,7 @@ const CreateJournal: React.FC<CreateJournalProps> = ({ embeddedMode = false, onS
                     <Col span={10}>
                       <Text strong style={{ fontSize: 13, color: isBalanced ? REDWOOD.success : REDWOOD.primary }}>
                         {formatNumber(Math.abs(lineTotals.enteredDr - lineTotals.enteredCr)) || '0.00'}
-                        {!isBalanced && lineTotals.enteredDr !== lineTotals.enteredCr && ' (Unbalanced)'}
+                        {!isBalanced && ' (Unbalanced)'}
                       </Text>
                     </Col>
                   </Row>
