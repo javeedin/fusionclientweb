@@ -83,7 +83,13 @@ const fmtSize = (n: number | null) => {
 const fmtDate = (v: string | null) =>
   v ? new Date(v).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
-const post = async (url: string, body: unknown) => {
+// The backend checks the SSH/SFTP connection (and the OCI Bastion tunnel) before every
+// operation and reopens it when it dropped; it then returns "reconnected".
+// If the backend itself lost the session (e.g. the app/backend restarted), the page
+// reconnects with the last connection settings and retries the call once.
+let sessionRecover: (() => Promise<string>) | null = null;
+
+const rawPost = async (url: string, body: unknown) => {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -91,7 +97,20 @@ const post = async (url: string, body: unknown) => {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
+  if (data.reconnected) message.info({ content: data.reconnected, key: 'ftp-reconnected', duration: 6 });
   return data;
+};
+
+const post = async (url: string, body: any) => {
+  try {
+    return await rawPost(url, body);
+  } catch (e: any) {
+    if (body?.sessionId && sessionRecover && /invalid or expired session/i.test(e?.message || '')) {
+      const newId = await sessionRecover();
+      return rawPost(url, { ...body, sessionId: newId });
+    }
+    throw e;
+  }
 };
 
 // join paths for each side
@@ -109,6 +128,9 @@ const FTPManager: React.FC = () => {
   const [connForm] = Form.useForm();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  // last successful connect payload — used to restore a session the backend lost
+  const lastConnRef = useRef<any>(null);
+  const [health, setHealth] = useState<{ state: 'ok' | 'checking' | 'lost'; at?: number; error?: string }>({ state: 'ok' });
   const [connLabel, setConnLabel] = useState('');
   const [connProtocol, setConnProtocol] = useState('');
   const [connHost, setConnHost] = useState('');
@@ -241,11 +263,14 @@ const FTPManager: React.FC = () => {
     const bastion = bastionFrom(v);
     setConnecting(true);
     try {
-      const d = await post(`${API}/connect`, {
+      const payload = {
         protocol: v.protocol, host: v.host.trim(), port: v.port || undefined,
         username: v.username.trim(), password: v.password,
         bastion,
-      });
+      };
+      const d = await rawPost(`${API}/connect`, payload);
+      lastConnRef.current = payload;
+      setHealth({ state: 'ok', at: Date.now() });
       setSessionId(d.sessionId);
       setConnLabel(`${v.protocol.toUpperCase()} ${v.username}@${v.host}${bastion ? ' via OCI Bastion' : ''}`);
       setConnProtocol(v.protocol);
@@ -262,10 +287,44 @@ const FTPManager: React.FC = () => {
   };
 
   const handleDisconnect = async () => {
-    if (sessionId) { try { await post(`${API}/disconnect`, { sessionId }); } catch { /* gone */ } }
+    lastConnRef.current = null;
+    if (sessionId) { try { await rawPost(`${API}/disconnect`, { sessionId }); } catch { /* gone */ } }
     setSessionId(null); setConnLabel(''); setConnProtocol(''); setConnHost(''); setSrvStatus(null);
     setRemoteItems([]); setRemotePath('/'); setRemotePathInput('/'); setRemoteSel([]);
   };
+
+  // restore a session the backend no longer knows (backend restarted): reconnect with
+  // the last settings (Bastion tunnel included) and hand the new id to the caller
+  useEffect(() => {
+    sessionRecover = async () => {
+      if (!lastConnRef.current) throw new Error('Not connected — click Connect');
+      const d = await rawPost(`${API}/connect`, lastConnRef.current);
+      setSessionId(d.sessionId);
+      setHealth({ state: 'ok', at: Date.now() });
+      message.info({ content: `Session restored — reconnected${lastConnRef.current.bastion ? ' (OCI Bastion tunnel reopened)' : ''}`, key: 'ftp-reconnected' });
+      return d.sessionId;
+    };
+    return () => { sessionRecover = null; };
+  }, []);
+
+  // keep-alive: every 30 s the backend checks the SSH link / Bastion tunnel and
+  // reopens it if it dropped, so the next Server/Transfer action does not stall
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    let stopped = false;
+    const check = async () => {
+      if (stopped) return;
+      setHealth(h => ({ ...h, state: h.state === 'lost' ? 'lost' : 'checking' }));
+      try {
+        await post(`${API}/ping`, { sessionId });
+        if (!stopped) setHealth({ state: 'ok', at: Date.now() });
+      } catch (e: any) {
+        if (!stopped) setHealth({ state: 'lost', at: Date.now(), error: e?.message || String(e) });
+      }
+    };
+    const t = setInterval(check, 30000);
+    return () => { stopped = true; clearInterval(t); };
+  }, [sessionId]);
 
   const saveConnection = async () => {
     await connForm.validateFields(['protocol', 'host', 'username']);
@@ -564,7 +623,15 @@ const FTPManager: React.FC = () => {
             {isRemote ? <CloudServerOutlined style={{ color: REDWOOD.info }} /> : <LaptopOutlined style={{ color: REDWOOD.success }} />}
             <Text strong style={{ fontSize: 13 }}>{isRemote ? 'Remote Server' : 'My Files (this computer)'}</Text>
             {isRemote && (sessionId
-              ? <Tag color="green" style={{ fontSize: 10 }}>{connLabel}</Tag>
+              ? (
+                <Tooltip title={health.state === 'lost'
+                  ? `Connection check failed: ${health.error}. The next action tries to reconnect; if the Bastion session expired, create a new one and paste its OCID.`
+                  : `Connection checked ${health.at ? new Date(health.at).toLocaleTimeString() : ''} — checked every 30 s and reopened automatically (incl. the Bastion tunnel) if it drops`}>
+                  <Tag color={health.state === 'lost' ? 'red' : health.state === 'checking' ? 'gold' : 'green'} style={{ fontSize: 10 }}>
+                    {health.state === 'checking' ? <SyncOutlined spin /> : health.state === 'lost' ? <CloseCircleOutlined /> : <CheckCircleOutlined />} {connLabel}
+                  </Tag>
+                </Tooltip>
+              )
               : <Tag style={{ fontSize: 10 }}>not connected</Tag>)}
           </Space>
         }

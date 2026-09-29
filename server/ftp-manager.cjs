@@ -9,6 +9,12 @@
 //        as `ssh -i key -N -L …:host:port -p 22 <sessionOcid>@host.bastion.<region>…`,
 //        but in-process: no ssh.exe window and no local port.
 //   POST /api/ftp/disconnect     {sessionId}
+//   POST /api/ftp/ping           {sessionId} -> {alive, reconnected?}  checks the SSH/SFTP
+//        connection (and the Bastion tunnel) and reopens it if it dropped.
+// Every remote operation checks the connection first and transparently reconnects —
+// Bastion tunnel included — when it was lost; quick operations (list, mkdir, delete,
+// server status/stop/start) are also retried once if they fail on a lost connection.
+// Responses then carry "reconnected": "<what was reopened>" so the page can say so.
 //   POST /api/ftp/remote/list    {sessionId, path}     -> {path, items:[{name,type,size,modified}]}
 //   POST /api/ftp/remote/mkdir   {sessionId, path}
 //   POST /api/ftp/remote/delete  {sessionId, path, isDir}
@@ -39,12 +45,53 @@ const jobs = new Map();     // id -> { status, filesDone, totalFiles, currentFil
 
 const newId = () => crypto.randomBytes(12).toString('hex');
 
-// serialize operations per session (both ftp libs are single-channel)
-const enqueue = (session, fn) => {
-  const run = session.queue.then(fn, fn);
+// ── connection health ───────────────────────────────────────────────────────
+const CONN_LOST = /ECONNRESET|EPIPE|ETIMEDOUT|ECONNREFUSED|ENOTCONN|not connected|no sftp connection|connection (lost|closed)|socket (hang up|closed)|channel open failure|client is closed|closed by (the )?remote|end of stream|keepalive timeout|timed out while waiting for handshake/i;
+const isConnLost = (e) => CONN_LOST.test(e instanceof Error ? e.message : String(e));
+
+// reconnect (Bastion tunnel first, then SFTP/FTP) with the session's saved settings
+const reconnect = async (session, why) => {
+  try { session.client.end(); } catch { /* already gone */ }
+  session.client = session.protocol === 'sftp' ? await makeSftp(session.cfg) : await makeFtp(session.cfg);
+  session.reconnects = (session.reconnects || 0) + 1;
+  session.reconnectNotice = `${why} — reconnected${session.cfg.bastion ? ' (OCI Bastion tunnel reopened)' : ''}`;
+  console.log(`[ftp] ${session.cfg.username}@${session.cfg.host}: ${session.reconnectNotice}`);
+};
+
+// make sure the connection is up before an operation
+const ensureConnected = async (session) => {
+  if (session.client.isAlive && !session.client.isAlive()) {
+    await reconnect(session, session.client.lostReason?.() || 'Connection was lost');
+  }
+};
+
+// serialize operations per session (both ftp libs are single-channel); each one
+// first checks/reopens the connection, and (retry=true) is retried once when it
+// fails because the connection dropped mid-way
+const enqueue = (session, fn, { retry = true } = {}) => {
+  const task = async () => {
+    await ensureConnected(session);
+    try {
+      return await fn();
+    } catch (e) {
+      if (!retry || !isConnLost(e)) throw e;
+      await reconnect(session, `Connection dropped (${e.message})`);
+      return fn();
+    }
+  };
+  const run = session.queue.then(task, task);
   session.queue = run.catch(() => {});
   return run;
 };
+
+// long jobs (transfers, deploy): check/reopen the connection before starting, but
+// never re-run a half-done job; a failed reconnect is reported on the job itself
+const enqueueJob = (session, job, fn) => enqueue(session, fn, { retry: false }).catch((e) => {
+  if (job.status === 'running') {
+    job.status = 'error';
+    job.error = `Could not reconnect to the server: ${e instanceof Error ? e.message : String(e)}`;
+  }
+});
 
 // count files in a local directory tree (for upload progress totals)
 const countLocalFiles = (p) => {
@@ -89,7 +136,15 @@ const openBastionTunnel = (bastion, targetHost, targetPort) => new Promise((reso
           + `the session must be a port-forwarding session for exactly this IP and port (${err.message})`));
       }
       settled = true;
-      resolve({ sock: stream, close: () => { try { conn.end(); } catch { /* ignore */ } } });
+      const closeHandlers = [];
+      const fire = () => { while (closeHandlers.length) { try { closeHandlers.shift()(); } catch { /* ignore */ } } };
+      conn.on('close', fire);
+      stream.on('close', fire);
+      resolve({
+        sock: stream,
+        close: () => { try { conn.end(); } catch { /* ignore */ } },
+        onClose: (fn) => closeHandlers.push(fn),
+      });
     });
   });
   conn.on('error', (e) => {
@@ -112,6 +167,11 @@ const makeSftp = async (cfg) => {
   const client = new SftpClient();
   // optional OCI Bastion tunnel: the SFTP session runs inside the forwarded channel
   const tunnel = cfg.bastion ? await openBastionTunnel(cfg.bastion, cfg.host, cfg.port || 22) : null;
+  // connection health: flips to false when the SSH connection or the tunnel closes
+  let alive = true;
+  let lostReason = '';
+  const markLost = (why) => { if (alive) { alive = false; lostReason = why; } };
+  if (tunnel) tunnel.onClose(() => markLost('OCI Bastion tunnel closed (session expired or network drop)'));
   // Some servers (notably Windows OpenSSH) may only offer keyboard-interactive
   // auth; answer its password prompt with the same password.
   client.client.on('keyboard-interactive', (_name, _instr, _lang, prompts, finish) => {
@@ -124,11 +184,15 @@ const makeSftp = async (cfg) => {
       username: cfg.username, password: cfg.password,
       tryKeyboard: true,
       readyTimeout: tunnel ? 25000 : 15000,
+      keepaliveInterval: 15000, keepaliveCountMax: 3,   // notice a dead link within ~45 s
     });
   } catch (e) {
     if (tunnel) tunnel.close();
     throw e;
   }
+  client.client.on('close', () => markLost('SSH connection closed'));
+  client.client.on('end', () => markLost('SSH connection ended'));
+  client.client.on('error', (e) => markLost(`SSH error: ${e.message}`));
   // ssh2-sftp-client has .on() but no .removeAllListeners(); register the
   // progress listeners once and swap the active callback per transfer.
   let onUpload = null;
@@ -175,7 +239,9 @@ const makeSftp = async (cfg) => {
         stream.on('close', (code) => { clearTimeout(timer); resolve({ code: code ?? 0, stdout, stderr }); });
       });
     }),
-    end: () => client.end().catch(() => {}).finally(() => { if (tunnel) tunnel.close(); }),
+    end: () => { alive = false; client.end().catch(() => {}).finally(() => { if (tunnel) tunnel.close(); }); },
+    isAlive: () => alive,
+    lostReason: () => lostReason,
   };
 };
 
@@ -322,6 +388,8 @@ const makeFtp = async (cfg) => {
       finally { client.trackProgress(); }
     },
     end: () => { try { client.close(); } catch { /* noop */ } },
+    isAlive: () => !client.closed,
+    lostReason: () => 'FTP connection closed',
   };
 };
 
@@ -388,13 +456,19 @@ const startBuild = () => {
 // ── express wiring ──────────────────────────────────────────────────────────
 
 module.exports = function registerFtpRoutes(app) {
-  const ok = (res, data) => res.json({ success: true, ...data });
+  const ok = (res, data) => {
+    const s = res.locals?.ftpSession;
+    const notice = s?.reconnectNotice;
+    if (s) s.reconnectNotice = null;
+    res.json({ success: true, ...data, ...(notice ? { reconnected: notice } : {}) });
+  };
   const fail = (res, e, code = 500) =>
     res.status(code).json({ success: false, error: e instanceof Error ? e.message : String(e) });
 
   const getSession = (req, res) => {
     const s = sessions.get(req.body?.sessionId);
     if (!s) { fail(res, 'Not connected (invalid or expired session) — connect again', 400); return null; }
+    res.locals.ftpSession = s;
     return s;
   };
 
@@ -409,6 +483,21 @@ module.exports = function registerFtpRoutes(app) {
       const id = newId();
       sessions.set(id, { protocol, cfg, client, queue: Promise.resolve() });
       ok(res, { sessionId: id });
+    } catch (e) {
+      fail(res, e);
+    }
+  });
+
+  // health check: reopens the SSH connection / Bastion tunnel if it dropped
+  app.post('/api/ftp/ping', async (req, res) => {
+    const s = getSession(req, res); if (!s) return;
+    try {
+      await enqueue(s, async () => {
+        // a cheap round-trip proves the link really works (not just "not closed yet")
+        if (s.client.exec) await s.client.exec('echo ok', 15000);
+        else await s.client.list('.');
+      });
+      ok(res, { alive: true, reconnects: s.reconnects || 0 });
     } catch (e) {
       fail(res, e);
     }
@@ -478,7 +567,7 @@ module.exports = function registerFtpRoutes(app) {
     const onFile = (name) => { job.filesDone += 1; job.currentFile = name; };
 
     // run in the session queue but respond immediately with the job id
-    enqueue(s, async () => {
+    enqueueJob(s, job, async () => {
       try {
         if (direction === 'upload') {
           const st = fs.statSync(localPath);
@@ -541,7 +630,7 @@ module.exports = function registerFtpRoutes(app) {
 
     const batDir = path.join(appRoot, 'deploy'); // server-side helper .bat files
 
-    enqueue(s, async () => {
+    enqueueJob(s, job, async () => {
       try {
         if (buildFirst) {
           job.currentFile = 'Building (npm run build)…';
