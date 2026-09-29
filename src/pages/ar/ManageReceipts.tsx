@@ -32,6 +32,7 @@ import {
   derivePeriodName, checkAccountingExists, getAccounting, checkGLJournalExists, type SlaCreatePayload,
 } from '../../services/sla.service';
 import { postJournal } from '../../services/manage-journals.service';
+import ReverseReceiptModal, { type ReverseReceiptInfo } from './ReverseReceiptModal';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -1445,6 +1446,9 @@ const ManageReceipts: React.FC = () => {
     const a = document.createElement('a'); a.href = blobUrl; a.download = att.name; a.click();
     setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
   };
+
+  // ── Reverse Receipt (eligibility → original entry → reversal entry → confirm) ──
+  const [reverseTarget, setReverseTarget] = useState<{ tabKey: string; info: ReverseReceiptInfo } | null>(null);
 
   // ── Copy Receipt ─────────────────────────────────────────────────────────
   const [copyModal, setCopyModal] = useState<{ draft: ReceiptDraft } | null>(null);
@@ -3855,9 +3859,20 @@ const ManageReceipts: React.FC = () => {
                       {
                         key: 'reverse',
                         icon: <RollbackOutlined />,
-                        label: 'Reverse Receipt',
-                        disabled: true,
-                        title: 'Coming soon',
+                        label: (draft.state || '').toLowerCase() === 'reversed' ? 'Reverse Receipt (already reversed)' : 'Reverse Receipt',
+                        disabled: (draft.state || '').toLowerCase() === 'reversed',
+                        onClick: () => setReverseTarget({
+                          tabKey,
+                          info: {
+                            standardReceiptId: draft.standardReceiptId,
+                            receiptNumber: draft.receiptNumber,
+                            businessUnit: draft.businessUnit,
+                            customerName: draft.customerName,
+                            currency: draft.currency,
+                            conversionRateType: draft.conversionRateType,
+                            amount: draft.amount,
+                          },
+                        }),
                       },
                     ],
                   }}
@@ -6761,6 +6776,18 @@ const ManageReceipts: React.FC = () => {
           </Modal>
         );
       })()}
+
+      {/* ── Reverse Receipt Modal ── */}
+      <ReverseReceiptModal
+        open={!!reverseTarget}
+        receipt={reverseTarget?.info ?? null}
+        currentUser={currentUser}
+        onClose={() => setReverseTarget(null)}
+        onReversed={() => {
+          if (reverseTarget) updateDraft(reverseTarget.tabKey, { state: 'Reversed', status: 'Reversed' });
+          message.success(`Receipt ${reverseTarget?.info.receiptNumber ?? ''} reversed`);
+        }}
+      />
 
       {/* ── Copy Receipt Modal ── */}
       {copyModal && (
