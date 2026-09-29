@@ -283,9 +283,10 @@ const PreviewPanel: React.FC<{
   selected: DeliveredFile | null;
   onSelect: (f: DeliveredFile) => void;
   onRemove: (f: DeliveredFile) => void;
+  onClearAll?: () => void;
   width?: number;
   onCollapse?: () => void;
-}> = ({ files, selected, onSelect, onRemove, width, onCollapse }) => (
+}> = ({ files, selected, onSelect, onRemove, onClearAll, width, onCollapse }) => (
   <div className="ai-preview" style={width ? { width, minWidth: 0 } : undefined}>
     <div className="ai-preview-head">
       {onCollapse && (
@@ -295,19 +296,33 @@ const PreviewPanel: React.FC<{
       )}
       <span style={{ fontWeight: 600, fontSize: 13 }}><EyeOutlined /> Preview</span>
       <div className="ai-preview-tabs">
-        {files.map((f, i) => (
-          <button key={`${f.name}${i}`} className={`ai-ptab${selected === f ? ' on' : ''}`} onClick={() => onSelect(f)} title={f.name}>
-            {f.kind === 'word' ? <FileWordOutlined /> : <FileExcelOutlined />} {f.name}
-            <span
-              title={`Remove ${f.name}`}
-              onClick={(e) => { e.stopPropagation(); onRemove(f); }}
-              style={{ marginLeft: 4, opacity: .55, fontWeight: 700, padding: '0 2px' }}
-              onMouseEnter={e => { (e.target as HTMLElement).style.opacity = '1'; }}
-              onMouseLeave={e => { (e.target as HTMLElement).style.opacity = '.55'; }}
-            >×</span>
-          </button>
-        ))}
+        {files.map((f, i) => {
+          const label = f.name?.trim() || `${f.kind === 'word' ? 'Document' : 'Workbook'} ${i + 1}`;
+          return (
+            <button key={`${f.name}${i}`} className={`ai-ptab${selected === f ? ' on' : ''}`} onClick={() => onSelect(f)} title={label}>
+              {f.kind === 'word' ? <FileWordOutlined /> : <FileExcelOutlined />}
+              <span className="ai-ptab-name">{label}</span>
+              <CloseOutlined
+                className="ai-ptab-x"
+                title={`Remove ${label}`}
+                onClick={(e) => { e.stopPropagation(); onRemove(f); }}
+              />
+            </button>
+          );
+        })}
       </div>
+      {files.length > 0 && onClearAll && (
+        <Popconfirm
+          title={`Remove all ${files.length} file(s) from this preview?`}
+          description="They are removed from this chat's preview list only."
+          okText="Clear all" okButtonProps={{ danger: true }}
+          onConfirm={onClearAll}
+        >
+          <Tooltip title="Clear all files">
+            <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ flexShrink: 0 }}>Clear</Button>
+          </Tooltip>
+        </Popconfirm>
+      )}
       {selected && (selected.url || selected.excel || selected.wordHtml !== undefined) && (
         <span className="ai-file" style={{ margin: 0, cursor: 'pointer' }} onClick={() => handleFileDownload(selected)}>
           <DownloadOutlined /> Download
@@ -343,6 +358,7 @@ interface ConvStore {
   createConv: () => string;
   deleteConv: (id: string) => void;
   removeFile: (convId: string, fileName: string) => void;
+  clearFiles: (convId: string) => void;
 }
 
 // ── One chat window ─────────────────────────────────────────────────────────
@@ -1111,6 +1127,10 @@ const AssistantPanel: React.FC<PanelProps> = ({
               if (cur) store.removeFile(cur.id, f.name);
               if (preview?.name === f.name) setPreview(null);
             }}
+            onClearAll={() => {
+              if (cur) store.clearFiles(cur.id);
+              setPreview(null);
+            }}
             width={previewW}
             onCollapse={() => setPreviewCollapsedPersist(true)}
           />
@@ -1304,9 +1324,16 @@ const AIAssistant: React.FC = () => {
       : c));
   }, []);
 
+  // Remove every generated file of a conversation (the preview's "Clear all").
+  const clearFiles = useCallback((convId: string) => {
+    setConvs(prev => prev.map(c => c.id === convId
+      ? { ...c, msgs: c.msgs.map(m => (m.files?.length ? { ...m, files: [] } : m)) }
+      : c));
+  }, []);
+
   const store: ConvStore = useMemo(
-    () => ({ convs, pushMsg, createConv, deleteConv, removeFile }),
-    [convs, pushMsg, createConv, deleteConv, removeFile],
+    () => ({ convs, pushMsg, createConv, deleteConv, removeFile, clearFiles }),
+    [convs, pushMsg, createConv, deleteConv, removeFile, clearFiles],
   );
 
   const resolveKey = useCallback(async (): Promise<string> => {
@@ -1382,6 +1409,10 @@ const AIAssistant: React.FC = () => {
         .ai-ptab{display:inline-flex;align-items:center;gap:5px;border:1px solid #EBE2DF;background:#fff;border-radius:8px;
           padding:3px 10px;font-size:11.5px;cursor:pointer;color:#5b4a45;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
         .ai-ptab.on{border-color:#C74634;color:#C74634;background:#FBF1EF}
+        .ai-ptab{flex-shrink:0}
+        .ai-ptab-name{overflow:hidden;text-overflow:ellipsis;max-width:140px}
+        .ai-ptab-x{margin-left:2px;padding:2px;border-radius:4px;font-size:10px;opacity:.6;flex-shrink:0}
+        .ai-ptab-x:hover{opacity:1;background:#F3D9D4;color:#C74634}
         .ai-preview-body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column}
         .ai-preview-body>*{flex:1;min-height:0}
         .ai-preview-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
