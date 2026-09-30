@@ -10,9 +10,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Card, Form, Select, Input, Button, Space, Typography, Alert, Table, Tag, Tooltip, Row, Col, Statistic, Empty, Segmented, message,
+  Collapse, Modal,
 } from 'antd';
 import {
-  PlayCircleOutlined, DownloadOutlined, WarningOutlined, CheckCircleOutlined, CalculatorOutlined,
+  PlayCircleOutlined, DownloadOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
@@ -30,9 +31,11 @@ interface TbRow {
 interface Amt { ptd: number; ytd: number }
 interface AcctLine { account: string; desc: string | null; ptd: number; ytd: number }
 type RowKind = 'group' | 'section' | 'account' | 'groupTotal' | 'total' | 'error';
+interface DrillLine { account: string; desc: string | null; section: string; ptd: number; ytd: number }
 interface PLRow {
   key: string; kind: RowKind; label: string; code?: string; ptd?: number; ytd?: number;
   indent: number; style?: string; error?: string; children?: PLRow[];
+  drill?: DrillLine[];   // group / section: the accounts behind the amount
 }
 
 const num = (v: unknown) => Number(v) || 0;
@@ -181,28 +184,34 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
     for (const g of groups) {
       const gAmt: Amt = { ptd: 0, ytd: 0 };
       const secRows: PLRow[] = [];
+      const gDrill: DrillLine[] = [];
       for (const s of [...(g.sections || [])].sort((a, b) => a.display_order - b.display_order)) {
         const sAmt: Amt = { ptd: 0, ytd: 0 };
         const acctRows: PLRow[] = [];
+        const sDrill: DrillLine[] = [];
+        const secName = s.section_label || s.section_name;
         for (const [acct, line] of byAcct) {
           if (!(s.accounts || []).some(a => matches(acct, a))) continue;
           sAmt.ptd += line.ptd; sAmt.ytd += line.ytd;
           used.set(acct, [...(used.get(acct) || []), `${g.group_code}/${s.section_code}`]);
           if (Math.abs(line.ptd) >= 0.005 || Math.abs(line.ytd) >= 0.005) {
+            sDrill.push({ account: acct, desc: line.desc, section: secName, ptd: line.ptd, ytd: line.ytd });
             acctRows.push({ key: `a-${s.section_id}-${acct}`, kind: 'account', label: `${acct}${line.desc ? ` · ${line.desc}` : ''}`,
               code: acct, ptd: line.ptd, ytd: line.ytd, indent: 3 });
           }
         }
         acctRows.sort((a, b) => String(a.code).localeCompare(String(b.code)));
+        sDrill.sort((a, b) => a.account.localeCompare(b.account));
+        gDrill.push(...sDrill);
         gAmt.ptd += sAmt.ptd; gAmt.ytd += sAmt.ytd;
-        secRows.push({ key: `s-${s.section_id}`, kind: 'section', label: s.section_label || s.section_name, code: s.section_code,
-          ptd: sAmt.ptd, ytd: sAmt.ytd, indent: 2, children: acctRows.length ? acctRows : undefined });
+        secRows.push({ key: `s-${s.section_id}`, kind: 'section', label: secName, code: s.section_code,
+          ptd: sAmt.ptd, ytd: sAmt.ytd, indent: 2, children: acctRows.length ? acctRows : undefined, drill: sDrill });
       }
       groupVal.set(g.group_code.toUpperCase(), gAmt);
       if (g.group_type === 'REVENUE') { revenueYtd += gAmt.ytd; revenuePtd += gAmt.ptd; }
       groupRows.set(g.group_code, {
         key: `g-${g.group_id}`, kind: 'group', label: g.group_label || g.group_name, code: g.group_code,
-        ptd: gAmt.ptd, ytd: gAmt.ytd, indent: 1, children: secRows.length ? secRows : undefined,
+        ptd: gAmt.ptd, ytd: gAmt.ytd, indent: 1, children: secRows.length ? secRows : undefined, drill: gDrill,
       });
     }
 
@@ -270,6 +279,16 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
     };
   }, [tb, tpl]);
 
+  // drill popup (group / section → accounts)
+  const [drillRow, setDrillRow] = useState<PLRow | null>(null);
+  const [drillSearch, setDrillSearch] = useState('');
+  const openDrill = (r: PLRow) => { if (r.drill) { setDrillSearch(''); setDrillRow(r); } };
+  const drillLines = useMemo(() => {
+    if (!drillRow?.drill) return [];
+    const q = drillSearch.trim().toLowerCase();
+    return q ? drillRow.drill.filter(l => `${l.account} ${l.desc || ''} ${l.section}`.toLowerCase().includes(q)) : drillRow.drill;
+  }, [drillRow, drillSearch]);
+
   const pct = (v: number | undefined, base: number) => (v === undefined || !base ? '' : `${r2((v / Math.abs(base)) * 100).toFixed(1)}%`);
   const rowsForView = useMemo(() => {
     if (!result) return [];
@@ -286,18 +305,21 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
       render: (_: unknown, r) => {
         if (r.kind === 'error') return <Space><Text strong>{r.label}</Text><Tag color="error" icon={<WarningOutlined />}>{r.error}</Tag></Space>;
         if (r.kind === 'total') return <Text strong style={{ fontSize: 14 }}>{r.label}</Text>;
-        if (r.kind === 'group') return <Text strong>{r.label} <Text type="secondary" style={{ fontSize: 11 }}>({r.code})</Text></Text>;
-        if (r.kind === 'section') return <Text>{r.label}</Text>;
+        const drillIcon = r.drill ? <ZoomInOutlined className="pl-drill-icon" style={{ marginLeft: 6, color: '#1677ff', fontSize: 12 }} /> : null;
+        if (r.kind === 'group') return <a onClick={() => openDrill(r)} style={{ color: 'inherit' }}><Text strong>{r.label} <Text type="secondary" style={{ fontSize: 11 }}>({r.code})</Text></Text>{drillIcon}</a>;
+        if (r.kind === 'section') return <a onClick={() => openDrill(r)} style={{ color: 'inherit' }}><Text>{r.label}</Text>{drillIcon}</a>;
         return <Text type="secondary" style={{ fontSize: 12 }}>{r.label}</Text>;
       },
     },
     {
       title: ran ? `Period ${ran.period}` : 'Period', dataIndex: 'ptd', key: 'ptd', align: 'right', width: 170,
+      onCell: r => ({ onClick: () => openDrill(r), style: r.drill ? { cursor: 'pointer' } : undefined }),
       render: (v: number | undefined, r) => <Text strong={r.kind === 'total' || r.kind === 'group'}
         style={{ fontVariantNumeric: 'tabular-nums', color: (v ?? 0) < 0 ? RED : undefined }}>{fmt(v)}</Text>,
     },
     {
       title: 'Year to date', dataIndex: 'ytd', key: 'ytd', align: 'right', width: 170,
+      onCell: r => ({ onClick: () => openDrill(r), style: r.drill ? { cursor: 'pointer' } : undefined }),
       render: (v: number | undefined, r) => <Text strong={r.kind === 'total' || r.kind === 'group'}
         style={{ fontVariantNumeric: 'tabular-nums', color: (v ?? 0) < 0 ? RED : undefined }}>{fmt(v)}</Text>,
     },
@@ -333,7 +355,14 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
     XLSX.writeFile(wb, `PL_${tpl.template_code}_${ran.period}${ran.company ? `_${ran.company}` : ''}.xlsx`);
   };
 
-  const bottomDiff = result && result.bottom?.ytd !== undefined ? r2(result.bottom.ytd - result.tbNetYtd) : null;
+  const exportDrill = () => {
+    if (!drillRow?.drill || !ran) return;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(drillLines.map(l => ({
+      Account: l.account, Description: l.desc, Section: l.section, [`Period ${ran.period}`]: r2(l.ptd), 'Year to date': r2(l.ytd),
+    }))), 'Accounts');
+    XLSX.writeFile(wb, `PL_${tpl.template_code}_${drillRow.code || 'drill'}_${ran.period}.xlsx`);
+  };
 
   return (
     <div>
@@ -367,43 +396,46 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
       {result && ran && (
         <>
           <Row gutter={12} style={{ marginBottom: 12 }}>
-            <Col flex="1"><Card size="small"><Statistic title={`Revenue YTD`} value={result.revenueYtd} precision={2} /></Card></Col>
+            <Col flex="1"><Card size="small"><Statistic title={`Revenue (${ran.period})`} value={result.revenuePtd} precision={2} /></Card></Col>
             <Col flex="1">
               <Card size="small">
-                <Statistic title={result.bottom ? `${result.bottom.label} (YTD)` : 'Result (YTD)'} value={result.bottom?.ytd ?? 0} precision={2}
-                  valueStyle={{ color: (result.bottom?.ytd ?? 0) < 0 ? RED : '#1D7B4D' }} />
+                <Statistic title={`${result.bottom?.label || 'Result'} (${ran.period})`} value={result.bottom?.ptd ?? 0} precision={2}
+                  valueStyle={{ color: (result.bottom?.ptd ?? 0) < 0 ? RED : '#1D7B4D' }} />
               </Card>
             </Col>
-            <Col flex="1">
-              <Tooltip title="Net of ALL income & expense accounts (account type R/E) in the trial balance — the statement's result should equal it when every P&L account is mapped once">
-                <Card size="small"><Statistic title="Trial balance net income (YTD)" value={result.tbNetYtd} precision={2} /></Card>
-              </Tooltip>
-            </Col>
+            <Col flex="1"><Card size="small"><Statistic title="Revenue (YTD)" value={result.revenueYtd} precision={2} /></Card></Col>
             <Col flex="1">
               <Card size="small">
-                <Statistic title="Difference" value={bottomDiff ?? 0} precision={2}
-                  valueStyle={{ color: bottomDiff !== null && Math.abs(bottomDiff) < 0.005 ? '#1D7B4D' : RED }}
-                  prefix={bottomDiff !== null && Math.abs(bottomDiff) < 0.005 ? <CheckCircleOutlined /> : <WarningOutlined />} />
+                <Statistic title={`${result.bottom?.label || 'Result'} (YTD)`} value={result.bottom?.ytd ?? 0} precision={2}
+                  valueStyle={{ color: (result.bottom?.ytd ?? 0) < 0 ? RED : '#1D7B4D' }} />
               </Card>
             </Col>
           </Row>
 
           {(result.unmapped.length > 0 || result.duplicates.length > 0) && (
-            <Alert type="warning" showIcon style={{ marginBottom: 12 }}
-              message={`${result.unmapped.length ? `${result.unmapped.length} income/expense account(s) with balances are not in any section (YTD ${fmt(result.unmappedYtd)})` : ''}`
-                + `${result.unmapped.length && result.duplicates.length ? ' · ' : ''}`
-                + `${result.duplicates.length ? `${result.duplicates.length} account(s) are in more than one section (counted twice)` : ''}`}
-              description={(
-                <div style={{ maxHeight: 160, overflow: 'auto', fontSize: 12 }}>
-                  {result.unmapped.slice(0, 50).map(u => (
-                    <div key={u.account}><Tag>{u.account}</Tag>{u.desc} — YTD {fmt(u.ytd)} · Period {fmt(u.ptd)}</div>
-                  ))}
-                  {result.duplicates.map(([a, secs]) => (
-                    <div key={`d-${a}`}><Tag color="orange">{a}</Tag>in {secs.join(', ')}</div>
-                  ))}
-                  {result.unmapped.length > 0 && <div style={{ marginTop: 4 }}>Add them to a section with <b>Add Account</b> on the template.</div>}
-                </div>
-              )} />
+            <Collapse size="small" style={{ marginBottom: 12, background: '#FFFBE6', borderColor: '#FFE58F' }}
+              items={[{
+                key: 'checks',
+                label: (
+                  <Space size={6} wrap>
+                    <WarningOutlined style={{ color: '#D48806' }} />
+                    {result.unmapped.length > 0 && <Text>{result.unmapped.length} income/expense account(s) not in any section — YTD {fmt(result.unmappedYtd)}</Text>}
+                    {result.duplicates.length > 0 && <Text>{result.duplicates.length} account(s) in more than one section</Text>}
+                    <Text type="secondary" style={{ fontSize: 12 }}>(not included in the statement — click to see)</Text>
+                  </Space>
+                ),
+                children: (
+                  <div style={{ maxHeight: 260, overflow: 'auto', fontSize: 12 }}>
+                    {result.unmapped.map(u => (
+                      <div key={u.account}><Tag>{u.account}</Tag>{u.desc} — YTD {fmt(u.ytd)} · Period {fmt(u.ptd)}</div>
+                    ))}
+                    {result.duplicates.map(([a, secs]) => (
+                      <div key={`d-${a}`}><Tag color="orange">{a}</Tag>in {secs.join(', ')} (counted twice)</div>
+                    ))}
+                    {result.unmapped.length > 0 && <div style={{ marginTop: 6 }}>Add them to a section with <b>Add Account</b> on the template to include them.</div>}
+                  </div>
+                ),
+              }]} />
           )}
 
           <Card size="small" style={{ borderRadius: 8 }}
@@ -425,7 +457,53 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
               .pl-double > td { border-bottom: 3px double #C74634 !important; }
               .pl-group > td { background: #FAFAFA !important; }
             `}</style>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+              <ZoomInOutlined /> Click a group or section (or its amount) to see the accounts behind it.
+            </Text>
           </Card>
+
+          <Modal open={!!drillRow} onCancel={() => setDrillRow(null)} width={900} zIndex={1100}
+            title={drillRow && (
+              <Space direction="vertical" size={0}>
+                <span>{drillRow.label} {drillRow.code && <Text type="secondary" style={{ fontSize: 12 }}>({drillRow.code})</Text>}</span>
+                <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                  {ran.ledger} · Period {ran.period}{ran.company ? ` · Company ${ran.company}` : ''} · {drillRow.drill?.length || 0} account(s)
+                </Text>
+              </Space>
+            )}
+            footer={[
+              <Button key="x" icon={<DownloadOutlined />} onClick={exportDrill} disabled={!drillLines.length}>Excel</Button>,
+              <Button key="c" type="primary" onClick={() => setDrillRow(null)}>Close</Button>,
+            ]}>
+            <Input allowClear prefix={<SearchOutlined />} placeholder="Search account, description or section"
+              value={drillSearch} onChange={e => setDrillSearch(e.target.value)} style={{ marginBottom: 8 }} />
+            <Table<DrillLine> size="small" rowKey={l => `${l.section}-${l.account}`} dataSource={drillLines}
+              pagination={drillLines.length > 50 ? { pageSize: 50, showSizeChanger: false } : false} scroll={{ y: 420 }}
+              columns={[
+                { title: 'Account', dataIndex: 'account', width: 110, sorter: (a, b) => a.account.localeCompare(b.account) },
+                { title: 'Description', dataIndex: 'desc', ellipsis: true },
+                ...(drillRow?.kind === 'group' ? [{ title: 'Section', dataIndex: 'section', width: 190, ellipsis: true,
+                  filters: [...new Set((drillRow.drill || []).map(l => l.section))].map(v => ({ text: v, value: v })),
+                  onFilter: (v: any, l: DrillLine) => l.section === v }] : []),
+                { title: `Period ${ran.period}`, dataIndex: 'ptd', align: 'right' as const, width: 150, sorter: (a, b) => a.ptd - b.ptd,
+                  render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
+                { title: 'Year to date', dataIndex: 'ytd', align: 'right' as const, width: 150, sorter: (a, b) => a.ytd - b.ytd,
+                  render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
+              ]}
+              summary={rows => {
+                const t = rows.reduce((acc, l) => ({ ptd: acc.ptd + l.ptd, ytd: acc.ytd + l.ytd }), { ptd: 0, ytd: 0 });
+                const span = drillRow?.kind === 'group' ? 3 : 2;
+                return (
+                  <Table.Summary fixed>
+                    <Table.Summary.Row style={{ background: '#FFF6F4' }}>
+                      <Table.Summary.Cell index={0} colSpan={span}><Text strong>Total{drillSearch ? ' (filtered)' : ''}</Text></Table.Summary.Cell>
+                      <Table.Summary.Cell index={span} align="right"><Text strong style={{ color: t.ptd < 0 ? RED : undefined }}>{fmt(t.ptd)}</Text></Table.Summary.Cell>
+                      <Table.Summary.Cell index={span + 1} align="right"><Text strong style={{ color: t.ytd < 0 ? RED : undefined }}>{fmt(t.ytd)}</Text></Table.Summary.Cell>
+                    </Table.Summary.Row>
+                  </Table.Summary>
+                );
+              }} />
+          </Modal>
         </>
       )}
     </div>
