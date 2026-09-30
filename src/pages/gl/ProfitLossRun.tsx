@@ -18,6 +18,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
 import { APEX_DB_CONFIG } from '../../config/api.config';
+import { buildApexUrl } from '../../config/api.helper';
 import type { PLTemplateStructure, PLSectionAccount } from '../../services/pl-templates.service';
 
 const { Text, Title } = Typography;
@@ -103,6 +104,40 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
   const [ran, setRan] = useState<{ ledger: string; period: string; company?: string } | null>(null);
   const [view, setView] = useState<'summary' | 'detail'>('summary');
   const ledger = Form.useWatch('ledger', form);
+  const [companies, setCompanies] = useState<string[]>([]);
+  const [companiesLoading, setCompaniesLoading] = useState(false);
+  const [companyNames, setCompanyNames] = useState<Map<string, string>>(new Map());
+
+  // company names from the COA company value set (same list as the Trial Balance page)
+  useEffect(() => {
+    fetch(buildApexUrl('valuesets/getvalues/BUIMERC_FIN_GLB_COA_CO'))
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        const m = new Map<string, string>();
+        for (const i of (d?.items || []) as any[]) {
+          const code = i.value || i.Value; const desc = i.description || i.Description;
+          if (code && desc) m.set(String(code), String(desc));
+        }
+        setCompanyNames(m);
+      })
+      .catch(() => {});
+  }, []);
+
+  // company codes that have balances in the selected ledger
+  useEffect(() => {
+    if (!ledger) return;
+    setCompaniesLoading(true);
+    fetch(`${BASE}/${APEX_DB_CONFIG.endpoints.rrTrialBalanceCompanies}?ledger_name=${encodeURIComponent(ledger)}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        const list = [...new Set(((d?.items || []) as any[]).map(i => i.company).filter(Boolean).map(String))].sort();
+        setCompanies(list);
+        const cur = form.getFieldValue('company');
+        if (cur && list.length && !list.includes(cur)) form.setFieldsValue({ company: undefined });
+      })
+      .catch(() => setCompanies([]))
+      .finally(() => setCompaniesLoading(false));
+  }, [ledger, form]);
 
   useEffect(() => {
     fetch(`${BASE}/gl/getledgername`).then(r => (r.ok ? r.json() : null)).then(d => {
@@ -375,8 +410,11 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
             <Select style={{ width: 140 }} placeholder="Period" showSearch loading={periodsLoading}
               options={periods.map(p => ({ value: p.name, label: p.name }))} />
           </Form.Item>
-          <Form.Item name="company" label="Company" tooltip="Optional: segment 1, e.g. 01 — empty = all companies">
-            <Input style={{ width: 90 }} placeholder="All" allowClear />
+          <Form.Item name="company" label="Company" tooltip="Companies with balances in the selected ledger — leave empty for all companies">
+            <Select style={{ width: 260 }} placeholder="All companies" allowClear showSearch loading={companiesLoading}
+              optionFilterProp="label" popupMatchSelectWidth={false}
+              notFoundContent={companiesLoading ? 'Loading…' : 'No companies for this ledger'}
+              options={companies.map(c => ({ value: c, label: companyNames.get(c) ? `${c} - ${companyNames.get(c)}` : c }))} />
           </Form.Item>
           <Form.Item>
             <Space>
@@ -443,7 +481,7 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
               <Space direction="vertical" size={0}>
                 <Title level={5} style={{ margin: 0 }}><CalculatorOutlined style={{ color: RED }} /> {tpl.template_name}</Title>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  {ran.ledger} · Period {ran.period}{ran.company ? ` · Company ${ran.company}` : ' · All companies'} · Credit − Debit (expenses in brackets)
+                  {ran.ledger} · Period {ran.period}{ran.company ? ` · Company ${ran.company}${companyNames.get(ran.company) ? ` - ${companyNames.get(ran.company)}` : ''}` : ' · All companies'} · Credit − Debit (expenses in brackets)
                 </Text>
               </Space>
             )}
