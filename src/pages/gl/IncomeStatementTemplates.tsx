@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Layout,
   Typography,
@@ -133,20 +133,32 @@ const IncomeStatementTemplates: React.FC = () => {
   const [accountSearchText, setAccountSearchText] = useState('');
 
   // Load GL accounts
-  const loadGLAccounts = async () => {
+  const loadGLAccounts = async (silent = false) => {
     setGlAccountsLoading(true);
     try {
       const response = await plService.getGLAccounts();
       if (response.success && response.data) {
         setGlAccounts(response.data);
-      } else {
+      } else if (!silent) {
         message.error(response.error || 'Failed to load GL accounts');
       }
     } catch (error) {
-      message.error('Failed to load GL accounts');
+      if (!silent) message.error('Failed to load GL accounts');
     }
     setGlAccountsLoading(false);
   };
+
+  // account → description, for the account lines in the template tree
+  const accountDesc = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of glAccounts) if (a.account && a.description) m.set(String(a.account).trim(), a.description);
+    return m;
+  }, [glAccounts]);
+  const hasEditTab = templateTabs.some(t => t.kind !== 'run');
+  useEffect(() => {
+    if (hasEditTab && glAccounts.length === 0 && !glAccountsLoading) loadGLAccounts(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasEditTab]);
 
   // Load templates on mount
   useEffect(() => {
@@ -621,6 +633,17 @@ const IncomeStatementTemplates: React.FC = () => {
                     ? `${account.account_from} - ${account.account_to}`
                     : account.account_code}
                 </Text>
+                {(() => {
+                  if (account.account_from && account.account_to) {
+                    const from = accountDesc.get(account.account_from.trim());
+                    const to = accountDesc.get(account.account_to.trim());
+                    const n = glAccounts.filter(a => a.account >= account.account_from! && a.account <= account.account_to!).length;
+                    const text = [from && to && from !== to ? `${from} … ${to}` : from || to, n ? `${n} accounts` : null].filter(Boolean).join(' · ');
+                    return text ? <Text type="secondary" style={{ fontSize: 12 }}>{text}</Text> : null;
+                  }
+                  const d = accountDesc.get(String(account.account_code || '').trim());
+                  return d ? <Text type="secondary" style={{ fontSize: 12 }}>{d}</Text> : null;
+                })()}
                 <Popconfirm
                   title="Remove this account from the section?"
                   description={`${account.account_from && account.account_to ? `${account.account_from} - ${account.account_to}` : account.account_code} will no longer be included in ${section.section_name}.`}
@@ -1742,7 +1765,7 @@ const IncomeStatementTemplates: React.FC = () => {
               <Col>
                 <Button
                   icon={<ReloadOutlined />}
-                  onClick={loadGLAccounts}
+                  onClick={() => loadGLAccounts()}
                   loading={glAccountsLoading}
                 >
                   Refresh
