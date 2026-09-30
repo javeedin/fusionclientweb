@@ -13,10 +13,13 @@ import {
   Collapse, Modal,
 } from 'antd';
 import {
-  PlayCircleOutlined, DownloadOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined,
+  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { getAppBranding } from '../../config/company.config';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { buildApexUrl } from '../../config/api.helper';
 import type { PLTemplateStructure, PLSectionAccount } from '../../services/pl-templates.service';
@@ -101,7 +104,7 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tb, setTb] = useState<TbRow[] | null>(null);
-  const [ran, setRan] = useState<{ ledger: string; period: string; company?: string } | null>(null);
+  const [ran, setRan] = useState<{ ledger: string; period: string; company?: string; currency?: string } | null>(null);
   const [view, setView] = useState<'summary' | 'detail'>('summary');
   const ledger = Form.useWatch('ledger', form);
   const [companies, setCompanies] = useState<string[]>([]);
@@ -167,6 +170,7 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
     setRunning(true); setError(null);
     try {
       const rows: TbRow[] = [];
+      let currency = '';
       const pageSize = 5000;
       for (let offset = 0, guard = 0; guard < 100; guard++) {
         const p = new URLSearchParams({ ledger_name: v.ledger, period_name: v.period, limit: String(pageSize), offset: String(offset) });
@@ -176,6 +180,7 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
         if (!res.ok) throw new Error(d?.message || `Trial balance HTTP ${res.status}`);
         const items: any[] = d.items || [];
         for (const i of items) {
+          if (!currency) currency = i.ledger_currency || i.currency_code || i.currency || '';
           rows.push({
             account: String(i.account ?? '').trim(), account_desc: i.account_desc ?? null,
             account_type: i.account_type ?? null, company: i.company ?? null,
@@ -186,7 +191,7 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
         offset += items.length;
       }
       setTb(rows);
-      setRan({ ledger: v.ledger, period: v.period, company: v.company?.trim() || undefined });
+      setRan({ ledger: v.ledger, period: v.period, company: v.company?.trim() || undefined, currency: currency || undefined });
       if (!rows.length) message.warning(`No trial balance rows for ${v.ledger} / ${v.period}`);
     } catch (e: any) {
       setTb(null);
@@ -390,6 +395,144 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
     XLSX.writeFile(wb, `PL_${tpl.template_code}_${ran.period}${ran.company ? `_${ran.company}` : ''}.xlsx`);
   };
 
+  // ── PDF: statement layout (A4 portrait) ───────────────────────────────────
+  const exportPdf = () => {
+    if (!result || !ran) return;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const W = doc.internal.pageSize.getWidth();
+    const M = 16;
+    const INK: [number, number, number] = [33, 33, 33];
+    const MUTED: [number, number, number] = [110, 110, 110];
+    const ACCENT: [number, number, number] = [199, 70, 52];
+    const pdfAmt = (n: number | undefined) => {
+      if (n === undefined || n === null) return '';
+      const v = r2(n);
+      if (Math.abs(v) < 0.005) return '-';
+      const t = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return v < 0 ? `(${t})` : t;
+    };
+    const pdfPct = (v: number | undefined) => (v === undefined || !result.revenueYtd ? '' : `${((v / Math.abs(result.revenueYtd)) * 100).toFixed(1)}%`);
+    const entity = ran.company
+      ? `${companyNames.get(ran.company) || `Company ${ran.company}`}${companyNames.get(ran.company) ? ` (${ran.company})` : ''}`
+      : `${ran.ledger} - all companies`;
+
+    // header
+    doc.setFillColor(...ACCENT); doc.rect(0, 0, W, 3, 'F');
+    doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
+    doc.text(entity, W / 2, 16, { align: 'center' });
+    doc.setFontSize(12); doc.text('Statement of Profit or Loss', W / 2, 23, { align: 'center' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(...MUTED);
+    doc.text(`For the period ${ran.period} and the year to date`, W / 2, 29, { align: 'center' });
+    doc.text(`${tpl.template_name}  |  Ledger: ${ran.ledger}${ran.currency ? `  |  Amounts in ${ran.currency}` : ''}`, W / 2, 34, { align: 'center' });
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(M, 38, W - M, 38);
+
+    // body rows — statement style: group heading, lines, "Total <group>" subtotal
+    type Kind = 'heading' | 'line' | 'account' | 'subtotal' | 'plain' | 'total' | 'double' | 'error' | 'gap';
+    const body: { cells: string[]; kind: Kind }[] = [];
+    const withAccounts = view === 'detail';
+    // groups the template already totals on their own (e.g. T1 = G1) get no extra "Total …" line
+    const ownTotal = new Set((tpl.totals || []).map(t => String(t.calculation_formula || '').replace(/[\s()+]/g, '').toUpperCase()));
+    for (const r of result.rows) {
+      if (r.kind === 'group') {
+        const secs = r.children || [];
+        if (!secs.length) { body.push({ kind: 'plain', cells: [r.label, pdfAmt(r.ptd), pdfAmt(r.ytd), pdfPct(r.ytd)] }); body.push({ kind: 'gap', cells: ['', '', '', ''] }); continue; }
+        body.push({ kind: 'heading', cells: [r.label, '', '', ''] });
+        for (const sct of secs) {
+          body.push({ kind: 'line', cells: [`    ${sct.label}`, pdfAmt(sct.ptd), pdfAmt(sct.ytd), pdfPct(sct.ytd)] });
+          if (withAccounts) for (const a of sct.children || []) {
+            body.push({ kind: 'account', cells: [`         ${a.label}`, pdfAmt(a.ptd), pdfAmt(a.ytd), ''] });
+          }
+        }
+        if (!ownTotal.has(String(r.code || '').toUpperCase())) {
+          body.push({ kind: 'subtotal', cells: [`Total ${r.label.toLowerCase()}`, pdfAmt(r.ptd), pdfAmt(r.ytd), pdfPct(r.ytd)] });
+          body.push({ kind: 'gap', cells: ['', '', '', ''] });
+        }
+      } else if (r.kind === 'total') {
+        body.push({ kind: r.style === 'DOUBLE_LINE' ? 'double' : 'total', cells: [r.label, pdfAmt(r.ptd), pdfAmt(r.ytd), pdfPct(r.ytd)] });
+        body.push({ kind: 'gap', cells: ['', '', '', ''] });
+      } else if (r.kind === 'error') {
+        body.push({ kind: 'error', cells: [`${r.label}: ${r.error}`, '', '', ''] });
+      }
+    }
+    while (body.length && body[body.length - 1].kind === 'gap') body.pop();
+
+    autoTable(doc, {
+      startY: 43,
+      margin: { left: M, right: M, top: 20, bottom: 18 },
+      head: [['', `Period\n${ran.period}`, 'Year to\ndate', '% of\nrevenue']],
+      body: body.map(b => b.cells),
+      theme: 'plain',
+      styles: { font: 'helvetica', fontSize: 9.5, textColor: INK, cellPadding: { top: 1.6, bottom: 1.6, left: 1.5, right: 1.5 }, overflow: 'linebreak' },
+      headStyles: { fontStyle: 'bold', fontSize: 9, textColor: INK, halign: 'right', valign: 'bottom' },
+      columnStyles: {
+        0: { cellWidth: 'auto', halign: 'left' },
+        1: { cellWidth: 34, halign: 'right' },
+        2: { cellWidth: 34, halign: 'right' },
+        3: { cellWidth: 18, halign: 'right', textColor: MUTED, fontSize: 8.5 },
+      },
+      didParseCell: d => {
+        if (d.section !== 'body') return;
+        const k = body[d.row.index]?.kind;
+        if (k === 'heading') { d.cell.styles.fontStyle = 'bold'; d.cell.styles.cellPadding = { top: 3, bottom: 1.2, left: 1.5, right: 1.5 }; }
+        if (k === 'subtotal' || k === 'plain') d.cell.styles.fontStyle = 'bold';
+        if (k === 'total' || k === 'double') {
+          d.cell.styles.fontStyle = 'bold';
+          d.cell.styles.fillColor = [253, 243, 241];
+        }
+        if (k === 'account') { d.cell.styles.fontSize = 8; d.cell.styles.textColor = MUTED; d.cell.styles.cellPadding = { top: 0.8, bottom: 0.8, left: 1.5, right: 1.5 }; }
+        if (k === 'gap') { d.cell.styles.cellPadding = 0.8; d.cell.styles.minCellHeight = 1.5; d.cell.styles.fontSize = 2; }
+        if (k === 'error') { d.cell.styles.textColor = ACCENT; d.cell.styles.fontStyle = 'italic'; }
+        if (d.column.index === 0 && d.cell.colSpan === 1 && k === 'error') d.cell.colSpan = 4;
+      },
+      didDrawCell: d => {
+        if (d.section === 'head' && d.column.index > 0 && d.column.index < 3) {
+          doc.setDrawColor(...INK); doc.setLineWidth(0.3);
+          doc.line(d.cell.x + 3, d.cell.y + d.cell.height, d.cell.x + d.cell.width - 1, d.cell.y + d.cell.height);
+        }
+        if (d.section !== 'body' || d.column.index === 0 || d.column.index > 2) return;
+        const k = body[d.row.index]?.kind;
+        const x1 = d.cell.x + 3; const x2 = d.cell.x + d.cell.width - 1;
+        doc.setDrawColor(...INK);
+        if (k === 'subtotal' || k === 'total' || k === 'double') {
+          doc.setLineWidth(0.25); doc.line(x1, d.cell.y + 0.2, x2, d.cell.y + 0.2);           // single rule above
+        }
+        if (k === 'double') {
+          const yb = d.cell.y + d.cell.height;
+          doc.setLineWidth(0.3); doc.line(x1, yb - 0.6, x2, yb - 0.6); doc.line(x1, yb + 0.4, x2, yb + 0.4);   // double underline
+        }
+      },
+    });
+
+    // notes under the statement
+    let y = (doc as any).lastAutoTable.finalY + 8;
+    const notes: string[] = [];
+    notes.push('Amounts are credit less debit: income is shown positive, expenses in brackets.');
+    if (result.unmapped.length) {
+      notes.push(`${result.unmapped.length} income/expense account(s) with a year-to-date balance of ${pdfAmt(result.unmappedYtd)} are not mapped to this template and are excluded.`);
+    }
+    if (result.duplicates.length) notes.push(`${result.duplicates.length} account(s) are mapped to more than one section and are counted in each.`);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...MUTED);
+    for (const n of notes) {
+      const lines = doc.splitTextToSize(`- ${n}`, W - 2 * M) as string[];
+      if (y + lines.length * 4 > doc.internal.pageSize.getHeight() - 20) { doc.addPage(); y = 20; }
+      doc.text(lines, M, y); y += lines.length * 4;
+    }
+
+    // footer on every page
+    const pages = doc.getNumberOfPages();
+    const H = doc.internal.pageSize.getHeight();
+    const stamp = new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const brand = getAppBranding();
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.2); doc.line(M, H - 12, W - M, H - 12);
+      doc.setFontSize(7.5); doc.setTextColor(...MUTED);
+      doc.text(`${entity}  |  Statement of Profit or Loss  |  ${ran.period}`, M, H - 7.5);
+      doc.text(`Generated ${stamp} by ${brand.name}  |  Page ${i} of ${pages}`, W - M, H - 7.5, { align: 'right' });
+    }
+    doc.save(`PL_${tpl.template_code}_${ran.period}${ran.company ? `_${ran.company}` : ''}.pdf`);
+  };
+
   const exportDrill = () => {
     if (!drillRow?.drill || !ran) return;
     const wb = XLSX.utils.book_new();
@@ -421,6 +564,9 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
               <Button type="primary" htmlType="submit" icon={<PlayCircleOutlined />} loading={running}
                 style={{ background: RED, borderColor: RED }}>Run P&amp;L</Button>
               <Button icon={<DownloadOutlined />} disabled={!result} onClick={exportExcel}>Excel</Button>
+              <Tooltip title="Statement layout, A4. Uses the Sections / Accounts view shown below.">
+                <Button icon={<FilePdfOutlined />} disabled={!result} onClick={exportPdf}>PDF</Button>
+              </Tooltip>
             </Space>
           </Form.Item>
         </Form>
