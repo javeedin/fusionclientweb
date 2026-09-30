@@ -46,7 +46,11 @@ interface ServerStatus {
   http: { ok: boolean; statusCode?: number; ms?: number; error?: string };
   checkedAt: string;
 }
-interface BastionCfg { sessionOcid: string; keyPath: string; bastionHost?: string; localPort?: number }
+interface BastionCfg {
+  sessionOcid?: string; keyPath: string; bastionHost?: string; localPort?: number;
+  // automatic sessions (OCI API key in ~/.oci/config): the Bastion itself + options
+  bastionOcid?: string; ociConfigPath?: string; ociProfile?: string; autoRenew?: boolean;
+}
 interface SavedConn {
   name: string; protocol: string; host: string; port?: number; username: string; password?: string;
   bastion?: BastionCfg;
@@ -90,6 +94,8 @@ const fmtDate = (v: string | null) =>
 // If the backend itself lost the session (e.g. the app/backend restarted), the page
 // reconnects with the last connection settings and retries the call once.
 let sessionRecover: (() => Promise<string>) | null = null;
+// called when the backend created a new Bastion session (expired one replaced)
+let onBastionSession: ((s: { sessionOcid: string; bastionHost: string; expiresAt: string }) => void) | null = null;
 
 const rawPost = async (url: string, body: unknown) => {
   const res = await fetch(url, {
@@ -100,6 +106,7 @@ const rawPost = async (url: string, body: unknown) => {
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
   if (data.reconnected) message.info({ content: data.reconnected, key: 'ftp-reconnected', duration: 6 });
+  if (data.bastionSession && onBastionSession) onBastionSession(data.bastionSession);
   return data;
 };
 
@@ -210,10 +217,15 @@ const FTPManager: React.FC = () => {
 
   // ── connect / disconnect ──────────────────────────────────────────────────
   // OCI Bastion (SFTP only): the app opens the tunnel itself — no ssh.exe window
-  const bastionFrom = (v: any): BastionCfg | undefined => (v.useBastion && v.protocol === 'sftp' && v.bastionOcid?.trim()
+  // (form field "bastionOcid" = the SESSION OCID; "bastionResourceOcid" = the Bastion itself)
+  const bastionFrom = (v: any): BastionCfg | undefined => (v.useBastion && v.protocol === 'sftp'
+    && (v.bastionOcid?.trim() || v.bastionResourceOcid?.trim())
     ? {
-      sessionOcid: v.bastionOcid.trim(), keyPath: (v.bastionKeyPath || '').trim(),
+      sessionOcid: v.bastionOcid?.trim() || undefined, keyPath: (v.bastionKeyPath || '').trim(),
       bastionHost: v.bastionHost?.trim() || undefined, localPort: Number(v.bastionLocalPort) || 2222,
+      bastionOcid: v.bastionResourceOcid?.trim() || undefined,
+      ociConfigPath: v.ociConfigPath?.trim() || undefined, ociProfile: v.ociProfile?.trim() || undefined,
+      autoRenew: v.bastionAutoRenew !== false,
     }
     : undefined);
   const savedToForm = (s: SavedConn) => ({
@@ -223,6 +235,8 @@ const FTPManager: React.FC = () => {
     useBastion: !!s.bastion,
     bastionOcid: s.bastion?.sessionOcid, bastionKeyPath: s.bastion?.keyPath, bastionHost: s.bastion?.bastionHost,
     bastionLocalPort: s.bastion?.localPort != null ? String(s.bastion.localPort) : undefined,
+    bastionResourceOcid: s.bastion?.bastionOcid, ociConfigPath: s.bastion?.ociConfigPath, ociProfile: s.bastion?.ociProfile,
+    bastionAutoRenew: s.bastion?.autoRenew !== false,
   });
   const useBastion = Form.useWatch('useBastion', connForm);
   const [sshPasteOpen, setSshPasteOpen] = useState(false);
@@ -240,6 +254,46 @@ const FTPManager: React.FC = () => {
     setSshPasteOpen(false); setSshPasteText('');
     message.success(`Filled from the SSH command: ${r.targetHost}:${r.targetPort} via ${r.bastionHost}`);
   };
+
+  // "New Bastion session": create a port-forwarding session through the OCI API
+  // (API key in ~/.oci/config) and fill in its OCID
+  const [creatingSession, setCreatingSession] = useState(false);
+  const createBastionSession = async () => {
+    const v = await connForm.validateFields(['host', 'bastionResourceOcid', 'bastionKeyPath']);
+    const all = connForm.getFieldsValue(true);
+    setCreatingSession(true);
+    const hide = message.loading('Creating the Bastion session in OCI… (usually 10–60 s)', 0);
+    try {
+      const d = await rawPost(`${API}/bastion/new-session`, {
+        bastionOcid: all.bastionResourceOcid.trim(), keyPath: (all.bastionKeyPath || '').trim(),
+        targetHost: v.host.trim(), targetPort: all.port || 22,
+        ociConfigPath: all.ociConfigPath?.trim() || undefined, ociProfile: all.ociProfile?.trim() || undefined,
+      });
+      connForm.setFieldsValue({ bastionOcid: d.sessionOcid, bastionHost: d.bastionHost });
+      // remember it in the saved connection once host + user are filled in
+      const now = connForm.getFieldsValue(true);
+      if (now.host?.trim() && now.username?.trim()) persistConnection(now);
+      message.success(`New Bastion session is ACTIVE until ${new Date(d.expiresAt).toLocaleTimeString()} — click Connect`, 8);
+    } catch (e: any) {
+      message.error(`Could not create the Bastion session: ${e.message}`, 10);
+    } finally {
+      hide();
+      setCreatingSession(false);
+    }
+  };
+
+  // the backend replaced an expired session on its own: show it and remember the new OCID
+  useEffect(() => {
+    onBastionSession = (s) => {
+      connForm.setFieldsValue({ bastionOcid: s.sessionOcid, bastionHost: s.bastionHost });
+      if (lastConnRef.current?.bastion) lastConnRef.current.bastion = { ...lastConnRef.current.bastion, sessionOcid: s.sessionOcid, bastionHost: s.bastionHost };
+      const now = connForm.getFieldsValue(true);
+      if (now.host?.trim() && now.username?.trim()) persistConnection(now);
+      message.info({ content: `The Bastion session had expired — created a new one (active until ${new Date(s.expiresAt).toLocaleTimeString()})`, key: 'ftp-bastion-new', duration: 8 });
+    };
+    return () => { onBastionSession = null; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const persistConnection = useCallback((v: {
     protocol: string; host: string; port?: string | number; username: string; password?: string;
     useBastion?: boolean; bastionOcid?: string; bastionKeyPath?: string; bastionHost?: string;
@@ -759,10 +813,26 @@ const FTPManager: React.FC = () => {
               {useBastion && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', width: '100%', marginTop: 8,
                   padding: '8px 10px', background: '#F4F8FC', border: '1px solid #D6E4F2', borderRadius: 6 }}>
+                  <Form.Item name="bastionResourceOcid" style={{ margin: 0 }}
+                    rules={[{ pattern: /^ocid1\.bastion\./i, message: 'Must start with ocid1.bastion.' }]}
+                    tooltip="OCI Console → Bastion → your bastion → OCID">
+                    <Input placeholder="Bastion OCID (ocid1.bastion.oc1.me-dubai-1…) — for automatic sessions" style={{ width: 420 }}
+                      disabled={!!sessionId} allowClear />
+                  </Form.Item>
+                  <Tooltip title="Create a new port-forwarding session for Host:Port through the OCI API (API key in your .oci\config) and fill in its OCID">
+                    <Button size="small" type="primary" ghost loading={creatingSession} disabled={!!sessionId}
+                      onClick={createBastionSession}>New Bastion session</Button>
+                  </Tooltip>
                   <Form.Item name="bastionOcid" style={{ margin: 0 }}
-                    rules={[{ required: true, message: 'Session OCID required' },
+                    dependencies={['bastionResourceOcid']}
+                    rules={[
+                      ({ getFieldValue }) => ({
+                        validator: (_: unknown, val?: string) => (val?.trim() || getFieldValue('bastionResourceOcid')?.trim()
+                          ? Promise.resolve()
+                          : Promise.reject(new Error('Session OCID, or a Bastion OCID to create one'))),
+                      }),
                       { pattern: /^ocid1\.bastionsession\./i, message: 'Must start with ocid1.bastionsession.' }]}>
-                    <Input placeholder="Bastion session OCID (ocid1.bastionsession.oc1.me-dubai-1…)" style={{ width: 420 }}
+                    <Input placeholder="Session OCID (ocid1.bastionsession…) — filled in automatically" style={{ width: 420 }}
                       disabled={!!sessionId} allowClear />
                   </Form.Item>
                   <Form.Item name="bastionKeyPath" style={{ margin: 0 }} rules={[{ required: true, message: 'Private key file required' }]}>
@@ -777,9 +847,23 @@ const FTPManager: React.FC = () => {
                     <Input placeholder="Bastion host (auto from the OCID)" style={{ width: 250 }} disabled={!!sessionId} allowClear />
                   </Form.Item>
                   <Button size="small" onClick={() => setSshPasteOpen(true)} disabled={!!sessionId}>Paste SSH command…</Button>
+                  <Form.Item name="bastionAutoRenew" valuePropName="checked" initialValue style={{ margin: 0 }}>
+                    <Checkbox disabled={!!sessionId}>
+                      <Tooltip title="Needs the Bastion OCID. On Connect (and before an action if the tunnel is closed) the session is checked in OCI; if it expired, a new one is created automatically">
+                        Renew expired session automatically
+                      </Tooltip>
+                    </Checkbox>
+                  </Form.Item>
+                  <Form.Item name="ociConfigPath" style={{ margin: 0 }}>
+                    <Input placeholder="OCI config (default: C:\Users\you\.oci\config)" style={{ width: 270 }} disabled={!!sessionId} allowClear />
+                  </Form.Item>
+                  <Form.Item name="ociProfile" style={{ margin: 0 }}>
+                    <Input placeholder="Profile (DEFAULT)" style={{ width: 130 }} disabled={!!sessionId} allowClear />
+                  </Form.Item>
                   <Text type="secondary" style={{ fontSize: 11 }}>
                     Host/Port above = the private server (e.g. 10.0.1.125 / 22). On Connect (and before any action, if it is closed) the app opens a
-                    Command Prompt “OCI Bastion tunnel” running the ssh command — keep it open. Bastion sessions expire (~3 h): paste the new SSH command.
+                    Command Prompt “OCI Bastion tunnel” running the ssh command — keep it open. Sessions expire (≤3 h): with the Bastion OCID and an
+                    OCI API key a new one is created automatically, otherwise use New Bastion session or paste the new SSH command.
                   </Text>
                 </div>
               )}

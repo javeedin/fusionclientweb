@@ -10,6 +10,10 @@
 //        "OCI Bastion tunnel" is opened running
 //          ssh -i <key> -N -L <localPort>:<host>:<port> -p 22 <sessionOcid>@host.bastion.<region>…
 //        and SFTP connects to 127.0.0.1:<localPort>. A tunnel you already opened is reused.
+//        With bastionOcid (+ an OCI API key in ~/.oci/config) the session is checked first
+//        and, if expired, a new one is created automatically (autoRenew, default on).
+//   POST /api/ftp/bastion/new-session {bastionOcid, keyPath, targetHost, targetPort?,
+//        ociConfigPath?, ociProfile?} -> {sessionOcid, bastionHost, expiresAt, sshCommand}
 //   POST /api/ftp/disconnect     {sessionId}
 //   POST /api/ftp/ping           {sessionId} -> {alive, reconnected?}  checks the SSH/SFTP
 //        connection (and the Bastion tunnel) and reopens it if it dropped.
@@ -56,9 +60,11 @@ const reconnect = async (session, why) => {
   try { session.client.end(); } catch { /* already gone */ }
   session.client = session.protocol === 'sftp' ? await makeSftp(session.cfg) : await makeFtp(session.cfg);
   session.reconnects = (session.reconnects || 0) + 1;
-  session.reconnectNotice = `${why} — ${session.client.tunnel?.opened
-    ? `opened the OCI Bastion tunnel again (Command Prompt, local port ${session.client.tunnel.localPort}) and reconnected`
+  const t = session.client.tunnel;
+  session.reconnectNotice = `${why} — ${t?.renewed ? `created a new Bastion session (expires ${new Date(t.renewed.expiresAt).toLocaleTimeString()}), ` : ''}${t?.opened
+    ? `opened the OCI Bastion tunnel again (Command Prompt, local port ${t.localPort}) and reconnected`
     : 'reconnected'}`;
+  if (t?.renewed) session.renewedSession = t.renewed;
   console.log(`[ftp] ${session.cfg.username}@${session.cfg.host}: ${session.reconnectNotice}`);
 };
 
@@ -159,12 +165,58 @@ const bastionCommand = (b, targetHost, targetPort) => {
   return { args, display, localPort };
 };
 
+// OCI Bastion API (server/oci-bastion.cjs) with the API key in ~/.oci/config
+const oci = require('./oci-bastion.cjs');
+const loadOci = (b) => oci.readOciConfig(b.ociConfigPath, b.ociProfile || 'DEFAULT');
+
+// Create a new port-forwarding session for targetHost:targetPort; returns its details
+const newBastionSession = async (b, targetHost, targetPort) => {
+  const keyPath = String(b.keyPath || '').trim().replace(/^"(.*)"$/, '$1');
+  if (!keyPath || !fs.existsSync(keyPath)) throw new Error(`Bastion private key not found: ${keyPath || '(empty)'}`);
+  if (!/^[\w.:-]+$/.test(String(targetHost || ''))) throw new Error('Host (the private server IP) is required');
+  return oci.createPortForwardingSession(loadOci(b), {
+    bastionOcid: String(b.bastionOcid).trim(), targetIp: String(targetHost).trim(),
+    targetPort: Number(targetPort) || 22, keyPath,
+  });
+};
+
+// Keep the session usable: ACTIVE → keep; expired/deleted/missing → create a new one.
+// Mutates b (sessionOcid, bastionHost). Returns the new session's details, or null.
+const renewBastionSessionIfNeeded = async (b, targetHost, targetPort) => {
+  let state = null;
+  if (b.sessionOcid) {
+    const cur = await oci.getSession(loadOci(b), String(b.sessionOcid).trim());
+    state = cur?.lifecycleState || 'NOT_FOUND';
+    if (state === 'ACTIVE') return null;
+    if (state === 'CREATING') {
+      // just created elsewhere — wait for it rather than making another one
+      for (let i = 0; i < 20 && state === 'CREATING'; i++) {
+        await new Promise(r => setTimeout(r, 4000));
+        state = (await oci.getSession(loadOci(b), String(b.sessionOcid).trim()))?.lifecycleState || 'NOT_FOUND';
+      }
+      if (state === 'ACTIVE') return null;
+    }
+  }
+  const s = await newBastionSession(b, targetHost, targetPort);
+  b.sessionOcid = s.sessionOcid;
+  b.bastionHost = s.bastionHost;
+  console.log(`[ftp] Bastion session ${state ? `was ${state}` : 'missing'} — created ${s.sessionOcid} (expires ${s.expiresAt})`);
+  return { ...s, previousState: state };
+};
+
 // Make sure the Bastion tunnel is open: if nothing listens on the local port, open a
 // Command Prompt window running the ssh command (it stays open — close it to stop the
 // tunnel) and wait for the port. Resolves {localPort, opened}.
 const ensureBastionTunnel = async (b, targetHost, targetPort) => {
+  const localPortFirst = Number(b.localPort) || 2222;
+  if (b.sessionOcid && await portOpen(localPortFirst)) return { localPort: localPortFirst, opened: false };
+  // tunnel not open: with the Bastion OCID known, make sure the session is still
+  // ACTIVE (sessions expire after ≤3 h) and create a fresh one if it is not — the new
+  // OCID is kept on the settings object so later reconnects use it too
+  let renewed = null;
+  if (b.bastionOcid && b.autoRenew !== false) renewed = await renewBastionSessionIfNeeded(b, targetHost, targetPort);
   const { args, display, localPort } = bastionCommand(b, targetHost, targetPort);
-  if (await portOpen(localPort)) return { localPort, opened: false };
+  if (await portOpen(localPort)) return { localPort, opened: false, renewed };
   const { spawn: spawnProc } = require('child_process');
   if (process.platform === 'win32') {
     // new visible console window titled "OCI Bastion tunnel"; /k keeps it open so
@@ -177,7 +229,7 @@ const ensureBastionTunnel = async (b, targetHost, targetPort) => {
   const until = Date.now() + 30000;
   while (Date.now() < until) {
     await new Promise(r => setTimeout(r, 1000));
-    if (await portOpen(localPort)) return { localPort, opened: true };
+    if (await portOpen(localPort)) return { localPort, opened: true, renewed };
   }
   throw new Error(`The OCI Bastion tunnel did not open on local port ${localPort} within 30 s — look at the "OCI Bastion tunnel" `
     + 'Command Prompt window: an expired session (~3 h), a wrong key or a busy port shows there. '
@@ -483,8 +535,13 @@ module.exports = function registerFtpRoutes(app) {
   const ok = (res, data) => {
     const s = res.locals?.ftpSession;
     const notice = s?.reconnectNotice;
-    if (s) s.reconnectNotice = null;
-    res.json({ success: true, ...data, ...(notice ? { reconnected: notice } : {}) });
+    const renewed = s?.renewedSession;
+    if (s) { s.reconnectNotice = null; s.renewedSession = null; }
+    res.json({
+      success: true, ...data,
+      ...(notice ? { reconnected: notice } : {}),
+      ...(renewed ? { bastionSession: renewed } : {}),
+    });
   };
   const fail = (res, e, code = 500) =>
     res.status(code).json({ success: false, error: e instanceof Error ? e.message : String(e) });
@@ -502,13 +559,14 @@ module.exports = function registerFtpRoutes(app) {
     if (bastion && protocol !== 'sftp') return fail(res, 'The OCI Bastion tunnel works with SFTP only', 400);
     const isLocal = /^(127\.0\.0\.1|localhost|::1)$/i.test(String(host).trim());
     // with the Bastion option, Host/Port are the PRIVATE server (the -L target), not the tunnel's local end
-    if (bastion && bastion.sessionOcid && isLocal) {
+    const hasBastion = !!(bastion && (bastion.sessionOcid || bastion.bastionOcid));
+    if (hasBastion && isLocal) {
       return fail(res, 'With "Via OCI Bastion", Host/Port must be the private server (e.g. 10.0.1.125 / 22), not 127.0.0.1 — '
         + 'the app opens the tunnel on the local port itself', 400);
     }
     try {
       const cfg = { protocol, host, port: Number(port) || undefined, username, password,
-        bastion: bastion && bastion.sessionOcid ? bastion : undefined };
+        bastion: hasBastion ? { ...bastion } : undefined };
       let client;
       try {
         client = protocol === 'sftp' ? await makeSftp(cfg) : await makeFtp(cfg);
@@ -524,10 +582,24 @@ module.exports = function registerFtpRoutes(app) {
       sessions.set(id, { protocol, cfg, client, queue: Promise.resolve() });
       ok(res, {
         sessionId: id,
-        ...(client.tunnel ? { tunnel: client.tunnel.opened
+        ...(client.tunnel ? { tunnel: `${client.tunnel.renewed
+          ? `Created a new Bastion session (${client.tunnel.renewed.previousState ? `old one was ${client.tunnel.renewed.previousState}` : 'none set'}; expires ${new Date(client.tunnel.renewed.expiresAt).toLocaleTimeString()}). ` : ''}${client.tunnel.opened
           ? `Opened the OCI Bastion tunnel in a Command Prompt window (local port ${client.tunnel.localPort}) — keep that window open`
-          : `Using the OCI Bastion tunnel already open on local port ${client.tunnel.localPort}` } : {}),
+          : `Using the OCI Bastion tunnel already open on local port ${client.tunnel.localPort}`}` } : {}),
+        ...(client.tunnel?.renewed ? { bastionSession: client.tunnel.renewed } : {}),
       });
+    } catch (e) {
+      fail(res, e);
+    }
+  });
+
+  // Create a new OCI Bastion port-forwarding session (the page's "New Bastion session" button)
+  //   {bastionOcid, keyPath, targetHost, targetPort?, ociConfigPath?, ociProfile?}
+  //   -> {sessionOcid, bastionHost, expiresAt, ttlSeconds, sshCommand}
+  app.post('/api/ftp/bastion/new-session', async (req, res) => {
+    const b = req.body || {};
+    try {
+      ok(res, await newBastionSession(b, b.targetHost, b.targetPort));
     } catch (e) {
       fail(res, e);
     }
