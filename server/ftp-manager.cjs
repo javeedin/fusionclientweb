@@ -500,10 +500,26 @@ module.exports = function registerFtpRoutes(app) {
     const { protocol = 'sftp', host, port, username, password, bastion } = req.body || {};
     if (!host || !username) return fail(res, 'host and username are required', 400);
     if (bastion && protocol !== 'sftp') return fail(res, 'The OCI Bastion tunnel works with SFTP only', 400);
+    const isLocal = /^(127\.0\.0\.1|localhost|::1)$/i.test(String(host).trim());
+    // with the Bastion option, Host/Port are the PRIVATE server (the -L target), not the tunnel's local end
+    if (bastion && bastion.sessionOcid && isLocal) {
+      return fail(res, 'With "Via OCI Bastion", Host/Port must be the private server (e.g. 10.0.1.125 / 22), not 127.0.0.1 — '
+        + 'the app opens the tunnel on the local port itself', 400);
+    }
     try {
       const cfg = { protocol, host, port: Number(port) || undefined, username, password,
         bastion: bastion && bastion.sessionOcid ? bastion : undefined };
-      const client = protocol === 'sftp' ? await makeSftp(cfg) : await makeFtp(cfg);
+      let client;
+      try {
+        client = protocol === 'sftp' ? await makeSftp(cfg) : await makeFtp(cfg);
+      } catch (e) {
+        // 127.0.0.1:<port> refused = no tunnel is running there (the app only opens one when the Bastion option is on)
+        if (!cfg.bastion && isLocal && /ECONNREFUSED/.test(e?.message || '')) {
+          throw new Error(`Nothing is listening on ${host}:${port || 22} — no tunnel is open. Tick "Via OCI Bastion" and set Host/Port to `
+            + 'the private server (10.0.1.125 / 22) so the app runs the ssh command for you, or start the ssh -L command yourself first.');
+        }
+        throw e;
+      }
       const id = newId();
       sessions.set(id, { protocol, cfg, client, queue: Promise.resolve() });
       ok(res, {
