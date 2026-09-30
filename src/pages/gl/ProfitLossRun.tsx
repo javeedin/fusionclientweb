@@ -10,10 +10,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Card, Form, Select, Input, Button, Space, Typography, Alert, Table, Tag, Tooltip, Row, Col, Statistic, Empty, Segmented, message,
-  Collapse, Modal,
+  Modal, Tabs, Badge,
 } from 'antd';
 import {
-  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined,
+  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, FileSearchOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
@@ -35,6 +35,11 @@ interface TbRow {
 interface Amt { ptd: number; ytd: number }
 interface AcctLine { account: string; desc: string | null; ptd: number; ytd: number }
 type RowKind = 'group' | 'section' | 'account' | 'groupTotal' | 'total' | 'error';
+interface TbPlLine { account: string; desc: string | null; type: 'R' | 'E'; ptd: number; ytd: number; sections: string[] }
+interface TbPlRow {
+  key: string; kind: 'group' | 'account' | 'total'; label: string; desc?: string | null; ptd: number; ytd: number;
+  sections?: string[]; missing?: boolean; children?: TbPlRow[];
+}
 interface DrillLine { account: string; desc: string | null; section: string; ptd: number; ytd: number }
 interface PLRow {
   key: string; kind: RowKind; label: string; code?: string; ptd?: number; ytd?: number;
@@ -216,6 +221,7 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
     }
     const acctType = new Map(tb.map(r => [r.account, r.account_type]));
     const used = new Map<string, string[]>();   // account → sections using it
+    const usedNames = new Map<string, string[]>();   // account → section names (As per TB tab)
     const groupVal = new Map<string, Amt>();
     const groups = [...(tpl.groups || [])].sort((a, b) => a.display_order - b.display_order);
     const groupRows = new Map<string, PLRow>();
@@ -234,6 +240,7 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
           if (!(s.accounts || []).some(a => matches(acct, a))) continue;
           sAmt.ptd += line.ptd; sAmt.ytd += line.ytd;
           used.set(acct, [...(used.get(acct) || []), `${g.group_code}/${s.section_code}`]);
+          usedNames.set(acct, [...(usedNames.get(acct) || []), secName]);
           if (Math.abs(line.ptd) >= 0.005 || Math.abs(line.ytd) >= 0.005) {
             sDrill.push({ account: acct, desc: line.desc, section: secName, ptd: line.ptd, ytd: line.ytd });
             acctRows.push({ key: `a-${s.section_id}-${acct}`, kind: 'account', label: `${acct}${line.desc ? ` · ${line.desc}` : ''}`,
@@ -297,15 +304,22 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
     items.sort((a, b) => a.order - b.order);
 
     // checks: unmapped P&L accounts, accounts used by several sections, TB net income
-    const unmapped: AcctLine[] = [];
+    const unmapped: (AcctLine & { type: string })[] = [];
+    const tbLines: TbPlLine[] = [];   // P&L as per TB: every R/E account with a balance
     let tbNetYtd = 0; let tbNetPtd = 0;
     for (const [acct, line] of byAcct) {
       const type = (acctType.get(acct) || '').toUpperCase();
       if (type === 'R' || type === 'E') {
         tbNetYtd += line.ytd; tbNetPtd += line.ptd;
-        if (!used.has(acct) && (Math.abs(line.ptd) >= 0.005 || Math.abs(line.ytd) >= 0.005)) unmapped.push(line);
+        const nonZero = Math.abs(line.ptd) >= 0.005 || Math.abs(line.ytd) >= 0.005;
+        if (!used.has(acct) && nonZero) unmapped.push({ ...line, type });
+        if (nonZero) tbLines.push({ account: acct, desc: line.desc, type, ptd: line.ptd, ytd: line.ytd, sections: usedNames.get(acct) || [] });
       }
     }
+    tbLines.sort((a, b) => a.account.localeCompare(b.account));
+    const sum = (ls: TbPlLine[]) => ls.reduce((t, l) => ({ ptd: t.ptd + l.ptd, ytd: t.ytd + l.ytd }), { ptd: 0, ytd: 0 });
+    const tbRev = tbLines.filter(l => l.type === 'R');
+    const tbExp = tbLines.filter(l => l.type === 'E');
     unmapped.sort((a, b) => Math.abs(b.ytd) - Math.abs(a.ytd));
     const duplicates = [...used.entries()].filter(([, secs]) => secs.length > 1);
     // the statement's bottom line = the last total that is not "comprehensive"-only
@@ -316,8 +330,32 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
       rows: items.map(i => i.row), unmapped, duplicates, revenueYtd, revenuePtd,
       tbNetYtd, tbNetPtd, bottom: bottom?.row, mappedYtd,
       unmappedYtd: unmapped.reduce((s, a) => s + a.ytd, 0),
+      unmappedPtd: unmapped.reduce((s, a) => s + a.ptd, 0),
+      tbRev, tbExp, tbRevAmt: sum(tbRev), tbExpAmt: sum(tbExp),
     };
   }, [tb, tpl]);
+
+  // tabs: the template statement | P&L as per TB (account type R / E)
+  const [plTab, setPlTab] = useState<'template' | 'tb'>('template');
+  const [missingOpen, setMissingOpen] = useState(false);
+  const [tbFilter, setTbFilter] = useState<'all' | 'missing'>('all');
+  const [tbSearch, setTbSearch] = useState('');
+  const tbRows = useMemo<TbPlRow[]>(() => {
+    if (!result) return [];
+    const q = tbSearch.trim().toLowerCase();
+    const keep = (l: TbPlLine) => (tbFilter === 'all' || !l.sections.length)
+      && (!q || `${l.account} ${l.desc || ''} ${l.sections.join(' ')}`.toLowerCase().includes(q));
+    const toRow = (l: TbPlLine): TbPlRow => ({ key: `tb-${l.account}`, kind: 'account', label: l.account, desc: l.desc,
+      ptd: l.ptd, ytd: l.ytd, sections: l.sections, missing: !l.sections.length });
+    const rev = result.tbRev.filter(keep).map(toRow);
+    const exp = result.tbExp.filter(keep).map(toRow);
+    return [
+      { key: 'tb-R', kind: 'group', label: 'Revenue (account type R)', ptd: result.tbRevAmt.ptd, ytd: result.tbRevAmt.ytd, children: rev.length ? rev : undefined },
+      { key: 'tb-E', kind: 'group', label: 'Expenses (account type E)', ptd: result.tbExpAmt.ptd, ytd: result.tbExpAmt.ytd, children: exp.length ? exp : undefined },
+      { key: 'tb-net', kind: 'total', label: 'Net profit / (loss) as per TB', ptd: result.tbNetPtd, ytd: result.tbNetYtd },
+    ];
+  }, [result, tbFilter, tbSearch]);
+  const tbRevYtd = result?.tbRevAmt.ytd || 0;
 
   // drill popup (group / section → accounts)
   const [drillRow, setDrillRow] = useState<PLRow | null>(null);
@@ -329,7 +367,11 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
     return q ? drillRow.drill.filter(l => `${l.account} ${l.desc || ''} ${l.section}`.toLowerCase().includes(q)) : drillRow.drill;
   }, [drillRow, drillSearch]);
 
-  const pct = (v: number | undefined, base: number) => (v === undefined || !base ? '' : `${r2((v / Math.abs(base)) * 100).toFixed(1)}%`);
+  const pct = (v: number | undefined, base: number) => {
+    if (v === undefined || !base) return '';
+    const p1 = Math.round((v / Math.abs(base)) * 1000) / 10;
+    return `${(p1 === 0 ? 0 : p1).toFixed(1)}%`;
+  };
   const rowsForView = useMemo(() => {
     if (!result) return [];
     if (view === 'detail') return result.rows;
@@ -387,10 +429,15 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
     walk(result.rows, 0);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(out), 'Profit and Loss');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([...result.tbRev, ...result.tbExp].map(l => ({
+      Type: l.type === 'R' ? 'Revenue' : 'Expense', Account: l.account, Description: l.desc,
+      [`Period ${ran.period}`]: r2(l.ptd), 'Year to date': r2(l.ytd),
+      'In template': l.sections.length ? l.sections.join(', ') : 'MISSING',
+    }))), 'As per TB');
     if (result.unmapped.length) {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(result.unmapped.map(u => ({
-        Account: u.account, Description: u.desc, [`Period ${ran.period}`]: r2(u.ptd), 'Year to date': r2(u.ytd),
-      }))), 'Unmapped accounts');
+        Account: u.account, Description: u.desc, Type: u.type, [`Period ${ran.period}`]: r2(u.ptd), 'Year to date': r2(u.ytd),
+      }))), 'Missing from template');
     }
     XLSX.writeFile(wb, `PL_${tpl.template_code}_${ran.period}${ran.company ? `_${ran.company}` : ''}.xlsx`);
   };
@@ -596,33 +643,92 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
             </Col>
           </Row>
 
-          {(result.unmapped.length > 0 || result.duplicates.length > 0) && (
-            <Collapse size="small" style={{ marginBottom: 12, background: '#FFFBE6', borderColor: '#FFE58F' }}
-              items={[{
-                key: 'checks',
+          <Tabs type="card" activeKey={plTab} onChange={k => setPlTab(k as 'template' | 'tb')} style={{ marginBottom: 0 }}
+            items={[
+              {
+                key: 'template',
                 label: (
-                  <Space size={6} wrap>
-                    <WarningOutlined style={{ color: '#D48806' }} />
-                    {result.unmapped.length > 0 && <Text>{result.unmapped.length} income/expense account(s) not in any section — YTD {fmt(result.unmappedYtd)}</Text>}
-                    {result.duplicates.length > 0 && <Text>{result.duplicates.length} account(s) in more than one section</Text>}
-                    <Text type="secondary" style={{ fontSize: 12 }}>(not included in the statement — click to see)</Text>
+                  <Space size={8}>
+                    <CalculatorOutlined />{tpl.template_name}
+                    {(result.unmapped.length > 0 || result.duplicates.length > 0) && (
+                      <Tooltip title={`${result.unmapped.length} TB income/expense account(s) are missing from this template${result.duplicates.length ? `, ${result.duplicates.length} are in more than one section` : ''} — click to see`}>
+                        <Badge count={result.unmapped.length + result.duplicates.length} size="small" overflowCount={999} offset={[4, -2]}>
+                          <WarningOutlined style={{ color: '#D48806', fontSize: 15, cursor: 'pointer' }}
+                            onClick={e => { e.stopPropagation(); setMissingOpen(true); }} />
+                        </Badge>
+                      </Tooltip>
+                    )}
                   </Space>
                 ),
-                children: (
-                  <div style={{ maxHeight: 260, overflow: 'auto', fontSize: 12 }}>
-                    {result.unmapped.map(u => (
-                      <div key={u.account}><Tag>{u.account}</Tag>{u.desc} — YTD {fmt(u.ytd)} · Period {fmt(u.ptd)}</div>
-                    ))}
-                    {result.duplicates.map(([a, secs]) => (
-                      <div key={`d-${a}`}><Tag color="orange">{a}</Tag>in {secs.join(', ')} (counted twice)</div>
-                    ))}
-                    {result.unmapped.length > 0 && <div style={{ marginTop: 6 }}>Add them to a section with <b>Add Account</b> on the template to include them.</div>}
-                  </div>
-                ),
-              }]} />
+                children: null,
+              },
+              {
+                key: 'tb',
+                label: <Space size={8}><FileSearchOutlined />As per TB</Space>,
+                children: null,
+              },
+            ]} />
+
+          <style>{`
+            .pl-total > td { background: #FFF6F4 !important; border-top: 1px solid #E8C4BD !important; }
+            .pl-double > td { border-bottom: 3px double #C74634 !important; }
+            .pl-group > td { background: #FAFAFA !important; }
+            .pl-missing > td { background: #FFF7E6 !important; }
+          `}</style>
+
+          {plTab === 'tb' && (
+            <Card size="small" style={{ borderRadius: '0 8px 8px 8px' }}
+              title={(
+                <Space direction="vertical" size={0}>
+                  <Title level={5} style={{ margin: 0 }}><FileSearchOutlined style={{ color: RED }} /> Profit &amp; Loss as per Trial Balance</Title>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    Every income (type R) and expense (type E) account in the trial balance · {ran.ledger} · Period {ran.period}{ran.company ? ` · Company ${ran.company}` : ' · All companies'}
+                  </Text>
+                </Space>
+              )}
+              extra={(
+                <Space>
+                  <Input size="small" allowClear prefix={<SearchOutlined />} placeholder="Account / description" style={{ width: 200 }}
+                    value={tbSearch} onChange={e => setTbSearch(e.target.value)} />
+                  <Segmented size="small" value={tbFilter} onChange={v => setTbFilter(v as 'all' | 'missing')}
+                    options={[{ label: 'All accounts', value: 'all' }, { label: `Missing from template (${result.unmapped.length})`, value: 'missing' }]} />
+                </Space>
+              )}>
+              <Row gutter={12} style={{ marginBottom: 12 }}>
+                <Col flex="1"><Card size="small"><Statistic title="Net profit as per TB (YTD)" value={result.tbNetYtd} precision={2}
+                  valueStyle={{ color: result.tbNetYtd < 0 ? RED : '#1D7B4D' }} /></Card></Col>
+                <Col flex="1"><Card size="small"><Statistic title={`${result.bottom?.label || 'Result'} as per template (YTD)`} value={result.bottom?.ytd ?? 0} precision={2} /></Card></Col>
+                <Col flex="1">
+                  <Card size="small" hoverable onClick={() => setTbFilter('missing')} style={{ background: result.unmapped.length ? '#FFFBE6' : undefined }}>
+                    <Statistic title={`Missing from template: ${result.unmapped.length} account(s) (YTD)`} value={result.unmappedYtd} precision={2}
+                      valueStyle={{ color: result.unmapped.length ? '#D48806' : '#1D7B4D' }} />
+                  </Card>
+                </Col>
+              </Row>
+              <Table<TbPlRow> size="small" rowKey="key" dataSource={tbRows} pagination={false}
+                expandable={{ defaultExpandAllRows: true, indentSize: 18 }}
+                rowClassName={r => (r.kind === 'total' ? 'pl-total pl-double' : r.kind === 'group' ? 'pl-group' : r.missing ? 'pl-missing' : '')}
+                columns={[
+                  { title: 'Line', key: 'label', render: (_: unknown, r) => (r.kind === 'account'
+                    ? <Space size={6}><Text style={{ fontSize: 12, fontFamily: 'monospace' }}>{r.label}</Text><Text style={{ fontSize: 12 }}>{r.desc}</Text></Space>
+                    : <Text strong>{r.label}{r.kind === 'group' ? <Text type="secondary" style={{ fontSize: 11 }}> ({r.children?.length || 0})</Text> : null}</Text>) },
+                  { title: 'In template', key: 'sections', width: 230, render: (_: unknown, r) => (r.kind !== 'account' ? null
+                    : r.missing ? <Tag color="warning" icon={<WarningOutlined />}>Missing</Tag>
+                      : <Space size={2} wrap>{r.sections!.map((sn, i) => <Tag key={i} color={r.sections!.length > 1 ? 'orange' : 'default'} style={{ fontSize: 11 }}>{sn}</Tag>)}</Space>) },
+                  { title: `Period ${ran.period}`, dataIndex: 'ptd', align: 'right', width: 160,
+                    render: (v: number, r) => <Text strong={r.kind !== 'account'} style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
+                  { title: 'Year to date', dataIndex: 'ytd', align: 'right', width: 160,
+                    render: (v: number, r) => <Text strong={r.kind !== 'account'} style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
+                  { title: '% of revenue', key: 'pct', align: 'right', width: 100,
+                    render: (_: unknown, r) => <Text type="secondary" style={{ fontSize: 12 }}>{pct(r.ytd, tbRevYtd)}</Text> },
+                ]} />
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+                Highlighted accounts are in the trial balance but not in any section of “{tpl.template_name}” — add them on the template with <b>Add Account</b>.
+              </Text>
+            </Card>
           )}
 
-          <Card size="small" style={{ borderRadius: 8 }}
+          {plTab === 'template' && <Card size="small" style={{ borderRadius: '0 8px 8px 8px' }}
             title={(
               <Space direction="vertical" size={0}>
                 <Title level={5} style={{ margin: 0 }}><CalculatorOutlined style={{ color: RED }} /> {tpl.template_name}</Title>
@@ -636,15 +742,49 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
             <Table<PLRow> size="small" rowKey="key" columns={columns} dataSource={rowsForView} pagination={false}
               expandable={{ defaultExpandAllRows: true, indentSize: 18 }}
               rowClassName={r => (r.kind === 'total' ? `pl-total${r.style === 'DOUBLE_LINE' ? ' pl-double' : ''}` : r.kind === 'group' ? 'pl-group' : '')} />
-            <style>{`
-              .pl-total > td { background: #FFF6F4 !important; border-top: 1px solid #E8C4BD !important; }
-              .pl-double > td { border-bottom: 3px double #C74634 !important; }
-              .pl-group > td { background: #FAFAFA !important; }
-            `}</style>
             <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
               <ZoomInOutlined /> Click a group or section (or its amount) to see the accounts behind it.
             </Text>
-          </Card>
+          </Card>}
+
+          <Modal open={missingOpen} onCancel={() => setMissingOpen(false)} width={900} zIndex={1100}
+            title={(
+              <Space direction="vertical" size={0}>
+                <span><WarningOutlined style={{ color: '#D48806' }} /> Accounts missing from “{tpl.template_name}”</span>
+                <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                  In the trial balance (type R / E, with a balance) but in no section of the template — not included in the statement
+                </Text>
+              </Space>
+            )}
+            footer={[
+              <Button key="tb" onClick={() => { setMissingOpen(false); setTbFilter('missing'); setPlTab('tb'); }}>Show in As per TB</Button>,
+              <Button key="c" type="primary" onClick={() => setMissingOpen(false)}>Close</Button>,
+            ]}>
+            <Table size="small" rowKey="account" dataSource={result.unmapped} pagination={false} scroll={{ y: 420 }}
+              columns={[
+                { title: 'Account', dataIndex: 'account', width: 110 },
+                { title: 'Description', dataIndex: 'desc', ellipsis: true },
+                { title: 'Type', dataIndex: 'type', width: 90, render: (t: string) => <Tag color={t === 'R' ? 'green' : 'volcano'}>{t === 'R' ? 'Revenue' : 'Expense'}</Tag> },
+                { title: `Period ${ran.period}`, dataIndex: 'ptd', align: 'right', width: 150,
+                  render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
+                { title: 'Year to date', dataIndex: 'ytd', align: 'right', width: 150,
+                  render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
+              ]}
+              summary={() => (
+                <Table.Summary fixed>
+                  <Table.Summary.Row style={{ background: '#FFFBE6' }}>
+                    <Table.Summary.Cell index={0} colSpan={3}><Text strong>Total missing ({result.unmapped.length})</Text></Table.Summary.Cell>
+                    <Table.Summary.Cell index={3} align="right"><Text strong>{fmt(result.unmappedPtd)}</Text></Table.Summary.Cell>
+                    <Table.Summary.Cell index={4} align="right"><Text strong>{fmt(result.unmappedYtd)}</Text></Table.Summary.Cell>
+                  </Table.Summary.Row>
+                </Table.Summary>
+              )} />
+            {result.duplicates.length > 0 && (
+              <Alert type="warning" showIcon style={{ marginTop: 12 }}
+                message={`${result.duplicates.length} account(s) are in more than one section (counted twice)`}
+                description={<div style={{ fontSize: 12 }}>{result.duplicates.map(([a, secs]) => <div key={a}><Tag color="orange">{a}</Tag>in {secs.join(', ')}</div>)}</div>} />
+            )}
+          </Modal>
 
           <Modal open={!!drillRow} onCancel={() => setDrillRow(null)} width={900} zIndex={1100}
             title={drillRow && (
