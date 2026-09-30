@@ -454,6 +454,35 @@ export const deleteAccountAssignment = async (sectionAccountId: number): Promise
   }
 };
 
+// Remove an account / range from a section (the structure API returns accounts
+// without their id, so the row is matched by section + account values)
+// POST /pl/section/:section_id/account/remove — database/gl/rr_pl_account_remove.sql
+export const removeSectionAccount = async (
+  sectionId: number,
+  account: { account_code?: string | null; account_from?: string | null; account_to?: string | null },
+): Promise<ApiResponse<void>> => {
+  try {
+    const response = await fetch(`${BASE_URL}/pl/section/${sectionId}/account/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        account_code: account.account_code || null,
+        account_from: account.account_from || null,
+        account_to: account.account_to || null,
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 404 && result?.code === 'NotFound') {
+      return { success: false, error: 'Remove-account service not deployed — run database/gl/rr_pl_account_remove.sql' };
+    }
+    if (result.success) return { success: true };
+    return { success: false, error: result.error || `HTTP ${response.status}` };
+  } catch (error) {
+    console.error('Error removing section account:', error);
+    return { success: false, error: String(error) };
+  }
+};
+
 // Delete total
 export const deleteTotal = async (totalId: number): Promise<ApiResponse<void>> => {
   try {

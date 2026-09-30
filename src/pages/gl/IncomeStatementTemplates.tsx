@@ -25,6 +25,7 @@ import {
   Tree,
 } from 'antd';
 import type { DataNode } from 'antd/es/tree';
+import ProfitLossRun from './ProfitLossRun';
 import {
   HomeOutlined,
   PlusOutlined,
@@ -47,6 +48,7 @@ import {
   NumberOutlined,
   MinusCircleOutlined,
   PlusCircleOutlined,
+  PlayCircleOutlined,
   CaretDownOutlined,
   CaretRightOutlined,
 } from '@ant-design/icons';
@@ -89,6 +91,7 @@ interface TemplateTab {
   templateId: number;
   template: plService.PLTemplateStructure | null;
   loading: boolean;
+  kind?: 'edit' | 'run';
 }
 
 const IncomeStatementTemplates: React.FC = () => {
@@ -213,6 +216,21 @@ const IncomeStatementTemplates: React.FC = () => {
     setTemplateTabs(prev => [...prev, newTab]);
     setActiveTabKey(tabKey);
     loadTemplateStructure(template.template_id, tabKey);
+  };
+
+  // Run P&L: a tab that applies the template to a period's trial balance
+  const openRunTab = (templateId: number, templateName: string) => {
+    const tabKey = `run-${templateId}`;
+    if (templateTabs.some(t => t.key === tabKey)) {
+      setActiveTabKey(tabKey);
+      loadTemplateStructure(templateId, tabKey); // pick up template edits
+      return;
+    }
+    setTemplateTabs(prev => [...prev, {
+      key: tabKey, label: templateName, templateId, template: null, loading: true, kind: 'run',
+    }]);
+    setActiveTabKey(tabKey);
+    loadTemplateStructure(templateId, tabKey);
   };
 
   const closeTemplateTab = (tabKey: string) => {
@@ -372,6 +390,17 @@ const IncomeStatementTemplates: React.FC = () => {
       }
     } catch (error) {
       message.error('Failed to add section');
+    }
+  };
+
+  const handleRemoveAccount = async (sectionId: number, account: plService.PLSectionAccount) => {
+    const label = account.account_from && account.account_to ? `${account.account_from} - ${account.account_to}` : account.account_code;
+    const response = await plService.removeSectionAccount(sectionId, account);
+    if (response.success) {
+      message.success(`Removed ${label}`);
+      refreshCurrentTab();
+    } else {
+      message.error(response.error || 'Failed to remove the account');
     }
   };
 
@@ -592,6 +621,16 @@ const IncomeStatementTemplates: React.FC = () => {
                     ? `${account.account_from} - ${account.account_to}`
                     : account.account_code}
                 </Text>
+                <Popconfirm
+                  title="Remove this account from the section?"
+                  description={`${account.account_from && account.account_to ? `${account.account_from} - ${account.account_to}` : account.account_code} will no longer be included in ${section.section_name}.`}
+                  onConfirm={() => handleRemoveAccount(section.section_id, account)}
+                  okText="Remove"
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+                    style={{ height: 20, padding: '0 4px' }} />
+                </Popconfirm>
               </Space>
             ),
             icon: <NumberOutlined style={{ color: REDWOOD.neutral600 }} />,
@@ -693,7 +732,7 @@ const IncomeStatementTemplates: React.FC = () => {
       {
         title: 'Actions',
         key: 'actions',
-        width: 200,
+        width: 280,
         render: (_: any, record: plService.PLTemplate) => (
           <Space size="small">
             <Tooltip title="Edit">
@@ -704,6 +743,15 @@ const IncomeStatementTemplates: React.FC = () => {
                 onClick={() => openTemplateTab(record)}
               >
                 Edit
+              </Button>
+            </Tooltip>
+            <Tooltip title="Run Profit & Loss for a period">
+              <Button
+                size="small"
+                icon={<PlayCircleOutlined />}
+                onClick={() => openRunTab(record.template_id, record.template_name)}
+              >
+                Run
               </Button>
             </Tooltip>
             <Tooltip title="Preview">
@@ -836,6 +884,13 @@ const IncomeStatementTemplates: React.FC = () => {
             </Col>
             <Col>
               <Space>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  onClick={() => openRunTab(tab.templateId, template.template_name)}
+                >
+                  Run P&amp;L
+                </Button>
                 <Button
                   icon={<FileExcelOutlined />}
                   onClick={() => {
@@ -1396,11 +1451,15 @@ const IncomeStatementTemplates: React.FC = () => {
       key: tab.key,
       label: (
         <span>
-          <EditOutlined />
-          {tab.label}
+          {tab.kind === 'run' ? <PlayCircleOutlined /> : <EditOutlined />}
+          {tab.kind === 'run' ? `P&L: ${tab.label}` : tab.label}
         </span>
       ),
-      children: renderTemplateEditor(tab),
+      children: tab.kind === 'run'
+        ? (tab.loading || !tab.template
+          ? <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>{tab.loading ? <Spin size="large" /> : <Empty description="Failed to load template" />}</div>
+          : <ProfitLossRun structure={tab.template} />)
+        : renderTemplateEditor(tab),
       closable: true,
     })),
   ];
