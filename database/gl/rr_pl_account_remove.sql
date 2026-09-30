@@ -8,39 +8,48 @@
 -- The template structure API returns accounts without their id, so the row is
 -- matched by section + account_code + account_from + account_to.
 --
--- Created in the ORDS module that already serves the P&L template endpoints
--- (the one owning 'templates/:template_id'); the block prints it.
+-- Created in the ORDS module that serves {base}/pl/… (the P&L template
+-- endpoints); the block prints the module and full path.
 -- Run in bcldifc (SQL Developer, F5).
 -- =============================================================================
 SET SERVEROUTPUT ON
 DECLARE
     v_mod    VARCHAR2(255);
     v_prefix VARCHAR2(255);
+    v_pat    VARCHAR2(255);
 BEGIN
+    -- The app calls {base}/pl/section/:id/account/remove. Use the module whose
+    -- prefix ends in /pl/ (pattern relative to it); otherwise a module holding
+    -- 'pl/…' patterns directly (pattern gets the 'pl/' in front).
     BEGIN
         SELECT m.name, m.uri_prefix INTO v_mod, v_prefix
         FROM   user_ords_modules m
-        JOIN   user_ords_templates t ON t.module_id = m.id
-        WHERE  t.uri_template IN ('templates/:template_id', 'account/:section_account_id', 'section/:section_id')
-        ORDER  BY CASE WHEN LOWER(m.uri_prefix) LIKE '%reerp/pl/' THEN 0 ELSE 1 END
+        WHERE  RTRIM(LOWER(m.uri_prefix), '/') LIKE '%/pl' OR LOWER(m.uri_prefix) = 'pl/'
+        ORDER  BY CASE WHEN LOWER(m.uri_prefix) LIKE '%reerp/pl/' THEN 0 ELSE 1 END,
+                  CASE WHEN m.name = 'pl' THEN 0 ELSE 1 END
         FETCH FIRST 1 ROW ONLY;
+        v_pat := 'section/:section_id/account/remove';
     EXCEPTION WHEN NO_DATA_FOUND THEN
-        v_mod := 'pl';
-        SELECT MAX(uri_prefix) INTO v_prefix FROM user_ords_modules WHERE name = 'pl';
+        SELECT m.name, m.uri_prefix INTO v_mod, v_prefix
+        FROM   user_ords_modules m
+        JOIN   user_ords_templates t ON t.module_id = m.id
+        WHERE  t.uri_template LIKE 'pl/%'
+        FETCH FIRST 1 ROW ONLY;
+        v_pat := 'pl/section/:section_id/account/remove';
     END;
     DBMS_OUTPUT.PUT_LINE('Module: ' || v_mod || '   base path: ' || v_prefix);
 
-    BEGIN ORDS.DELETE_TEMPLATE(p_module_name => v_mod, p_pattern => 'section/:section_id/account/remove');
+    BEGIN ORDS.DELETE_TEMPLATE(p_module_name => v_mod, p_pattern => v_pat);
     EXCEPTION WHEN OTHERS THEN NULL; END;
 
     ORDS.DEFINE_TEMPLATE(
         p_module_name => v_mod,
-        p_pattern     => 'section/:section_id/account/remove',
+        p_pattern     => v_pat,
         p_comments    => 'Remove an account / range from a P&L template section'
     );
     ORDS.DEFINE_HANDLER(
         p_module_name    => v_mod,
-        p_pattern        => 'section/:section_id/account/remove',
+        p_pattern        => v_pat,
         p_method         => 'POST',
         p_source_type    => 'plsql/block',
         p_mimes_allowed  => 'application/json',
@@ -82,7 +91,7 @@ END;
 ~'
     );
     COMMIT;
-    DBMS_OUTPUT.PUT_LINE('Created: ' || v_prefix || 'section/:section_id/account/remove  (POST)');
+    DBMS_OUTPUT.PUT_LINE('Created: ' || v_prefix || v_pat || '  (POST)');
 END;
 /
 
@@ -91,5 +100,5 @@ SELECT m.name AS module_name, m.uri_prefix, t.uri_template, h.method
 FROM   user_ords_modules m
 JOIN   user_ords_templates t ON t.module_id = m.id
 JOIN   user_ords_handlers  h ON h.template_id = t.id
-WHERE  t.uri_template IN ('section/:section_id', 'section/:section_id/account/remove')
+WHERE  t.uri_template LIKE '%section/:section_id%'
 ORDER  BY t.uri_template, h.method;

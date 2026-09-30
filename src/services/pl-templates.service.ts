@@ -462,17 +462,28 @@ export const removeSectionAccount = async (
   account: { account_code?: string | null; account_from?: string | null; account_to?: string | null },
 ): Promise<ApiResponse<void>> => {
   try {
-    const response = await fetch(`${BASE_URL}/pl/section/${sectionId}/account/remove`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        account_code: account.account_code || null,
-        account_from: account.account_from || null,
-        account_to: account.account_to || null,
-      }),
+    const body = JSON.stringify({
+      account_code: account.account_code || null,
+      account_from: account.account_from || null,
+      account_to: account.account_to || null,
     });
-    const result = await response.json().catch(() => ({}));
-    if (response.status === 404 && result?.code === 'NotFound') {
+    // Served under /pl/ like the other template endpoints; depending on which ORDS
+    // module the script found, it can also sit directly under the base path.
+    let response: Response | null = null;
+    let result: any = {};
+    for (const url of [`${BASE_URL}/pl/section/${sectionId}/account/remove`, `${BASE_URL}/section/${sectionId}/account/remove`]) {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body,
+      });
+      result = await response.json().catch(() => ({}));
+      // ORDS' own 404 (no such endpoint) has no "success" field; the handler's 404 does
+      const missing = response.status === 404 && result?.success === undefined;
+      if (!missing) break;
+      response = null;
+    }
+    if (!response) {
       return { success: false, error: 'Remove-account service not deployed — run database/gl/rr_pl_account_remove.sql' };
     }
     if (result.success) return { success: true };
