@@ -13,7 +13,7 @@ import {
   Modal, Tabs, Badge,
 } from 'antd';
 import {
-  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, FileSearchOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined,
+  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, FileSearchOutlined, PlusOutlined, BulbOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
@@ -23,6 +23,7 @@ import { getAppBranding } from '../../config/company.config';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { buildApexUrl } from '../../config/api.helper';
 import type { PLTemplateStructure, PLSectionAccount } from '../../services/pl-templates.service';
+import { assignAccount } from '../../services/pl-templates.service';
 
 const { Text, Title } = Typography;
 const BASE = APEX_DB_CONFIG.baseUrl;
@@ -100,7 +101,10 @@ const evalFormula = (formula: string, lookup: (code: string) => number): number 
   return v;
 };
 
-export default function ProfitLossRun({ structure }: { structure: PLTemplateStructure }) {
+export default function ProfitLossRun({ structure, onTemplateChanged }: {
+  structure: PLTemplateStructure;
+  onTemplateChanged?: () => void | Promise<void>;   // after accounts are added to the template
+}) {
   const tpl = structure.template;
   const [form] = Form.useForm();
   const [ledgers, setLedgers] = useState<string[]>([]);
@@ -356,6 +360,77 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
     ];
   }, [result, tbFilter, tbSearch]);
   const tbRevYtd = result?.tbRevAmt.ytd || 0;
+
+  // ── add missing accounts to the template ─────────────────────────────────
+  // sections of the template, labelled "Group › Section"
+  const sectionOptions = useMemo(() => [...(tpl.groups || [])]
+    .sort((a, b) => a.display_order - b.display_order)
+    .map(g => ({
+      label: `${g.group_label || g.group_name} (${g.group_code})`,
+      groupType: g.group_type,
+      options: [...(g.sections || [])].sort((a, b) => a.display_order - b.display_order).map(sct => ({
+        value: sct.section_id, label: `${g.group_label || g.group_name} › ${sct.section_label || sct.section_name}`,
+      })),
+    }))
+    .filter(g => g.options.length), [tpl]);
+  const sectionLabel = useMemo(() => new Map(sectionOptions.flatMap(g => g.options.map(o => [o.value, o.label] as const))), [sectionOptions]);
+
+  // suggestion: the section of the nearest account code already in the template
+  // (longest common prefix, then numerically closest), preferring the same account type
+  const suggestSection = useMemo(() => {
+    const known: { code: string; sectionId: number; type?: string }[] = [];
+    const typeOf = new Map((tb || []).map(r => [r.account, (r.account_type || '').toUpperCase()]));
+    for (const g of tpl.groups || []) for (const sct of g.sections || []) for (const a of sct.accounts || []) {
+      for (const c of [a.account_code, a.account_from, a.account_to]) {
+        if (c && c.trim()) known.push({ code: c.trim(), sectionId: sct.section_id, type: typeOf.get(c.trim()) });
+      }
+    }
+    const firstOfType = (t: string) => sectionOptions.find(g => (t === 'R' ? g.groupType === 'REVENUE' : g.groupType !== 'REVENUE'))?.options[0]?.value;
+    return (acct: string, type: string): number | undefined => {
+      let best: { score: number; dist: number; id: number } | null = null;
+      for (const k of known) {
+        let pre = 0; while (pre < acct.length && pre < k.code.length && acct[pre] === k.code[pre]) pre++;
+        const score = pre * 2 + (k.type === type ? 1 : 0);
+        const dist = /^\d+$/.test(acct) && /^\d+$/.test(k.code) ? Math.abs(Number(acct) - Number(k.code)) : 0;
+        if (!best || score > best.score || (score === best.score && dist < best.dist)) best = { score, dist, id: k.sectionId };
+      }
+      return best && best.score >= 4 ? best.id : firstOfType(type);   // at least 2 matching leading digits
+    };
+  }, [tpl, tb, sectionOptions]);
+
+  interface AddLine { account: string; desc: string | null; type: string; ytd: number; sectionId?: number; suggested?: number }
+  const [addLines, setAddLines] = useState<AddLine[] | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [missingSel, setMissingSel] = useState<string[]>([]);
+  const openAdd = (accounts: string[]) => {
+    if (!result) return;
+    const lines = result.unmapped.filter(u => accounts.includes(u.account)).map(u => {
+      const sug = suggestSection(u.account, u.type);
+      return { account: u.account, desc: u.desc, type: u.type, ytd: u.ytd, sectionId: sug, suggested: sug };
+    });
+    if (!lines.length) { message.info('Nothing to add'); return; }
+    if (!sectionOptions.length) { message.warning('The template has no sections yet — add a group and a section on the template first'); return; }
+    setAddLines(lines);
+  };
+  const saveAdd = async () => {
+    if (!addLines) return;
+    const todo = addLines.filter(l => l.sectionId);
+    setAdding(true);
+    const failed: string[] = [];
+    for (const l of todo) {
+      const r = await assignAccount(l.sectionId!, l.account);
+      if (!r.success) failed.push(`${l.account}: ${r.error || 'failed'}`);
+    }
+    setAdding(false);
+    const ok = todo.length - failed.length;
+    if (ok) message.success(`${ok} account(s) added to "${tpl.template_name}"`);
+    if (failed.length) {
+      Modal.error({ title: `${failed.length} account(s) could not be added`, content: <div style={{ fontSize: 12 }}>{failed.map(f => <div key={f}>{f}</div>)}</div>, zIndex: 1300 });
+    }
+    setAddLines(null); setMissingSel([]);
+    if (ok && failed.length === 0) setMissingOpen(false);
+    if (ok) await onTemplateChanged?.();   // structure reloads → statement recalculates, TB kept
+  };
 
   // drill popup (group / section → accounts)
   const [drillRow, setDrillRow] = useState<PLRow | null>(null);
@@ -690,6 +765,10 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
                 <Space>
                   <Input size="small" allowClear prefix={<SearchOutlined />} placeholder="Account / description" style={{ width: 200 }}
                     value={tbSearch} onChange={e => setTbSearch(e.target.value)} />
+                  <Button size="small" icon={<PlusOutlined />} disabled={!result.unmapped.length}
+                    onClick={() => openAdd(tbRows.flatMap(g => g.children || []).filter(r => r.missing).map(r => r.label))}>
+                    Add missing to template…
+                  </Button>
                   <Segmented size="small" value={tbFilter} onChange={v => setTbFilter(v as 'all' | 'missing')}
                     options={[{ label: 'All accounts', value: 'all' }, { label: `Missing from template (${result.unmapped.length})`, value: 'missing' }]} />
                 </Space>
@@ -713,7 +792,12 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
                     ? <Space size={6}><Text style={{ fontSize: 12, fontFamily: 'monospace' }}>{r.label}</Text><Text style={{ fontSize: 12 }}>{r.desc}</Text></Space>
                     : <Text strong>{r.label}{r.kind === 'group' ? <Text type="secondary" style={{ fontSize: 11 }}> ({r.children?.length || 0})</Text> : null}</Text>) },
                   { title: 'In template', key: 'sections', width: 230, render: (_: unknown, r) => (r.kind !== 'account' ? null
-                    : r.missing ? <Tag color="warning" icon={<WarningOutlined />}>Missing</Tag>
+                    : r.missing ? (
+                      <Space size={4}>
+                        <Tag color="warning" icon={<WarningOutlined />}>Missing</Tag>
+                        <Button size="small" type="link" icon={<PlusOutlined />} style={{ padding: 0 }} onClick={() => openAdd([r.label])}>Add</Button>
+                      </Space>
+                    )
                       : <Space size={2} wrap>{r.sections!.map((sn, i) => <Tag key={i} color={r.sections!.length > 1 ? 'orange' : 'default'} style={{ fontSize: 11 }}>{sn}</Tag>)}</Space>) },
                   { title: `Period ${ran.period}`, dataIndex: 'ptd', align: 'right', width: 160,
                     render: (v: number, r) => <Text strong={r.kind !== 'account'} style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
@@ -758,9 +842,14 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
             )}
             footer={[
               <Button key="tb" onClick={() => { setMissingOpen(false); setTbFilter('missing'); setPlTab('tb'); }}>Show in As per TB</Button>,
+              <Button key="add" icon={<PlusOutlined />} disabled={!result.unmapped.length}
+                onClick={() => openAdd(missingSel.length ? missingSel : result.unmapped.map(u => u.account))}>
+                {missingSel.length ? `Add ${missingSel.length} selected to template…` : 'Add all to template…'}
+              </Button>,
               <Button key="c" type="primary" onClick={() => setMissingOpen(false)}>Close</Button>,
             ]}>
             <Table size="small" rowKey="account" dataSource={result.unmapped} pagination={false} scroll={{ y: 420 }}
+              rowSelection={{ selectedRowKeys: missingSel, onChange: k => setMissingSel(k as string[]) }}
               columns={[
                 { title: 'Account', dataIndex: 'account', width: 110 },
                 { title: 'Description', dataIndex: 'desc', ellipsis: true },
@@ -773,9 +862,9 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
               summary={() => (
                 <Table.Summary fixed>
                   <Table.Summary.Row style={{ background: '#FFFBE6' }}>
-                    <Table.Summary.Cell index={0} colSpan={3}><Text strong>Total missing ({result.unmapped.length})</Text></Table.Summary.Cell>
-                    <Table.Summary.Cell index={3} align="right"><Text strong>{fmt(result.unmappedPtd)}</Text></Table.Summary.Cell>
-                    <Table.Summary.Cell index={4} align="right"><Text strong>{fmt(result.unmappedYtd)}</Text></Table.Summary.Cell>
+                    <Table.Summary.Cell index={0} colSpan={4}><Text strong>Total missing ({result.unmapped.length})</Text></Table.Summary.Cell>
+                    <Table.Summary.Cell index={4} align="right"><Text strong>{fmt(result.unmappedPtd)}</Text></Table.Summary.Cell>
+                    <Table.Summary.Cell index={5} align="right"><Text strong>{fmt(result.unmappedYtd)}</Text></Table.Summary.Cell>
                   </Table.Summary.Row>
                 </Table.Summary>
               )} />
@@ -783,6 +872,54 @@ export default function ProfitLossRun({ structure }: { structure: PLTemplateStru
               <Alert type="warning" showIcon style={{ marginTop: 12 }}
                 message={`${result.duplicates.length} account(s) are in more than one section (counted twice)`}
                 description={<div style={{ fontSize: 12 }}>{result.duplicates.map(([a, secs]) => <div key={a}><Tag color="orange">{a}</Tag>in {secs.join(', ')}</div>)}</div>} />
+            )}
+          </Modal>
+
+          <Modal open={!!addLines} onCancel={() => !adding && setAddLines(null)} width={980} zIndex={1200} maskClosable={false}
+            title={(
+              <Space direction="vertical" size={0}>
+                <span><PlusOutlined /> Add accounts to “{tpl.template_name}”</span>
+                <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                  Choose the group › section for each account. <BulbOutlined /> Pre-filled with the section of the nearest account code already in the template.
+                </Text>
+              </Space>
+            )}
+            footer={[
+              <Button key="c" onClick={() => setAddLines(null)} disabled={adding}>Cancel</Button>,
+              <Button key="s" type="primary" loading={adding} onClick={saveAdd}
+                disabled={!addLines?.some(l => l.sectionId)} style={{ background: RED, borderColor: RED }}>
+                Add {addLines?.filter(l => l.sectionId).length || 0} account(s)
+              </Button>,
+            ]}>
+            {addLines && (
+              <>
+                <Space style={{ marginBottom: 10 }} wrap>
+                  <Text>Put all in:</Text>
+                  <Select style={{ width: 420 }} placeholder="Group › Section" showSearch optionFilterProp="label" options={sectionOptions}
+                    onChange={(v: number) => setAddLines(ls => ls && ls.map(l => ({ ...l, sectionId: v })))} />
+                  <Button size="small" onClick={() => setAddLines(ls => ls && ls.map(l => ({ ...l, sectionId: l.suggested })))}>
+                    <BulbOutlined /> Use suggestions
+                  </Button>
+                </Space>
+                <Table<AddLine> size="small" rowKey="account" dataSource={addLines} pagination={false} scroll={{ y: 420 }}
+                  columns={[
+                    { title: 'Account', dataIndex: 'account', width: 100 },
+                    { title: 'Description', dataIndex: 'desc', ellipsis: true },
+                    { title: 'Type', dataIndex: 'type', width: 90, render: (t: string) => <Tag color={t === 'R' ? 'green' : 'volcano'}>{t === 'R' ? 'Revenue' : 'Expense'}</Tag> },
+                    { title: 'Year to date', dataIndex: 'ytd', width: 140, align: 'right',
+                      render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
+                    { title: 'Add to group › section', key: 'sec', width: 380, render: (_: unknown, l) => (
+                      <Space size={4}>
+                        <Select size="small" style={{ width: 310 }} placeholder="Skip (not added)" allowClear showSearch optionFilterProp="label"
+                          value={l.sectionId} options={sectionOptions}
+                          onChange={(v: number | undefined) => setAddLines(ls => ls && ls.map(x => (x.account === l.account ? { ...x, sectionId: v } : x)))} />
+                        {l.sectionId && l.sectionId === l.suggested && (
+                          <Tooltip title={`Suggested: ${sectionLabel.get(l.suggested) || ''}`}><BulbOutlined style={{ color: '#D48806' }} /></Tooltip>
+                        )}
+                      </Space>
+                    ) },
+                  ]} />
+              </>
             )}
           </Modal>
 

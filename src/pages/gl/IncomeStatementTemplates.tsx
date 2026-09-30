@@ -230,6 +230,15 @@ const IncomeStatementTemplates: React.FC = () => {
     loadTemplateStructure(template.template_id, tabKey);
   };
 
+  // Refresh a template's structure in every open tab (editor + Run P&L) without the
+  // loading spinner, so a Run P&L tab keeps its trial balance and just recalculates
+  const reloadStructureQuietly = async (templateId: number) => {
+    const response = await plService.getTemplateStructure(templateId);
+    if (response.success && response.data) {
+      setTemplateTabs(prev => prev.map(t => (t.templateId === templateId ? { ...t, template: response.data! } : t)));
+    }
+  };
+
   // Run P&L: a tab that applies the template to a period's trial balance
   const openRunTab = (templateId: number, templateName: string) => {
     const tabKey = `run-${templateId}`;
@@ -1481,7 +1490,7 @@ const IncomeStatementTemplates: React.FC = () => {
       children: tab.kind === 'run'
         ? (tab.loading || !tab.template
           ? <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>{tab.loading ? <Spin size="large" /> : <Empty description="Failed to load template" />}</div>
-          : <ProfitLossRun structure={tab.template} />)
+          : <ProfitLossRun structure={tab.template} onTemplateChanged={() => reloadStructureQuietly(tab.templateId)} />)
         : renderTemplateEditor(tab),
       closable: true,
     })),
