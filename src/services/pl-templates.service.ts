@@ -378,62 +378,56 @@ export const cloneTemplate = async (
   }
 };
 
-// Delete template (soft delete)
-export const deleteTemplate = async (templateId: number): Promise<ApiResponse<void>> => {
-  try {
-    const baseUrl = BASE_URL;
-    const response = await fetch(`${baseUrl}/pl/template/${templateId}`, {
-      method: 'DELETE',
-    });
-    const result = await response.json();
-
-    if (result.success) {
-      return { success: true };
+// Delete (soft) a group / section / total / template. Tries, in order:
+//   DELETE {base}/pl/<kind>/<id>          (original handlers)
+//   POST   {base}/pl/<kind>/<id>/delete   (database/gl/rr_pl_delete_endpoints.sql)
+//   POST   {base}/<kind>/<id>/delete      (same script when the module sits at the base path)
+// and moves on when ORDS answers "no such endpoint/method" (HTML page, 404/405 without
+// our JSON), so a missing route never surfaces as "Unexpected token '<' … not valid JSON".
+type PLKind = 'group' | 'section' | 'total' | 'template';
+const plDelete = async (kind: PLKind, id: number): Promise<ApiResponse<void>> => {
+  const attempts: Array<[string, string]> = [
+    ['DELETE', `${BASE_URL}/pl/${kind}/${id}`],
+    ['POST', `${BASE_URL}/pl/${kind}/${id}/delete`],
+    ['POST', `${BASE_URL}/${kind}/${id}/delete`],
+  ];
+  let lastStatus = 0;
+  for (const [method, url] of attempts) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers: { Accept: 'application/json', ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
+        body: method === 'POST' ? '{}' : undefined,
+      });
+    } catch (error) {
+      lastStatus = 0;
+      continue; // network / CORS preflight refused (e.g. DELETE not allowed) → next route
     }
-    return { success: false, error: result.error };
-  } catch (error) {
-    console.error('Error deleting template:', error);
-    return { success: false, error: String(error) };
+    lastStatus = response.status;
+    const text = await response.text();
+    let result: any = null;
+    try { result = text ? JSON.parse(text) : null; } catch { /* HTML error page */ }
+    if (result && typeof result.success === 'boolean') {
+      return result.success ? { success: true } : { success: false, error: result.error || `HTTP ${response.status}` };
+    }
+    if (response.ok && !text.trim()) return { success: true };
+    // anything else (ORDS 404/405 page, plain-text error) → try the next route
   }
+  return {
+    success: false,
+    error: `Delete ${kind} service not available (HTTP ${lastStatus || 'network error'}) — run database/gl/rr_pl_delete_endpoints.sql`,
+  };
 };
+
+// Delete template (soft delete)
+export const deleteTemplate = async (templateId: number): Promise<ApiResponse<void>> => plDelete('template', templateId);
 
 // Delete group (soft delete)
-export const deleteGroup = async (groupId: number): Promise<ApiResponse<void>> => {
-  try {
-    const baseUrl = BASE_URL;
-    const response = await fetch(`${baseUrl}/pl/group/${groupId}`, {
-      method: 'DELETE',
-    });
-    const result = await response.json();
-
-    if (result.success) {
-      return { success: true };
-    }
-    return { success: false, error: result.error };
-  } catch (error) {
-    console.error('Error deleting group:', error);
-    return { success: false, error: String(error) };
-  }
-};
+export const deleteGroup = async (groupId: number): Promise<ApiResponse<void>> => plDelete('group', groupId);
 
 // Delete section (soft delete)
-export const deleteSection = async (sectionId: number): Promise<ApiResponse<void>> => {
-  try {
-    const baseUrl = BASE_URL;
-    const response = await fetch(`${baseUrl}/pl/section/${sectionId}`, {
-      method: 'DELETE',
-    });
-    const result = await response.json();
-
-    if (result.success) {
-      return { success: true };
-    }
-    return { success: false, error: result.error };
-  } catch (error) {
-    console.error('Error deleting section:', error);
-    return { success: false, error: String(error) };
-  }
-};
+export const deleteSection = async (sectionId: number): Promise<ApiResponse<void>> => plDelete('section', sectionId);
 
 // Delete account assignment
 export const deleteAccountAssignment = async (sectionAccountId: number): Promise<ApiResponse<void>> => {
@@ -495,23 +489,7 @@ export const removeSectionAccount = async (
 };
 
 // Delete total
-export const deleteTotal = async (totalId: number): Promise<ApiResponse<void>> => {
-  try {
-    const baseUrl = BASE_URL;
-    const response = await fetch(`${baseUrl}/pl/total/${totalId}`, {
-      method: 'DELETE',
-    });
-    const result = await response.json();
-
-    if (result.success) {
-      return { success: true };
-    }
-    return { success: false, error: result.error };
-  } catch (error) {
-    console.error('Error deleting total:', error);
-    return { success: false, error: String(error) };
-  }
-};
+export const deleteTotal = async (totalId: number): Promise<ApiResponse<void>> => plDelete('total', totalId);
 
 // Group types for dropdown
 export const GROUP_TYPES = [
