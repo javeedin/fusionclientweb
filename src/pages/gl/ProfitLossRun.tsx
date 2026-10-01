@@ -370,9 +370,17 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
       groupType: g.group_type,
       options: [...(g.sections || [])].sort((a, b) => a.display_order - b.display_order).map(sct => ({
         value: sct.section_id, label: `${g.group_label || g.group_name} › ${sct.section_label || sct.section_name}`,
+        short: sct.section_label || sct.section_name,
       })),
     }))
     .filter(g => g.options.length), [tpl]);
+  // dropdown list: section name only (the group is the heading above it); full "Group › Section" on hover
+  const sectionPick = {
+    popupMatchSelectWidth: false,
+    listHeight: 360,
+    optionRender: (o: any) => <span title={o.data?.label}>{o.data?.short ?? o.label}</span>,
+    labelRender: (l: any) => <span title={String(sectionLabel.get(l.value as number) ?? l.label ?? '')}>{sectionLabel.get(l.value as number) ?? l.label}</span>,
+  } as const;
   const sectionLabel = useMemo(() => new Map(sectionOptions.flatMap(g => g.options.map(o => [o.value, o.label] as const))), [sectionOptions]);
 
   // suggestion: the section of the nearest account code already in the template
@@ -875,7 +883,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
             )}
           </Modal>
 
-          <Modal open={!!addLines} onCancel={() => !adding && setAddLines(null)} width={980} zIndex={1200} maskClosable={false}
+          <Modal open={!!addLines} onCancel={() => !adding && setAddLines(null)} width={1150} zIndex={1200} maskClosable={false}
             title={(
               <Space direction="vertical" size={0}>
                 <span><PlusOutlined /> Add accounts to “{tpl.template_name}”</span>
@@ -895,7 +903,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
               <>
                 <Space style={{ marginBottom: 10 }} wrap>
                   <Text>Put all in:</Text>
-                  <Select style={{ width: 420 }} placeholder="Group › Section" showSearch optionFilterProp="label" options={sectionOptions}
+                  <Select style={{ width: 520 }} placeholder="Group › Section" showSearch optionFilterProp="label" options={sectionOptions} {...sectionPick}
                     onChange={(v: number) => setAddLines(ls => ls && ls.map(l => ({ ...l, sectionId: v })))} />
                   <Button size="small" onClick={() => setAddLines(ls => ls && ls.map(l => ({ ...l, sectionId: l.suggested })))}>
                     <BulbOutlined /> Use suggestions
@@ -904,14 +912,14 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                 <Table<AddLine> size="small" rowKey="account" dataSource={addLines} pagination={false} scroll={{ y: 420 }}
                   columns={[
                     { title: 'Account', dataIndex: 'account', width: 100 },
-                    { title: 'Description', dataIndex: 'desc', ellipsis: true },
+                    { title: 'Description', dataIndex: 'desc', ellipsis: { showTitle: true } },
                     { title: 'Type', dataIndex: 'type', width: 90, render: (t: string) => <Tag color={t === 'R' ? 'green' : 'volcano'}>{t === 'R' ? 'Revenue' : 'Expense'}</Tag> },
                     { title: 'Year to date', dataIndex: 'ytd', width: 140, align: 'right',
                       render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
-                    { title: 'Add to group › section', key: 'sec', width: 380, render: (_: unknown, l) => (
+                    { title: 'Add to group › section', key: 'sec', width: 440, render: (_: unknown, l) => (
                       <Space size={4}>
-                        <Select size="small" style={{ width: 310 }} placeholder="Skip (not added)" allowClear showSearch optionFilterProp="label"
-                          value={l.sectionId} options={sectionOptions}
+                        <Select size="small" style={{ width: 400 }} placeholder="Skip (not added)" allowClear showSearch optionFilterProp="label"
+                          value={l.sectionId} options={sectionOptions} {...sectionPick}
                           onChange={(v: number | undefined) => setAddLines(ls => ls && ls.map(x => (x.account === l.account ? { ...x, sectionId: v } : x)))} />
                         {l.sectionId && l.sectionId === l.suggested && (
                           <Tooltip title={`Suggested: ${sectionLabel.get(l.suggested) || ''}`}><BulbOutlined style={{ color: '#D48806' }} /></Tooltip>
