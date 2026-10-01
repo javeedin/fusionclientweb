@@ -461,11 +461,21 @@ const mapApexToPaymentRecord = (item: any, index: number): PaymentRecord => ({
   syncStatus: item.SyncStatus || '',
 });
 
-const ManagePayments: React.FC = () => {
+// createOnly: one "New Payment" tab — this component rendered with only the Create Payment
+// form, so every tab has its own independent form state (Manage Payments opens one per click)
+interface ManagePaymentsProps {
+  createOnly?: boolean;
+  onCloseCreate?: () => void;
+  onPaymentCreated?: (paymentNumber: string) => void;
+}
+
+const ManagePayments: React.FC<ManagePaymentsProps> = ({ createOnly = false, onCloseCreate, onPaymentCreated }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [form] = Form.useForm();
   const [createPaymentForm] = Form.useForm();
+  // unique field ids per form instance (several New Payment tabs can be open at once)
+  const createFormName = `createPayment${React.useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const watchedConversionRate = Form.useWatch('conversionRate', createPaymentForm);
   const [voidForm] = Form.useForm();
   const { checkPdcMaturity } = useNotifications();
@@ -503,8 +513,11 @@ const ManagePayments: React.FC = () => {
   const [searchCollapsed, setSearchCollapsed] = useState(false);
 
   // Tab management state
-  const [activeTab, setActiveTab] = useState('search');
+  const [activeTab, setActiveTab] = useState(createOnly ? 'create-payment' : 'search');
   const [openTabs, setOpenTabs] = useState<PaymentTab[]>([]);
+  // New Payment tabs (each renders its own <ManagePayments createOnly />)
+  const [newPaymentTabs, setNewPaymentTabs] = useState<{ key: string; label: string; created?: boolean }[]>([]);
+  const newPaymentSeq = useRef(0);
 
   // Data source toggle: true = APEX, false = Fusion
   const [useApex, setUseApex] = useState(true);
@@ -598,7 +611,7 @@ const ManagePayments: React.FC = () => {
   // ────────────────────────────────────────────────────────────────────────
 
   // Create Payment tab state
-  const [createPaymentTabOpen, setCreatePaymentTabOpen] = useState(false);
+  const [createPaymentTabOpen, setCreatePaymentTabOpen] = useState(createOnly);
   const [createPaymentActiveTab, setCreatePaymentActiveTab] = useState('paymentDetails');
   const [createPaymentCurrency, setCreatePaymentCurrency] = useState<string>('AED');
   const [bmsRateLoading, setBmsRateLoading] = useState(false);
@@ -760,7 +773,7 @@ const ManagePayments: React.FC = () => {
   useEffect(() => {
     fetchBusinessUnits();
     fetchBankAccounts();
-    checkPdcMaturity(); // background PDC maturity check on AP page load
+    if (!createOnly) checkPdcMaturity(); // background PDC maturity check on AP page load
   }, []);
 
   // Load remaining LOV data when Create Payment tab opens
@@ -1712,6 +1725,36 @@ const ManagePayments: React.FC = () => {
     }
   };
 
+  // ── New Payment tabs: one independent Create Payment form per click ─────────
+  const openNewPaymentTab = () => {
+    newPaymentSeq.current += 1;
+    const key = `new-payment-${newPaymentSeq.current}`;
+    setNewPaymentTabs(prev => [...prev, { key, label: `New Payment ${newPaymentSeq.current}` }]);
+    setActiveTab(key);
+  };
+  const removeNewPaymentTab = (key: string) => {
+    setNewPaymentTabs(prev => {
+      const rest = prev.filter(t => t.key !== key);
+      setActiveTab(cur => (cur === key ? (rest.length ? rest[rest.length - 1].key : 'search') : cur));
+      return rest;
+    });
+  };
+  const closeNewPaymentTab = (key: string) => {
+    const tab = newPaymentTabs.find(t => t.key === key);
+    if (tab?.created) { removeNewPaymentTab(key); return; }
+    Modal.confirm({
+      title: `Close ${tab?.label || 'this payment'}?`,
+      content: 'The payment has not been confirmed — anything entered in this tab will be lost.',
+      okText: 'Close tab', okButtonProps: { danger: true }, cancelText: 'Keep editing',
+      onOk: () => removeNewPaymentTab(key),
+    });
+  };
+
+  // tell the parent Manage Payments when this form's payment is saved
+  useEffect(() => {
+    if (createOnly && confirmedPaymentNumber) onPaymentCreated?.(confirmedPaymentNumber);
+  }, [createOnly, confirmedPaymentNumber]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Handle tab change
   const onTabChange = (key: string) => {
     setActiveTab(key);
@@ -1720,9 +1763,12 @@ const ManagePayments: React.FC = () => {
   // Handle tab edit (close)
   const onTabEdit = (targetKey: React.MouseEvent | React.KeyboardEvent | string, action: 'add' | 'remove') => {
     if (action === 'remove' && typeof targetKey === 'string') {
-      if (targetKey === 'create-payment') {
+      if (targetKey.startsWith('new-payment-')) {
+        closeNewPaymentTab(targetKey);
+      } else if (targetKey === 'create-payment') {
         setCreatePaymentTabOpen(false);
         setActiveTab('search');
+        if (createOnly) onCloseCreate?.();
       } else {
         closePaymentTab(targetKey);
       }
@@ -3749,6 +3795,7 @@ const ManagePayments: React.FC = () => {
           >
             <Form
               form={createPaymentForm}
+              name={createFormName}
               layout="horizontal"
               labelCol={{ span: 7 }}
               wrapperCol={{ span: 17 }}
@@ -3768,6 +3815,7 @@ const ManagePayments: React.FC = () => {
                       onClick={() => {
                         setCreatePaymentTabOpen(false);
                         setActiveTab('search');
+                        if (createOnly) onCloseCreate?.();
                         createPaymentForm.resetFields();
                         setInvoicesToPay([]);
                         setSelectedBuLegalEntityName('');
@@ -3822,6 +3870,7 @@ const ManagePayments: React.FC = () => {
                       onClick={() => {
                         setCreatePaymentTabOpen(false);
                         setActiveTab('search');
+                        if (createOnly) onCloseCreate?.();
                         createPaymentForm.resetFields();
                         setInvoicesToPay([]);
                         setSelectedBuLegalEntityName('');
@@ -4900,11 +4949,30 @@ const ManagePayments: React.FC = () => {
         />
       ),
     })),
+
+    // New Payment tabs — each its own independent Create Payment form (kept mounted while switching tabs)
+    ...newPaymentTabs.map((tab) => ({
+      key: tab.key,
+      label: (
+        <span>
+          {tab.created ? <CheckCircleOutlined style={{ color: REDWOOD.success }} /> : <PlusOutlined />} {tab.label}
+        </span>
+      ),
+      closable: true,
+      children: (
+        <ManagePayments
+          createOnly
+          onCloseCreate={() => removeNewPaymentTab(tab.key)}
+          onPaymentCreated={(no) => setNewPaymentTabs(prev => prev.map(t => (t.key === tab.key ? { ...t, label: `Payment ${no}`, created: true } : t)))}
+        />
+      ),
+    })),
   ];
 
   return (
     <Layout style={{ minHeight: 'calc(100vh - 64px)', background: REDWOOD.neutral100 }}>
       <Content>
+        {!createOnly && (<>
         {/* Breadcrumb Header */}
         <div style={{
           padding: '12px 24px',
@@ -4934,16 +5002,7 @@ const ManagePayments: React.FC = () => {
               type="primary"
               icon={<PlusOutlined />}
               style={{ background: REDWOOD.success }}
-              onClick={() => {
-                setCreatePaymentTabOpen(true);
-                setCreatePaymentActiveTab('paymentDetails');
-                createPaymentForm.resetFields();
-                setCreatePaymentCurrency('AED');
-                setBmsRate(null);
-                setActiveTab('create-payment');
-                setPaymentConfirmed(false);
-                setConfirmedPaymentNumber('');
-              }}
+              onClick={openNewPaymentTab}
             >
               Create Payment
             </Button>
@@ -4953,6 +5012,11 @@ const ManagePayments: React.FC = () => {
           </Space>
         </div>
 
+        </>)}
+
+        {createOnly
+          ? tabItems.find(t => t.key === 'create-payment')?.children
+          : (<>
         {/* Page Title and Tabs */}
         <div style={{ background: REDWOOD.surface, borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
           <div style={{ padding: '8px 16px 0 16px' }}>
@@ -4977,6 +5041,8 @@ const ManagePayments: React.FC = () => {
             }}
           />
         </div>
+
+          </>)}
 
         {/* Custom styles */}
         <style>{`
