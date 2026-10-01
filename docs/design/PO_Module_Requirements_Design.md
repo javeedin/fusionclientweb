@@ -1,6 +1,11 @@
 # Re-ERP Procurement Module — Requirements & Design (RD)
 
-**Version 1.0 — October 2026 · Module code `PO` · Status: draft for review**
+**Version 1.1 — October 2026 · Module code `PO` · Status: draft for review**
+
+| Version | Change |
+|---|---|
+| 1.1 | Purchase orders can be created **directly, without a requisition** (default); requisitions are optional. Supplier data comes **only from the existing `RR_SUPPLIER_*` tables** — section 4.10 lists every table and column used. |
+| 1.0 | First issue |
 
 Prepared for the Re-ERP product team. Defines the scope, processes, data model, accounting, services, screens and
 validations of the native Re-ERP Procurement (Purchasing) module, built primarily for **expense (non-stock)
@@ -43,9 +48,9 @@ The four design principles:
 
 | Area | Contents | Section |
 |---|---|---|
-| Setup | BU purchasing options, locations, categories, expense-item catalog, buyers, requester defaults, account derivation, numbering, supplier-site options | 4 |
+| Setup | BU purchasing options, locations, categories, expense-item catalog, buyers, requester defaults, account derivation, numbering; suppliers from the existing `RR_SUPPLIER_*` tables (+ optional site options) | 4 |
 | Requisitions | Catalog and free-text requests, multi-distribution charge accounts, approval, buyer assignment, return to requester | 5.1, 6.1 |
-| Purchase orders | Standard POs, quantity and amount (service) lines, schedules, distributions, approval, PDF and email to supplier | 5.2, 6.2 |
+| Purchase orders | **Direct POs without a requisition (standard path)**, quantity and amount (service) lines, schedules, distributions, approval, PDF and email to supplier | 5.2, 6.2 |
 | Autocreate | Approved requisition lines → POs, grouped by supplier, site, currency and BU | 6.3 |
 | Change orders | Revisions with re-approval, archive of every approved version | 5.3, 6.4 |
 | Receiving | Receive by quantity or amount, returns, corrections, receipt accrual | 5.4, 6.5 |
@@ -120,7 +125,8 @@ INCOMPLETE→PENDING        (rule by amount,    (autocreate PO,
 
 Short paths are supported without bending the model:
 
-* **Direct PO** — a buyer raises a PO without a requisition (for example a recurring service contract).
+* **Direct PO (standard path)** — a buyer creates the PO straight away, without a requisition (section 6.2.0).
+  Requisitions are optional; a BU can make them mandatory with `REQUIRE_REQUISITION = Y`.
 * **Two-way services** — an amount line with match level `TWO_WAY` is invoiced directly against the PO; no
   receipt is needed.
 * **Emergency / after-the-fact** — allowed only when the BU option `ALLOW_AFTER_FACT_PO = Y`; such POs are flagged
@@ -276,7 +282,7 @@ changing an option later never changes the meaning of an approved PO.
 | PO_APPROVAL_REQUIRED | VARCHAR2(1) | Y | Default Y |
 | CO_REAPPROVAL_THRESHOLD_PCT | NUMBER(5,2) | Y | Change orders that raise the PO total by more than this need approval (default 0 = always) |
 | AUTOCREATE_MODE | VARCHAR2(10) | Y | `MANUAL` (buyer workbench) / `AUTO` (approved catalog lines with a preferred supplier become POs automatically) |
-| REQUIRE_REQUISITION | VARCHAR2(1) | Y | `Y` = POs only from requisitions (except buyers with `DIRECT_PO_ALLOWED`) |
+| REQUIRE_REQUISITION | VARCHAR2(1) | Y | Default **`N`**: POs can be created directly. `Y` = POs only from requisitions (except buyers with `DIRECT_PO_ALLOWED`) |
 | ALLOW_AFTER_FACT_PO | VARCHAR2(1) | Y | Allow PO dated after the invoice / receipt (flagged) |
 | BUDGET_CONTROL_LEVEL | VARCHAR2(10) | Y | `NONE` (Phase 1) / `ADVISORY` / `ABSOLUTE` (Phase 3) |
 | PO_TERMS_TEXT | CLOB | N | Standard terms and conditions printed on the PO |
@@ -358,7 +364,7 @@ a synonym in the other direction otherwise, so both modules always read one list
 | USER_NAME | VARCHAR2(150) | Y | Re-ERP login |
 | BUSINESS_UNIT_ID | NUMBER | N | NULL = all BUs the user has access to |
 | CATEGORY_ID | NUMBER | N | Specialisation used by buyer assignment (6.1.4) |
-| DIRECT_PO_ALLOWED | VARCHAR2(1) | Y | May raise POs without a requisition when `REQUIRE_REQUISITION = Y` |
+| DIRECT_PO_ALLOWED | VARCHAR2(1) | Y | Default `Y`. Only matters when the BU sets `REQUIRE_REQUISITION = Y`: buyers with `Y` may still create direct POs |
 | EMAIL / PHONE | VARCHAR2 | N | Printed on the PO as the contact |
 | DEFAULT_FLAG | VARCHAR2(1) | Y | Fallback buyer for the BU |
 | STATUS | VARCHAR2(10) | Y | `ACTIVE` / `INACTIVE` |
@@ -412,10 +418,37 @@ Example: "all `FACILITIES.*` spend in BU DIFC goes to cost centre 900" → `SEGM
 Numbers are assigned **on creation** for POs, receipts and change orders, and **on submit** for requisitions (drafts
 show `Draft #<id>`), so abandoned drafts never burn numbers.
 
-### 4.10 RR_PO_SUPPLIER_SITE_OPTIONS — purchasing options per supplier site
+### 4.10 Suppliers — existing `RR_SUPPLIER_*` tables
 
-Suppliers stay in `RR_SUPPLIER_MASTER` / `RR_SUPPLIER_SITES` (site must have `PURCHASING_FLAG = 'Y'`). This 1:1
-table adds what Procurement needs. Any NULL falls back to the BU option.
+Procurement has **no supplier master of its own**. Every supplier, site and address on a PO comes from the existing
+Re-ERP supplier tables, which Payables already uses and the current supplier sync keeps up to date. Procurement only
+reads them; the one extension (`RR_PO_SUPPLIER_SITE_OPTIONS`, below) is a 1:1 add-on per site and holds no supplier
+data.
+
+| Existing table | Used for | Columns used |
+|---|---|---|
+| `RR_SUPPLIER_MASTER` | Supplier LOV, status, tax registration on the PO print | `SUPPLIER_ID`, `SUPPLIER`, `SUPPLIER_NUMBER`, `ALTERNATE_NAME`, `STATUS`, `INACTIVE_DATE`, `TAX_REGISTRATION_NUMBER`, `TAXPAYER_ID`, `ONE_TIME_SUPPLIER_FLAG` |
+| `RR_SUPPLIER_SITES` | Site LOV, purchasing flags, payment terms default, procurement BU | `SUPPLIER_SITE_ID`, `SUPPLIER_ID`, `SUPPLIER_SITE`, `SUPPLIER_SITE_CODE`, `PROCUREMENT_BU_ID`, `PURCHASING_FLAG`, `PAY_SITE_FLAG`, `PAYMENT_TERMS`, `PAYMENT_TERMS_ID`, `ADDRESS_NAME`, inactive date / status |
+| `RR_SUPPLIER_ADDRESS` | Address printed on the PO (ordering purpose) and shown on the PO header | `SUPPLIER_ID` + `ADDRESS_NAME` (join to the site), `ADDRESS_LINE1..4`, `CITY`, `STATE`, `COUNTRY`, `POSTAL_CODE`, `FORMATTED_ADDRESS`, `ADDR_PURPOSE_ORDERING`, phone and fax |
+| `RR_SUPPLIER_SITE_ASSIGNMENTS` | Which business units may use the site; bill-to BU; default ship-to / bill-to locations | `SUPPLIER_SITE_ID`, `CLIENT_BU_ID`, `BILL_TO_BU_ID`, `SHIP_TO_LOCATION_CODE`, `BILL_TO_LOCATION_CODE`, `STATUS`, `INACTIVE_DATE` |
+
+Rules that use them (PO-02, MAT-01):
+
+* Supplier `STATUS` active and `INACTIVE_DATE` empty or in the future.
+* Site active, `PURCHASING_FLAG = 'Y'`, and usable by the PO's BU: an active `RR_SUPPLIER_SITE_ASSIGNMENTS` row with
+  `CLIENT_BU_ID = PO.BUSINESS_UNIT_ID`, or `RR_SUPPLIER_SITES.PROCUREMENT_BU_ID = PO.BUSINESS_UNIT_ID`.
+* The supplier LOV on the PO shows only suppliers with at least one such site; picking the supplier filters the
+  sites; picking the site defaults payment terms (site) and ship-to / bill-to (assignment codes matched to
+  `RR_PO_LOCATIONS.LOCATION_CODE`, else the BU defaults).
+* AP matching uses the same site (or another pay site of the same supplier), so the PO, the invoice and the payment
+  all point at one supplier record.
+* Supplier creation and maintenance stay where they are today; a supplier added there is immediately available to
+  Procurement.
+
+#### RR_PO_SUPPLIER_SITE_OPTIONS — purchasing options per supplier site (extension)
+
+Holds only purchasing settings that the supplier tables do not have. Optional: a site with no row uses the BU
+defaults. Any NULL column also falls back to the BU option.
 
 | Column | Type | Req | Description |
 |---|---|---|---|
@@ -857,6 +890,25 @@ no category → BU default buyer (`DEFAULT_FLAG = Y`). No buyer found → line s
 
 ### 6.2 Purchase orders
 
+#### 6.2.0 Creating a PO directly (no requisition)
+
+This is the standard way to buy. **Create Purchase Order** (`/po/orders/new`):
+
+1. **Header** — BU (from the user's BU access), supplier and site (LOVs from the existing `RR_SUPPLIER_*` tables,
+   filtered to sites usable by the BU), currency (site default, else functional), payment terms (site), ship-to /
+   bill-to (site assignment, else BU defaults), buyer (the user, when they are a buyer), description.
+2. **Lines** — pick a catalog item or type free text; category; quantity × price or amount; need-by date; tax code
+   (category / item default). One schedule per line is created automatically (more can be added for split
+   deliveries).
+3. **Charge account** — derived exactly as for requisitions (6.1.3) using the line's **requester**, which defaults
+   to the person creating the PO (or can be set to the employee the purchase is for); editable with
+   `EDIT_ACCOUNT`; split into several distributions by percentage when the cost is shared.
+4. **Save** (`INCOMPLETE`, PO number assigned) → **Submit** → approval (6.10) → approved → sent to the supplier.
+
+From here a direct PO is identical to one created from a requisition: same receiving, matching, accruals, change
+orders and close. Its distributions simply have no `REQ_DISTRIBUTION_ID` and the header has `ORIGIN = MANUAL`.
+Copy-PO (from any earlier PO, with new dates) makes repeat purchases one click.
+
 #### 6.2.1 PO document status model
 
 ```
@@ -877,8 +929,8 @@ closure status allows it (receiving: `OPEN` or `CLOSED_FOR_INVOICING`; invoicing
 
 #### 6.2.2 Submit PO — validations and steps
 
-1. Buyer is an active buyer for the BU; supplier and site active, site `PURCHASING_FLAG = Y`, not on purchasing
-   hold, site belongs to the PO's procurement BU (`RR_SUPPLIER_SITES.PROCUREMENT_BU_ID`).
+1. Buyer is an active buyer for the BU; supplier and site valid for the BU per 4.10 (existing `RR_SUPPLIER_*`
+   tables), not on purchasing hold.
 2. Currency rate available; payment terms set; ship-to and bill-to locations valid for the BU.
 3. Lines, schedules and distributions complete; quantity ledger sums consistent (5.2 invariants); charge
    accounts valid; tax codes active and assigned to the BU (`RR_TAX_ASSIGNMENTS`).
@@ -1221,6 +1273,7 @@ returns to zero, and the identity `invoice = base + IPV + ERV` holds.
 | Privilege (module `PO`) | Requester | Buyer | Receiver | Proc. manager | AP clerk | Admin |
 |---|---|---|---|---|---|---|
 | Create / submit own requisitions | ✓ | ✓ | | ✓ | | ✓ |
+| Create purchase orders directly (6.2.0) | | ✓ | | ✓ | | ✓ |
 | Requisition on behalf of others | | ✓ | | ✓ | | ✓ |
 | `EDIT_ACCOUNT` on lines | | ✓ | | ✓ | | ✓ |
 | Process requisitions / create POs | | ✓ | | ✓ | | ✓ |
@@ -1280,7 +1333,7 @@ Procedure signature convention: `IN p_xxx` (strings, numbers, ISO dates; complex
 | `RR_PO_SETUP_PKG` | `SAVE_BU_OPTIONS`, `SAVE_LOCATION`, `SAVE_CATEGORY`, `SAVE_EXPENSE_ITEM`, `SAVE_BUYER`, `SAVE_REQUESTER_DEFAULT`, `SAVE_ACCOUNT_RULE`, `SAVE_DOC_SEQUENCE`, `SAVE_SITE_OPTIONS`, `SET_STATUS(p_entity, p_id, p_status)` | S-01…S-12 |
 | `RR_PO_ACCOUNT_PKG` | functions `DERIVE_CHARGE_ACCOUNT(bu, requester, category, item)`, `VALIDATE_ACCOUNT(combo, bu)`, `NEXT_DOC_NUMBER(bu, doc_type)` | S-08, REQ-08 |
 | `RR_PO_REQ_PKG` | `SAVE_REQUISITION(p_header_json, p_lines_json)` (create/update draft incl. distributions), `DELETE_DRAFT`, `SUBMIT`, `WITHDRAW`, `CANCEL(p_req_header_id, p_line_ids)`, `RETURN_LINES(p_line_ids, p_reason)` (buyer → requester), `COPY_REQUISITION` | REQ-01…REQ-15 |
-| `RR_PO_DOC_PKG` | `CREATE_PO(p_header_json, p_lines_json)`, `UPDATE_PO` (INCOMPLETE/REJECTED only), `DELETE_PO` (never approved), `AUTOCREATE(p_req_line_ids_json, p_options_json)`, `SUBMIT`, `WITHDRAW`, `HOLD`/`RELEASE_HOLD`, `CANCEL(p_level, p_id, p_reason, p_recreate_demand)`, `CLOSE`/`REOPEN(p_level, p_id)`, `FINAL_CLOSE(p_po_header_id)`, `COMMUNICATE(p_po_header_id, p_attachment_id, p_to, p_cc)`, `RECORD_ACCEPTANCE` | PO-01…PO-20 |
+| `RR_PO_DOC_PKG` | `CREATE_PO(p_header_json, p_lines_json)` (direct PO, 6.2.0), `COPY_PO(p_po_header_id)`, `UPDATE_PO` (INCOMPLETE/REJECTED only), `DELETE_PO` (never approved), `AUTOCREATE(p_req_line_ids_json, p_options_json)`, `SUBMIT`, `WITHDRAW`, `HOLD`/`RELEASE_HOLD`, `CANCEL(p_level, p_id, p_reason, p_recreate_demand)`, `CLOSE`/`REOPEN(p_level, p_id)`, `FINAL_CLOSE(p_po_header_id)`, `COMMUNICATE(p_po_header_id, p_attachment_id, p_to, p_cc)`, `RECORD_ACCEPTANCE` | PO-01…PO-20 |
 | `RR_PO_CHANGE_PKG` | `SAVE_CHANGE_ORDER(p_po_header_id, p_changes_json, p_reason)`, `SUBMIT`, `CANCEL`, `APPLY` (internal, from approval callback) | CO-01…CO-09 |
 | `RR_PO_RCV_PKG` | `RECEIVE(p_header_json, p_lines_json)` (many schedules, one delivery note), `RETURN_TO_SUPPLIER(p_rcv_transaction_id, p_qty_or_amount, p_reason, p_date)`, `CORRECT(p_rcv_transaction_id, p_delta, p_date)`; function `CLOSURE_ROLLUP(p_schedule_id)` | RCV-01…RCV-12 |
 | `RR_PO_MATCH_PKG` | `MATCH_TO_PO(p_invoice_id, p_matches_json)`, `MATCH_TO_RECEIPT(p_invoice_id, p_matches_json)`, `REVERSE_MATCH(p_match_id)`, `VALIDATE_INVOICE(p_invoice_id)`, `RELEASE_HOLD(p_hold_id, p_release_code, p_reason)`, `PLACE_MANUAL_HOLD` | MAT-01…MAT-14 |
@@ -1450,13 +1503,13 @@ cheap checks client-side; the server is authoritative.
 | Code | Rule |
 |---|---|
 | PO-01 | Buyer active for the BU |
-| PO-02 | Supplier active; site active, `PURCHASING_FLAG = Y`, procurement BU = PO BU, no purchasing hold |
+| PO-02 | Supplier active (`RR_SUPPLIER_MASTER`); site active, `PURCHASING_FLAG = Y`, assigned to the PO BU (`RR_SUPPLIER_SITE_ASSIGNMENTS.CLIENT_BU_ID` or `PROCUREMENT_BU_ID`), no purchasing hold (4.10) |
 | PO-03 | Currency rate available; payment terms present |
 | PO-04 | Ship-to / bill-to locations valid for the BU |
 | PO-05 | Each line has ≥ 1 schedule; each schedule ≥ 1 distribution; quantity ledger sums consistent |
 | PO-06 | Quantity line: UOM, quantity > 0, price ≥ 0; amount line: amount > 0 |
 | PO-07 | Charge accounts valid for the BU company; tax codes active and assigned to the BU |
-| PO-08 | `REQUIRE_REQUISITION = Y` → manual PO only by buyers with `DIRECT_PO_ALLOWED` |
+| PO-08 | Direct POs allowed by default; only when the BU sets `REQUIRE_REQUISITION = Y` must a manual PO come from a buyer with `DIRECT_PO_ALLOWED = Y` |
 | PO-09 | Requisition lines on autocreate are `APPROVED`/`OPEN`, same BU, not already on a PO (row lock) |
 | PO-10 | Autocreate grouping keys equal within one PO |
 | PO-11 | Edit only `INCOMPLETE` / `REJECTED`; approved POs change only through change orders |
@@ -1581,13 +1634,13 @@ Each sub-phase ships as one database script plus its pages and is deployable ind
 | D1 | Default accrual method | Receipt accrual for quantity lines, period-end for amount (service) lines |
 | D2 | Default match level | 3-way for quantity lines, 2-way for services |
 | D3 | Approval routing | Amount-band rules per BU/category (existing engine) now; supervisor chain later via `MANAGER_USER_NAME` |
-| D4 | Requisitions mandatory? | `REQUIRE_REQUISITION = Y` for most BUs; direct POs for nominated buyers |
+| D4 | Requisitions mandatory? | **Decided (v1.1): no** — POs are created directly by default; requisitions optional per BU |
 | D5 | Tolerances | Over-receipt 0 % reject; invoice qty 0 %; invoice price 5 % or 500 AED |
 | D6 | ERV on period-end-accrual POs | Separate ERV (keeps expense at PO value) |
 | D7 | Non-recoverable VAT | Not needed now (all input VAT recoverable); add a recovery rate on tax codes if required |
 | D8 | Shared dispatcher with Inventory | Share one dispatcher with a module column if Inventory is built in the same release |
 | D9 | Existing Fusion `/procurement/*` screens | Keep during parallel run; hide per company once POs are native |
-| D10 | Supplier master | Keep Fusion sync; add Re-ERP supplier creation only if Fusion is retired |
+| D10 | Supplier master | **Decided (v1.1):** existing `RR_SUPPLIER_*` tables only (kept by the current Fusion sync); no Procurement supplier master. Re-ERP supplier creation only if Fusion is retired |
 
 ## 16. Glossary
 
