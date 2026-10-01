@@ -492,6 +492,27 @@ export const removeSectionAccount = async (
 export const deleteTotal = async (totalId: number): Promise<ApiResponse<void>> => plDelete('total', totalId);
 
 // Group types for dropdown
+// Update a calculated total (e.g. its formula) — PUT /pl/total/:total_id
+export const updateTotal = async (
+  totalId: number,
+  changes: { calculation_formula?: string; total_name?: string; display_order?: number },
+): Promise<ApiResponse<void>> => {
+  try {
+    const response = await fetch(`${BASE_URL}/pl/total/${totalId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(changes),
+    });
+    const text = await response.text();
+    let result: any = null;
+    try { result = text ? JSON.parse(text) : null; } catch { /* ORDS HTML error page */ }
+    if (result?.success) return { success: true };
+    return { success: false, error: result?.error || `Update total service not available (HTTP ${response.status})` };
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
+};
+
 export const GROUP_TYPES = [
   { value: 'REVENUE', label: 'Revenue' },
   { value: 'EXPENSE', label: 'Expense' },

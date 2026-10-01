@@ -10,10 +10,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Card, Form, Select, Input, Button, Space, Typography, Alert, Table, Tag, Tooltip, Row, Col, Statistic, Empty, Segmented, message,
-  Modal, Tabs, Badge,
+  Modal, Tabs, Badge, Checkbox, InputNumber,
 } from 'antd';
 import {
-  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, FileSearchOutlined, PlusOutlined, BulbOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined,
+  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, FileSearchOutlined, PlusOutlined, BulbOutlined, SwapOutlined, FolderAddOutlined, AppstoreAddOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
@@ -23,7 +23,7 @@ import { getAppBranding } from '../../config/company.config';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { buildApexUrl } from '../../config/api.helper';
 import type { PLTemplateStructure, PLSectionAccount } from '../../services/pl-templates.service';
-import { assignAccount } from '../../services/pl-templates.service';
+import { assignAccount, removeSectionAccount, addGroup, addSection, updateTotal, GROUP_TYPES } from '../../services/pl-templates.service';
 
 const { Text, Title } = Typography;
 const BASE = APEX_DB_CONFIG.baseUrl;
@@ -36,10 +36,11 @@ interface TbRow {
 interface Amt { ptd: number; ytd: number }
 interface AcctLine { account: string; desc: string | null; ptd: number; ytd: number }
 type RowKind = 'group' | 'section' | 'account' | 'groupTotal' | 'total' | 'error';
-interface TbPlLine { account: string; desc: string | null; type: 'R' | 'E'; ptd: number; ytd: number; sections: string[] }
+interface MapEntry { sectionId: number; sectionName: string; entry: PLSectionAccount }
+interface TbPlLine { account: string; desc: string | null; type: 'R' | 'E'; ptd: number; ytd: number; sections: string[]; entries: MapEntry[] }
 interface TbPlRow {
   key: string; kind: 'group' | 'account' | 'total'; label: string; desc?: string | null; ptd: number; ytd: number;
-  sections?: string[]; missing?: boolean; children?: TbPlRow[];
+  sections?: string[]; missing?: boolean; children?: TbPlRow[]; type?: 'R' | 'E';
 }
 interface DrillLine { account: string; desc: string | null; section: string; ptd: number; ytd: number }
 interface PLRow {
@@ -226,6 +227,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     const acctType = new Map(tb.map(r => [r.account, r.account_type]));
     const used = new Map<string, string[]>();   // account → sections using it
     const usedNames = new Map<string, string[]>();   // account → section names (As per TB tab)
+    const usedEntries = new Map<string, MapEntry[]>();   // account → template rows that pick it up (Move)
     const groupVal = new Map<string, Amt>();
     const groups = [...(tpl.groups || [])].sort((a, b) => a.display_order - b.display_order);
     const groupRows = new Map<string, PLRow>();
@@ -245,6 +247,8 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
           sAmt.ptd += line.ptd; sAmt.ytd += line.ytd;
           used.set(acct, [...(used.get(acct) || []), `${g.group_code}/${s.section_code}`]);
           usedNames.set(acct, [...(usedNames.get(acct) || []), secName]);
+          usedEntries.set(acct, [...(usedEntries.get(acct) || []),
+            { sectionId: s.section_id, sectionName: `${g.group_label || g.group_name} › ${secName}`, entry: (s.accounts || []).find(a => matches(acct, a))! }]);
           if (Math.abs(line.ptd) >= 0.005 || Math.abs(line.ytd) >= 0.005) {
             sDrill.push({ account: acct, desc: line.desc, section: secName, ptd: line.ptd, ytd: line.ytd });
             acctRows.push({ key: `a-${s.section_id}-${acct}`, kind: 'account', label: `${acct}${line.desc ? ` · ${line.desc}` : ''}`,
@@ -317,7 +321,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
         tbNetYtd += line.ytd; tbNetPtd += line.ptd;
         const nonZero = Math.abs(line.ptd) >= 0.005 || Math.abs(line.ytd) >= 0.005;
         if (!used.has(acct) && nonZero) unmapped.push({ ...line, type });
-        if (nonZero) tbLines.push({ account: acct, desc: line.desc, type, ptd: line.ptd, ytd: line.ytd, sections: usedNames.get(acct) || [] });
+        if (nonZero) tbLines.push({ account: acct, desc: line.desc, type, ptd: line.ptd, ytd: line.ytd, sections: usedNames.get(acct) || [], entries: usedEntries.get(acct) || [] });
       }
     }
     tbLines.sort((a, b) => a.account.localeCompare(b.account));
@@ -350,7 +354,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     const keep = (l: TbPlLine) => (tbFilter === 'all' || !l.sections.length)
       && (!q || `${l.account} ${l.desc || ''} ${l.sections.join(' ')}`.toLowerCase().includes(q));
     const toRow = (l: TbPlLine): TbPlRow => ({ key: `tb-${l.account}`, kind: 'account', label: l.account, desc: l.desc,
-      ptd: l.ptd, ytd: l.ytd, sections: l.sections, missing: !l.sections.length });
+      ptd: l.ptd, ytd: l.ytd, sections: l.sections, missing: !l.sections.length, type: l.type });
     const rev = result.tbRev.filter(keep).map(toRow);
     const exp = result.tbExp.filter(keep).map(toRow);
     return [
@@ -406,7 +410,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     };
   }, [tpl, tb, sectionOptions]);
 
-  interface AddLine { account: string; desc: string | null; type: string; ytd: number; sectionId?: number; suggested?: number }
+  interface AddLine { account: string; desc: string | null; type: string; ytd: number; sectionId?: number; suggested?: number; from?: MapEntry[] }
   const [addLines, setAddLines] = useState<AddLine[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [missingSel, setMissingSel] = useState<string[]>([]);
@@ -417,23 +421,159 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
       return { account: u.account, desc: u.desc, type: u.type, ytd: u.ytd, sectionId: sug, suggested: sug };
     });
     if (!lines.length) { message.info('Nothing to add'); return; }
-    if (!sectionOptions.length) { message.warning('The template has no sections yet — add a group and a section on the template first'); return; }
+    setAddMode('add');
     setAddLines(lines);
   };
+  // Move mapped accounts to another section (also fixes accounts that sit in two sections)
+  const openMove = (accounts: string[]) => {
+    if (!result) return;
+    const lines = [...result.tbRev, ...result.tbExp].filter(l => accounts.includes(l.account) && l.entries.length)
+      .map(l => ({ account: l.account, desc: l.desc, type: l.type, ytd: l.ytd, from: l.entries,
+        sectionId: undefined as number | undefined, suggested: undefined as number | undefined }));
+    if (!lines.length) { message.info('Nothing to move'); return; }
+    setAddMode('move');
+    setAddLines(lines);
+  };
+  const [addMode, setAddMode] = useState<'add' | 'move'>('add');
+  const isRange = (e: PLSectionAccount) => !!(e.account_from && e.account_to);
+
+  // ── new group / new section from the TB view ─────────────────────────────
+  const [newSecForm] = Form.useForm();
+  const [newGrpForm] = Form.useForm();
+  const [newSecOpen, setNewSecOpen] = useState(false);
+  const [newGrpOpen, setNewGrpOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const groupsSorted = useMemo(() => [...(tpl.groups || [])].sort((a, b) => a.display_order - b.display_order), [tpl]);
+  // statement order: groups and totals by display order (where a new group can be placed)
+  const statementItems = useMemo(() => [
+    ...groupsSorted.map(g => ({ key: `G:${g.group_code}`, order: g.display_order, label: `${g.group_label || g.group_name} (${g.group_code})`, code: g.group_code })),
+    ...(tpl.totals || []).map(t => ({ key: `T:${t.total_code}`, order: t.display_order, label: `${t.total_label || t.total_name} = ${t.calculation_formula} (${t.total_code})`, code: t.total_code })),
+  ].sort((a, b) => a.order - b.order), [groupsSorted, tpl]);
+  const nextGroupCode = () => {
+    const used = new Set(groupsSorted.map(g => g.group_code.toUpperCase()));
+    let n = groupsSorted.length + 1;
+    while (used.has(`G${n}`)) n++;
+    return `G${n}`;
+  };
+  const nextSectionCode = (groupCode: string) => {
+    const used = new Set(groupsSorted.flatMap(g => (g.sections || []).map(x => x.section_code.toUpperCase())));
+    let n = (groupsSorted.find(g => g.group_code === groupCode)?.sections?.length || 0) + 1;
+    while (used.has(`${groupCode}S${n}`.toUpperCase())) n++;
+    return `${groupCode}S${n}`;
+  };
+  // order right after the chosen item, before the next one (decimals keep existing orders untouched)
+  const orderAfter = (afterKey?: string) => {
+    if (!statementItems.length) return 10;
+    const i = afterKey ? statementItems.findIndex(x => x.key === afterKey) : statementItems.length - 1;
+    const cur = statementItems[i]?.order ?? 0;
+    const next = statementItems[i + 1]?.order;
+    if (next === undefined) return cur + 10;
+    return next - cur > 1 ? cur + 1 : Math.round(((cur + next) / 2) * 100) / 100;
+  };
+  // which totals should pick up a new group placed after `afterKey`: the first total below it
+  // whose formula combines several items — later totals inherit through it (no double counting)
+  const suggestTotals = (afterKey?: string) => {
+    const i = afterKey ? statementItems.findIndex(x => x.key === afterKey) : statementItems.length - 1;
+    const below = (tpl.totals || []).filter(t => t.display_order > (statementItems[i]?.order ?? -Infinity))
+      .sort((a, b) => a.display_order - b.display_order);
+    const first = below.find(t => /[+\-*/]/.test(t.calculation_formula));
+    return first ? [first.total_id] : [];
+  };
+  const totalRefs = (code: string, seen = new Set<string>()): Set<string> => {   // codes a total depends on, transitively
+    const t = (tpl.totals || []).find(x => x.total_code.toUpperCase() === code.toUpperCase());
+    if (!t || seen.has(code)) return seen;
+    for (const tok of t.calculation_formula.toUpperCase().match(/[A-Z_][A-Z0-9_]*/g) || []) {
+      if (!seen.has(tok)) { seen.add(tok); totalRefs(tok, seen); }
+    }
+    return seen;
+  };
+  const applyNewSection = (sectionId: number, assignAll: boolean) => {
+    if (assignAll) setAddLines(ls => ls && ls.map(l => ({ ...l, sectionId })));
+  };
+  const openNewSection = (groupCode?: string) => {
+    const g = groupCode || groupsSorted[0]?.group_code;
+    newSecForm.setFieldsValue({ group_code: g, section_name: '', assign_all: (addLines?.length || 0) > 0 });
+    setNewSecOpen(true);
+  };
+  const createSection = async () => {
+    const v = await newSecForm.validateFields();
+    const g = groupsSorted.find(x => x.group_code === v.group_code);
+    if (!g) return;
+    setCreating(true);
+    const order = Math.max(0, ...(g.sections || []).map(x => x.display_order)) + 1;
+    const r = await addSection(g.group_id, nextSectionCode(g.group_code), v.section_name, v.section_name, order);
+    setCreating(false);
+    if (!r.success || !r.data?.section_id) { message.error(r.error || 'Section could not be created'); return; }
+    message.success(`Section "${v.section_name}" created in ${g.group_label || g.group_name}`);
+    setNewSecOpen(false);
+    await onTemplateChanged?.();
+    applyNewSection(r.data.section_id, v.assign_all);
+  };
+  const openNewGroup = () => {
+    // default position: after the last group (before the closing totals)
+    const lastGroup = groupsSorted[groupsSorted.length - 1];
+    const after = lastGroup ? `G:${lastGroup.group_code}` : statementItems[statementItems.length - 1]?.key;
+    newGrpForm.setFieldsValue({ group_name: '', group_type: 'EXPENSE', after, first_section: '', totals: suggestTotals(after),
+      assign_all: (addLines?.length || 0) > 0 });
+    setNewGrpOpen(true);
+  };
+  const createGroup = async () => {
+    const v = await newGrpForm.validateFields();
+    const code = nextGroupCode();
+    const sign = ['REVENUE', 'OTHER_INCOME', 'COMPREHENSIVE'].includes(v.group_type) ? 1 : -1;
+    setCreating(true);
+    const g = await addGroup(tpl.template_id, code, v.group_name, v.group_name, v.group_type, orderAfter(v.after), sign);
+    if (!g.success || !g.data?.group_id) { setCreating(false); message.error(g.error || 'Group could not be created'); return; }
+    const sec = await addSection(g.data.group_id, `${code}S1`, v.first_section || v.group_name, v.first_section || v.group_name, 1);
+    const totalErrors: string[] = [];
+    for (const id of (v.totals || []) as number[]) {
+      const t = (tpl.totals || []).find(x => x.total_id === id);
+      if (!t) continue;
+      const r = await updateTotal(id, { calculation_formula: `${t.calculation_formula}+${code}` });
+      if (!r.success) totalErrors.push(`${t.total_code}: ${r.error}`);
+    }
+    setCreating(false);
+    setNewGrpOpen(false);
+    message.success(`Group "${v.group_name}" (${code}) created${sec.success ? ' with its first section' : ''}`);
+    if (!sec.success) message.error(`First section not created: ${sec.error}`);
+    if (totalErrors.length) {
+      Modal.warning({ title: 'Group created, but not added to these totals', zIndex: 1300,
+        content: <div style={{ fontSize: 12 }}>{totalErrors.map(e => <div key={e}>{e}</div>)}<div style={{ marginTop: 6 }}>Add +{code} to their formulas on the template.</div></div> });
+    }
+    await onTemplateChanged?.();
+    if (sec.success && sec.data?.section_id) applyNewSection(sec.data.section_id, v.assign_all);
+  };
+  const rangeText = (e: PLSectionAccount) => `${e.account_from} – ${e.account_to}`;
   const saveAdd = async () => {
     if (!addLines) return;
     const todo = addLines.filter(l => l.sectionId);
     setAdding(true);
     const failed: string[] = [];
+    let skipped = 0;
     for (const l of todo) {
-      const r = await assignAccount(l.sectionId!, l.account);
-      if (!r.success) failed.push(`${l.account}: ${r.error || 'failed'}`);
+      const from = l.from || [];
+      const ranges = from.filter(f => isRange(f.entry));
+      if (ranges.length) {   // one account cannot be taken out of a range — the range would go with it
+        failed.push(`${l.account}: picked up by range ${ranges.map(f => `${rangeText(f.entry)} in ${f.sectionName}`).join(', ')} — edit the range on the template`);
+        continue;
+      }
+      const toRemove = from.filter(f => f.sectionId !== l.sectionId);
+      if (from.length && toRemove.length === 0) { skipped++; continue; }          // already only there
+      if (!from.some(f => f.sectionId === l.sectionId)) {                          // add first: nothing lost if it fails
+        const r = await assignAccount(l.sectionId!, l.account);
+        if (!r.success) { failed.push(`${l.account}: ${r.error || 'failed'}`); continue; }
+      }
+      for (const f of toRemove) {
+        const r = await removeSectionAccount(f.sectionId, f.entry);
+        if (!r.success) failed.push(`${l.account}: added to the new section but not removed from ${f.sectionName} — ${r.error || 'failed'}`);
+      }
     }
     setAdding(false);
-    const ok = todo.length - failed.length;
-    if (ok) message.success(`${ok} account(s) added to "${tpl.template_name}"`);
+    const ok = todo.length - failed.length - skipped;
+    if (ok) message.success(`${ok} account(s) ${addMode === 'move' ? 'moved in' : 'added to'} "${tpl.template_name}"`);
+    if (skipped && !ok && !failed.length) message.info('No change — the accounts are already in those sections');
     if (failed.length) {
-      Modal.error({ title: `${failed.length} account(s) could not be added`, content: <div style={{ fontSize: 12 }}>{failed.map(f => <div key={f}>{f}</div>)}</div>, zIndex: 1300 });
+      Modal.error({ title: `${failed.length} account(s) could not be ${addMode === 'move' ? 'moved' : 'added'}`, content: <div style={{ fontSize: 12 }}>{failed.map(f => <div key={f}>{f}</div>)}</div>, zIndex: 1300 });
     }
     setAddLines(null); setMissingSel([]);
     if (ok && failed.length === 0) setMissingOpen(false);
@@ -777,6 +917,8 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                     onClick={() => openAdd(tbRows.flatMap(g => g.children || []).filter(r => r.missing).map(r => r.label))}>
                     Add missing to template…
                   </Button>
+                  <Button size="small" icon={<AppstoreAddOutlined />} onClick={() => openNewSection()} disabled={!groupsSorted.length}>New section</Button>
+                  <Button size="small" icon={<FolderAddOutlined />} onClick={openNewGroup}>New group</Button>
                   <Segmented size="small" value={tbFilter} onChange={v => setTbFilter(v as 'all' | 'missing')}
                     options={[{ label: 'All accounts', value: 'all' }, { label: `Missing from template (${result.unmapped.length})`, value: 'missing' }]} />
                 </Space>
@@ -799,14 +941,21 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                   { title: 'Line', key: 'label', render: (_: unknown, r) => (r.kind === 'account'
                     ? <Space size={6}><Text style={{ fontSize: 12, fontFamily: 'monospace' }}>{r.label}</Text><Text style={{ fontSize: 12 }}>{r.desc}</Text></Space>
                     : <Text strong>{r.label}{r.kind === 'group' ? <Text type="secondary" style={{ fontSize: 11 }}> ({r.children?.length || 0})</Text> : null}</Text>) },
-                  { title: 'In template', key: 'sections', width: 230, render: (_: unknown, r) => (r.kind !== 'account' ? null
+                  { title: 'In template', key: 'sections', width: 300, render: (_: unknown, r) => (r.kind !== 'account' ? null
                     : r.missing ? (
                       <Space size={4}>
                         <Tag color="warning" icon={<WarningOutlined />}>Missing</Tag>
                         <Button size="small" type="link" icon={<PlusOutlined />} style={{ padding: 0 }} onClick={() => openAdd([r.label])}>Add</Button>
                       </Space>
                     )
-                      : <Space size={2} wrap>{r.sections!.map((sn, i) => <Tag key={i} color={r.sections!.length > 1 ? 'orange' : 'default'} style={{ fontSize: 11 }}>{sn}</Tag>)}</Space>) },
+                      : (
+                        <Space size={2} wrap>
+                          {r.sections!.map((sn, i) => <Tag key={i} color={r.sections!.length > 1 ? 'orange' : 'default'} style={{ fontSize: 11 }}>{sn}</Tag>)}
+                          <Tooltip title={r.sections!.length > 1 ? 'In more than one section — move it to one' : 'Change the section'}>
+                            <Button size="small" type="link" icon={<SwapOutlined />} style={{ padding: 0 }} onClick={() => openMove([r.label])}>Move</Button>
+                          </Tooltip>
+                        </Space>
+                      )) },
                   { title: `Period ${ran.period}`, dataIndex: 'ptd', align: 'right', width: 160,
                     render: (v: number, r) => <Text strong={r.kind !== 'account'} style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
                   { title: 'Year to date', dataIndex: 'ytd', align: 'right', width: 160,
@@ -886,9 +1035,11 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
           <Modal open={!!addLines} onCancel={() => !adding && setAddLines(null)} width={1150} zIndex={1200} maskClosable={false}
             title={(
               <Space direction="vertical" size={0}>
-                <span><PlusOutlined /> Add accounts to “{tpl.template_name}”</span>
+                <span>{addMode === 'move' ? <><SwapOutlined /> Move accounts in “{tpl.template_name}”</> : <><PlusOutlined /> Add accounts to “{tpl.template_name}”</>}</span>
                 <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
-                  Choose the group › section for each account. <BulbOutlined /> Pre-filled with the section of the nearest account code already in the template.
+                  {addMode === 'move'
+                    ? 'Choose the new group › section. The account is added there and removed from its current section(s).'
+                    : <>Choose the group › section for each account. <BulbOutlined /> Pre-filled with the section of the nearest account code already in the template.</>}
                 </Text>
               </Space>
             )}
@@ -896,7 +1047,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
               <Button key="c" onClick={() => setAddLines(null)} disabled={adding}>Cancel</Button>,
               <Button key="s" type="primary" loading={adding} onClick={saveAdd}
                 disabled={!addLines?.some(l => l.sectionId)} style={{ background: RED, borderColor: RED }}>
-                Add {addLines?.filter(l => l.sectionId).length || 0} account(s)
+                {addMode === 'move' ? 'Move' : 'Add'} {addLines?.filter(l => l.sectionId).length || 0} account(s)
               </Button>,
             ]}>
             {addLines && (
@@ -905,10 +1056,17 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                   <Text>Put all in:</Text>
                   <Select style={{ width: 520 }} placeholder="Group › Section" showSearch optionFilterProp="label" options={sectionOptions} {...sectionPick}
                     onChange={(v: number) => setAddLines(ls => ls && ls.map(l => ({ ...l, sectionId: v })))} />
-                  <Button size="small" onClick={() => setAddLines(ls => ls && ls.map(l => ({ ...l, sectionId: l.suggested })))}>
-                    <BulbOutlined /> Use suggestions
-                  </Button>
+                  {addMode === 'add' && (
+                    <Button size="small" onClick={() => setAddLines(ls => ls && ls.map(l => ({ ...l, sectionId: l.suggested })))}>
+                      <BulbOutlined /> Use suggestions
+                    </Button>
+                  )}
+                  <Button size="small" icon={<AppstoreAddOutlined />} onClick={() => openNewSection()} disabled={!groupsSorted.length}>New section…</Button>
+                  <Button size="small" icon={<FolderAddOutlined />} onClick={openNewGroup}>New group…</Button>
                 </Space>
+                {!sectionOptions.length && (
+                  <Alert type="info" showIcon style={{ marginBottom: 10 }} message="This template has no sections yet — create a group (it gets a first section) to place the accounts." />
+                )}
                 <Table<AddLine> size="small" rowKey="account" dataSource={addLines} pagination={false} scroll={{ y: 420 }}
                   columns={[
                     { title: 'Account', dataIndex: 'account', width: 100 },
@@ -916,9 +1074,18 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                     { title: 'Type', dataIndex: 'type', width: 90, render: (t: string) => <Tag color={t === 'R' ? 'green' : 'volcano'}>{t === 'R' ? 'Revenue' : 'Expense'}</Tag> },
                     { title: 'Year to date', dataIndex: 'ytd', width: 140, align: 'right',
                       render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
-                    { title: 'Add to group › section', key: 'sec', width: 440, render: (_: unknown, l) => (
+                    ...(addMode === 'move' ? [{ title: 'Currently in', key: 'from', width: 260, render: (_: unknown, l: AddLine) => (
+                      <Space direction="vertical" size={0}>
+                        {(l.from || []).map((f, i) => (
+                          <Text key={i} style={{ fontSize: 12 }} type={isRange(f.entry) ? 'warning' : undefined}>
+                            {f.sectionName}{isRange(f.entry) ? ` (range ${rangeText(f.entry)} — can't move one account)` : ''}
+                          </Text>
+                        ))}
+                      </Space>
+                    ) }] : []),
+                    { title: addMode === 'move' ? 'Move to group › section' : 'Add to group › section', key: 'sec', width: 440, render: (_: unknown, l: AddLine) => (
                       <Space size={4}>
-                        <Select size="small" style={{ width: 400 }} placeholder="Skip (not added)" allowClear showSearch optionFilterProp="label"
+                        <Select size="small" style={{ width: 400 }} placeholder={addMode === 'move' ? 'Choose the new section' : 'Skip (not added)'} allowClear showSearch optionFilterProp="label"
                           value={l.sectionId} options={sectionOptions} {...sectionPick}
                           onChange={(v: number | undefined) => setAddLines(ls => ls && ls.map(x => (x.account === l.account ? { ...x, sectionId: v } : x)))} />
                         {l.sectionId && l.sectionId === l.suggested && (
@@ -929,6 +1096,84 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                   ]} />
               </>
             )}
+          </Modal>
+
+          <Modal open={newSecOpen} onCancel={() => !creating && setNewSecOpen(false)} zIndex={1250} width={520}
+            title={<span><AppstoreAddOutlined /> New section in “{tpl.template_name}”</span>}
+            okText="Create section" onOk={createSection} confirmLoading={creating} okButtonProps={{ style: { background: RED, borderColor: RED } }}>
+            <Form form={newSecForm} layout="vertical">
+              <Form.Item name="group_code" label="Group" rules={[{ required: true }]}>
+                <Select options={groupsSorted.map(g => ({ value: g.group_code, label: `${g.group_label || g.group_name} (${g.group_code})` }))} />
+              </Form.Item>
+              <Form.Item name="section_name" label="Section name" rules={[{ required: true, whitespace: true, message: 'Enter a name' }]}>
+                <Input placeholder="e.g. Professional fees" autoFocus />
+              </Form.Item>
+              <Form.Item noStyle shouldUpdate>
+                {() => <Text type="secondary" style={{ fontSize: 12 }}>Code {nextSectionCode(newSecForm.getFieldValue('group_code') || '')} · placed last in the group</Text>}
+              </Form.Item>
+              {(addLines?.length || 0) > 0 && (
+                <Form.Item name="assign_all" valuePropName="checked" style={{ marginTop: 10, marginBottom: 0 }}>
+                  <Checkbox>Put the {addLines!.length} account(s) in the dialog into this section</Checkbox>
+                </Form.Item>
+              )}
+            </Form>
+          </Modal>
+
+          <Modal open={newGrpOpen} onCancel={() => !creating && setNewGrpOpen(false)} zIndex={1250} width={640}
+            title={<span><FolderAddOutlined /> New group in “{tpl.template_name}”</span>}
+            okText="Create group" onOk={createGroup} confirmLoading={creating} okButtonProps={{ style: { background: RED, borderColor: RED } }}>
+            <Form form={newGrpForm} layout="vertical"
+              onValuesChange={(ch) => { if ('after' in ch) newGrpForm.setFieldsValue({ totals: suggestTotals(ch.after) }); }}>
+              <Row gutter={12}>
+                <Col span={14}>
+                  <Form.Item name="group_name" label="Group name" rules={[{ required: true, whitespace: true, message: 'Enter a name' }]}>
+                    <Input placeholder="e.g. Depreciation & Amortisation" autoFocus />
+                  </Form.Item>
+                </Col>
+                <Col span={10}>
+                  <Form.Item name="group_type" label="Type" rules={[{ required: true }]}>
+                    <Select options={GROUP_TYPES.filter(t => t.value !== 'CALCULATED')} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Form.Item name="after" label="Show it after">
+                <Select options={statementItems.map(x => ({ value: x.key, label: x.label }))} popupMatchSelectWidth={false} />
+              </Form.Item>
+              <Form.Item name="first_section" label="First section name" tooltip="Accounts sit in sections — the group is created with this first section">
+                <Input placeholder="Same as the group name when empty" />
+              </Form.Item>
+              <Form.Item name="totals" label="Add the group to these totals"
+                extra={(
+                  <Form.Item noStyle shouldUpdate>
+                    {() => {
+                      const sel = ((newGrpForm.getFieldValue('totals') || []) as number[])
+                        .map(id => (tpl.totals || []).find(t => t.total_id === id)).filter(Boolean) as typeof tpl.totals;
+                      const dup = sel.find(a => sel.some(b => b !== a && totalRefs(a.total_code).has(b.total_code.toUpperCase())));
+                      const code = nextGroupCode();
+                      return (
+                        <Space direction="vertical" size={2} style={{ fontSize: 12 }}>
+                          {sel.map(t => <span key={t.total_id}>{t.total_code}: {t.calculation_formula} → <b>{t.calculation_formula}+{code}</b></span>)}
+                          {!sel.length && <span style={{ color: '#D48806' }}>Not in any total — its amounts will not reach the profit lines.</span>}
+                          {dup && <span style={{ color: RED }}>{dup.total_code} already includes another selected total — the group would be counted twice.</span>}
+                          <span>Suggested: the first total below it that adds several items; totals built on it pick the group up automatically.</span>
+                        </Space>
+                      );
+                    }}
+                  </Form.Item>
+                )}>
+                <Select mode="multiple" placeholder="None"
+                  options={(tpl.totals || []).slice().sort((a, b) => a.display_order - b.display_order)
+                    .map(t => ({ value: t.total_id, label: `${t.total_code} — ${t.total_label || t.total_name} = ${t.calculation_formula}` }))} />
+              </Form.Item>
+              <Form.Item noStyle shouldUpdate>
+                {() => <Text type="secondary" style={{ fontSize: 12 }}>Code {nextGroupCode()} · first section {nextGroupCode()}S1 · display order {orderAfter(newGrpForm.getFieldValue('after'))}</Text>}
+              </Form.Item>
+              {(addLines?.length || 0) > 0 && (
+                <Form.Item name="assign_all" valuePropName="checked" style={{ marginTop: 10, marginBottom: 0 }}>
+                  <Checkbox>Put the {addLines!.length} account(s) in the dialog into its first section</Checkbox>
+                </Form.Item>
+              )}
+            </Form>
           </Modal>
 
           <Modal open={!!drillRow} onCancel={() => setDrillRow(null)} width={900} zIndex={1100}
