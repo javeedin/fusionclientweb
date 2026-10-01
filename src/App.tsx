@@ -87,6 +87,15 @@ const ReportDesignerList      = lazy(() => import('./pages/reports/ReportDesigne
 const ReportDesignerStudio    = lazy(() => import('./pages/reports/ReportDesignerStudio'));
 const SyncData                = lazy(() => import('./pages/sync/SyncData'));
 const PettyCash               = lazy(() => import('./pages/pc/PettyCash'));
+const PurchasingHome          = lazy(() => import('./pages/po/PurchasingHome'));
+const PoRequisitions          = lazy(() => import('./pages/po/Requisitions'));
+const PoBuyerWorkbench        = lazy(() => import('./pages/po/BuyerWorkbench'));
+const PoPurchaseOrders        = lazy(() => import('./pages/po/PurchaseOrders'));
+const PoReceiving             = lazy(() => import('./pages/po/Receiving'));
+const PoAccruals              = lazy(() => import('./pages/po/Accruals'));
+const PoApprovals             = lazy(() => import('./pages/po/PoApprovals'));
+const PoReports               = lazy(() => import('./pages/po/PoReports'));
+const PoSetup                 = lazy(() => import('./pages/po/PoSetup'));
 const APModule                = lazy(() => import('./pages/ap').then(m => ({ default: m.APModule })));
 const PMSModule               = lazy(() => import('./pages/pms').then(m => ({ default: m.PMSModule })));
 const FundManagement          = lazy(() => import('./pages/pms').then(m => ({ default: m.FundManagement })));
@@ -413,6 +422,15 @@ function App() {
               <Route path="check-accounting" element={<CheckAccounting />} />
               {/* Petty Cash */}
               <Route path="pc/registers" element={<PettyCash />} />
+              <Route path="po" element={<PurchasingHome />} />
+              <Route path="po/requisitions" element={<PoRequisitions />} />
+              <Route path="po/buyer-workbench" element={<PoBuyerWorkbench />} />
+              <Route path="po/orders" element={<PoPurchaseOrders />} />
+              <Route path="po/receiving" element={<PoReceiving />} />
+              <Route path="po/accruals" element={<PoAccruals />} />
+              <Route path="po/approvals" element={<PoApprovals />} />
+              <Route path="po/reports" element={<PoReports />} />
+              <Route path="po/setup" element={<PoSetup />} />
               {/* Cash Management */}
               <Route path="cash" element={<CashModule />} />
               <Route path="cash/bank-transfers" element={<ManageBankTransfers module="cash" />} />

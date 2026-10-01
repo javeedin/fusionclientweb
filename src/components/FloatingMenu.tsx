@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Typography, Tooltip, Space, Button, Form, Input, Select, DatePicker, Modal, InputNumber, message, Table, Tag, Checkbox } from 'antd';
 import {
   WalletOutlined,
+  ShopOutlined,
   CheckSquareOutlined,
   BarChartOutlined,
   SearchOutlined,
@@ -145,6 +146,15 @@ const pettyCashItems: MenuItemType[] = [
   { key: 'petty-cash-registers', icon: <WalletOutlined />, label: 'Petty Cash Registers', description: 'Manage petty cash registers and transactions', color: REDWOOD.success, path: '/pc/registers' },
 ];
 
+const purchasingItems: MenuItemType[] = [
+  { key: 'po-home', icon: <ShopOutlined />, label: 'Purchasing Home', description: 'KPIs and my open documents', color: REDWOOD.primary, path: '/po' },
+  { key: 'po-requisitions', icon: <FileTextOutlined />, label: 'Requisitions', description: 'Request goods and services', color: REDWOOD.info, path: '/po/requisitions' },
+  { key: 'po-buyer', icon: <CheckSquareOutlined />, label: 'Buyer Workbench', description: 'Approved demand to purchase orders', color: REDWOOD.warning, path: '/po/buyer-workbench' },
+  { key: 'po-orders', icon: <ShopOutlined />, label: 'Purchase Orders', description: 'Direct and requisition purchase orders', color: REDWOOD.primary, path: '/po/orders' },
+  { key: 'po-receiving', icon: <ReconciliationOutlined />, label: 'Receiving', description: 'Receipts, returns and corrections', color: REDWOOD.success, path: '/po/receiving' },
+  { key: 'po-accruals', icon: <BarChartOutlined />, label: 'Receipt Accounting', description: 'GRNI, period-end accruals, write-offs', color: '#722ed1', path: '/po/accruals' },
+];
+
 const administrationItems: MenuItemType[] = [
   { key: 'attachments', icon: <CloudDownloadOutlined />, label: 'Attachments', description: 'Download invoice attachments from Oracle Fusion in bulk', color: '#722ed1', path: '/ap/attachments' },
 ];
@@ -179,6 +189,7 @@ const taskSections = [
   { key: 'invoices', label: 'Invoices', items: invoiceTaskItems },
   { key: 'accounting', label: 'Accounting', items: accountingTaskItems },
   { key: 'petty-cash', label: 'Petty Cash', items: pettyCashItems },
+  { key: 'purchasing-rr', label: 'Purchasing-RR', items: purchasingItems },
   { key: 'assets', label: 'Assets', items: assetsTaskItems },
   { key: 'periods', label: 'Payables Periods', items: periodsTaskItems },
   { key: 'payments', label: 'Payments', items: paymentTaskItems },
