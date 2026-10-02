@@ -10,6 +10,7 @@ Design: `docs/design/PO_Module_Requirements_Design.md` (RD v1.1).
 | 2 | `301_po_views.sql` | `RR_PO_V_*` read views (adds them to the AI-gateway ACL only when the ACL is in whitelist mode) |
 | 3 | `302_po_packages.sql` | `RR_PO_UTIL/SETUP/REQ/DOC/RCV/ACCT/APPROVAL_PKG`, `BUSINESS_UNIT_ID` + `CATEGORY_CODE` on `RR_APPROVAL_RULES`, trigger `RR_PO_APPROVAL_DECISION_TRG` |
 | 4 | `303_po_execute.sql` | `RR_PO_EXECUTE` dispatcher, procedure registry, ORDS `POST reerp/po/execute` |
+| 5 | `304_po_attachments.sql` | `RR_PO_ATTACHMENTS`, `RR_PO_ATTACH_PKG`, ORDS `po/attachments/:entity_type/:entity_id[/:attachment_id]` (PO and requisition attachments) |
 
 Every script can be run again safely. After step 3, the last query must return no rows from `user_errors`. After step 4, every `RR_PO_%` object must be `VALID`.
 

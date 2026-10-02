@@ -1,10 +1,10 @@
 // Purchasing-RR — Requisitions: search + create/edit/submit/withdraw/cancel.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Card, Table, Button, Space, Input, Segmented, Typography, Tag, Form, Alert, Popconfirm, message, Checkbox, Descriptions, Spin,
+  Card, Table, Button, Space, Input, Segmented, Typography, Tag, Form, Alert, Popconfirm, message, Checkbox, Spin, Select, Tabs,
 } from 'antd';
 import {
-  PlusOutlined, ReloadOutlined, ArrowLeftOutlined, SaveOutlined, SendOutlined, RollbackOutlined, StopOutlined,
+  PlusOutlined, ReloadOutlined, SaveOutlined, SearchOutlined, PaperClipOutlined, SendOutlined, RollbackOutlined, StopOutlined,
   DeleteOutlined, FileTextOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -15,15 +15,16 @@ import {
   PoBar, BuNotSetUp, StatusTag, useBusinessUnits, useLookups, usePoUser, LinesEditor, EditLine, newLine, linesToJson,
   HistoryButton, askReason, lineAmount,
 } from './poShared';
+import PoAttachments from './PoAttachments';
 
 const { Text } = Typography;
 const EDITABLE = ['INCOMPLETE', 'REJECTED'];
 
-const Requisitions: React.FC = () => {
-  const buState = useBusinessUnits();
-  const user = usePoUser();
-  const [params, setParams] = useSearchParams();
-  const openId = params.get('id');
+interface ReqTab { key: string; id: number | null; label: string }
+let newSeq = 0;
+
+const ReqSearchTab: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; user: string; refreshKey: number;
+  onOpen: (r: Row) => void; onNew: () => void }> = ({ buState, user, refreshKey, onOpen, onNew }) => {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>('ACTIVE');
@@ -31,10 +32,10 @@ const Requisitions: React.FC = () => {
   const [search, setSearch] = useState('');
 
   const load = useCallback(async () => {
-    if (!buState.bu) { setRows([]); return; }
     setLoading(true);
     try {
-      const where = [`BUSINESS_UNIT_ID = ${nlit(buState.bu)}`];
+      const where = ['1 = 1'];
+      if (buState.bu) where.push(`BUSINESS_UNIT_ID = ${nlit(buState.bu)}`);
       if (status === 'ACTIVE') where.push(`STATUS IN ('INCOMPLETE','PENDING_APPROVAL','REJECTED','APPROVED')`);
       else if (status !== 'ALL') where.push(`STATUS = ${lit(status)}`);
       if (mine) where.push(`UPPER(PREPARER_USER) = UPPER(${lit(user)})`);
@@ -45,18 +46,10 @@ const Requisitions: React.FC = () => {
       setRows(await poQuery(`SELECT * FROM RR_PO_V_REQUISITIONS WHERE ${where.join(' AND ')} ORDER BY REQ_HEADER_ID DESC`, 500));
     } catch (e: any) { message.error(e.message); } finally { setLoading(false); }
   }, [buState.bu, status, mine, search, user]);
-  useEffect(() => { if (!openId) load(); }, [load, openId]);
-
-  if (openId) {
-    return <RequisitionEditor id={openId === 'new' ? null : Number(openId)} buState={buState} user={user}
-      onBack={() => setParams({})} onSaved={id => setParams({ id: String(id) })} />;
-  }
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   return (
-    <div style={{ padding: 20 }}>
-      <PoBar title="Requisitions" subtitle="Request goods and services · approval · hand-off to buyers" icon={<FileTextOutlined />}
-        buState={buState}
-        extra={<Button type="primary" icon={<PlusOutlined />} disabled={!buState.bu} onClick={() => setParams({ id: 'new' })}>New requisition</Button>} />
+    <div style={{ padding: 16 }}>
       <BuNotSetUp current={buState.current} />
       <Card size="small">
         <Space wrap style={{ marginBottom: 12 }}>
@@ -67,11 +60,13 @@ const Requisitions: React.FC = () => {
           <Checkbox checked={mine} onChange={e => setMine(e.target.checked)}>Mine only</Checkbox>
           <Input.Search allowClear placeholder="Number or description" style={{ width: 260 }} onSearch={setSearch} />
           <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={onNew}>New requisition</Button>
         </Space>
         <Table size="small" rowKey="REQ_HEADER_ID" loading={loading} dataSource={rows} pagination={{ pageSize: 20 }}
-          onRow={r => ({ onClick: () => setParams({ id: String(r.REQ_HEADER_ID) }), style: { cursor: 'pointer' } })}
+          onRow={r => ({ onDoubleClick: () => onOpen(r), style: { cursor: 'pointer' } })}
           columns={[
-            { title: 'Requisition', dataIndex: 'REQ_NUMBER', width: 160, render: (v, r) => <Space><Text strong>{v}</Text>{r.URGENT_FLAG === 'Y' && <Tag color="red">Urgent</Tag>}</Space> },
+            { title: 'Requisition', dataIndex: 'REQ_NUMBER', width: 170, render: (v, r) => <Space><a onClick={() => onOpen(r)}>{v}</a>{r.URGENT_FLAG === 'Y' && <Tag color="red">Urgent</Tag>}</Space> },
+            ...(!buState.bu ? [{ title: 'Business unit', dataIndex: 'BUSINESS_UNIT_NAME', width: 170, ellipsis: true }] : []),
             { title: 'Description', dataIndex: 'DESCRIPTION', ellipsis: true },
             { title: 'Preparer', dataIndex: 'PREPARER_USER', width: 130 },
             { title: 'Status', dataIndex: 'STATUS', width: 140, render: s => <StatusTag s={s} /> },
@@ -84,11 +79,74 @@ const Requisitions: React.FC = () => {
   );
 };
 
+const Requisitions: React.FC = () => {
+  const buState = useBusinessUnits();
+  const user = usePoUser();
+  const [params, setParams] = useSearchParams();
+  const [tabs, setTabs] = useState<ReqTab[]>([]);
+  const [active, setActive] = useState('search');
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const openReq = useCallback((id: number, label?: string) => {
+    const key = `req-${id}`;
+    setTabs(ts => (ts.some(t => t.key === key) ? ts : [...ts, { key, id, label: label || `REQ #${id}` }]));
+    setActive(key);
+  }, []);
+  const newReq = useCallback(() => {
+    const key = `new-${++newSeq}`;
+    setTabs(ts => [...ts, { key, id: null, label: `New requisition ${newSeq}` }]);
+    setActive(key);
+  }, []);
+  const closeTab = useCallback((key: string) => {
+    setTabs(ts => {
+      const i = ts.findIndex(t => t.key === key);
+      const rest = ts.filter(t => t.key !== key);
+      setActive(a => (a === key ? (rest[i - 1]?.key ?? rest[i]?.key ?? 'search') : a));
+      return rest;
+    });
+    setRefreshKey(k => k + 1);
+  }, []);
+
+  useEffect(() => {
+    const id = params.get('id');
+    if (!id) return;
+    if (id === 'new') newReq(); else if (Number(id)) openReq(Number(id));
+    setParams({}, { replace: true });
+  }, [params, setParams, newReq, openReq]);
+
+  return (
+    <div style={{ padding: '12px 20px 20px' }}>
+      <PoBar title="Requisitions" subtitle="Request goods and services · approval · hand-off to buyers" icon={<FileTextOutlined />}
+        buState={buState} allowAllBu
+        extra={<Button type="primary" icon={<PlusOutlined />} onClick={newReq}>New requisition</Button>} />
+      <Tabs type="editable-card" hideAdd activeKey={active} onChange={setActive}
+        onEdit={(key, action) => { if (action === 'remove') closeTab(String(key)); }}
+        style={{ background: '#fff', borderRadius: 8 }} tabBarStyle={{ margin: 0, paddingLeft: 8 }}
+        items={[
+          { key: 'search', closable: false, label: <Space size={4}><SearchOutlined />Search</Space>,
+            children: <ReqSearchTab buState={buState} user={user} refreshKey={refreshKey} onNew={newReq}
+              onOpen={r => openReq(Number(r.REQ_HEADER_ID), String(r.REQ_NUMBER))} /> },
+          ...tabs.map(t => ({
+            key: t.key, closable: true, label: t.label,
+            children: <RequisitionEditor key={t.key} id={t.id} buState={buState} user={user}
+              onBack={() => closeTab(t.key)}
+              onSaved={(id, num) => setTabs(ts => ts.map(x => (x.key === t.key ? { ...x, id, label: num || `REQ #${id}` } : x)))} />,
+          })),
+        ]} />
+    </div>
+  );
+};
+
 // ── Editor ─────────────────────────────────────────────────────────────────
 export const RequisitionEditor: React.FC<{
   id: number | null; buState: ReturnType<typeof useBusinessUnits>; user: string;
-  onBack: () => void; onSaved: (id: number) => void;
-}> = ({ id, buState, user, onBack, onSaved }) => {
+  onBack: () => void; onSaved: (id: number, number?: string | null) => void;
+}> = ({ id, buState, user, onBack: onBackProp, onSaved: onSavedProp }) => {
+  // parent callbacks change identity every render — keep them in refs so loading does not re-run
+  const cb = useRef({ onBackProp, onSavedProp });
+  cb.current = { onBackProp, onSavedProp };
+  const onBack = useCallback(() => cb.current.onBackProp(), []);
+  const onSaved = useCallback((i: number, num?: string | null) => cb.current.onSavedProp(i, num), []);
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const [hdr, setHdr] = useState<Row | null>(null);
@@ -96,9 +154,10 @@ export const RequisitionEditor: React.FC<{
   const [loading, setLoading] = useState(!!id);
   const [busy, setBusy] = useState(false);
   const [defaults, setDefaults] = useState<Row | null>(null);
-  const bu = hdr ? Number(hdr.BUSINESS_UNIT_ID) : buState.bu;
+  const [newBu, setNewBu] = useState<number | null>(buState.bu);
+  useEffect(() => { setNewBu(b => b ?? buState.bu ?? (buState.bus[0] ? Number(buState.bus[0].BUSINESS_UNIT_ID) : null)); }, [buState.bu, buState.bus]);
+  const bu = hdr ? Number(hdr.BUSINESS_UNIT_ID) : newBu;
   const lookups = useLookups(bu);
-  const buName = buState.bus.find(b => Number(b.BUSINESS_UNIT_ID) === bu)?.BUSINESS_UNIT_NAME;
   const currency = hdr?.FUNCTIONAL_CURRENCY || buState.bus.find(b => Number(b.BUSINESS_UNIT_ID) === bu)?.FUNCTIONAL_CURRENCY || '';
   const editable = !hdr || EDITABLE.includes(hdr.STATUS);
 
@@ -112,6 +171,7 @@ export const RequisitionEditor: React.FC<{
       const ds = await poQuery(`SELECT REQ_LINE_ID, PERCENT, CHARGE_ACCOUNT FROM RR_PO_V_REQ_DISTRIBUTIONS
                                 WHERE REQ_HEADER_ID = ${nlit(id)} ORDER BY REQ_LINE_ID, DIST_NUM`);
       setHdr(h);
+      onSaved(Number(h.REQ_HEADER_ID), String(h.REQ_NUMBER));   // relabel the tab
       form.setFieldsValue({ description: h.DESCRIPTION, justification: h.JUSTIFICATION, urgentFlag: h.URGENT_FLAG === 'Y' });
       setLines(ls.map(l => {
         const myD = ds.filter(d => Number(d.REQ_LINE_ID) === Number(l.REQ_LINE_ID));
@@ -154,7 +214,7 @@ export const RequisitionEditor: React.FC<{
         },
       }, user);
       message.success(r.message || 'Saved');
-      if (!id && r.id) onSaved(r.id); else await load();
+      if (!id && r.id) onSaved(r.id, r.number); else await load();
       return r.id;
     } catch (e: any) { message.error(e.message, 8); return null; } finally { setBusy(false); }
   };
@@ -177,21 +237,50 @@ export const RequisitionEditor: React.FC<{
 
   if (loading) return <div style={{ padding: 60, textAlign: 'center' }}><Spin /></div>;
   const st = hdr?.STATUS as string | undefined;
-  return (
-    <div style={{ padding: 20 }}>
-      <PoBar title={hdr ? `Requisition ${hdr.REQ_NUMBER}` : 'New requisition'} icon={<FileTextOutlined />}
-        subtitle={`${buName || ''}${hdr ? ` · prepared by ${hdr.PREPARER_USER}` : ''}`}
-        extra={<Button icon={<ArrowLeftOutlined />} onClick={onBack}>Back</Button>} />
-
-      {hdr && (
-        <Descriptions size="small" bordered column={{ xs: 1, md: 3, xl: 5 }} style={{ marginBottom: 12 }}>
-          <Descriptions.Item label="Status"><StatusTag s={st} /></Descriptions.Item>
-          <Descriptions.Item label="Total">{money(hdr.TOTAL_AMOUNT_FUNC)} {currency}</Descriptions.Item>
-          <Descriptions.Item label="Submitted">{day(hdr.SUBMITTED_DATE) || '—'}</Descriptions.Item>
-          <Descriptions.Item label="Approved">{day(hdr.APPROVED_DATE) || '—'}</Descriptions.Item>
-          <Descriptions.Item label="Lines on PO">{hdr.LINES_ON_PO}/{hdr.LINE_COUNT}</Descriptions.Item>
-        </Descriptions>
+  const actions = (
+    <Space wrap size={6}>
+      {editable && <Button icon={<SaveOutlined />} loading={busy} onClick={save}>Save</Button>}
+      {editable && <Button type="primary" icon={<SendOutlined />} loading={busy} onClick={submit}>Submit for approval</Button>}
+      {st === 'PENDING_APPROVAL' && (
+        <Popconfirm title="Withdraw from approval?" onConfirm={() => act(PROC.withdrawReq, { p_req_header_id: id })}>
+          <Button icon={<RollbackOutlined />} loading={busy}>Withdraw</Button>
+        </Popconfirm>
       )}
+      {st === 'APPROVED' && (
+        <Button icon={<ThunderboltOutlined />} onClick={() => navigate('/po/buyer-workbench')}>Open buyer workbench</Button>
+      )}
+      {st && st !== 'CANCELLED' && !(st === 'INCOMPLETE' && !hdr?.SUBMITTED_DATE) && (
+        <Button danger icon={<StopOutlined />} loading={busy} onClick={async () => {
+          const reason = await askReason('Cancel requisition', { danger: true, okText: 'Cancel requisition',
+            extra: <Text type="secondary">Lines already on a purchase order stay there.</Text> });
+          if (reason !== null) await act(PROC.cancelReq, { p_req_header_id: id, p_reason: reason });
+        }}>Cancel requisition</Button>
+      )}
+      {st === 'INCOMPLETE' && !hdr?.SUBMITTED_DATE && (
+        <Popconfirm title="Delete this draft?" onConfirm={() => act(PROC.deleteReq, { p_req_header_id: id }, 'back')}>
+          <Button danger icon={<DeleteOutlined />} loading={busy}>Delete draft</Button>
+        </Popconfirm>
+      )}
+      <HistoryButton entityType="REQ" id={id} />
+    </Space>
+  );
+  const row = (label: string, value: React.ReactNode, strong?: boolean) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px dashed #eee' }}>
+      <Text type={strong ? undefined : 'secondary'} strong={strong}>{label}</Text><Text strong={strong}>{value}</Text>
+    </div>
+  );
+
+  return (
+    <div style={{ padding: '12px 20px 20px' }}>
+      <div style={{ position: 'sticky', top: 0, zIndex: 5, background: '#fff', padding: '8px 0 10px', marginBottom: 10,
+        borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <Space size={10} wrap>
+          <Text strong style={{ fontSize: 18 }}>{hdr ? `Requisition ${hdr.REQ_NUMBER}` : 'New requisition'}</Text>
+          {hdr && <StatusTag s={st} />}
+          {hdr?.URGENT_FLAG === 'Y' && <Tag color="red">Urgent</Tag>}
+        </Space>
+        {actions}
+      </div>
       {st === 'REJECTED' && <Alert type="error" showIcon style={{ marginBottom: 12 }} message="Rejected — see History for the approver's comments, edit and submit again." />}
       {!id && defaults === null && (
         <Alert type="info" showIcon style={{ marginBottom: 12 }}
@@ -199,46 +288,40 @@ export const RequisitionEditor: React.FC<{
           description="Enter a charge account on each line, or ask the administrator to add your requester default (Setup → Requester Defaults) so accounts are derived automatically." />
       )}
 
-      <Card size="small" title="Header" style={{ marginBottom: 12 }}>
-        <Form form={form} layout="vertical" disabled={!editable}>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 3fr 140px', gap: 16 }}>
-            <Form.Item name="description" label="Description" rules={[{ required: true }]}><Input maxLength={240} /></Form.Item>
-            <Form.Item name="justification" label="Justification"><Input maxLength={2000} /></Form.Item>
-            <Form.Item name="urgentFlag" label="Urgent" valuePropName="checked"><Checkbox>Urgent</Checkbox></Form.Item>
-          </div>
-        </Form>
-      </Card>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: 12, marginBottom: 12, alignItems: 'start' }}>
+        <Card size="small" title="Requisition details">
+          <Form form={form} layout="vertical" disabled={!editable}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', columnGap: 14 }}>
+              <Form.Item label="Business unit" required>
+                <Select value={bu ?? undefined} disabled={!!hdr} showSearch optionFilterProp="label" placeholder="Choose business unit"
+                  onChange={v => setNewBu(v)}
+                  options={buState.bus.map(b => ({ value: Number(b.BUSINESS_UNIT_ID), label: b.BUSINESS_UNIT_NAME }))} />
+              </Form.Item>
+              <Form.Item name="description" label="Description" rules={[{ required: true }]} style={{ gridColumn: 'span 2' }}><Input maxLength={240} /></Form.Item>
+              <Form.Item name="urgentFlag" label="Urgent" valuePropName="checked"><Checkbox>Urgent</Checkbox></Form.Item>
+              <Form.Item name="justification" label="Justification" style={{ gridColumn: '1 / -1' }}><Input.TextArea rows={2} maxLength={2000} /></Form.Item>
+            </div>
+          </Form>
+        </Card>
+        <Card size="small" title="Totals">
+          {row('Lines', lines.length)}
+          {row('Total', `${money(total)} ${currency}`, true)}
+          {hdr && <>
+            {row('Lines on PO', `${hdr.LINES_ON_PO}/${hdr.LINE_COUNT}`)}
+            {row('Prepared by', hdr.PREPARER_USER)}
+            {row('Submitted', day(hdr.SUBMITTED_DATE) || '—')}
+            {row('Approved', day(hdr.APPROVED_DATE) || '—')}
+          </>}
+        </Card>
+      </div>
 
-      <Card size="small" title={`Lines · ${money(total)} ${currency}`} style={{ marginBottom: 12 }}>
-        <LinesEditor mode="REQ" lines={lines} onChange={setLines} lookups={lookups} readOnly={!editable} currency={currency}
-          defaultLocationId={defaults?.DELIVER_TO_LOCATION_ID ?? null} />
-      </Card>
-
-      <Space wrap>
-        {editable && <Button icon={<SaveOutlined />} loading={busy} onClick={save}>Save</Button>}
-        {editable && <Button type="primary" icon={<SendOutlined />} loading={busy} onClick={submit}>Submit for approval</Button>}
-        {st === 'PENDING_APPROVAL' && (
-          <Popconfirm title="Withdraw from approval?" onConfirm={() => act(PROC.withdrawReq, { p_req_header_id: id })}>
-            <Button icon={<RollbackOutlined />} loading={busy}>Withdraw</Button>
-          </Popconfirm>
-        )}
-        {st === 'APPROVED' && (
-          <Button icon={<ThunderboltOutlined />} onClick={() => navigate('/po/buyer-workbench')}>Open buyer workbench</Button>
-        )}
-        {st && st !== 'CANCELLED' && !(st === 'INCOMPLETE' && !hdr?.SUBMITTED_DATE) && (
-          <Button danger icon={<StopOutlined />} loading={busy} onClick={async () => {
-            const reason = await askReason('Cancel requisition', { danger: true, okText: 'Cancel requisition',
-              extra: <Text type="secondary">Lines already on a purchase order stay there.</Text> });
-            if (reason !== null) await act(PROC.cancelReq, { p_req_header_id: id, p_reason: reason });
-          }}>Cancel requisition</Button>
-        )}
-        {st === 'INCOMPLETE' && !hdr?.SUBMITTED_DATE && (
-          <Popconfirm title="Delete this draft?" onConfirm={() => act(PROC.deleteReq, { p_req_header_id: id }, 'back')}>
-            <Button danger icon={<DeleteOutlined />} loading={busy}>Delete draft</Button>
-          </Popconfirm>
-        )}
-        <HistoryButton entityType="REQ" id={id} />
-      </Space>
+      <Tabs defaultActiveKey="lines" items={[
+        { key: 'lines', label: `Lines (${lines.length})`, children: (
+          <LinesEditor mode="REQ" lines={lines} onChange={setLines} lookups={lookups} readOnly={!editable} currency={currency}
+            defaultLocationId={defaults?.DELIVER_TO_LOCATION_ID ?? null} />) },
+        { key: 'attachments', label: <span><PaperClipOutlined /> Attachments</span>, disabled: !id,
+          children: id ? <PoAttachments entityType="REQ" entityId={id} user={user} readOnly={st === 'CANCELLED'} /> : null },
+      ]} />
     </div>
   );
 };

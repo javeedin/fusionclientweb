@@ -2,12 +2,13 @@
 // history, reason prompt).
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Select, Space, Typography, Tag, Table, Input, InputNumber, Button, Tooltip, Modal, Alert, message, Empty, Form,
+  Select, Space, Typography, Tag, Table, Breadcrumb, Input, InputNumber, Button, Tooltip, Modal, Alert, message, Empty, Form,
 } from 'antd';
 import {
-  DeleteOutlined, PlusOutlined, SplitCellsOutlined, HistoryOutlined, ShoppingCartOutlined, CopyOutlined,
+  DeleteOutlined, PlusOutlined, SplitCellsOutlined, HomeOutlined, HistoryOutlined, ShoppingCartOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import {
   BusinessUnit, Row, loadBusinessUnits, loadCategories, loadCurrencies, loadItems, loadLocations, loadSupplierSites,
@@ -33,7 +34,7 @@ export function useBusinessUnits() {
       .then(rows => {
         setBus(rows);
         setBuState(cur => (cur && rows.some(r => Number(r.BUSINESS_UNIT_ID) === cur)) ? cur
-          : rows.length === 1 ? Number(rows[0].BUSINESS_UNIT_ID) : (rows.find(r => r.OPTIONS_SET === 'Y')?.BUSINESS_UNIT_ID ?? null));
+          : Number((rows.find(r => r.OPTIONS_SET === 'Y') ?? rows[0])?.BUSINESS_UNIT_ID) || null);
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
@@ -47,6 +48,11 @@ export const PoBar: React.FC<{
   title: string; subtitle?: string; icon?: React.ReactNode;
   buState?: ReturnType<typeof useBusinessUnits>; allowAllBu?: boolean; extra?: React.ReactNode;
 }> = ({ title, subtitle, icon, buState, allowAllBu, extra }) => (
+  <>
+  <Breadcrumb style={{ marginBottom: 8 }} items={[
+    { title: <Link to="/home"><HomeOutlined /> Home</Link> },
+    ...(title === 'Purchasing' ? [{ title: 'Purchasing-RR' }] : [{ title: <Link to="/po">Purchasing-RR</Link> }, { title }]),
+  ]} />
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
       <div style={{ width: 40, height: 40, borderRadius: 10, background: `${PO_RED}15`, color: PO_RED, display: 'flex',
@@ -75,6 +81,7 @@ export const PoBar: React.FC<{
       {extra}
     </Space>
   </div>
+  </>
 );
 
 export const BuNotSetUp: React.FC<{ current: BusinessUnit | null }> = ({ current }) =>
