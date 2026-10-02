@@ -5,7 +5,7 @@ import {
   Select, Space, Typography, Tag, Table, Breadcrumb, Input, InputNumber, Button, Tooltip, Modal, Alert, message, Empty, Form,
 } from 'antd';
 import {
-  DeleteOutlined, PlusOutlined, SplitCellsOutlined, HomeOutlined, HistoryOutlined, ShoppingCartOutlined, CopyOutlined,
+  DeleteOutlined, PlusOutlined, SplitCellsOutlined, HomeOutlined, SettingOutlined, HistoryOutlined, ShoppingCartOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { Link } from 'react-router-dom';
@@ -88,7 +88,9 @@ export const BuNotSetUp: React.FC<{ current: BusinessUnit | null }> = ({ current
   current && current.OPTIONS_SET !== 'Y' ? (
     <Alert type="warning" showIcon style={{ marginBottom: 12 }}
       message={`${current.BUSINESS_UNIT_NAME} has no Purchasing Options yet`}
-      description="Open Purchasing → Setup → Purchasing Options and save the options for this business unit (currency, accrual account, tolerances, approval flags)." />
+      description={<span>Save the options for this business unit (currency, accrual account, tolerances, approval flags) in{' '}
+        <Link to={`/po/setup?tab=opt&bu=${current.BUSINESS_UNIT_ID}`}>Purchasing → Setup → Purchasing Options</Link>.</span>}
+      action={<Link to={`/po/setup?tab=opt&bu=${current.BUSINESS_UNIT_ID}`}><Button type="primary" size="small" icon={<SettingOutlined />}>Set up now</Button></Link>} />
   ) : null;
 
 export const StatusTag: React.FC<{ s: unknown }> = ({ s }) =>

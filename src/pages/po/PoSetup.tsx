@@ -7,7 +7,7 @@ import {
   Card, Table, Button, Space, Input, InputNumber, Select, Typography, Tabs, Modal, Form, Alert, message, Popconfirm, Tag, Divider,
 } from 'antd';
 import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, SettingOutlined, SaveOutlined, LinkOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { poQuery, poExec, PROC, nlit, Row } from '../../services/po.service';
 import { PoBar, StatusTag, useBusinessUnits, usePoUser, YesNo, PO_RED } from './poShared';
 
@@ -410,6 +410,12 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
 
 const PoSetup: React.FC = () => {
   const buState = useBusinessUnits();
+  // deep link from the "no Purchasing Options" warning: /po/setup?tab=opt&bu=123
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(params.get('tab') || 'opt');
+  const linkBu = Number(params.get('bu')) || null;
+  const { setBu } = buState;
+  useEffect(() => { if (linkBu) setBu(linkBu); }, [linkBu, setBu]);
   const [lk, setLk] = useState<SetupLookups>({ bus: [], locations: [], categories: [], items: [], uoms: [], sites: [] });
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -427,7 +433,7 @@ const PoSetup: React.FC = () => {
   return (
     <div style={{ padding: 20 }}>
       <PoBar title="Purchasing Setup" subtitle="Options per business unit · reference data" icon={<SettingOutlined />} buState={buState} />
-      <Tabs items={[
+      <Tabs activeKey={tab} onChange={setTab} items={[
         { key: 'opt', label: 'Purchasing options', children: <BuOptions buState={buState} lk={lk} /> },
         ...ENTITIES.map(e => ({ key: e.key, label: e.title, children: <EntityGrid e={e} lk={lk} onChanged={() => setTick(t => t + 1)} /> })),
       ]} />
