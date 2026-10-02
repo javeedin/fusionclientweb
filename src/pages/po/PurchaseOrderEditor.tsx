@@ -391,7 +391,7 @@ const PurchaseOrderEditor: React.FC<{
         {
           key: 'lines', label: `Lines (${editable ? lines.length : lineRows.length})`,
           children: editable ? (
-            <LinesEditor mode="PO" lines={lines} onChange={setLines} lookups={lookups} currency={currencyCode} />
+            <LinesEditor mode="PO" lines={lines} onChange={setLines} lookups={lookups} currency={currencyCode} company={buRow?.COMPANY} />
           ) : (
             <Table size="small" rowKey="PO_LINE_ID" dataSource={lineRows} pagination={false} scroll={{ x: 1600 }} columns={approvedLineCols} />
           ),
@@ -461,7 +461,7 @@ const PurchaseOrderEditor: React.FC<{
           ]} />
         <Card size="small" title="New lines" style={{ marginTop: 8 }} extra={!coAdds.length && (
           <Button size="small" icon={<PlusOutlined />} onClick={() => setCoAdds([newLine({ needByDate: plusDays(7) })])}>Add line</Button>)}>
-          {coAdds.length > 0 && <LinesEditor mode="PO" lines={coAdds} onChange={setCoAdds} lookups={lookups} currency={hdr?.CURRENCY_CODE} />}
+          {coAdds.length > 0 && <LinesEditor mode="PO" lines={coAdds} onChange={setCoAdds} lookups={lookups} currency={hdr?.CURRENCY_CODE} company={buRow?.COMPANY} />}
         </Card>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
           <div><Text type="secondary">Note to supplier</Text>

@@ -9,12 +9,14 @@ import {
 import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, SettingOutlined, SaveOutlined, LinkOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { poQuery, poExec, PROC, nlit, Row } from '../../services/po.service';
-import { PoBar, StatusTag, useBusinessUnits, usePoUser, YesNo, PO_RED } from './poShared';
+import { PoBar, StatusTag, useBusinessUnits, usePoUser, YesNo, PO_RED, AccountInput } from './poShared';
 
 const { Text } = Typography;
 
-type FieldType = 'text' | 'number' | 'yn' | 'status' | 'select' | 'bu' | 'location' | 'category' | 'item' | 'uom' | 'supplier' | 'site' | 'textarea';
-interface Field { name: string; label: string; type?: FieldType; required?: boolean; options?: string[]; help?: string; span?: number }
+type FieldType = 'account' | 'text' | 'number' | 'yn' | 'status' | 'select' | 'bu' | 'location' | 'category' | 'item' | 'uom' | 'supplier' | 'site' | 'textarea';
+interface Field { name: string; label: string; type?: FieldType; required?: boolean;
+  /** required only when another field has a value, e.g. GRNI account when accruing at receipt */
+  requiredWhen?: { field: string; equals: string }; options?: string[]; help?: string; span?: number }
 interface Entity {
   key: string; title: string; sql: string; rowKey: string; fields: Field[]; columns: string[];
   deletable?: boolean; help?: string;
@@ -102,7 +104,7 @@ const ENTITIES: Entity[] = [
     columns: ['USER_NAME', 'BUSINESS_UNIT_NAME', 'CHARGE_ACCOUNT_TEMPLATE', 'LOCATION_NAME', 'MANAGER_USER_NAME'],
     fields: [
       { name: 'USER_NAME', label: 'User name', required: true }, { name: 'BUSINESS_UNIT_ID', label: 'Business unit', type: 'bu', required: true },
-      { name: 'CHARGE_ACCOUNT_TEMPLATE', label: 'Charge account template', required: true, help: 'Full 9-segment combination, e.g. 101-1000-000-000000-…' },
+      { name: 'CHARGE_ACCOUNT_TEMPLATE', label: 'Charge account template', type: 'account', required: true, help: 'Full 9-segment combination, e.g. 101-1000-000-000000-…' },
       { name: 'DELIVER_TO_LOCATION_ID', label: 'Deliver to', type: 'location' }, { name: 'MANAGER_USER_NAME', label: 'Manager' },
     ],
   },
@@ -158,40 +160,40 @@ const ENTITIES: Entity[] = [
 const BU_OPTION_FIELDS: { section: string; fields: Field[] }[] = [
   { section: 'General', fields: [
     { name: 'FUNCTIONAL_CURRENCY', label: 'Functional currency', required: true },
-    { name: 'DEFAULT_RATE_TYPE', label: 'Default rate type', type: 'select', options: ['Corporate', 'Spot', 'User'] },
+    { name: 'DEFAULT_RATE_TYPE', label: 'Default rate type', type: 'select', options: ['Corporate', 'Spot', 'User'], required: true },
     { name: 'DEFAULT_SHIP_TO_LOCATION_ID', label: 'Default ship-to', type: 'location' },
     { name: 'DEFAULT_BILL_TO_LOCATION_ID', label: 'Default bill-to', type: 'location' },
-    { name: 'REQUIRE_REQUISITION', label: 'Require requisitions (no direct POs)', type: 'yn', help: 'N = buyers create POs directly (default)' },
-    { name: 'ALLOW_AFTER_FACT_PO', label: 'Allow after-the-fact POs', type: 'yn' },
-    { name: 'AUTOCREATE_MODE', label: 'Autocreate', type: 'select', options: ['MANUAL', 'AUTOMATIC'] },
-    { name: 'STATUS', label: 'Status', type: 'status' },
+    { name: 'REQUIRE_REQUISITION', label: 'Require requisitions (no direct POs)', type: 'yn', help: 'N = buyers create POs directly (default)', required: true },
+    { name: 'ALLOW_AFTER_FACT_PO', label: 'Allow after-the-fact POs', type: 'yn', required: true },
+    { name: 'AUTOCREATE_MODE', label: 'Autocreate', type: 'select', options: ['MANUAL', 'AUTOMATIC'], required: true },
+    { name: 'STATUS', label: 'Status', type: 'status', required: true },
   ] },
   { section: 'Approvals', fields: [
-    { name: 'REQ_APPROVAL_REQUIRED', label: 'Requisition approval required', type: 'yn' },
-    { name: 'PO_APPROVAL_REQUIRED', label: 'PO approval required', type: 'yn' },
-    { name: 'CO_REAPPROVAL_THRESHOLD_PCT', label: 'Change-order re-approval above %', type: 'number' },
-    { name: 'SOD_BUYER_RECEIVE', label: 'Buyer may not receive own PO', type: 'yn' },
-    { name: 'BUDGET_CONTROL_LEVEL', label: 'Budget control', type: 'select', options: ['NONE', 'ADVISORY'] },
+    { name: 'REQ_APPROVAL_REQUIRED', label: 'Requisition approval required', type: 'yn', required: true },
+    { name: 'PO_APPROVAL_REQUIRED', label: 'PO approval required', type: 'yn', required: true },
+    { name: 'CO_REAPPROVAL_THRESHOLD_PCT', label: 'Change-order re-approval above %', type: 'number', required: true },
+    { name: 'SOD_BUYER_RECEIVE', label: 'Buyer may not receive own PO', type: 'yn', required: true },
+    { name: 'BUDGET_CONTROL_LEVEL', label: 'Budget control', type: 'select', options: ['NONE', 'ADVISORY'], required: true },
   ] },
   { section: 'Receiving & matching', fields: [
-    { name: 'MATCH_LEVEL_QUANTITY', label: 'Match level — goods', type: 'select', options: ['THREE_WAY', 'TWO_WAY'] },
-    { name: 'MATCH_LEVEL_AMOUNT', label: 'Match level — services', type: 'select', options: ['TWO_WAY', 'THREE_WAY'] },
-    { name: 'OVER_RECEIPT_TOLERANCE_PCT', label: 'Over-receipt tolerance %', type: 'number' },
-    { name: 'OVER_RECEIPT_ACTION', label: 'Over-receipt action', type: 'select', options: ['REJECT', 'WARNING'] },
+    { name: 'MATCH_LEVEL_QUANTITY', label: 'Match level — goods', type: 'select', options: ['THREE_WAY', 'TWO_WAY'], required: true },
+    { name: 'MATCH_LEVEL_AMOUNT', label: 'Match level — services', type: 'select', options: ['TWO_WAY', 'THREE_WAY'], required: true },
+    { name: 'OVER_RECEIPT_TOLERANCE_PCT', label: 'Over-receipt tolerance %', type: 'number', required: true },
+    { name: 'OVER_RECEIPT_ACTION', label: 'Over-receipt action', type: 'select', options: ['REJECT', 'WARNING'], required: true },
     { name: 'EARLY_RECEIPT_DAYS', label: 'Early receipt days', type: 'number' },
-    { name: 'RECEIPT_CLOSE_TOLERANCE_PCT', label: 'Receipt close tolerance %', type: 'number' },
-    { name: 'INVOICE_CLOSE_TOLERANCE_PCT', label: 'Invoice close tolerance %', type: 'number' },
-    { name: 'INVOICE_QTY_TOLERANCE_PCT', label: 'Invoice qty tolerance %', type: 'number' },
-    { name: 'INVOICE_PRICE_TOLERANCE_PCT', label: 'Invoice price tolerance %', type: 'number' },
+    { name: 'RECEIPT_CLOSE_TOLERANCE_PCT', label: 'Receipt close tolerance %', type: 'number', required: true },
+    { name: 'INVOICE_CLOSE_TOLERANCE_PCT', label: 'Invoice close tolerance %', type: 'number', required: true },
+    { name: 'INVOICE_QTY_TOLERANCE_PCT', label: 'Invoice qty tolerance %', type: 'number', required: true },
+    { name: 'INVOICE_PRICE_TOLERANCE_PCT', label: 'Invoice price tolerance %', type: 'number', required: true },
     { name: 'INVOICE_AMOUNT_TOLERANCE', label: 'Invoice amount tolerance', type: 'number' },
   ] },
   { section: 'Accounting', fields: [
-    { name: 'ACCRUE_AT_RECEIPT_FLAG', label: 'Accrue at receipt', type: 'yn', help: 'N = accrue at period end' },
-    { name: 'RECEIPT_ACCRUAL_ACCOUNT', label: 'Receipt accrual (GRNI) account' },
-    { name: 'PRICE_VARIANCE_ACCOUNT', label: 'Invoice price variance account' },
-    { name: 'EXCHANGE_GAIN_ACCOUNT', label: 'Exchange gain account' },
-    { name: 'EXCHANGE_LOSS_ACCOUNT', label: 'Exchange loss account' },
-    { name: 'ACCRUAL_WRITE_OFF_ACCOUNT', label: 'Accrual write-off account' },
+    { name: 'ACCRUE_AT_RECEIPT_FLAG', label: 'Accrue at receipt', type: 'yn', help: 'N = accrue at period end', required: true },
+    { name: 'RECEIPT_ACCRUAL_ACCOUNT', label: 'Receipt accrual (GRNI) account', type: 'account', requiredWhen: { field: 'ACCRUE_AT_RECEIPT_FLAG', equals: 'Y' }, help: 'Required when accruing at receipt' },
+    { name: 'PRICE_VARIANCE_ACCOUNT', label: 'Invoice price variance account', type: 'account' },
+    { name: 'EXCHANGE_GAIN_ACCOUNT', label: 'Exchange gain account', type: 'account' },
+    { name: 'EXCHANGE_LOSS_ACCOUNT', label: 'Exchange loss account', type: 'account' },
+    { name: 'ACCRUAL_WRITE_OFF_ACCOUNT', label: 'Accrual write-off account', type: 'account' },
     { name: 'ACCRUAL_WRITE_OFF_AGE_DAYS', label: 'Write-off allowed after (days)', type: 'number' },
   ] },
   { section: 'Purchase order document', fields: [
@@ -203,10 +205,11 @@ const BU_OPTION_FIELDS: { section: string; fields: Field[] }[] = [
 
 interface SetupLookups { bus: Row[]; locations: Row[]; categories: Row[]; items: Row[]; uoms: Row[]; sites: Row[] }
 
-const FieldInput: React.FC<{ f: Field; lk: SetupLookups; id?: string; value?: any; onChange?: (v: any) => void; supplierId?: number }> = ({ f, lk, id, value, onChange, supplierId }) => {
+const FieldInput: React.FC<{ f: Field; lk: SetupLookups; id?: string; value?: any; onChange?: (v: any) => void; supplierId?: number; company?: string | null }> = ({ f, lk, id, value, onChange, supplierId, company }) => {
   const sel = (options: { value: any; label: string }[], allowClear = !f.required) =>
     <Select id={id} value={value ?? undefined} onChange={v => onChange?.(v ?? null)} allowClear={allowClear} showSearch optionFilterProp="label" options={options} />;
   switch (f.type) {
+    case 'account': return <AccountInput id={id} value={value} onChange={v => onChange?.(v)} company={company} />;
     case 'number': return <InputNumber id={id} style={{ width: '100%' }} value={value ?? undefined} onChange={v => onChange?.(v ?? null)} />;
     case 'yn': return sel(YesNo, false);
     case 'status': return sel(STATUS_OPTS.map(s => ({ value: s, label: s })), false);
@@ -229,6 +232,15 @@ const FieldInput: React.FC<{ f: Field; lk: SetupLookups; id?: string; value?: an
     default: return <Input id={id} value={value ?? ''} onChange={e => onChange?.(e.target.value)} />;
   }
 };
+
+// mandatory = NOT NULL column (required) or conditionally required (requiredWhen, checked against the form)
+const isReq = (f: Field, values?: Record<string, any>) =>
+  !!f.required || (!!f.requiredWhen && (values ? values[f.requiredWhen.field] === f.requiredWhen.equals : true));
+const ruleFor = (f: Field) => (f.required ? [{ required: true, message: `${f.label} is required` }]
+  : f.requiredWhen ? [({ getFieldValue }: { getFieldValue: (n: string) => any }) => ({
+      validator: (_: unknown, v: any) => (getFieldValue(f.requiredWhen!.field) === f.requiredWhen!.equals && (v === null || v === undefined || v === '')
+        ? Promise.reject(new Error(`${f.label} is required`)) : Promise.resolve()),
+    })] : undefined);
 
 const toJson = (fields: Field[], v: Record<string, any>, isNew: boolean) => {
   const o: Record<string, unknown> = {};
@@ -317,7 +329,7 @@ const EntityGrid: React.FC<{ e: Entity; lk: SetupLookups; onChanged: () => void 
         <Form form={form} layout="vertical">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', columnGap: 16 }}>
             {e.fields.map(f => (
-              <Form.Item key={f.name} name={f.name} label={f.label} rules={f.required ? [{ required: true }] : undefined}
+              <Form.Item key={f.name} name={f.name} label={f.label} rules={ruleFor(f)} required={isReq(f)}
                 extra={f.help} style={f.span ? { gridColumn: `span ${f.span}` } : undefined}>
                 <FieldInput f={f} lk={lk} supplierId={f.name === 'PREFERRED_SUPPLIER_SITE_ID' ? supplierId : undefined}
                   /* UOM code is the key — not editable once created */ />
@@ -338,12 +350,20 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
   const [busy, setBusy] = useState(false);
   const [exists, setExists] = useState(false);
   const all = BU_OPTION_FIELDS.flatMap(s => s.fields);
+  const accrue = Form.useWatch('ACCRUE_AT_RECEIPT_FLAG', form);
 
   useEffect(() => {
     if (!buState.bu) return;
     setLoading(true);
     const cols = all.map(f => (['PO_TERMS_TEXT', 'PO_EMAIL_BODY'].includes(f.name)
       ? `CAST(SUBSTR(${f.name}, 1, 3900) AS VARCHAR2(3900)) AS ${f.name}` : f.name)).join(', ');
+    const applyDefaults = () => form.setFieldsValue({
+            FUNCTIONAL_CURRENCY: buState.current?.FUNCTIONAL_CURRENCY || 'AED', DEFAULT_RATE_TYPE: 'Corporate', REQUIRE_REQUISITION: 'N',
+            ALLOW_AFTER_FACT_PO: 'N', AUTOCREATE_MODE: 'MANUAL', STATUS: 'ACTIVE', REQ_APPROVAL_REQUIRED: 'Y', PO_APPROVAL_REQUIRED: 'Y',
+            CO_REAPPROVAL_THRESHOLD_PCT: 0, SOD_BUYER_RECEIVE: 'Y', BUDGET_CONTROL_LEVEL: 'NONE', MATCH_LEVEL_QUANTITY: 'THREE_WAY',
+            MATCH_LEVEL_AMOUNT: 'TWO_WAY', OVER_RECEIPT_TOLERANCE_PCT: 0, OVER_RECEIPT_ACTION: 'REJECT', RECEIPT_CLOSE_TOLERANCE_PCT: 0,
+            INVOICE_CLOSE_TOLERANCE_PCT: 0, INVOICE_QTY_TOLERANCE_PCT: 0, INVOICE_PRICE_TOLERANCE_PCT: 5, ACCRUE_AT_RECEIPT_FLAG: 'Y',
+          });
     poQuery(`SELECT BU_OPTION_ID, ${cols} FROM RR_PO_BU_OPTIONS WHERE BUSINESS_UNIT_ID = ${nlit(buState.bu)}`)
       .then(([r]) => {
         form.resetFields();
@@ -352,17 +372,9 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
           const v: Record<string, any> = {};
           all.forEach(f => { v[f.name] = f.type === 'location' && r[f.name] != null ? Number(r[f.name]) : r[f.name]; });
           form.setFieldsValue(v);
-        } else {
-          form.setFieldsValue({
-            FUNCTIONAL_CURRENCY: buState.current?.FUNCTIONAL_CURRENCY || 'AED', DEFAULT_RATE_TYPE: 'Corporate', REQUIRE_REQUISITION: 'N',
-            ALLOW_AFTER_FACT_PO: 'N', AUTOCREATE_MODE: 'MANUAL', STATUS: 'ACTIVE', REQ_APPROVAL_REQUIRED: 'Y', PO_APPROVAL_REQUIRED: 'Y',
-            CO_REAPPROVAL_THRESHOLD_PCT: 0, SOD_BUYER_RECEIVE: 'Y', BUDGET_CONTROL_LEVEL: 'NONE', MATCH_LEVEL_QUANTITY: 'THREE_WAY',
-            MATCH_LEVEL_AMOUNT: 'TWO_WAY', OVER_RECEIPT_TOLERANCE_PCT: 0, OVER_RECEIPT_ACTION: 'REJECT', RECEIPT_CLOSE_TOLERANCE_PCT: 0,
-            INVOICE_CLOSE_TOLERANCE_PCT: 0, INVOICE_QTY_TOLERANCE_PCT: 0, INVOICE_PRICE_TOLERANCE_PCT: 5, ACCRUE_AT_RECEIPT_FLAG: 'Y',
-          });
-        }
+        } else applyDefaults();
       })
-      .catch(e => message.error(e.message))
+      .catch(e => { message.error(e.message); form.resetFields(); applyDefaults(); })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buState.bu]);
@@ -395,9 +407,10 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
             <Divider titlePlacement="start" style={{ color: PO_RED, marginTop: 4 }}>{s.section}</Divider>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', columnGap: 16 }}>
               {s.fields.map(f => (
-                <Form.Item key={f.name} name={f.name} label={f.label} rules={f.required ? [{ required: true }] : undefined}
+                <Form.Item key={f.name} name={f.name} label={f.label} rules={ruleFor(f)} required={isReq(f, { ACCRUE_AT_RECEIPT_FLAG: accrue })}
+                  dependencies={f.requiredWhen ? [f.requiredWhen.field] : undefined}
                   extra={f.help} style={f.span ? { gridColumn: `span ${f.span}` } : undefined}>
-                  <FieldInput f={f} lk={lk} />
+                  <FieldInput f={f} lk={lk} company={buState.current?.COMPANY} />
                 </Form.Item>
               ))}
             </div>

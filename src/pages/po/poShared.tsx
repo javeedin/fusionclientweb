@@ -5,11 +5,12 @@ import {
   Select, Space, Typography, Tag, Table, Breadcrumb, Input, InputNumber, Button, Tooltip, Modal, Alert, message, Empty, Form,
 } from 'antd';
 import {
-  DeleteOutlined, PlusOutlined, SplitCellsOutlined, HomeOutlined, SettingOutlined, HistoryOutlined, ShoppingCartOutlined, CopyOutlined,
+  DeleteOutlined, PlusOutlined, SplitCellsOutlined, HomeOutlined, SettingOutlined, SearchOutlined, HistoryOutlined, ShoppingCartOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import AccountSelector from '../../components/AccountSelector';
 import {
   BusinessUnit, Row, loadBusinessUnits, loadCategories, loadCurrencies, loadItems, loadLocations, loadSupplierSites,
   loadTaxCodes, loadUoms, loadHistory, rememberBu, rememberedBu, STATUS_COLOR, label, money, n, r2,
@@ -95,6 +96,31 @@ export const BuNotSetUp: React.FC<{ current: BusinessUnit | null }> = ({ current
 
 export const StatusTag: React.FC<{ s: unknown }> = ({ s }) =>
   s ? <Tag color={STATUS_COLOR[String(s)] || 'default'} style={{ marginInlineEnd: 0 }}>{label(s)}</Tag> : null;
+
+// ── Account field with the standard account-combination popup (AccountSelector) ──
+export const AccountInput: React.FC<{
+  id?: string; value?: string | null; onChange?: (v: string | null) => void; disabled?: boolean;
+  /** company segment of the business unit — locks segment 1 in the popup */
+  company?: string | null; size?: 'small' | 'middle'; placeholder?: string; status?: 'warning' | 'error';
+}> = ({ id, value, onChange, disabled, company, size, placeholder, status }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Space.Compact style={{ width: '100%' }}>
+        <Input id={id} size={size} value={value || ''} disabled={disabled} placeholder={placeholder ?? 'Select account…'} allowClear
+          status={status} onChange={e => onChange?.(e.target.value || null)} />
+        <Tooltip title="Choose account combination">
+          <Button size={size} icon={<SearchOutlined />} disabled={disabled} onClick={() => setOpen(true)} />
+        </Tooltip>
+      </Space.Compact>
+      {open && (
+        <AccountSelector visible={open} initialValue={value || undefined} lockedFirstSegment={company || undefined}
+          onCancel={() => setOpen(false)}
+          onSelect={code => { onChange?.(code); setOpen(false); }} />
+      )}
+    </>
+  );
+};
 
 // ── Lookups ────────────────────────────────────────────────────────────────
 export interface Lookups {
@@ -218,7 +244,9 @@ export const LinesEditor: React.FC<{
   readOnly?: boolean;
   currency?: string;
   defaultLocationId?: number | null;
-}> = ({ mode, lines, onChange, lookups, readOnly, currency, defaultLocationId }) => {
+  /** business-unit company (segment 1) for the account popup */
+  company?: string | null;
+}> = ({ mode, lines, onChange, lookups, readOnly, currency, defaultLocationId, company }) => {
   const [splitKey, setSplitKey] = useState<string | null>(null);
   const [splitRows, setSplitRows] = useState<Dist[]>([]);
   const upd = (key: string, patch: Partial<EditLine>) => onChange(lines.map(l => (l.key === key ? { ...l, ...patch } : l)));
@@ -339,15 +367,15 @@ export const LinesEditor: React.FC<{
     },
     {
       title: <Tooltip title="Leave blank to derive it from requester defaults + category natural account + account rules">Charge account</Tooltip>,
-      dataIndex: 'chargeAccount', width: 230,
+      dataIndex: 'chargeAccount', width: 290,
       render: (v, l) => (l.distributions?.length ?? 0) > 1 ? (
         <Button size="small" icon={<SplitCellsOutlined />} onClick={() => openSplit(l)}>
           Split ({l.distributions!.length})
         </Button>
       ) : (
         <Space.Compact style={{ width: '100%' }}>
-          <Input size="small" disabled={readOnly} value={v || ''} placeholder="auto-derived"
-            onChange={e => upd(l.key, { chargeAccount: e.target.value })} />
+          <AccountInput size="small" disabled={readOnly} value={v} placeholder="auto-derived" company={company}
+            onChange={val => upd(l.key, { chargeAccount: val })} />
           {!readOnly && <Tooltip title="Split across accounts"><Button size="small" icon={<SplitCellsOutlined />} onClick={() => openSplit(l)} /></Tooltip>}
         </Space.Compact>
       ),
@@ -450,8 +478,8 @@ export const LinesEditor: React.FC<{
               <InputNumber size="small" min={0} max={100} value={d.percent} disabled={readOnly}
                 onChange={v => setSplitRows(rs => rs.map((x, j) => (j === d.i ? { ...x, percent: v as number } : x)))} />) },
             { title: 'Charge account', render: (_, d) => (
-              <Input size="small" value={d.chargeAccount || ''} disabled={readOnly}
-                onChange={e => setSplitRows(rs => rs.map((x, j) => (j === d.i ? { ...x, chargeAccount: e.target.value } : x)))} />) },
+              <AccountInput size="small" value={d.chargeAccount} disabled={readOnly} company={company}
+                onChange={val => setSplitRows(rs => rs.map((x, j) => (j === d.i ? { ...x, chargeAccount: val } : x)))} />) },
             { title: '', width: 40, render: (_, d) => !readOnly && splitRows.length > 1 && (
               <Button size="small" type="text" danger icon={<DeleteOutlined />}
                 onClick={() => setSplitRows(rs => rs.filter((_, j) => j !== d.i))} />) },

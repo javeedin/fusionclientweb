@@ -9,7 +9,7 @@ import {
 } from 'antd';
 import { CalculatorOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, ScissorOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { poQuery, poExec, PROC, nlit, lit, money, qty, day, today, Row, n, r2 } from '../../services/po.service';
-import { PoBar, BuNotSetUp, StatusTag, useBusinessUnits, usePoUser } from './poShared';
+import { PoBar, BuNotSetUp, StatusTag, useBusinessUnits, usePoUser, AccountInput } from './poShared';
 import { postJournal, pair, PO_JE_CATEGORY } from './poAccounting';
 
 const { Text } = Typography;
@@ -336,7 +336,7 @@ const Uninvoiced: React.FC<{ buState: BuState }> = ({ buState }) => {
         <Form form={form} layout="vertical">
           <Form.Item name="reason" label="Reason" rules={[{ required: true }]}><Input.TextArea rows={2} /></Form.Item>
           <Form.Item name="writeOffDate" label="Write-off date" rules={[{ required: true }]}><Input type="date" /></Form.Item>
-          <Form.Item name="account" label="Write-off account (blank = Purchasing Options default)"><Input /></Form.Item>
+          <Form.Item name="account" label="Write-off account (blank = Purchasing Options default)"><AccountInput company={buState.current?.COMPANY} /></Form.Item>
         </Form>
         <Text type="secondary">Only closed lines (or receipts older than the configured age) can be written off. Then create the accounting in the Write-off accounting tab.</Text>
       </Modal>
