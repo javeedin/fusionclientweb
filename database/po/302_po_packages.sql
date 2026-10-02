@@ -1327,7 +1327,8 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
                           p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
         o      JSON_OBJECT_T := JSON_OBJECT_T.parse(p_json);
         ids    JSON_ARRAY_T := RR_PO_UTIL_PKG.jarr(o, 'reqLineIds');
-        v_ids  CLOB;                 -- the id list as text for JSON_TABLE (no object methods in SQL)
+        v_ids  SYS.ODCINUMBERLIST := SYS.ODCINUMBERLIST();   -- ids as a SQL collection (no object methods in SQL)
+        v_lock NUMBER;
         prices JSON_OBJECT_T;
         po     JSON_OBJECT_T := JSON_OBJECT_T();
         lines  JSON_ARRAY_T := JSON_ARRAY_T();
@@ -1340,13 +1341,19 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
         v_n    NUMBER := 0;
     BEGIN
         IF ids.get_size = 0 THEN RR_PO_UTIL_PKG.err('Select at least one requisition line'); END IF;
-        v_ids := ids.to_clob;
+        FOR i IN 0 .. ids.get_size - 1 LOOP
+            v_ids.EXTEND; v_ids(v_ids.COUNT) := ids.get_number(i);
+            -- lock each line (FOR UPDATE is not allowed on the ordered join below: ORA-01786)
+            BEGIN
+                SELECT REQ_LINE_ID INTO v_lock FROM RR_PO_REQ_LINES WHERE REQ_LINE_ID = v_ids(v_ids.COUNT) FOR UPDATE;
+            EXCEPTION WHEN NO_DATA_FOUND THEN NULL;   -- reported below as "not found"
+            END;
+        END LOOP;
         IF o.has('prices') AND o.get('prices').is_object THEN prices := o.get_object('prices'); END IF;
         FOR r IN (SELECT l.*, h.BUSINESS_UNIT_ID, h.STATUS hdr_status
                   FROM RR_PO_REQ_LINES l JOIN RR_PO_REQ_HEADERS h ON h.REQ_HEADER_ID = l.REQ_HEADER_ID
-                  WHERE l.REQ_LINE_ID IN (SELECT TO_NUMBER(VALUE) FROM JSON_TABLE(v_ids, '$[*]' COLUMNS (VALUE VARCHAR2(40) PATH '$')))
-                  ORDER BY l.REQ_HEADER_ID, l.LINE_NUM
-                  FOR UPDATE OF l.LINE_STATUS) LOOP
+                  WHERE l.REQ_LINE_ID IN (SELECT COLUMN_VALUE FROM TABLE(v_ids))
+                  ORDER BY l.REQ_HEADER_ID, l.LINE_NUM) LOOP
             IF r.hdr_status <> 'APPROVED' OR r.LINE_STATUS <> 'OPEN' THEN
                 RR_PO_UTIL_PKG.err('Requisition line ' || r.REQ_LINE_ID || ' is not an open line of an approved requisition');
             END IF;
