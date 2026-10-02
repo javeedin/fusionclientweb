@@ -266,7 +266,7 @@ export const RequisitionEditor: React.FC<{
     </Space>
   );
   const row = (label: string, value: React.ReactNode, strong?: boolean) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px dashed #eee' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px dashed #eee', fontSize: 12 }}>
       <Text type={strong ? undefined : 'secondary'} strong={strong}>{label}</Text><Text strong={strong}>{value}</Text>
     </div>
   );
@@ -291,16 +291,18 @@ export const RequisitionEditor: React.FC<{
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: 12, marginBottom: 12, alignItems: 'start' }}>
         <Card size="small" title="Requisition details">
-          <Form form={form} layout="vertical" disabled={!editable}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', columnGap: 14 }}>
+          <style>{`.po-compact .ant-form-item { margin-bottom: 8px; } .po-compact .ant-form-item-label > label { font-size: 12px; color: #595959; }`}</style>
+          <Form form={form} disabled={!editable} className="po-compact" size="small" layout="horizontal" labelAlign="left"
+            labelCol={{ flex: '96px' }} wrapperCol={{ flex: 'auto' }} colon={false}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', columnGap: 14 }}>
               <Form.Item label="Business unit" required>
                 <Select value={bu ?? undefined} disabled={!!hdr} showSearch optionFilterProp="label" placeholder="Choose business unit"
                   onChange={v => setNewBu(v)}
                   options={buState.bus.map(b => ({ value: Number(b.BUSINESS_UNIT_ID), label: b.BUSINESS_UNIT_NAME }))} />
               </Form.Item>
-              <Form.Item name="description" label="Description" rules={[{ required: true }]} style={{ gridColumn: 'span 2' }}><Input maxLength={240} /></Form.Item>
-              <Form.Item name="urgentFlag" label="Urgent" valuePropName="checked"><Checkbox>Urgent</Checkbox></Form.Item>
-              <Form.Item name="justification" label="Justification" style={{ gridColumn: '1 / -1' }}><Input.TextArea rows={2} maxLength={2000} /></Form.Item>
+              <Form.Item name="description" label="Description" rules={[{ required: true }]}><Input maxLength={240} /></Form.Item>
+              <Form.Item name="urgentFlag" label="Urgent" valuePropName="checked"><Checkbox /></Form.Item>
+              <Form.Item name="justification" label="Justification" style={{ gridColumn: '1 / -1' }}><Input.TextArea rows={1} autoSize={{ minRows: 1, maxRows: 4 }} maxLength={2000} /></Form.Item>
             </div>
           </Form>
         </Card>

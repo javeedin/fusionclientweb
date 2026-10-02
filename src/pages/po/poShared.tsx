@@ -170,18 +170,25 @@ export const SupplierSelect: React.FC<{
 }> = ({ bu, value, onChange, anyBu, id, disabled, placeholder, size, style }) => {
   const [opts, setOpts] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const seq = React.useRef(0);
   const run = useCallback((text: string) => {
     if (!bu && !anyBu) { setOpts([]); return; }
     const my = ++seq.current;
-    setLoading(true);
+    setLoading(true); setErr(null);
     Promise.all([searchSuppliers(bu, text), value && !text ? searchSuppliers(bu, '', value) : Promise.resolve([] as Row[])])
       .then(([rows, cur]) => {
         if (my !== seq.current) return;
         const all = [...cur, ...rows.filter(r => !cur.some(c => c.SUPPLIER_ID === r.SUPPLIER_ID))];
         setOpts(all);
       })
-      .catch(e => message.error(e.message))
+      .catch(e => {
+        if (my !== seq.current) return;
+        setOpts([]);
+        setErr(/PURCHASING_FLAG|invalid identifier|ORA-00904/i.test(String(e.message))
+          ? 'The supplier view is out of date — run database/po/301_po_views.sql again'
+          : String(e.message));
+      })
       .finally(() => { if (my === seq.current) setLoading(false); });
   }, [bu, value, anyBu]);
   useEffect(() => { run(''); }, [run]);
@@ -189,7 +196,9 @@ export const SupplierSelect: React.FC<{
   return (
     <Select id={id} size={size} style={style} value={value ?? undefined} disabled={disabled} allowClear showSearch filterOption={false}
       placeholder={placeholder ?? 'Type to search suppliers'} loading={loading} popupMatchSelectWidth={420}
-      notFoundContent={loading ? 'Searching…' : 'No supplier found'}
+      notFoundContent={loading ? 'Searching…' : err
+        ? <Text type="danger" style={{ fontSize: 12 }}>{err}</Text>
+        : <Text type="secondary" style={{ fontSize: 12 }}>No supplier found{bu ? ' for this business unit' : ''} — check that the supplier and its site are active (RR_SUPPLIER_MASTER / RR_SUPPLIER_SITES)</Text>}
       onSearch={t => { clearTimeout(timer.current); timer.current = setTimeout(() => run(t), 300); }}
       onChange={v => onChange?.(v ?? null, opts.find(o => Number(o.SUPPLIER_ID) === v))}
       options={opts.map(o => ({

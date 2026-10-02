@@ -271,9 +271,9 @@ const PurchaseOrderEditor: React.FC<{
   const tax = editable ? taxEstimate : n(hdr?.TOTAL_TAX_ESTIMATE);
   const buOptions = buState.bus.map(b => ({ value: Number(b.BUSINESS_UNIT_ID), label: b.BUSINESS_UNIT_NAME }));
   const TotalRow: React.FC<{ label: string; value: React.ReactNode; strong?: boolean }> = ({ label, value, strong }) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px dashed #eee' }}>
-      <Text type={strong ? undefined : 'secondary'} strong={strong}>{label}</Text>
-      <Text strong={strong} style={strong ? { fontSize: 16 } : undefined}>{value}</Text>
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px dashed #eee', fontSize: 12 }}>
+      <Text type={strong ? undefined : 'secondary'} strong={strong} style={{ fontSize: 12 }}>{label}</Text>
+      <Text strong={strong} style={{ fontSize: strong ? 14 : 12 }}>{value}</Text>
     </div>
   );
 
@@ -305,8 +305,8 @@ const PurchaseOrderEditor: React.FC<{
   );
 
   const section = (title: string, sub?: string) => (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '4px 0 10px' }}>
-      <Text strong style={{ fontSize: 13, color: PO_RED, textTransform: 'uppercase', letterSpacing: 0.5 }}>{title}</Text>
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '2px 0 8px' }}>
+      <Text strong style={{ fontSize: 11, color: PO_RED, textTransform: 'uppercase', letterSpacing: 0.5 }}>{title}</Text>
       {sub && <Text type="secondary" style={{ fontSize: 12 }}>{sub}</Text>}
       <div style={{ flex: 1, borderBottom: '1px solid #f0f0f0' }} />
     </div>
@@ -317,14 +317,14 @@ const PurchaseOrderEditor: React.FC<{
     <div style={{ padding: '12px 20px 20px', background: '#f7f8fa' }}>
       {/* ── title bar ── */}
       <div style={{ position: 'sticky', top: 0, zIndex: 5, background: '#fff', border: '1px solid #eef0f3', borderRadius: 10,
-        padding: '12px 16px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10,
+        padding: '8px 14px', marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10,
         boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 42, height: 42, borderRadius: 10, background: `${PO_RED}12`, color: PO_RED, display: 'flex',
+          <div style={{ width: 34, height: 34, borderRadius: 8, background: `${PO_RED}12`, color: PO_RED, display: 'flex',
             alignItems: 'center', justifyContent: 'center', fontSize: 20 }}><FileTextOutlined /></div>
           <div>
             <Space size={8} wrap>
-              <Text strong style={{ fontSize: 18 }}>{hdr ? hdr.PO_NUMBER : 'New purchase order'}</Text>
+              <Text strong style={{ fontSize: 16 }}>{hdr ? hdr.PO_NUMBER : 'New purchase order'}</Text>
               {hdr && n(hdr.REVISION_NUM) > 0 && <Tag>Rev {hdr.REVISION_NUM}</Tag>}
               {hdr ? <><StatusTag s={st} />{st === 'APPROVED' && <StatusTag s={hdr.CLOSURE_STATUS} />}</> : <Tag color="blue">Draft</Tag>}
               {hdr?.HOLD_FLAG === 'Y' && <Tooltip title={hdr.HOLD_REASON}><Tag color="red">ON HOLD</Tag></Tooltip>}
@@ -346,39 +346,41 @@ const PurchaseOrderEditor: React.FC<{
         action={<Popconfirm title="Cancel this change order?" onConfirm={() => exec(PROC.cancelChange, { p_change_order_id: pendingCo.CHANGE_ORDER_ID })}>
           <Button size="small" danger>Cancel change</Button></Popconfirm>} />}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: 12, marginBottom: 12, alignItems: 'start' }}>
-        <Card size="small" style={{ borderRadius: 10 }} styles={{ body: { padding: '14px 18px 4px' } }}>
-          <Form form={form} layout="vertical" disabled={!editable} requiredMark>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 260px', gap: 10, marginBottom: 10, alignItems: 'start' }}>
+        <Card size="small" style={{ borderRadius: 10 }} styles={{ body: { padding: '10px 14px 2px' } }}>
+          <style>{`
+            .po-compact .ant-form-item { margin-bottom: 8px; }
+            .po-compact .ant-form-item-label > label { font-size: 12px; color: #595959; }
+            .po-compact .ant-form-item-label { padding-right: 8px; }
+          `}</style>
+          <Form form={form} disabled={!editable} requiredMark className="po-compact" size="small"
+            layout="horizontal" labelAlign="left" labelCol={{ flex: '96px' }} wrapperCol={{ flex: 'auto' }} colon={false}>
             {section('Supplier')}
-            <div style={grid('minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1fr)')}>
-              <div>
-                <div style={grid('minmax(0, 1fr) minmax(0, 1fr)')}>
-                  <Form.Item name="supplierId" label="Supplier" rules={[{ required: true, message: 'Choose the supplier' }]} style={{ gridColumn: '1 / -1' }}>
-                    <SupplierSelect bu={bu} disabled={!editable || !bu} placeholder={bu ? 'Type supplier name or number' : 'Choose the business unit first'}
-                      onChange={() => form.setFieldsValue({ supplierSiteId: undefined, paymentTerms: undefined })} />
-                  </Form.Item>
-                  <Form.Item name="supplierSiteId" label="Supplier site" rules={[{ required: true, message: 'Choose the site' }]}>
-                    <Select options={siteOptions(supplierSites, supplierId)} disabled={!editable || !supplierId} onChange={onSite}
-                      placeholder={supplierId ? 'Choose site' : 'Choose supplier first'} />
-                  </Form.Item>
-                  <Form.Item name="supplierContact" label="Contact"><Input placeholder="Name / phone" /></Form.Item>
-                </div>
-              </div>
-              <Form.Item name="paymentTerms" label="Payment terms"><Input placeholder="From the supplier site" /></Form.Item>
-              <div style={{ background: '#fafbfc', border: '1px dashed #e3e6ea', borderRadius: 8, padding: '8px 10px', marginBottom: 16, fontSize: 12, minHeight: 74 }}>
+            <div style={grid('minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)')}>
+              <Form.Item name="supplierId" label="Supplier" rules={[{ required: true, message: 'Choose the supplier' }]} style={{ gridColumn: 'span 2' }}>
+                <SupplierSelect bu={bu} size="small" disabled={!editable || !bu} placeholder={bu ? 'Type supplier name or number' : 'Choose the business unit first'}
+                  onChange={() => form.setFieldsValue({ supplierSiteId: undefined, paymentTerms: undefined })} />
+              </Form.Item>
+              <div style={{ gridRow: 'span 3', background: '#fafbfc', border: '1px dashed #e3e6ea', borderRadius: 8, padding: '6px 10px', marginBottom: 8, fontSize: 12, lineHeight: 1.6 }}>
                 {site ? <>
                   <Text strong style={{ fontSize: 12 }}>{site.SUPPLIER_NAME}</Text>
-                  {site.PURCHASING_FLAG === 'Y' ? <Tag color="green" style={{ marginLeft: 6 }}>Purchasing site</Tag> : <Tag style={{ marginLeft: 6 }}>Pay site</Tag>}
+                  {site.PURCHASING_FLAG === 'Y' ? <Tag color="green" style={{ marginLeft: 6, fontSize: 11 }}>Purchasing site</Tag> : <Tag style={{ marginLeft: 6, fontSize: 11 }}>Pay site</Tag>}
                   <div><Text type="secondary">{site.ADDRESS || [site.CITY, site.COUNTRY].filter(Boolean).join(', ') || 'No address'}</Text></div>
                   {site.TAX_REGISTRATION_NUMBER && <div><Text type="secondary">TRN {site.TAX_REGISTRATION_NUMBER}</Text></div>}
                   <div><Text type="secondary">PO by {String(site.PO_COMMUNICATION || 'PRINT').toLowerCase()}{site.PO_EMAIL ? ` · ${site.PO_EMAIL}` : ''}</Text></div>
                 </> : <Text type="secondary">Supplier details appear here once a site is chosen.</Text>}
               </div>
+              <Form.Item name="supplierSiteId" label="Site" rules={[{ required: true, message: 'Choose the site' }]}>
+                <Select options={siteOptions(supplierSites, supplierId)} disabled={!editable || !supplierId} onChange={onSite}
+                  placeholder={supplierId ? 'Choose site' : 'Choose supplier first'} />
+              </Form.Item>
+              <Form.Item name="paymentTerms" label="Pay terms"><Input placeholder="From the supplier site" /></Form.Item>
+              <Form.Item name="supplierContact" label="Contact" style={{ gridColumn: 'span 2' }}><Input placeholder="Name / phone / e-mail" /></Form.Item>
             </div>
-            {site?.PURCHASING_HOLD_FLAG === 'Y' && <Alert type="error" showIcon style={{ marginBottom: 12 }} message={`Supplier site on purchasing hold: ${site.HOLD_REASON || ''}`} />}
+            {site?.PURCHASING_HOLD_FLAG === 'Y' && <Alert type="error" showIcon style={{ marginBottom: 8 }} message={`Supplier site on purchasing hold: ${site.HOLD_REASON || ''}`} />}
 
             {section('Order')}
-            <div style={grid('repeat(4, minmax(0, 1fr))')}>
+            <div style={grid('minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)')}>
               <Form.Item label="Business unit" required>
                 <Select value={bu ?? undefined} options={buOptions} showSearch optionFilterProp="label" disabled={!!hdr}
                   placeholder="Choose business unit"
@@ -386,32 +388,31 @@ const PurchaseOrderEditor: React.FC<{
               </Form.Item>
               <Form.Item name="buyerUser" label="Buyer"><Input /></Form.Item>
               <Form.Item name="currencyCode" label="Currency"><Select showSearch options={lookups.currencies.map(c => ({ value: c, label: c }))} /></Form.Item>
-              <Form.Item name="afterFactFlag" label={<Tooltip title="Goods/services already delivered before the PO (needs 'Allow after-the-fact PO' in options)">After the fact</Tooltip>}>
-                <Select options={YesNo} /></Form.Item>
               {currencyCode !== fc && <>
                 <Form.Item name="rateType" label="Rate type"><Select allowClear options={['Corporate', 'Spot', 'User'].map(v => ({ value: v, label: v }))} /></Form.Item>
                 <Form.Item name="rateDate" label="Rate date"><Input type="date" /></Form.Item>
-                <Form.Item name="rate" label={`Rate to ${fc}`} tooltip="Blank = daily rate"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item>
-                <div />
+                <Form.Item name="rate" label={`Rate → ${fc}`} tooltip="Blank = daily rate"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item>
               </>}
-              <Form.Item name="description" label="Description" style={{ gridColumn: '1 / -1' }}><Input maxLength={240} placeholder="What is being purchased" /></Form.Item>
+              <Form.Item name="description" label="Description" style={{ gridColumn: 'span 2' }}><Input maxLength={240} placeholder="What is being purchased" /></Form.Item>
+              <Form.Item name="afterFactFlag" label={<Tooltip title="Goods/services already delivered before the PO (needs 'Allow after-the-fact PO' in options)">After fact</Tooltip>}>
+                <Select options={YesNo} /></Form.Item>
             </div>
 
             {section('Delivery & notes')}
-            <div style={grid('minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr)')}>
+            <div style={grid('minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)')}>
               <Form.Item name="shipToLocationId" label="Ship to"><Select allowClear placeholder="BU default" showSearch optionFilterProp="label"
                 options={lookups.locations.filter(l => l.SHIP_TO_FLAG !== 'N').map(l => ({ value: Number(l.LOCATION_ID), label: l.LOCATION_NAME }))} /></Form.Item>
               <Form.Item name="billToLocationId" label="Bill to"><Select allowClear placeholder="BU default" showSearch optionFilterProp="label"
                 options={lookups.locations.filter(l => l.BILL_TO_FLAG !== 'N').map(l => ({ value: Number(l.LOCATION_ID), label: l.LOCATION_NAME }))} /></Form.Item>
-              <Form.Item name="noteToSupplier" label="Note to supplier"><Input.TextArea rows={1} autoSize={{ minRows: 1, maxRows: 4 }} maxLength={2000} /></Form.Item>
+              <Form.Item name="noteToSupplier" label="Note"><Input.TextArea rows={1} autoSize={{ minRows: 1, maxRows: 4 }} maxLength={2000} placeholder="Note to supplier" /></Form.Item>
             </div>
           </Form>
         </Card>
 
         <Card size="small" style={{ position: 'sticky', top: 84, borderRadius: 10, overflow: 'hidden' }} styles={{ body: { padding: 0 } }}>
-          <div style={{ background: `linear-gradient(135deg, ${PO_RED}, #a33b2c)`, color: '#fff', padding: '14px 16px' }}>
+          <div style={{ background: `linear-gradient(135deg, ${PO_RED}, #a33b2c)`, color: '#fff', padding: '10px 14px' }}>
             <div style={{ fontSize: 12, opacity: 0.85, textTransform: 'uppercase', letterSpacing: 0.5 }}>Order total</div>
-            <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.2 }}>{money(r2(subTotal + tax))}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.2 }}>{money(r2(subTotal + tax))}</div>
             <div style={{ fontSize: 12, opacity: 0.85 }}>{currencyCode}{currencyCode !== fc ? ` · ${money(r2((subTotal + tax) * rate))} ${fc}` : ''}</div>
           </div>
           <div style={{ padding: '8px 16px 12px' }}>
