@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import AccountSelector from '../../components/AccountSelector';
 import {
-  BusinessUnit, Row, loadBusinessUnits, loadCategories, loadCurrencies, loadItems, loadLocations, loadSupplierSites,
+  BusinessUnit, Row, poQuery, lit, nlit, loadBusinessUnits, loadCategories, loadCurrencies, loadItems, loadLocations,
   loadTaxCodes, loadUoms, loadHistory, rememberBu, rememberedBu, STATUS_COLOR, label, money, n, r2,
 } from '../../services/po.service';
 
@@ -144,10 +144,107 @@ export function useLookups(bu: number | null): Lookups {
       .finally(() => setLoading(false));
   }, [tick]);
   useEffect(() => {
-    if (!bu) { setSites([]); return; }
-    loadSupplierSites(bu).then(setSites).catch(e => setError(e.message));
+    // suppliers are searched on demand (SupplierSelect / useSupplierSites) — the gateway caps at 1000 rows
+    setSites([]);
   }, [bu, tick]);
   return { ...base, sites, loading, error, reload: () => setTick(t => t + 1) };
+}
+
+// ── Supplier type-ahead (server-side search: the read gateway caps at 1000 rows) ──
+export const searchSuppliers = (bu: number | null, text: string, supplierId?: number | null) => poQuery(`
+  SELECT SUPPLIER_ID, SUPPLIER_NAME, SUPPLIER_NUMBER, TAX_REGISTRATION_NUMBER,
+         MAX(PURCHASING_FLAG) AS PURCHASING_FLAG, COUNT(*) AS SITE_COUNT
+  FROM   RR_PO_V_SUPPLIER_SITES
+  WHERE  ${bu ? `BUSINESS_UNIT_ID = ${nlit(bu)}` : '1 = 1'}
+  ${supplierId ? `AND SUPPLIER_ID = ${nlit(supplierId)}` : text.trim()
+    ? `AND (UPPER(SUPPLIER_NAME) LIKE ${lit(`%${text.trim().toUpperCase()}%`)} OR UPPER(SUPPLIER_NUMBER) LIKE ${lit(`%${text.trim().toUpperCase()}%`)})` : ''}
+  GROUP  BY SUPPLIER_ID, SUPPLIER_NAME, SUPPLIER_NUMBER, TAX_REGISTRATION_NUMBER
+  ORDER  BY MAX(PURCHASING_FLAG) DESC, SUPPLIER_NAME
+  FETCH FIRST 100 ROWS ONLY`, 100);
+
+export const SupplierSelect: React.FC<{
+  bu: number | null; value?: number | null; onChange?: (v: number | null, row?: Row) => void;
+  /** search across all business units (setup screens) */
+  anyBu?: boolean;
+  id?: string; disabled?: boolean; placeholder?: string; size?: 'small' | 'middle'; style?: React.CSSProperties;
+}> = ({ bu, value, onChange, anyBu, id, disabled, placeholder, size, style }) => {
+  const [opts, setOpts] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(false);
+  const seq = React.useRef(0);
+  const run = useCallback((text: string) => {
+    if (!bu && !anyBu) { setOpts([]); return; }
+    const my = ++seq.current;
+    setLoading(true);
+    Promise.all([searchSuppliers(bu, text), value && !text ? searchSuppliers(bu, '', value) : Promise.resolve([] as Row[])])
+      .then(([rows, cur]) => {
+        if (my !== seq.current) return;
+        const all = [...cur, ...rows.filter(r => !cur.some(c => c.SUPPLIER_ID === r.SUPPLIER_ID))];
+        setOpts(all);
+      })
+      .catch(e => message.error(e.message))
+      .finally(() => { if (my === seq.current) setLoading(false); });
+  }, [bu, value, anyBu]);
+  useEffect(() => { run(''); }, [run]);
+  const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  return (
+    <Select id={id} size={size} style={style} value={value ?? undefined} disabled={disabled} allowClear showSearch filterOption={false}
+      placeholder={placeholder ?? 'Type to search suppliers'} loading={loading} popupMatchSelectWidth={420}
+      notFoundContent={loading ? 'Searching…' : 'No supplier found'}
+      onSearch={t => { clearTimeout(timer.current); timer.current = setTimeout(() => run(t), 300); }}
+      onChange={v => onChange?.(v ?? null, opts.find(o => Number(o.SUPPLIER_ID) === v))}
+      options={opts.map(o => ({
+        value: Number(o.SUPPLIER_ID),
+        label: (
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.SUPPLIER_NAME}
+              {o.SUPPLIER_NUMBER && <Text type="secondary" style={{ fontSize: 12 }}> · {o.SUPPLIER_NUMBER}</Text>}</span>
+            {o.PURCHASING_FLAG === 'Y'
+              ? <Tag color="green" style={{ marginInlineEnd: 0 }}>Purchasing</Tag>
+              : <Tag style={{ marginInlineEnd: 0 }}>Pay site</Tag>}
+          </div>
+        ),
+      }))}
+      labelRender={({ value: v }) => {
+        const o = opts.find(x => Number(x.SUPPLIER_ID) === Number(v));
+        return o ? `${o.SUPPLIER_NAME}${o.SUPPLIER_NUMBER ? ` (${o.SUPPLIER_NUMBER})` : ''}` : String(v ?? '');
+      }} />
+  );
+};
+
+/** Supplier-site type-ahead across all business units (setup screens). */
+export const SiteSearchSelect: React.FC<{ value?: number | null; onChange?: (v: number | null) => void; id?: string; supplierId?: number | null }> =
+  ({ value, onChange, id, supplierId }) => {
+    const [opts, setOpts] = useState<Row[]>([]);
+    const [loading, setLoading] = useState(false);
+    const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const run = useCallback((text: string) => {
+      setLoading(true);
+      const t = text.trim().toUpperCase();
+      poQuery(`SELECT DISTINCT SUPPLIER_SITE_ID, SUPPLIER_ID, SUPPLIER_NAME, SITE_NAME, PURCHASING_FLAG FROM RR_PO_V_SUPPLIER_SITES
+               WHERE 1 = 1 ${supplierId ? `AND SUPPLIER_ID = ${nlit(supplierId)}` : ''}
+               ${t ? `AND (UPPER(SUPPLIER_NAME) LIKE ${lit(`%${t}%`)} OR UPPER(SITE_NAME) LIKE ${lit(`%${t}%`)})` : ''}
+               ${!t && value ? `OR SUPPLIER_SITE_ID = ${nlit(value)}` : ''}
+               ORDER BY SUPPLIER_NAME, SITE_NAME FETCH FIRST 100 ROWS ONLY`, 100)
+        .then(setOpts).catch(e => message.error(e.message)).finally(() => setLoading(false));
+    }, [supplierId, value]);
+    useEffect(() => { run(''); }, [run]);
+    return (
+      <Select id={id} value={value ?? undefined} allowClear showSearch filterOption={false} loading={loading} placeholder="Type to search sites"
+        onSearch={t => { clearTimeout(timer.current); timer.current = setTimeout(() => run(t), 300); }}
+        onChange={v => onChange?.(v ?? null)}
+        options={opts.map(o => ({ value: Number(o.SUPPLIER_SITE_ID), label: `${o.SUPPLIER_NAME} — ${o.SITE_NAME}${o.PURCHASING_FLAG === 'N' ? ' (pay site)' : ''}` }))} />
+    );
+  };
+
+/** Sites of one supplier for a business unit. */
+export function useSupplierSites(bu: number | null, supplierId: number | null | undefined) {
+  const [sites, setSites] = useState<Row[]>([]);
+  useEffect(() => {
+    if (!bu || !supplierId) { setSites([]); return; }
+    poQuery(`SELECT * FROM RR_PO_V_SUPPLIER_SITES WHERE BUSINESS_UNIT_ID = ${nlit(bu)} AND SUPPLIER_ID = ${nlit(supplierId)}
+             ORDER BY PURCHASING_FLAG DESC, SITE_NAME`).then(setSites).catch(e => message.error(e.message));
+  }, [bu, supplierId]);
+  return sites;
 }
 
 export const supplierOptions = (sites: Row[]) => {
@@ -158,7 +255,7 @@ export const supplierOptions = (sites: Row[]) => {
 export const siteOptions = (sites: Row[], supplierId: number | null | undefined) =>
   sites.filter(s => Number(s.SUPPLIER_ID) === Number(supplierId)).map(s => ({
     value: Number(s.SUPPLIER_SITE_ID),
-    label: `${s.SITE_NAME}${s.PURCHASING_HOLD_FLAG === 'Y' ? ' — ON HOLD' : ''}`,
+    label: `${s.SITE_NAME}${s.PURCHASING_FLAG === 'N' ? ' (pay site)' : ''}${s.PURCHASING_HOLD_FLAG === 'Y' ? ' — ON HOLD' : ''}`,
     disabled: s.PURCHASING_HOLD_FLAG === 'Y',
   }));
 
@@ -246,7 +343,9 @@ export const LinesEditor: React.FC<{
   defaultLocationId?: number | null;
   /** business-unit company (segment 1) for the account popup */
   company?: string | null;
-}> = ({ mode, lines, onChange, lookups, readOnly, currency, defaultLocationId, company }) => {
+  /** business unit — supplier search scope */
+  bu?: number | null;
+}> = ({ mode, lines, onChange, lookups, readOnly, currency, defaultLocationId, company, bu }) => {
   const [splitKey, setSplitKey] = useState<string | null>(null);
   const [splitRows, setSplitRows] = useState<Dist[]>([]);
   const upd = (key: string, patch: Partial<EditLine>) => onChange(lines.map(l => (l.key === key ? { ...l, ...patch } : l)));
@@ -428,10 +527,9 @@ export const LinesEditor: React.FC<{
               )}
               {mode === 'REQ' && (
                 <span><Text type="secondary">Suggested supplier </Text>
-                  <Select size="small" style={{ width: 240 }} disabled={readOnly} allowClear showSearch optionFilterProp="label"
-                    value={l.suggestedSupplierId ?? undefined}
-                    onChange={v => upd(l.key, { suggestedSupplierId: v ?? null, suggestedSupplierSiteId: null })}
-                    options={supplierOptions(lookups.sites)} />
+                  <SupplierSelect size="small" style={{ width: 280 }} disabled={readOnly} bu={bu ?? null}
+                    value={l.suggestedSupplierId ?? null}
+                    onChange={v => upd(l.key, { suggestedSupplierId: v, suggestedSupplierSiteId: null })} />
                   {!l.suggestedSupplierId && (
                     <Input size="small" style={{ width: 180, marginLeft: 6 }} disabled={readOnly} placeholder="or new supplier name"
                       value={l.suggestedSupplierName || ''} onChange={e => upd(l.key, { suggestedSupplierName: e.target.value })} />

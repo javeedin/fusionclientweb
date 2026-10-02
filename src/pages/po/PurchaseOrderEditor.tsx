@@ -8,13 +8,13 @@ import {
 import {
   SaveOutlined, SendOutlined, RollbackOutlined, StopOutlined, DeleteOutlined, CopyOutlined,
   PrinterOutlined, MailOutlined, LockOutlined, UnlockOutlined, PauseCircleOutlined, PlayCircleOutlined, EditOutlined,
-  InboxOutlined, FileDoneOutlined, DownOutlined, PlusOutlined, PaperClipOutlined,
+  InboxOutlined, FileDoneOutlined, DownOutlined, PlusOutlined, PaperClipOutlined, FileTextOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { poQuery, poExec, PROC, nlit, money, qty, day, plusDays, Row, n, r2 } from '../../services/po.service';
 import {
   StatusTag, useBusinessUnits, useLookups, LinesEditor, EditLine, newLine, linesToJson, HistoryButton, askReason,
-  lineAmount, supplierOptions, siteOptions, YesNo,
+  lineAmount, siteOptions, YesNo, SupplierSelect, useSupplierSites, PO_RED,
 } from './poShared';
 import { buildPoPdf } from './poPdf';
 import PoAttachments from './PoAttachments';
@@ -115,9 +115,11 @@ const PurchaseOrderEditor: React.FC<{
   }, [id, form, user, fc]);
 
   // supplier site → payment terms + default currency
-  const site = lookups.sites.find(s => Number(s.SUPPLIER_SITE_ID) === Number(form.getFieldValue('supplierSiteId')));
+  const supplierSites = useSupplierSites(bu, supplierId);
+  const siteId = Form.useWatch('supplierSiteId', form);
+  const site = supplierSites.find(s => Number(s.SUPPLIER_SITE_ID) === Number(siteId));
   const onSite = (siteId: number) => {
-    const s = lookups.sites.find(x => Number(x.SUPPLIER_SITE_ID) === siteId);
+    const s = supplierSites.find(x => Number(x.SUPPLIER_SITE_ID) === siteId);
     if (!s) return;
     form.setFieldsValue({ paymentTerms: s.PAYMENT_TERMS, ...(s.DEFAULT_CURRENCY && !id ? { currencyCode: s.DEFAULT_CURRENCY } : {}) });
   };
@@ -302,19 +304,39 @@ const PurchaseOrderEditor: React.FC<{
     </Space>
   );
 
+  const section = (title: string, sub?: string) => (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '4px 0 10px' }}>
+      <Text strong style={{ fontSize: 13, color: PO_RED, textTransform: 'uppercase', letterSpacing: 0.5 }}>{title}</Text>
+      {sub && <Text type="secondary" style={{ fontSize: 12 }}>{sub}</Text>}
+      <div style={{ flex: 1, borderBottom: '1px solid #f0f0f0' }} />
+    </div>
+  );
+  const grid = (cols: string) => ({ display: 'grid', gridTemplateColumns: cols, columnGap: 14 } as React.CSSProperties);
+
   return (
-    <div style={{ padding: '12px 20px 20px' }}>
-      {/* title + actions (top) */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 5, background: '#fff', padding: '8px 0 10px', marginBottom: 10,
-        borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <Space size={10} wrap>
-          <Text strong style={{ fontSize: 18 }}>{hdr ? `Purchase Order ${hdr.PO_NUMBER}` : 'New purchase order'}</Text>
-          {hdr && n(hdr.REVISION_NUM) > 0 && <Tag>Rev {hdr.REVISION_NUM}</Tag>}
-          {hdr ? <><StatusTag s={st} />{st === 'APPROVED' && <StatusTag s={hdr.CLOSURE_STATUS} />}</> : <Tag>Direct · no requisition</Tag>}
-          {hdr?.HOLD_FLAG === 'Y' && <Tooltip title={hdr.HOLD_REASON}><Tag color="red">ON HOLD</Tag></Tooltip>}
-          {n(hdr?.PENDING_CHANGES) > 0 && <Tag color="gold">Change pending</Tag>}
-          {hdr?.ORIGIN === 'REQUISITION' && <Tag color="blue">From requisition</Tag>}
-        </Space>
+    <div style={{ padding: '12px 20px 20px', background: '#f7f8fa' }}>
+      {/* ── title bar ── */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 5, background: '#fff', border: '1px solid #eef0f3', borderRadius: 10,
+        padding: '12px 16px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10,
+        boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 42, height: 42, borderRadius: 10, background: `${PO_RED}12`, color: PO_RED, display: 'flex',
+            alignItems: 'center', justifyContent: 'center', fontSize: 20 }}><FileTextOutlined /></div>
+          <div>
+            <Space size={8} wrap>
+              <Text strong style={{ fontSize: 18 }}>{hdr ? hdr.PO_NUMBER : 'New purchase order'}</Text>
+              {hdr && n(hdr.REVISION_NUM) > 0 && <Tag>Rev {hdr.REVISION_NUM}</Tag>}
+              {hdr ? <><StatusTag s={st} />{st === 'APPROVED' && <StatusTag s={hdr.CLOSURE_STATUS} />}</> : <Tag color="blue">Draft</Tag>}
+              {hdr?.HOLD_FLAG === 'Y' && <Tooltip title={hdr.HOLD_REASON}><Tag color="red">ON HOLD</Tag></Tooltip>}
+              {n(hdr?.PENDING_CHANGES) > 0 && <Tag color="gold">Change pending</Tag>}
+            </Space>
+            <div><Text type="secondary" style={{ fontSize: 12 }}>
+              {buRow?.BUSINESS_UNIT_NAME || 'Choose a business unit'}
+              {' · '}{hdr?.ORIGIN === 'REQUISITION' ? 'From requisition' : 'Direct purchase order'}
+              {hdr ? ` · Created ${day(hdr.CREATION_DATE)} by ${hdr.CREATED_BY}` : ''}
+            </Text></div>
+          </div>
+        </div>
         {actions}
       </div>
 
@@ -323,68 +345,91 @@ const PurchaseOrderEditor: React.FC<{
         message={`Change order ${pendingCo.CO_NUMBER} is pending approval`} description={pendingCo.CHANGE_SUMMARY}
         action={<Popconfirm title="Cancel this change order?" onConfirm={() => exec(PROC.cancelChange, { p_change_order_id: pendingCo.CHANGE_ORDER_ID })}>
           <Button size="small" danger>Cancel change</Button></Popconfirm>} />}
-      {!hdr && bu && !lookups.loading && lookups.sites.length === 0 && (
-        <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="No purchasing supplier sites for this business unit"
-          description="A supplier site shows here when RR_SUPPLIER_SITES.PURCHASING_FLAG = 'Y' and the site is assigned to the business unit (RR_SUPPLIER_SITE_ASSIGNMENTS.CLIENT_BU_ID) or the BU is its procurement BU." />
-      )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 12, marginBottom: 12, alignItems: 'start' }}>
-        <Card size="small" title="Order details">
-          <Form form={form} layout="vertical" disabled={!editable}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', columnGap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: 12, marginBottom: 12, alignItems: 'start' }}>
+        <Card size="small" style={{ borderRadius: 10 }} styles={{ body: { padding: '14px 18px 4px' } }}>
+          <Form form={form} layout="vertical" disabled={!editable} requiredMark>
+            {section('Supplier')}
+            <div style={grid('minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1fr)')}>
+              <div>
+                <div style={grid('minmax(0, 1fr) minmax(0, 1fr)')}>
+                  <Form.Item name="supplierId" label="Supplier" rules={[{ required: true, message: 'Choose the supplier' }]} style={{ gridColumn: '1 / -1' }}>
+                    <SupplierSelect bu={bu} disabled={!editable || !bu} placeholder={bu ? 'Type supplier name or number' : 'Choose the business unit first'}
+                      onChange={() => form.setFieldsValue({ supplierSiteId: undefined, paymentTerms: undefined })} />
+                  </Form.Item>
+                  <Form.Item name="supplierSiteId" label="Supplier site" rules={[{ required: true, message: 'Choose the site' }]}>
+                    <Select options={siteOptions(supplierSites, supplierId)} disabled={!editable || !supplierId} onChange={onSite}
+                      placeholder={supplierId ? 'Choose site' : 'Choose supplier first'} />
+                  </Form.Item>
+                  <Form.Item name="supplierContact" label="Contact"><Input placeholder="Name / phone" /></Form.Item>
+                </div>
+              </div>
+              <Form.Item name="paymentTerms" label="Payment terms"><Input placeholder="From the supplier site" /></Form.Item>
+              <div style={{ background: '#fafbfc', border: '1px dashed #e3e6ea', borderRadius: 8, padding: '8px 10px', marginBottom: 16, fontSize: 12, minHeight: 74 }}>
+                {site ? <>
+                  <Text strong style={{ fontSize: 12 }}>{site.SUPPLIER_NAME}</Text>
+                  {site.PURCHASING_FLAG === 'Y' ? <Tag color="green" style={{ marginLeft: 6 }}>Purchasing site</Tag> : <Tag style={{ marginLeft: 6 }}>Pay site</Tag>}
+                  <div><Text type="secondary">{site.ADDRESS || [site.CITY, site.COUNTRY].filter(Boolean).join(', ') || 'No address'}</Text></div>
+                  {site.TAX_REGISTRATION_NUMBER && <div><Text type="secondary">TRN {site.TAX_REGISTRATION_NUMBER}</Text></div>}
+                  <div><Text type="secondary">PO by {String(site.PO_COMMUNICATION || 'PRINT').toLowerCase()}{site.PO_EMAIL ? ` · ${site.PO_EMAIL}` : ''}</Text></div>
+                </> : <Text type="secondary">Supplier details appear here once a site is chosen.</Text>}
+              </div>
+            </div>
+            {site?.PURCHASING_HOLD_FLAG === 'Y' && <Alert type="error" showIcon style={{ marginBottom: 12 }} message={`Supplier site on purchasing hold: ${site.HOLD_REASON || ''}`} />}
+
+            {section('Order')}
+            <div style={grid('repeat(4, minmax(0, 1fr))')}>
               <Form.Item label="Business unit" required>
                 <Select value={bu ?? undefined} options={buOptions} showSearch optionFilterProp="label" disabled={!!hdr}
                   placeholder="Choose business unit"
                   onChange={v => { setNewBu(v); form.setFieldsValue({ supplierId: undefined, supplierSiteId: undefined, paymentTerms: undefined }); }} />
               </Form.Item>
-              <Form.Item name="supplierId" label="Supplier" rules={[{ required: true }]}>
-                <Select showSearch optionFilterProp="label" options={supplierOptions(lookups.sites)} loading={lookups.loading}
-                  disabled={!editable || !bu} placeholder={bu ? 'Search supplier' : 'Choose the business unit first'}
-                  onChange={() => form.setFieldsValue({ supplierSiteId: undefined, paymentTerms: undefined })} />
-              </Form.Item>
-              <Form.Item name="supplierSiteId" label="Supplier site" rules={[{ required: true }]}>
-                <Select options={siteOptions(lookups.sites, supplierId)} disabled={!editable || !supplierId} onChange={onSite} />
-              </Form.Item>
-              <Form.Item name="supplierContact" label="Supplier contact"><Input /></Form.Item>
               <Form.Item name="buyerUser" label="Buyer"><Input /></Form.Item>
               <Form.Item name="currencyCode" label="Currency"><Select showSearch options={lookups.currencies.map(c => ({ value: c, label: c }))} /></Form.Item>
+              <Form.Item name="afterFactFlag" label={<Tooltip title="Goods/services already delivered before the PO (needs 'Allow after-the-fact PO' in options)">After the fact</Tooltip>}>
+                <Select options={YesNo} /></Form.Item>
               {currencyCode !== fc && <>
                 <Form.Item name="rateType" label="Rate type"><Select allowClear options={['Corporate', 'Spot', 'User'].map(v => ({ value: v, label: v }))} /></Form.Item>
                 <Form.Item name="rateDate" label="Rate date"><Input type="date" /></Form.Item>
-                <Form.Item name="rate" label={`Rate to ${fc} (blank = daily)`}><InputNumber style={{ width: '100%' }} min={0} /></Form.Item>
+                <Form.Item name="rate" label={`Rate to ${fc}`} tooltip="Blank = daily rate"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item>
+                <div />
               </>}
-              <Form.Item name="paymentTerms" label="Payment terms"><Input placeholder="from supplier site" /></Form.Item>
+              <Form.Item name="description" label="Description" style={{ gridColumn: '1 / -1' }}><Input maxLength={240} placeholder="What is being purchased" /></Form.Item>
+            </div>
+
+            {section('Delivery & notes')}
+            <div style={grid('minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr)')}>
               <Form.Item name="shipToLocationId" label="Ship to"><Select allowClear placeholder="BU default" showSearch optionFilterProp="label"
                 options={lookups.locations.filter(l => l.SHIP_TO_FLAG !== 'N').map(l => ({ value: Number(l.LOCATION_ID), label: l.LOCATION_NAME }))} /></Form.Item>
               <Form.Item name="billToLocationId" label="Bill to"><Select allowClear placeholder="BU default" showSearch optionFilterProp="label"
                 options={lookups.locations.filter(l => l.BILL_TO_FLAG !== 'N').map(l => ({ value: Number(l.LOCATION_ID), label: l.LOCATION_NAME }))} /></Form.Item>
-              <Form.Item name="afterFactFlag" label={<Tooltip title="Goods/services already delivered before the PO (needs 'Allow after-the-fact PO' in options)">After the fact</Tooltip>}>
-                <Select options={YesNo} /></Form.Item>
-              <Form.Item name="description" label="Description" style={{ gridColumn: 'span 2' }}><Input maxLength={240} /></Form.Item>
-              <Form.Item name="noteToSupplier" label="Note to supplier" style={{ gridColumn: 'span 2' }}><Input.TextArea rows={1} autoSize maxLength={2000} /></Form.Item>
+              <Form.Item name="noteToSupplier" label="Note to supplier"><Input.TextArea rows={1} autoSize={{ minRows: 1, maxRows: 4 }} maxLength={2000} /></Form.Item>
             </div>
-            {site?.PURCHASING_HOLD_FLAG === 'Y' && <Alert type="error" showIcon message={`Supplier site on purchasing hold: ${site.HOLD_REASON || ''}`} />}
           </Form>
         </Card>
 
-        <Card size="small" title="Totals" style={{ position: 'sticky', top: 64 }}>
-          <TotalRow label="Lines" value={editable ? lines.length : lineRows.length} />
-          <TotalRow label="Subtotal" value={`${money(subTotal)} ${currencyCode}`} />
-          <TotalRow label="Tax (estimate)" value={money(tax)} />
-          <TotalRow label="Total" value={`${money(r2(subTotal + tax))} ${currencyCode}`} strong />
-          {currencyCode !== fc && <TotalRow label={`Total in ${fc}`} value={money(r2((subTotal + tax) * rate))} />}
-          {hdr && st === 'APPROVED' && <>
-            <TotalRow label="Received" value={money(hdr.AMOUNT_RECEIVED)} />
-            <TotalRow label="To receive" value={money(hdr.AMOUNT_TO_RECEIVE)} />
-            <TotalRow label="Billed" value={money(hdr.AMOUNT_BILLED)} />
-            {n(hdr.AMOUNT_CANCELLED) > 0 && <TotalRow label="Cancelled" value={money(hdr.AMOUNT_CANCELLED)} />}
-            <div style={{ marginTop: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Receipt progress</Text><Progress percent={recvPct} size="small" /></div>
-          </>}
-          {hdr && <div style={{ marginTop: 8, fontSize: 12 }}>
-            <Text type="secondary">Created {day(hdr.CREATION_DATE)} by {hdr.CREATED_BY}</Text><br />
-            {hdr.APPROVED_DATE && <><Text type="secondary">Approved {day(hdr.APPROVED_DATE)}</Text><br /></>}
-            <Text type="secondary">Communicated {day(hdr.COMMUNICATED_DATE) || '—'}</Text>
-          </div>}
+        <Card size="small" style={{ position: 'sticky', top: 84, borderRadius: 10, overflow: 'hidden' }} styles={{ body: { padding: 0 } }}>
+          <div style={{ background: `linear-gradient(135deg, ${PO_RED}, #a33b2c)`, color: '#fff', padding: '14px 16px' }}>
+            <div style={{ fontSize: 12, opacity: 0.85, textTransform: 'uppercase', letterSpacing: 0.5 }}>Order total</div>
+            <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.2 }}>{money(r2(subTotal + tax))}</div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>{currencyCode}{currencyCode !== fc ? ` · ${money(r2((subTotal + tax) * rate))} ${fc}` : ''}</div>
+          </div>
+          <div style={{ padding: '8px 16px 12px' }}>
+            <TotalRow label="Lines" value={editable ? lines.length : lineRows.length} />
+            <TotalRow label="Subtotal" value={money(subTotal)} />
+            <TotalRow label="Tax (estimate)" value={money(tax)} />
+            {hdr && st === 'APPROVED' && <>
+              <TotalRow label="Received" value={money(hdr.AMOUNT_RECEIVED)} />
+              <TotalRow label="To receive" value={money(hdr.AMOUNT_TO_RECEIVE)} />
+              <TotalRow label="Billed" value={money(hdr.AMOUNT_BILLED)} />
+              {n(hdr.AMOUNT_CANCELLED) > 0 && <TotalRow label="Cancelled" value={money(hdr.AMOUNT_CANCELLED)} />}
+              <div style={{ marginTop: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>Receipt progress</Text><Progress percent={recvPct} size="small" /></div>
+            </>}
+            {hdr && <div style={{ marginTop: 8, fontSize: 12 }}>
+              {hdr.APPROVED_DATE && <><Text type="secondary">Approved {day(hdr.APPROVED_DATE)}</Text><br /></>}
+              <Text type="secondary">Sent to supplier {day(hdr.COMMUNICATED_DATE) || '—'}</Text>
+            </div>}
+          </div>
         </Card>
       </div>
 
@@ -392,7 +437,7 @@ const PurchaseOrderEditor: React.FC<{
         {
           key: 'lines', label: `Lines (${editable ? lines.length : lineRows.length})`,
           children: editable ? (
-            <LinesEditor mode="PO" lines={lines} onChange={setLines} lookups={lookups} currency={currencyCode} company={buRow?.COMPANY} />
+            <LinesEditor mode="PO" lines={lines} onChange={setLines} lookups={lookups} currency={currencyCode} company={buRow?.COMPANY} bu={bu} />
           ) : (
             <Table size="small" rowKey="PO_LINE_ID" dataSource={lineRows} pagination={false} scroll={{ x: 1600 }} columns={approvedLineCols} />
           ),

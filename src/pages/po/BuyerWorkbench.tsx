@@ -2,12 +2,12 @@
 // (AUTOCREATE), or return lines to the requester.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Card, Table, Button, Space, Input, Select, Typography, Tag, Modal, Form, InputNumber, Alert, message, Segmented, Tooltip,
+  Card, Table, Button, Space, Input, Select, Typography, Tag, Modal, Form, InputNumber, message, Segmented, Tooltip,
 } from 'antd';
 import { ThunderboltOutlined, RollbackOutlined, ReloadOutlined, PlusOutlined, WarningOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { poQuery, poExec, PROC, lit, nlit, money, qty, day, today, Row, n, r2 } from '../../services/po.service';
-import { PoBar, BuNotSetUp, useBusinessUnits, useLookups, usePoUser, supplierOptions, siteOptions, askReason } from './poShared';
+import { PoBar, BuNotSetUp, useBusinessUnits, useLookups, usePoUser, SupplierSelect, useSupplierSites, siteOptions, askReason } from './poShared';
 
 const { Text } = Typography;
 
@@ -89,7 +89,8 @@ const BuyerWorkbench: React.FC = () => {
     } catch (e: any) { message.error(e.message, 8); }
   };
 
-  const sites = siteOptions(lookups.sites, supplierId);
+  const supplierSites = useSupplierSites(buState.bu, supplierId);
+  const sites = siteOptions(supplierSites, supplierId);
   const fc = buState.current?.FUNCTIONAL_CURRENCY;
 
   return (
@@ -135,8 +136,7 @@ const BuyerWorkbench: React.FC = () => {
         <Form form={form} layout="vertical">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 16 }}>
             <Form.Item name="supplierId" label="Supplier" rules={[{ required: true }]}>
-              <Select showSearch optionFilterProp="label" options={supplierOptions(lookups.sites)}
-                onChange={() => form.setFieldValue('supplierSiteId', undefined)} />
+              <SupplierSelect bu={buState.bu} onChange={() => form.setFieldValue('supplierSiteId', undefined)} />
             </Form.Item>
             <Form.Item name="supplierSiteId" label="Supplier site" rules={[{ required: true }]}>
               <Select options={sites} disabled={!supplierId} />
@@ -148,7 +148,6 @@ const BuyerWorkbench: React.FC = () => {
             <Form.Item name="description" label="PO description" style={{ gridColumn: '1 / span 2' }}><Input maxLength={240} /></Form.Item>
           </div>
         </Form>
-        {lookups.sites.length === 0 && <Alert type="warning" showIcon message="No purchasing supplier sites are assigned to this business unit (RR_SUPPLIER_SITES purchasing flag + site assignment)." />}
         <Table size="small" rowKey="REQ_LINE_ID" pagination={false} dataSource={selected}
           columns={[
             { title: 'Line', render: (_, r) => `${r.REQ_NUMBER}-${r.LINE_NUM}`, width: 140 },

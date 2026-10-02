@@ -318,7 +318,7 @@ export const RequisitionEditor: React.FC<{
 
       <Tabs defaultActiveKey="lines" items={[
         { key: 'lines', label: `Lines (${lines.length})`, children: (
-          <LinesEditor mode="REQ" lines={lines} onChange={setLines} lookups={lookups} readOnly={!editable} currency={currency}
+          <LinesEditor mode="REQ" bu={bu} lines={lines} onChange={setLines} lookups={lookups} readOnly={!editable} currency={currency}
             company={buState.bus.find(b => Number(b.BUSINESS_UNIT_ID) === bu)?.COMPANY}
             defaultLocationId={defaults?.DELIVER_TO_LOCATION_ID ?? null} />) },
         { key: 'attachments', label: <span><PaperClipOutlined /> Attachments</span>, disabled: !id,

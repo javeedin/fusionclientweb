@@ -395,8 +395,8 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_UTIL_PKG AS
         SELECT MAX(SUPPLIER_ID), MAX(PURCHASING_HOLD_FLAG), MAX(HOLD_REASON) INTO v_sup, v_hold, v_why
         FROM   RR_PO_V_SUPPLIER_SITES WHERE SUPPLIER_SITE_ID = p_site_id AND BUSINESS_UNIT_ID = p_bu;
         IF v_sup IS NULL THEN
-            RETURN 'Supplier site ' || p_site_id || ' is not an active purchasing site for this business unit '
-                || '(RR_SUPPLIER_SITES purchasing flag / site assignment)';
+            RETURN 'Supplier site ' || p_site_id || ' is not active or not assigned to this business unit '
+                || '(RR_SUPPLIER_SITES status / RR_SUPPLIER_SITE_ASSIGNMENTS)';
         END IF;
         IF v_sup <> p_supplier_id THEN RETURN 'The site does not belong to the selected supplier'; END IF;
         IF v_hold = 'Y' THEN RETURN 'Supplier site is on purchasing hold: ' || NVL(v_why, 'no reason given'); END IF;

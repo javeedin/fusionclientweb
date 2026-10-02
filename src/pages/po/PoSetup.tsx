@@ -9,7 +9,7 @@ import {
 import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, SettingOutlined, SaveOutlined, LinkOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { poQuery, poExec, PROC, nlit, Row } from '../../services/po.service';
-import { PoBar, StatusTag, useBusinessUnits, usePoUser, YesNo, PO_RED, AccountInput } from './poShared';
+import { PoBar, StatusTag, useBusinessUnits, usePoUser, YesNo, PO_RED, AccountInput, SupplierSelect, SiteSearchSelect } from './poShared';
 
 const { Text } = Typography;
 
@@ -219,15 +219,8 @@ const FieldInput: React.FC<{ f: Field; lk: SetupLookups; id?: string; value?: an
     case 'category': return sel(lk.categories.map(c => ({ value: Number(c.CATEGORY_ID), label: `${c.CATEGORY_CODE} — ${c.FULL_NAME}` })));
     case 'item': return sel(lk.items.map(i => ({ value: Number(i.EXPENSE_ITEM_ID), label: `${i.ITEM_CODE} — ${i.DESCRIPTION}` })));
     case 'uom': return sel(lk.uoms.map(u => ({ value: u.UOM_CODE, label: `${u.UOM_CODE} — ${u.UOM_NAME}` })));
-    case 'supplier': {
-      const m = new Map<number, string>(); lk.sites.forEach(s => m.set(Number(s.SUPPLIER_ID), s.SUPPLIER_NAME));
-      return sel(Array.from(m.entries()).map(([v, l]) => ({ value: v, label: l })));
-    }
-    case 'site': {
-      const seen = new Set<number>();
-      return sel(lk.sites.filter(s => (!supplierId || Number(s.SUPPLIER_ID) === supplierId) && !seen.has(Number(s.SUPPLIER_SITE_ID)) && seen.add(Number(s.SUPPLIER_SITE_ID)))
-        .map(s => ({ value: Number(s.SUPPLIER_SITE_ID), label: `${s.SUPPLIER_NAME} — ${s.SITE_NAME}` })));
-    }
+    case 'supplier': return <SupplierSelect id={id} bu={null} anyBu value={value ?? null} onChange={v => onChange?.(v)} />;
+    case 'site': return <SiteSearchSelect id={id} value={value ?? null} supplierId={supplierId} onChange={v => onChange?.(v)} />;
     case 'textarea': return <Input.TextArea id={id} rows={4} value={value ?? ''} onChange={e => onChange?.(e.target.value)} />;
     default: return <Input id={id} value={value ?? ''} onChange={e => onChange?.(e.target.value)} />;
   }
@@ -439,7 +432,7 @@ const PoSetup: React.FC = () => {
       poQuery('SELECT CATEGORY_ID, CATEGORY_CODE, FULL_NAME FROM RR_PO_V_CATEGORIES ORDER BY FULL_NAME'),
       poQuery('SELECT EXPENSE_ITEM_ID, ITEM_CODE, DESCRIPTION FROM RR_PO_EXPENSE_ITEMS ORDER BY ITEM_CODE'),
       poQuery('SELECT UOM_CODE, UOM_NAME FROM RR_PO_UOMS ORDER BY UOM_CODE'),
-      poQuery('SELECT DISTINCT SUPPLIER_ID, SUPPLIER_NAME, SUPPLIER_SITE_ID, SITE_NAME FROM RR_PO_V_SUPPLIER_SITES ORDER BY SUPPLIER_NAME, SITE_NAME'),
+      Promise.resolve([] as Row[]),   // suppliers / sites are searched on demand
     ]).then(([locations, categories, items, uoms, sites]) => setLk(l => ({ ...l, locations, categories, items, uoms, sites })))
       .catch(e => message.error(e.message));
   }, [tick]);
