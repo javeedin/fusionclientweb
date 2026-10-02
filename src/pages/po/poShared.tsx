@@ -151,16 +151,26 @@ export function useLookups(bu: number | null): Lookups {
 }
 
 // ── Supplier type-ahead (server-side search: the read gateway caps at 1000 rows) ──
-export const searchSuppliers = (bu: number | null, text: string, supplierId?: number | null) => poQuery(`
-  SELECT SUPPLIER_ID, SUPPLIER_NAME, SUPPLIER_NUMBER, TAX_REGISTRATION_NUMBER,
-         MAX(PURCHASING_FLAG) AS PURCHASING_FLAG, COUNT(*) AS SITE_COUNT
-  FROM   RR_PO_V_SUPPLIER_SITES
-  WHERE  ${bu ? `BUSINESS_UNIT_ID = ${nlit(bu)}` : '1 = 1'}
-  ${supplierId ? `AND SUPPLIER_ID = ${nlit(supplierId)}` : text.trim()
-    ? `AND (UPPER(SUPPLIER_NAME) LIKE ${lit(`%${text.trim().toUpperCase()}%`)} OR UPPER(SUPPLIER_NUMBER) LIKE ${lit(`%${text.trim().toUpperCase()}%`)})` : ''}
-  GROUP  BY SUPPLIER_ID, SUPPLIER_NAME, SUPPLIER_NUMBER, TAX_REGISTRATION_NUMBER
-  ORDER  BY MAX(PURCHASING_FLAG) DESC, SUPPLIER_NAME
-  FETCH FIRST 100 ROWS ONLY`, 100);
+export const searchSuppliers = async (bu: number | null, text: string, supplierId?: number | null): Promise<Row[]> => {
+  const t = text.trim().toUpperCase();
+  // plain DISTINCT (no aggregates): the view is itself grouped, and an outer MAX()/COUNT() makes
+  // Oracle merge them into nested group functions (ORA-00935)
+  const rows = await poQuery(`
+    SELECT DISTINCT SUPPLIER_ID, SUPPLIER_NAME, SUPPLIER_NUMBER, TAX_REGISTRATION_NUMBER, PURCHASING_FLAG
+    FROM   RR_PO_V_SUPPLIER_SITES
+    WHERE  ${bu ? `BUSINESS_UNIT_ID = ${nlit(bu)}` : '1 = 1'}
+    ${supplierId ? `AND SUPPLIER_ID = ${nlit(supplierId)}`
+      : t ? `AND (UPPER(SUPPLIER_NAME) LIKE ${lit(`%${t}%`)} OR UPPER(SUPPLIER_NUMBER) LIKE ${lit(`%${t}%`)})` : ''}
+    ORDER  BY PURCHASING_FLAG DESC, SUPPLIER_NAME`, 300);
+  // one row per supplier, purchasing site wins
+  const m = new Map<number, Row>();
+  rows.forEach(r => {
+    const k = Number(r.SUPPLIER_ID);
+    const cur = m.get(k);
+    if (!cur || (r.PURCHASING_FLAG === 'Y' && cur.PURCHASING_FLAG !== 'Y')) m.set(k, r);
+  });
+  return Array.from(m.values()).slice(0, 100);
+};
 
 export const SupplierSelect: React.FC<{
   bu: number | null; value?: number | null; onChange?: (v: number | null, row?: Row) => void;

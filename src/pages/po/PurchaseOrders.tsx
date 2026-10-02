@@ -16,8 +16,8 @@ interface PoTab { key: string; id: number | null; label: string; dirty?: boolean
 let newSeq = 0;
 
 // ── Search tab ─────────────────────────────────────────────────────────────
-const SearchTab: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; user: string; onOpen: (r: Row) => void; onNew: () => void; refreshKey: number }> =
-  ({ buState, user, onOpen, onNew, refreshKey }) => {
+const SearchTab: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; user: string; onOpen: (r: Row) => void; refreshKey: number }> =
+  ({ buState, user, onOpen, refreshKey }) => {
     const [rows, setRows] = useState<Row[]>([]);
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState('OPEN');
@@ -69,7 +69,6 @@ const SearchTab: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; user: 
             <Input.Search allowClear placeholder="PO, supplier or description" style={{ width: 280 }} onSearch={setSearch} />
             <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
             <Button icon={<DownloadOutlined />} disabled={!rows.length} onClick={exportXlsx}>Excel</Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={onNew}>New purchase order</Button>
           </Space>
           <Table size="small" rowKey="PO_HEADER_ID" loading={loading} dataSource={rows} pagination={{ pageSize: 20 }} scroll={{ x: 1300 }}
             onRow={r => ({ onDoubleClick: () => onOpen(r), style: { cursor: 'pointer' } })}
@@ -143,7 +142,7 @@ const PurchaseOrders: React.FC = () => {
 
   const items = [
     { key: 'search', closable: false, label: <Space size={4}><SearchOutlined />Search</Space>,
-      children: <SearchTab buState={buState} user={user} refreshKey={refreshKey} onNew={newPo}
+      children: <SearchTab buState={buState} user={user} refreshKey={refreshKey}
         onOpen={r => openPo(Number(r.PO_HEADER_ID), String(r.PO_NUMBER))} /> },
     ...tabs.map(t => ({
       key: t.key, closable: true,

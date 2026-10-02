@@ -54,7 +54,15 @@ const PurchaseOrderEditor: React.FC<{
   const [coNote, setCoNote] = useState<string | null>(null);
   const [coReason, setCoReason] = useState('');
   const [newBu, setNewBu] = useState<number | null>(buState.bu);
-  useEffect(() => { setNewBu(b => b ?? buState.bu ?? (buState.bus[0] ? Number(buState.bus[0].BUSINESS_UNIT_ID) : null)); }, [buState.bu, buState.bus]);
+  // a new order follows the business unit chosen at the top of the page
+  useEffect(() => {
+    if (initialId) return;
+    const target = buState.bu ?? (buState.bus[0] ? Number(buState.bus[0].BUSINESS_UNIT_ID) : null);
+    setNewBu(prev => {
+      if (prev !== target) form.setFieldsValue({ supplierId: undefined, supplierSiteId: undefined, paymentTerms: undefined });
+      return target;
+    });
+  }, [buState.bu, buState.bus, initialId, form]);
   const bu = hdr ? Number(hdr.BUSINESS_UNIT_ID) : newBu;
   const lookups = useLookups(bu);
   const buRow = buState.bus.find(b => Number(b.BUSINESS_UNIT_ID) === bu);
@@ -381,11 +389,13 @@ const PurchaseOrderEditor: React.FC<{
 
             {section('Order')}
             <div style={grid('minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)')}>
+              {!hdr && !buState.bu && (
               <Form.Item label="Business unit" required>
-                <Select value={bu ?? undefined} options={buOptions} showSearch optionFilterProp="label" disabled={!!hdr}
-                  placeholder="Choose business unit"
-                  onChange={v => { setNewBu(v); form.setFieldsValue({ supplierId: undefined, supplierSiteId: undefined, paymentTerms: undefined }); }} />
-              </Form.Item>
+                  <Select value={bu ?? undefined} options={buOptions} showSearch optionFilterProp="label" disabled={!!hdr}
+                    placeholder="Choose business unit"
+                    onChange={v => { setNewBu(v); form.setFieldsValue({ supplierId: undefined, supplierSiteId: undefined, paymentTerms: undefined }); }} />
+                </Form.Item>
+              )}
               <Form.Item name="buyerUser" label="Buyer"><Input /></Form.Item>
               <Form.Item name="currencyCode" label="Currency"><Select showSearch options={lookups.currencies.map(c => ({ value: c, label: c }))} /></Form.Item>
               {currencyCode !== fc && <>

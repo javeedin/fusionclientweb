@@ -24,7 +24,7 @@ interface ReqTab { key: string; id: number | null; label: string }
 let newSeq = 0;
 
 const ReqSearchTab: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; user: string; refreshKey: number;
-  onOpen: (r: Row) => void; onNew: () => void }> = ({ buState, user, refreshKey, onOpen, onNew }) => {
+  onOpen: (r: Row) => void }> = ({ buState, user, refreshKey, onOpen }) => {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>('ACTIVE');
@@ -60,7 +60,6 @@ const ReqSearchTab: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; use
           <Checkbox checked={mine} onChange={e => setMine(e.target.checked)}>Mine only</Checkbox>
           <Input.Search allowClear placeholder="Number or description" style={{ width: 260 }} onSearch={setSearch} />
           <Button icon={<ReloadOutlined />} onClick={load}>Refresh</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={onNew}>New requisition</Button>
         </Space>
         <Table size="small" rowKey="REQ_HEADER_ID" loading={loading} dataSource={rows} pagination={{ pageSize: 20 }}
           onRow={r => ({ onDoubleClick: () => onOpen(r), style: { cursor: 'pointer' } })}
@@ -124,7 +123,7 @@ const Requisitions: React.FC = () => {
         style={{ background: '#fff', borderRadius: 8 }} tabBarStyle={{ margin: 0, paddingLeft: 8 }}
         items={[
           { key: 'search', closable: false, label: <Space size={4}><SearchOutlined />Search</Space>,
-            children: <ReqSearchTab buState={buState} user={user} refreshKey={refreshKey} onNew={newReq}
+            children: <ReqSearchTab buState={buState} user={user} refreshKey={refreshKey}
               onOpen={r => openReq(Number(r.REQ_HEADER_ID), String(r.REQ_NUMBER))} /> },
           ...tabs.map(t => ({
             key: t.key, closable: true, label: t.label,
@@ -155,7 +154,11 @@ export const RequisitionEditor: React.FC<{
   const [busy, setBusy] = useState(false);
   const [defaults, setDefaults] = useState<Row | null>(null);
   const [newBu, setNewBu] = useState<number | null>(buState.bu);
-  useEffect(() => { setNewBu(b => b ?? buState.bu ?? (buState.bus[0] ? Number(buState.bus[0].BUSINESS_UNIT_ID) : null)); }, [buState.bu, buState.bus]);
+  // a new requisition follows the business unit chosen at the top of the page
+  useEffect(() => {
+    if (id) return;
+    setNewBu(buState.bu ?? (buState.bus[0] ? Number(buState.bus[0].BUSINESS_UNIT_ID) : null));
+  }, [buState.bu, buState.bus, id]);
   const bu = hdr ? Number(hdr.BUSINESS_UNIT_ID) : newBu;
   const lookups = useLookups(bu);
   const currency = hdr?.FUNCTIONAL_CURRENCY || buState.bus.find(b => Number(b.BUSINESS_UNIT_ID) === bu)?.FUNCTIONAL_CURRENCY || '';
@@ -295,11 +298,13 @@ export const RequisitionEditor: React.FC<{
           <Form form={form} disabled={!editable} className="po-compact" size="small" layout="horizontal" labelAlign="left"
             labelCol={{ flex: '96px' }} wrapperCol={{ flex: 'auto' }} colon={false}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', columnGap: 14 }}>
+              {!hdr && !buState.bu && (
               <Form.Item label="Business unit" required>
-                <Select value={bu ?? undefined} disabled={!!hdr} showSearch optionFilterProp="label" placeholder="Choose business unit"
-                  onChange={v => setNewBu(v)}
-                  options={buState.bus.map(b => ({ value: Number(b.BUSINESS_UNIT_ID), label: b.BUSINESS_UNIT_NAME }))} />
-              </Form.Item>
+                  <Select value={bu ?? undefined} disabled={!!hdr} showSearch optionFilterProp="label" placeholder="Choose business unit"
+                    onChange={v => setNewBu(v)}
+                    options={buState.bus.map(b => ({ value: Number(b.BUSINESS_UNIT_ID), label: b.BUSINESS_UNIT_NAME }))} />
+                </Form.Item>
+              )}
               <Form.Item name="description" label="Description" rules={[{ required: true }]}><Input maxLength={240} /></Form.Item>
               <Form.Item name="urgentFlag" label="Urgent" valuePropName="checked"><Checkbox /></Form.Item>
               <Form.Item name="justification" label="Justification" style={{ gridColumn: '1 / -1' }}><Input.TextArea rows={1} autoSize={{ minRows: 1, maxRows: 4 }} maxLength={2000} /></Form.Item>
