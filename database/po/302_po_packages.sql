@@ -683,12 +683,18 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_REQ_PKG AS
         IF v_id IS NULL THEN
             IF v_bu IS NULL THEN RR_PO_UTIL_PKG.err('Business unit is required'); END IF;
             op := RR_PO_UTIL_PKG.opt(v_bu);
-            INSERT INTO RR_PO_REQ_HEADERS (BUSINESS_UNIT_ID, DESCRIPTION, JUSTIFICATION, PREPARER_USER, URGENT_FLAG,
-                                           STATUS, FUNCTIONAL_CURRENCY, CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
-            VALUES (v_bu, NVL(RR_PO_UTIL_PKG.jstr(o, 'description'), 'Requisition'), RR_PO_UTIL_PKG.jstr(o, 'justification'),
-                    p_user, NVL(RR_PO_UTIL_PKG.jstr(o, 'urgentFlag'), 'N'), 'INCOMPLETE', op.FUNCTIONAL_CURRENCY,
-                    p_user, p_user, SYSTIMESTAMP)
-            RETURNING REQ_HEADER_ID INTO v_id;
+            DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                j1 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'description');
+                j2 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'justification');
+                j3 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'urgentFlag');
+            BEGIN
+                INSERT INTO RR_PO_REQ_HEADERS (BUSINESS_UNIT_ID, DESCRIPTION, JUSTIFICATION, PREPARER_USER, URGENT_FLAG,
+                                               STATUS, FUNCTIONAL_CURRENCY, CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
+                VALUES (v_bu, NVL(j1, 'Requisition'), j2,
+                        p_user, NVL(j3, 'N'), 'INCOMPLETE', op.FUNCTIONAL_CURRENCY,
+                        p_user, p_user, SYSTIMESTAMP)
+                RETURNING REQ_HEADER_ID INTO v_id;
+            END;
             RR_PO_UTIL_PKG.history('REQ', v_id, 'CREATE', NULL, 'INCOMPLETE', p_user);
             h := hdr(v_id);
         ELSE
@@ -697,12 +703,18 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_REQ_PKG AS
                 RR_PO_UTIL_PKG.err('Only incomplete or rejected requisitions can be edited (status ' || h.STATUS || ')');
             END IF;
             op := RR_PO_UTIL_PKG.opt(h.BUSINESS_UNIT_ID);
-            UPDATE RR_PO_REQ_HEADERS
-            SET    DESCRIPTION = NVL(RR_PO_UTIL_PKG.jstr(o, 'description'), DESCRIPTION),
-                   JUSTIFICATION = RR_PO_UTIL_PKG.jstr(o, 'justification'),
-                   URGENT_FLAG = NVL(RR_PO_UTIL_PKG.jstr(o, 'urgentFlag'), URGENT_FLAG),
-                   STATUS = 'INCOMPLETE', LAST_UPDATED_BY = p_user, LAST_UPDATE_DATE = SYSTIMESTAMP
-            WHERE  REQ_HEADER_ID = v_id;
+            DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                j4 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'description');
+                j5 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'justification');
+                j6 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'urgentFlag');
+            BEGIN
+                UPDATE RR_PO_REQ_HEADERS
+                SET    DESCRIPTION = NVL(j4, DESCRIPTION),
+                       JUSTIFICATION = j5,
+                       URGENT_FLAG = NVL(j6, URGENT_FLAG),
+                       STATUS = 'INCOMPLETE', LAST_UPDATED_BY = p_user, LAST_UPDATE_DATE = SYSTIMESTAMP
+                WHERE  REQ_HEADER_ID = v_id;
+            END;
             DELETE FROM RR_PO_REQ_DISTRIBUTIONS WHERE REQ_LINE_ID IN (SELECT REQ_LINE_ID FROM RR_PO_REQ_LINES WHERE REQ_HEADER_ID = v_id);
             DELETE FROM RR_PO_REQ_LINES WHERE REQ_HEADER_ID = v_id;
         END IF;
@@ -744,17 +756,27 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_REQ_PKG AS
                                    || op.FUNCTIONAL_CURRENCY || ' — enter the rate');
             END IF;
             v_req := NVL(RR_PO_UTIL_PKG.jstr(l, 'requesterUser'), p_user);
-            INSERT INTO RR_PO_REQ_LINES (REQ_HEADER_ID, LINE_NUM, LINE_TYPE, EXPENSE_ITEM_ID, CATEGORY_ID, ITEM_DESCRIPTION,
-                UOM_CODE, QUANTITY, UNIT_PRICE, AMOUNT, CURRENCY_CODE, RATE_TYPE, RATE_DATE, RATE, AMOUNT_FUNC, TAX_CODE,
-                NEED_BY_DATE, DELIVER_TO_LOCATION_ID, REQUESTER_USER, SUGGESTED_SUPPLIER_ID, SUGGESTED_SUPPLIER_SITE_ID,
-                SUGGESTED_SUPPLIER_NAME, SUPPLIER_ITEM_NUM, NOTE_TO_BUYER, LINE_STATUS, CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
-            VALUES (v_id, i + 1, v_type, v_item, v_cat, v_desc, v_uom, v_qty, v_price, NVL(v_amt, 0), v_cur,
-                op.DEFAULT_RATE_TYPE, TRUNC(SYSDATE), v_rate, ROUND(NVL(v_amt, 0) * v_rate, 2), v_tax,
-                NVL(RR_PO_UTIL_PKG.jdate(l, 'needByDate'), TRUNC(SYSDATE) + 7), RR_PO_UTIL_PKG.jnum(l, 'deliverToLocationId'),
-                v_req, RR_PO_UTIL_PKG.jnum(l, 'suggestedSupplierId'), RR_PO_UTIL_PKG.jnum(l, 'suggestedSupplierSiteId'),
-                RR_PO_UTIL_PKG.jstr(l, 'suggestedSupplierName'), RR_PO_UTIL_PKG.jstr(l, 'supplierItemNum'),
-                RR_PO_UTIL_PKG.jstr(l, 'noteToBuyer'), 'OPEN', p_user, p_user, SYSTIMESTAMP)
-            RETURNING REQ_LINE_ID INTO v_line;
+            DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                j7 DATE := RR_PO_UTIL_PKG.jdate(l, 'needByDate');
+                j8 NUMBER := RR_PO_UTIL_PKG.jnum(l, 'deliverToLocationId');
+                j9 NUMBER := RR_PO_UTIL_PKG.jnum(l, 'suggestedSupplierId');
+                j10 NUMBER := RR_PO_UTIL_PKG.jnum(l, 'suggestedSupplierSiteId');
+                j11 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(l, 'suggestedSupplierName');
+                j12 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(l, 'supplierItemNum');
+                j13 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(l, 'noteToBuyer');
+            BEGIN
+                INSERT INTO RR_PO_REQ_LINES (REQ_HEADER_ID, LINE_NUM, LINE_TYPE, EXPENSE_ITEM_ID, CATEGORY_ID, ITEM_DESCRIPTION,
+                    UOM_CODE, QUANTITY, UNIT_PRICE, AMOUNT, CURRENCY_CODE, RATE_TYPE, RATE_DATE, RATE, AMOUNT_FUNC, TAX_CODE,
+                    NEED_BY_DATE, DELIVER_TO_LOCATION_ID, REQUESTER_USER, SUGGESTED_SUPPLIER_ID, SUGGESTED_SUPPLIER_SITE_ID,
+                    SUGGESTED_SUPPLIER_NAME, SUPPLIER_ITEM_NUM, NOTE_TO_BUYER, LINE_STATUS, CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
+                VALUES (v_id, i + 1, v_type, v_item, v_cat, v_desc, v_uom, v_qty, v_price, NVL(v_amt, 0), v_cur,
+                    op.DEFAULT_RATE_TYPE, TRUNC(SYSDATE), v_rate, ROUND(NVL(v_amt, 0) * v_rate, 2), v_tax,
+                    NVL(j7, TRUNC(SYSDATE) + 7), j8,
+                    v_req, j9, j10,
+                    j11, j12,
+                    j13, 'OPEN', p_user, p_user, SYSTIMESTAMP)
+                RETURNING REQ_LINE_ID INTO v_line;
+            END;
 
             -- distributions: given split, else one 100 % line with the derived account
             dists := RR_PO_UTIL_PKG.jarr(l, 'distributions');
@@ -779,10 +801,14 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_REQ_PKG AS
                     v_da := ROUND(NVL(v_amt, 0) * v_pct / 100, 2); v_dq := CASE WHEN v_qty IS NOT NULL THEN ROUND(v_qty * v_pct / 100, 6) END;
                 END IF;
                 v_sum_a := v_sum_a + v_da; v_sum_q := v_sum_q + NVL(v_dq, 0); v_sum_p := v_sum_p + v_pct;
-                INSERT INTO RR_PO_REQ_DISTRIBUTIONS (REQ_LINE_ID, DIST_NUM, PERCENT, QUANTITY, AMOUNT, CHARGE_ACCOUNT, BUDGET_DATE,
-                                                     CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
-                VALUES (v_line, j + 1, v_pct, v_dq, v_da, v_acct,
-                        NVL(RR_PO_UTIL_PKG.jdate(l, 'needByDate'), TRUNC(SYSDATE) + 7), p_user, p_user, SYSTIMESTAMP);
+                DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                    j14 DATE := RR_PO_UTIL_PKG.jdate(l, 'needByDate');
+                BEGIN
+                    INSERT INTO RR_PO_REQ_DISTRIBUTIONS (REQ_LINE_ID, DIST_NUM, PERCENT, QUANTITY, AMOUNT, CHARGE_ACCOUNT, BUDGET_DATE,
+                                                         CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
+                    VALUES (v_line, j + 1, v_pct, v_dq, v_da, v_acct,
+                            NVL(j14, TRUNC(SYSDATE) + 7), p_user, p_user, SYSTIMESTAMP);
+                END;
             END LOOP;
             IF ABS(v_sum_p - 100) > 0.0001 THEN RR_PO_UTIL_PKG.err('Line ' || (i + 1) || ': distribution percentages must total 100'); END IF;
         END LOOP;
@@ -1127,18 +1153,28 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
         ELSE v_amt := NVL(RR_PO_UTIL_PKG.jnum(l, 'amount'), 0); v_qty := NULL; v_price := NULL; v_uom := NULL;
         END IF;
         v_need := NVL(RR_PO_UTIL_PKG.jdate(l, 'needByDate'), TRUNC(SYSDATE) + 7);
-        INSERT INTO RR_PO_LINES (PO_HEADER_ID, LINE_NUM, LINE_TYPE, EXPENSE_ITEM_ID, CATEGORY_ID, ITEM_DESCRIPTION,
-            SUPPLIER_ITEM_NUM, UOM_CODE, QUANTITY, UNIT_PRICE, AMOUNT, TAX_CODE, LINE_STATUS, CAPEX_FLAG, NOTE_TO_SUPPLIER,
-            CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
-        VALUES (h.PO_HEADER_ID, p_line_num, v_type, v_item, v_cat, v_desc, RR_PO_UTIL_PKG.jstr(l, 'supplierItemNum'), v_uom,
-            v_qty, v_price, v_amt, v_tax, 'OPEN', NVL(v_capex, 'N'), RR_PO_UTIL_PKG.jstr(l, 'noteToSupplier'),
-            p_user, p_user, SYSTIMESTAMP)
-        RETURNING PO_LINE_ID INTO v_line;
-        INSERT INTO RR_PO_SCHEDULES (PO_LINE_ID, PO_HEADER_ID, SCHEDULE_NUM, SHIP_TO_LOCATION_ID, NEED_BY_DATE, PROMISED_DATE,
-            QUANTITY, AMOUNT, TAX_CODE, CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
-        VALUES (v_line, h.PO_HEADER_ID, 1, NVL(RR_PO_UTIL_PKG.jnum(l, 'shipToLocationId'), h.SHIP_TO_LOCATION_ID), v_need,
-            RR_PO_UTIL_PKG.jdate(l, 'promisedDate'), v_qty, v_amt, v_tax, p_user, p_user, SYSTIMESTAMP)
-        RETURNING SCHEDULE_ID INTO v_sched;
+        DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+            j15 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(l, 'supplierItemNum');
+            j16 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(l, 'noteToSupplier');
+        BEGIN
+            INSERT INTO RR_PO_LINES (PO_HEADER_ID, LINE_NUM, LINE_TYPE, EXPENSE_ITEM_ID, CATEGORY_ID, ITEM_DESCRIPTION,
+                SUPPLIER_ITEM_NUM, UOM_CODE, QUANTITY, UNIT_PRICE, AMOUNT, TAX_CODE, LINE_STATUS, CAPEX_FLAG, NOTE_TO_SUPPLIER,
+                CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
+            VALUES (h.PO_HEADER_ID, p_line_num, v_type, v_item, v_cat, v_desc, j15, v_uom,
+                v_qty, v_price, v_amt, v_tax, 'OPEN', NVL(v_capex, 'N'), j16,
+                p_user, p_user, SYSTIMESTAMP)
+            RETURNING PO_LINE_ID INTO v_line;
+        END;
+        DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+            j17 NUMBER := RR_PO_UTIL_PKG.jnum(l, 'shipToLocationId');
+            j18 DATE := RR_PO_UTIL_PKG.jdate(l, 'promisedDate');
+        BEGIN
+            INSERT INTO RR_PO_SCHEDULES (PO_LINE_ID, PO_HEADER_ID, SCHEDULE_NUM, SHIP_TO_LOCATION_ID, NEED_BY_DATE, PROMISED_DATE,
+                QUANTITY, AMOUNT, TAX_CODE, CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
+            VALUES (v_line, h.PO_HEADER_ID, 1, NVL(j17, h.SHIP_TO_LOCATION_ID), v_need,
+                j18, v_qty, v_amt, v_tax, p_user, p_user, SYSTIMESTAMP)
+            RETURNING SCHEDULE_ID INTO v_sched;
+        END;
 
         v_req := NVL(RR_PO_UTIL_PKG.jstr(l, 'requesterUser'), p_user);
         dists := RR_PO_UTIL_PKG.jarr(l, 'distributions');
@@ -1162,13 +1198,20 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
                 v_da := ROUND(v_amt * v_pct / 100, 2); v_dq := CASE WHEN v_qty IS NOT NULL THEN ROUND(v_qty * v_pct / 100, 6) END;
             END IF;
             v_sum_a := v_sum_a + v_da; v_sum_q := v_sum_q + NVL(v_dq, 0); v_sum_p := v_sum_p + v_pct;
-            INSERT INTO RR_PO_DISTRIBUTIONS (SCHEDULE_ID, PO_LINE_ID, PO_HEADER_ID, DIST_NUM, PERCENT, QUANTITY_ORDERED, AMOUNT_ORDERED,
-                CHARGE_ACCOUNT, RATE, BUDGET_DATE, REQ_DISTRIBUTION_ID, REQUESTER_USER, DELIVER_TO_LOCATION_ID,
-                CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
-            VALUES (v_sched, v_line, h.PO_HEADER_ID, j + 1, v_pct, v_dq, v_da, v_acct, h.RATE, v_need,
-                RR_PO_UTIL_PKG.jnum(d, 'reqDistributionId'), NVL(RR_PO_UTIL_PKG.jstr(d, 'requesterUser'), v_req),
-                NVL(RR_PO_UTIL_PKG.jnum(d, 'deliverToLocationId'), RR_PO_UTIL_PKG.jnum(l, 'shipToLocationId')),
-                p_user, p_user, SYSTIMESTAMP);
+            DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                j19 NUMBER := RR_PO_UTIL_PKG.jnum(d, 'reqDistributionId');
+                j20 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(d, 'requesterUser');
+                j21 NUMBER := RR_PO_UTIL_PKG.jnum(d, 'deliverToLocationId');
+                j22 NUMBER := RR_PO_UTIL_PKG.jnum(l, 'shipToLocationId');
+            BEGIN
+                INSERT INTO RR_PO_DISTRIBUTIONS (SCHEDULE_ID, PO_LINE_ID, PO_HEADER_ID, DIST_NUM, PERCENT, QUANTITY_ORDERED, AMOUNT_ORDERED,
+                    CHARGE_ACCOUNT, RATE, BUDGET_DATE, REQ_DISTRIBUTION_ID, REQUESTER_USER, DELIVER_TO_LOCATION_ID,
+                    CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
+                VALUES (v_sched, v_line, h.PO_HEADER_ID, j + 1, v_pct, v_dq, v_da, v_acct, h.RATE, v_need,
+                    j19, NVL(j20, v_req),
+                    NVL(j21, j22),
+                    p_user, p_user, SYSTIMESTAMP);
+            END;
         END LOOP;
         IF ABS(v_sum_p - 100) > 0.0001 THEN RR_PO_UTIL_PKG.err('Line ' || p_line_num || ': distribution percentages must total 100'); END IF;
         -- requisition lines placed on this PO line
@@ -1281,33 +1324,57 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
                 AND (BUSINESS_UNIT_ID IS NULL OR BUSINESS_UNIT_ID = v_bu);
                 IF v_direct = 0 THEN RR_PO_UTIL_PKG.err('This business unit requires purchase orders to come from requisitions'); END IF;
             END IF;
-            INSERT INTO RR_PO_HEADERS (PO_NUMBER, BUSINESS_UNIT_ID, PO_TYPE, ORIGIN, SUPPLIER_ID, SUPPLIER_SITE_ID, SUPPLIER_CONTACT,
-                BUYER_USER, CURRENCY_CODE, RATE_TYPE, RATE_DATE, RATE, PAYMENT_TERMS, PAYMENT_TERMS_ID, SHIP_TO_LOCATION_ID,
-                BILL_TO_LOCATION_ID, DESCRIPTION, NOTE_TO_SUPPLIER, DOCUMENT_STATUS, CLOSURE_STATUS, AFTER_FACT_FLAG,
-                CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
-            VALUES (RR_PO_UTIL_PKG.next_number(v_bu, 'PO'), v_bu, 'STANDARD', NVL(RR_PO_UTIL_PKG.jstr(o, 'origin'), 'MANUAL'),
-                v_sup, v_site, RR_PO_UTIL_PKG.jstr(o, 'supplierContact'), NVL(RR_PO_UTIL_PKG.jstr(o, 'buyerUser'), p_user),
-                v_cur, h.RATE_TYPE, h.RATE_DATE, h.RATE, NVL(RR_PO_UTIL_PKG.jstr(o, 'paymentTerms'), v_terms),
-                NVL(RR_PO_UTIL_PKG.jnum(o, 'paymentTermsId'), v_terms_id),
-                NVL(RR_PO_UTIL_PKG.jnum(o, 'shipToLocationId'), op.DEFAULT_SHIP_TO_LOCATION_ID),
-                NVL(RR_PO_UTIL_PKG.jnum(o, 'billToLocationId'), op.DEFAULT_BILL_TO_LOCATION_ID),
-                RR_PO_UTIL_PKG.jstr(o, 'description'), RR_PO_UTIL_PKG.jstr(o, 'noteToSupplier'), 'INCOMPLETE', 'OPEN',
-                CASE WHEN op.ALLOW_AFTER_FACT_PO = 'Y' THEN NVL(RR_PO_UTIL_PKG.jstr(o, 'afterFactFlag'), 'N') ELSE 'N' END,
-                p_user, p_user, SYSTIMESTAMP)
-            RETURNING PO_HEADER_ID INTO v_id;
+            DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                j23 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'origin');
+                j24 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'supplierContact');
+                j25 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'buyerUser');
+                j26 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'paymentTerms');
+                j27 NUMBER := RR_PO_UTIL_PKG.jnum(o, 'paymentTermsId');
+                j28 NUMBER := RR_PO_UTIL_PKG.jnum(o, 'shipToLocationId');
+                j29 NUMBER := RR_PO_UTIL_PKG.jnum(o, 'billToLocationId');
+                j30 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'description');
+                j31 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'noteToSupplier');
+                j32 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'afterFactFlag');
+            BEGIN
+                INSERT INTO RR_PO_HEADERS (PO_NUMBER, BUSINESS_UNIT_ID, PO_TYPE, ORIGIN, SUPPLIER_ID, SUPPLIER_SITE_ID, SUPPLIER_CONTACT,
+                    BUYER_USER, CURRENCY_CODE, RATE_TYPE, RATE_DATE, RATE, PAYMENT_TERMS, PAYMENT_TERMS_ID, SHIP_TO_LOCATION_ID,
+                    BILL_TO_LOCATION_ID, DESCRIPTION, NOTE_TO_SUPPLIER, DOCUMENT_STATUS, CLOSURE_STATUS, AFTER_FACT_FLAG,
+                    CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
+                VALUES (RR_PO_UTIL_PKG.next_number(v_bu, 'PO'), v_bu, 'STANDARD', NVL(j23, 'MANUAL'),
+                    v_sup, v_site, j24, NVL(j25, p_user),
+                    v_cur, h.RATE_TYPE, h.RATE_DATE, h.RATE, NVL(j26, v_terms),
+                    NVL(j27, v_terms_id),
+                    NVL(j28, op.DEFAULT_SHIP_TO_LOCATION_ID),
+                    NVL(j29, op.DEFAULT_BILL_TO_LOCATION_ID),
+                    j30, j31, 'INCOMPLETE', 'OPEN',
+                    CASE WHEN op.ALLOW_AFTER_FACT_PO = 'Y' THEN NVL(j32, 'N') ELSE 'N' END,
+                    p_user, p_user, SYSTIMESTAMP)
+                RETURNING PO_HEADER_ID INTO v_id;
+            END;
             RR_PO_UTIL_PKG.history('PO', v_id, 'CREATE', NULL, 'INCOMPLETE', p_user);
         ELSE
-            UPDATE RR_PO_HEADERS
-            SET    SUPPLIER_ID = v_sup, SUPPLIER_SITE_ID = v_site, SUPPLIER_CONTACT = RR_PO_UTIL_PKG.jstr(o, 'supplierContact'),
-                   BUYER_USER = NVL(RR_PO_UTIL_PKG.jstr(o, 'buyerUser'), BUYER_USER), CURRENCY_CODE = v_cur,
-                   RATE_TYPE = h.RATE_TYPE, RATE_DATE = h.RATE_DATE, RATE = h.RATE,
-                   PAYMENT_TERMS = NVL(RR_PO_UTIL_PKG.jstr(o, 'paymentTerms'), v_terms),
-                   PAYMENT_TERMS_ID = NVL(RR_PO_UTIL_PKG.jnum(o, 'paymentTermsId'), v_terms_id),
-                   SHIP_TO_LOCATION_ID = RR_PO_UTIL_PKG.jnum(o, 'shipToLocationId'),
-                   BILL_TO_LOCATION_ID = RR_PO_UTIL_PKG.jnum(o, 'billToLocationId'),
-                   DESCRIPTION = RR_PO_UTIL_PKG.jstr(o, 'description'), NOTE_TO_SUPPLIER = RR_PO_UTIL_PKG.jstr(o, 'noteToSupplier'),
-                   DOCUMENT_STATUS = 'INCOMPLETE', LAST_UPDATED_BY = p_user, LAST_UPDATE_DATE = SYSTIMESTAMP
-            WHERE  PO_HEADER_ID = v_id;
+            DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                j33 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'supplierContact');
+                j34 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'buyerUser');
+                j35 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'paymentTerms');
+                j36 NUMBER := RR_PO_UTIL_PKG.jnum(o, 'paymentTermsId');
+                j37 NUMBER := RR_PO_UTIL_PKG.jnum(o, 'shipToLocationId');
+                j38 NUMBER := RR_PO_UTIL_PKG.jnum(o, 'billToLocationId');
+                j39 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'description');
+                j40 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'noteToSupplier');
+            BEGIN
+                UPDATE RR_PO_HEADERS
+                SET    SUPPLIER_ID = v_sup, SUPPLIER_SITE_ID = v_site, SUPPLIER_CONTACT = j33,
+                       BUYER_USER = NVL(j34, BUYER_USER), CURRENCY_CODE = v_cur,
+                       RATE_TYPE = h.RATE_TYPE, RATE_DATE = h.RATE_DATE, RATE = h.RATE,
+                       PAYMENT_TERMS = NVL(j35, v_terms),
+                       PAYMENT_TERMS_ID = NVL(j36, v_terms_id),
+                       SHIP_TO_LOCATION_ID = j37,
+                       BILL_TO_LOCATION_ID = j38,
+                       DESCRIPTION = j39, NOTE_TO_SUPPLIER = j40,
+                       DOCUMENT_STATUS = 'INCOMPLETE', LAST_UPDATED_BY = p_user, LAST_UPDATE_DATE = SYSTIMESTAMP
+                WHERE  PO_HEADER_ID = v_id;
+            END;
             IF o.has('lines') THEN delete_lines(v_id); END IF;
         END IF;
         h := hdr(v_id);
@@ -1876,7 +1943,11 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
                 resplit(s.SCHEDULE_ID, l.QUANTITY, v_new);
                 rollup_schedule(s.SCHEDULE_ID);
             WHEN 'UPDATE_NEED_BY' THEN
-                UPDATE RR_PO_SCHEDULES SET NEED_BY_DATE = RR_PO_UTIL_PKG.jdate(c, 'value') WHERE SCHEDULE_ID = s.SCHEDULE_ID;
+                DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                    j41 DATE := RR_PO_UTIL_PKG.jdate(c, 'value');
+                BEGIN
+                    UPDATE RR_PO_SCHEDULES SET NEED_BY_DATE = j41 WHERE SCHEDULE_ID = s.SCHEDULE_ID;
+                END;
             WHEN 'CANCEL_LINE' THEN
                 cancel_schedule(s.SCHEDULE_ID);
                 release_req_lines(h.PO_HEADER_ID, v_line, 'Y', p_user);
@@ -1885,7 +1956,11 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
                 SELECT NVL(MAX(LINE_NUM), 0) + 1 INTO v_new FROM RR_PO_LINES WHERE PO_HEADER_ID = h.PO_HEADER_ID;
                 v_l := insert_line(h, v_new, c.get_object('line'), p_user);
             WHEN 'UPDATE_NOTE' THEN
-                UPDATE RR_PO_HEADERS SET NOTE_TO_SUPPLIER = RR_PO_UTIL_PKG.jstr(c, 'value') WHERE PO_HEADER_ID = h.PO_HEADER_ID;
+                DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                    j42 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(c, 'value');
+                BEGIN
+                    UPDATE RR_PO_HEADERS SET NOTE_TO_SUPPLIER = j42 WHERE PO_HEADER_ID = h.PO_HEADER_ID;
+                END;
             ELSE NULL;
             END CASE;
         END LOOP;
@@ -2035,7 +2110,11 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_RCV_PKG AS
             v_amt := RR_PO_UTIL_PKG.jnum(ln, 'amount');
             IF NVL(v_qty, 0) = 0 AND NVL(v_amt, 0) = 0 THEN CONTINUE; END IF;
             BEGIN
-                SELECT * INTO s FROM RR_PO_SCHEDULES WHERE SCHEDULE_ID = RR_PO_UTIL_PKG.jnum(ln, 'scheduleId') FOR UPDATE;
+                DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                    j43 NUMBER := RR_PO_UTIL_PKG.jnum(ln, 'scheduleId');
+                BEGIN
+                    SELECT * INTO s FROM RR_PO_SCHEDULES WHERE SCHEDULE_ID = j43 FOR UPDATE;
+                END;
             EXCEPTION WHEN NO_DATA_FOUND THEN RR_PO_UTIL_PKG.err('Schedule ' || RR_PO_UTIL_PKG.jstr(ln, 'scheduleId') || ' not found');
             END;
             SELECT * INTO l FROM RR_PO_LINES WHERE PO_LINE_ID = s.PO_LINE_ID;
@@ -2045,11 +2124,16 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_RCV_PKG AS
                 op := RR_PO_UTIL_PKG.opt(v_bu);
                 check_date(v_bu, v_date);
                 v_num := RR_PO_UTIL_PKG.next_number(v_bu, 'RCV');
-                INSERT INTO RR_PO_RCV_HEADERS (RECEIPT_NUMBER, BUSINESS_UNIT_ID, SUPPLIER_ID, SUPPLIER_SITE_ID, RECEIPT_DATE,
-                    DELIVERY_NOTE_NUM, COMMENTS, RECEIVED_BY, CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
-                VALUES (v_num, v_bu, v_sup, v_site, v_date, RR_PO_UTIL_PKG.jstr(o, 'deliveryNote'), RR_PO_UTIL_PKG.jstr(o, 'comments'),
-                    p_user, p_user, p_user, SYSTIMESTAMP)
-                RETURNING RECEIPT_HEADER_ID INTO v_hdr;
+                DECLARE   -- JSON values read into variables first: SQL cannot take PL/SQL JSON objects (ORA-40573)
+                    j44 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'deliveryNote');
+                    j45 VARCHAR2(4000) := RR_PO_UTIL_PKG.jstr(o, 'comments');
+                BEGIN
+                    INSERT INTO RR_PO_RCV_HEADERS (RECEIPT_NUMBER, BUSINESS_UNIT_ID, SUPPLIER_ID, SUPPLIER_SITE_ID, RECEIPT_DATE,
+                        DELIVERY_NOTE_NUM, COMMENTS, RECEIVED_BY, CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
+                    VALUES (v_num, v_bu, v_sup, v_site, v_date, j44, j45,
+                        p_user, p_user, p_user, SYSTIMESTAMP)
+                    RETURNING RECEIPT_HEADER_ID INTO v_hdr;
+                END;
             ELSIF h.SUPPLIER_SITE_ID <> v_site OR h.BUSINESS_UNIT_ID <> v_bu THEN
                 RR_PO_UTIL_PKG.err('One receipt covers one supplier site — PO ' || h.PO_NUMBER || ' is for another supplier/site');
             END IF;

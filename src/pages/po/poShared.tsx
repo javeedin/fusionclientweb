@@ -2,17 +2,17 @@
 // history, reason prompt).
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Select, Space, Typography, Tag, Table, Breadcrumb, Input, InputNumber, Button, Tooltip, Modal, Alert, message, Empty, Form,
+  Select, Space, Typography, Tag, Table, Breadcrumb, Badge, Drawer, Collapse, Segmented, Input, InputNumber, Button, Tooltip, Modal, Alert, message, Empty, Form,
 } from 'antd';
 import {
-  DeleteOutlined, PlusOutlined, SplitCellsOutlined, HomeOutlined, SettingOutlined, SearchOutlined, HistoryOutlined, ShoppingCartOutlined, CopyOutlined,
+  DeleteOutlined, PlusOutlined, ApiOutlined, SplitCellsOutlined, HomeOutlined, SettingOutlined, SearchOutlined, HistoryOutlined, ShoppingCartOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import AccountSelector from '../../components/AccountSelector';
 import {
-  BusinessUnit, Row, poQuery, lit, nlit, loadBusinessUnits, loadCategories, loadCurrencies, loadItems, loadLocations,
+  BusinessUnit, Row, ApiCall, getApiLog, clearApiLog, onApiLog, poQuery, lit, nlit, loadBusinessUnits, loadCategories, loadCurrencies, loadItems, loadLocations,
   loadTaxCodes, loadUoms, loadHistory, rememberBu, rememberedBu, STATUS_COLOR, label, money, n, r2,
 } from '../../services/po.service';
 
@@ -22,6 +22,66 @@ export const PO_RED = '#C74634';
 export const usePoUser = () => {
   const { user } = useAuth();
   return (user?.username || user?.email || 'UNKNOWN') as string;
+};
+
+// ── API log viewer: every Purchasing POST with its body and response ──────
+const pretty = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2));
+const copy = (t: string) => { navigator.clipboard?.writeText(t).then(() => message.success('Copied'), () => message.error('Copy failed')); };
+const curlOf = (c: ApiCall) =>
+  `curl -X ${c.method} '${c.url}' -H 'Content-Type: application/json' -d '${JSON.stringify(c.body).replace(/'/g, "'\\''")}'`;
+
+export const ApiLogButton: React.FC<{ size?: 'small' | 'middle' }> = ({ size }) => {
+  const [open, setOpen] = useState(false);
+  const [, force] = useState(0);
+  const [filter, setFilter] = useState<'ALL' | 'WRITES' | 'ERRORS'>('WRITES');
+  useEffect(() => onApiLog(() => force(x => x + 1)), []);
+  const log = getApiLog();
+  const errors = log.filter(c => !c.ok).length;
+  const shown = log.filter(c => filter === 'ALL' || (filter === 'ERRORS' ? !c.ok : c.label !== 'Query'));
+  return (
+    <>
+      <Tooltip title="API calls — see each POST with its body and response">
+        <Badge count={errors} size="small" offset={[-4, 4]}>
+          <Button size={size} icon={<ApiOutlined />} onClick={() => setOpen(true)}>API</Button>
+        </Badge>
+      </Tooltip>
+      <Drawer open={open} onClose={() => setOpen(false)} title={<Space><ApiOutlined />API calls <Text type="secondary" style={{ fontSize: 12 }}>(last {log.length}, newest first)</Text></Space>}
+        size={760} extra={<Space>
+          <Segmented size="small" value={filter} onChange={v => setFilter(v as typeof filter)}
+            options={[{ value: 'WRITES', label: 'Saves / actions' }, { value: 'ALL', label: 'All' }, { value: 'ERRORS', label: `Errors (${errors})` }]} />
+          <Button size="small" onClick={() => clearApiLog()}>Clear</Button>
+        </Space>}>
+        {!shown.length && <Empty description="No calls yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+        <Collapse size="small" accordion items={shown.map(c => ({
+          key: c.id,
+          label: (
+            <Space size={6} wrap>
+              <Tag color={c.ok ? 'green' : 'red'} style={{ marginInlineEnd: 0 }}>{c.status ?? 'ERR'}</Tag>
+              <Tag color="blue" style={{ marginInlineEnd: 0 }}>{c.method}</Tag>
+              <Text code style={{ fontSize: 12 }}>{c.url.replace(/^.*?\/(?=(ai|po)\/)/, '')}</Text>
+              <Text strong style={{ fontSize: 12 }}>{c.label}</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>{c.at.slice(11, 19)} · {c.ms} ms</Text>
+            </Space>
+          ),
+          children: (
+            <div>
+              <Space style={{ marginBottom: 6 }}>
+                <Text strong>Request body</Text>
+                <Button size="small" icon={<CopyOutlined />} onClick={() => copy(pretty(c.body))}>Copy body</Button>
+                <Button size="small" onClick={() => copy(curlOf(c))}>Copy as curl</Button>
+              </Space>
+              <pre style={{ background: '#0f172a', color: '#e2e8f0', padding: 10, borderRadius: 6, fontSize: 12, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{pretty(c.body)}</pre>
+              <Space style={{ margin: '6px 0' }}>
+                <Text strong>Response</Text>
+                <Button size="small" icon={<CopyOutlined />} onClick={() => copy(pretty(c.response))}>Copy</Button>
+              </Space>
+              <pre style={{ background: c.ok ? '#f6ffed' : '#fff1f0', border: `1px solid ${c.ok ? '#b7eb8f' : '#ffa39e'}`, padding: 10, borderRadius: 6, fontSize: 12, maxHeight: 240, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{pretty(c.response)}</pre>
+            </div>
+          ),
+        }))} />
+      </Drawer>
+    </>
+  );
 };
 
 // ── Business units ─────────────────────────────────────────────────────────
@@ -80,6 +140,7 @@ export const PoBar: React.FC<{
         />
       )}
       {extra}
+      <ApiLogButton />
     </Space>
   </div>
   </>

@@ -10,6 +10,24 @@ const BASE = APEX_DB_CONFIG.baseUrl.replace(/\/+$/, '');
 
 export type Row = Record<string, any>;
 
+// ── API call log (shown by the "API" button on Purchasing pages) ───────────
+export interface ApiCall {
+  id: number; at: string; method: string; url: string; body: unknown;
+  status: number | null; ok: boolean; ms: number; response: unknown; label: string;
+}
+const apiLog: ApiCall[] = [];
+const apiListeners = new Set<() => void>();
+let apiSeq = 0;
+export const getApiLog = () => apiLog;
+export const clearApiLog = () => { apiLog.length = 0; apiListeners.forEach(f => f()); };
+export const onApiLog = (f: () => void) => { apiListeners.add(f); return () => { apiListeners.delete(f); }; };
+export function logApi(c: Omit<ApiCall, 'id' | 'at'>) {
+  apiLog.unshift({ ...c, id: ++apiSeq, at: new Date().toISOString() });
+  if (apiLog.length > 100) apiLog.length = 100;
+  apiListeners.forEach(f => f());
+}
+const parseMaybe = (t: string) => { try { return JSON.parse(t); } catch { return t.slice(0, 4000); } };
+
 export interface ExecResult {
   success: boolean;
   status: 'S' | 'W' | 'E';
@@ -40,13 +58,19 @@ const errText = (text: string, data: any, status: number) => {
 
 /** Run one SELECT through the gateway; rows come back as objects keyed by UPPER column name. */
 export async function poQuery(sql: string, maxRows = 1000): Promise<Row[]> {
+  const reqBody = { sql: sql.trim().replace(/;\s*$/, ''), maxRows, appUser: 'PURCHASING' };
+  const t0 = performance.now();
   const res = await fetch(`${BASE}/ai/executequery`, {
     method: 'POST',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ sql: sql.trim().replace(/;\s*$/, ''), maxRows, appUser: 'PURCHASING' }),
+    body: JSON.stringify(reqBody),
   });
   const text = await res.text();
+  const parsed = parseMaybe(text);
+  logApi({ method: 'POST', url: `${BASE}/ai/executequery`, body: reqBody, status: res.status, ms: Math.round(performance.now() - t0),
+    ok: res.ok && (parsed as any)?.success !== false, label: 'Query',
+    response: typeof parsed === 'object' && parsed ? { ...(parsed as any), rows: `(${(parsed as any).rows?.length ?? 0} rows)` } : parsed });
   let data: any = null;
   try { data = JSON.parse(text); } catch { /* HTML error page */ }
   if (!res.ok || !data || data.success === false) throw new Error(errText(text, data, res.status));
@@ -60,13 +84,18 @@ export async function poQuery(sql: string, maxRows = 1000): Promise<Row[]> {
 
 /** Call a registered procedure. Resolves for S and W; throws with the procedure's message on E. */
 export async function poExec(proc: string, params: Record<string, unknown>, user: string): Promise<ExecResult> {
+  const reqBody = { proc, params, user: user || 'UNKNOWN' };
+  const t0 = performance.now();
   const res = await fetch(`${BASE}/po/execute`, {
     method: 'POST',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ proc, params, user: user || 'UNKNOWN' }),
+    body: JSON.stringify(reqBody),
   });
   const text = await res.text();
+  const parsedResp = parseMaybe(text);
+  logApi({ method: 'POST', url: `${BASE}/po/execute`, body: reqBody, status: res.status, ms: Math.round(performance.now() - t0),
+    ok: res.ok && ['S', 'W'].includes((parsedResp as any)?.status), label: proc.replace(/^RR_PO_/, '').replace('_PKG', ''), response: parsedResp });
   let data: any = null;
   try { data = JSON.parse(text); } catch { /* HTML error page */ }
   if (!data) {
