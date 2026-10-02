@@ -133,7 +133,8 @@ const PurchaseOrderEditor: React.FC<{
   };
 
   const save = async (): Promise<number | null> => {
-    const v = await form.validateFields();
+    const v = await form.validateFields().catch(() => null);   // invalid fields are shown on the form
+    if (!v) return null;
     if (!lines.length) { message.warning('Add at least one line'); return null; }
     const r = await exec(PROC.savePo, {
       p_json: {

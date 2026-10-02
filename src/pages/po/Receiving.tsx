@@ -166,7 +166,8 @@ const ReceiptsTab: React.FC<{ bu: number | null }> = ({ bu }) => {
   };
   const submit = async () => {
     if (!adj) return;
-    const v = await form.validateFields();
+    const v = await form.validateFields().catch(() => null);   // invalid fields are shown on the form
+    if (!v) return null;
     const isQ = adj.row.LINE_TYPE === 'QUANTITY';
     setBusy(true);
     try {

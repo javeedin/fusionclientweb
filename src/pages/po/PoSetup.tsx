@@ -280,7 +280,8 @@ const EntityGrid: React.FC<{ e: Entity; lk: SetupLookups; onChanged: () => void 
     setEdit(r || {});
   };
   const save = async () => {
-    const v = await form.validateFields();
+    const v = await form.validateFields().catch(() => null);   // invalid fields are shown on the form
+    if (!v) return null;
     const isNew = !edit || edit[e.rowKey] === undefined;
     const json = toJson(e.fields, v, isNew);
     if (!isNew && e.key !== 'UOM') json[e.rowKey.toLowerCase()] = edit![e.rowKey];
@@ -380,7 +381,8 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
   }, [buState.bu]);
 
   const save = async () => {
-    const v = await form.validateFields();
+    const v = await form.validateFields().catch(() => null);   // invalid fields are shown on the form
+    if (!v) return null;
     setBusy(true);
     try {
       const json = toJson(all, v, !exists);

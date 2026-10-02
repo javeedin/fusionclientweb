@@ -172,7 +172,8 @@ const PeriodEnd: React.FC<{ buState: BuState }> = ({ buState }) => {
   };
 
   const create = async () => {
-    const v = await form.validateFields();
+    const v = await form.validateFields().catch(() => null);   // invalid fields are shown on the form
+    if (!v) return null;
     setBusy(true);
     try {
       const r = await poExec(PROC.runAccrual, { p_business_unit_id: buState.bu, p_period_name: v.periodName,
@@ -292,7 +293,8 @@ const Uninvoiced: React.FC<{ buState: BuState }> = ({ buState }) => {
   const fc = buState.current?.FUNCTIONAL_CURRENCY || '';
 
   const writeOff = async () => {
-    const v = await form.validateFields();
+    const v = await form.validateFields().catch(() => null);   // invalid fields are shown on the form
+    if (!v) return null;
     setBusy(true);
     try {
       const r = await poExec(PROC.writeOff, { p_json: { distributionIds: sel, reason: v.reason, writeOffDate: v.writeOffDate, account: v.account || null } }, user);
