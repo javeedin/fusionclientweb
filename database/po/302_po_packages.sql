@@ -1099,6 +1099,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
         v_req  VARCHAR2(150); v_acct VARCHAR2(200); v_pct NUMBER; v_dq NUMBER; v_da NUMBER;
         v_sum_q NUMBER := 0; v_sum_a NUMBER := 0; v_sum_p NUMBER := 0;
         v_need DATE;
+        v_rq_id NUMBER;
     BEGIN
         v_item := RR_PO_UTIL_PKG.jnum(l, 'expenseItemId');
         v_cat  := RR_PO_UTIL_PKG.jnum(l, 'categoryId');
@@ -1173,8 +1174,9 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
         -- requisition lines placed on this PO line
         rq := RR_PO_UTIL_PKG.jarr(l, 'reqLineIds');
         FOR j IN 0 .. rq.get_size - 1 LOOP
+            v_rq_id := rq.get_number(j);   -- object methods cannot be called inside SQL
             UPDATE RR_PO_REQ_LINES SET LINE_STATUS = 'ON_PO', PO_LINE_ID = v_line, LAST_UPDATED_BY = p_user, LAST_UPDATE_DATE = SYSTIMESTAMP
-            WHERE REQ_LINE_ID = rq.get_number(j);
+            WHERE REQ_LINE_ID = v_rq_id;
         END LOOP;
         RETURN v_line;
     END;
@@ -1325,6 +1327,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
                           p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
         o      JSON_OBJECT_T := JSON_OBJECT_T.parse(p_json);
         ids    JSON_ARRAY_T := RR_PO_UTIL_PKG.jarr(o, 'reqLineIds');
+        v_ids  CLOB;                 -- the id list as text for JSON_TABLE (no object methods in SQL)
         prices JSON_OBJECT_T;
         po     JSON_OBJECT_T := JSON_OBJECT_T();
         lines  JSON_ARRAY_T := JSON_ARRAY_T();
@@ -1337,10 +1340,11 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_DOC_PKG AS
         v_n    NUMBER := 0;
     BEGIN
         IF ids.get_size = 0 THEN RR_PO_UTIL_PKG.err('Select at least one requisition line'); END IF;
+        v_ids := ids.to_clob;
         IF o.has('prices') AND o.get('prices').is_object THEN prices := o.get_object('prices'); END IF;
         FOR r IN (SELECT l.*, h.BUSINESS_UNIT_ID, h.STATUS hdr_status
                   FROM RR_PO_REQ_LINES l JOIN RR_PO_REQ_HEADERS h ON h.REQ_HEADER_ID = l.REQ_HEADER_ID
-                  WHERE l.REQ_LINE_ID IN (SELECT TO_NUMBER(VALUE) FROM JSON_TABLE(ids.to_clob, '$[*]' COLUMNS (VALUE VARCHAR2(40) PATH '$')))
+                  WHERE l.REQ_LINE_ID IN (SELECT TO_NUMBER(VALUE) FROM JSON_TABLE(v_ids, '$[*]' COLUMNS (VALUE VARCHAR2(40) PATH '$')))
                   ORDER BY l.REQ_HEADER_ID, l.LINE_NUM
                   FOR UPDATE OF l.LINE_STATUS) LOOP
             IF r.hdr_status <> 'APPROVED' OR r.LINE_STATUS <> 'OPEN' THEN
@@ -2287,14 +2291,16 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_ACCT_PKG AS
         v_last DATE;
         v_use  VARCHAR2(200);
         v_e    VARCHAR2(400);
+        v_did  NUMBER;
     BEGIN
         IF TRIM(v_rsn) IS NULL THEN RR_PO_UTIL_PKG.err('Reason is required'); END IF;
         IF ids.get_size = 0 THEN RR_PO_UTIL_PKG.err('Select at least one line'); END IF;
         FOR i IN 0 .. ids.get_size - 1 LOOP
+            v_did := ids.get_number(i);
             FOR d IN (SELECT d.*, s.CLOSURE_STATUS, h.BUSINESS_UNIT_ID, h.PO_NUMBER
                       FROM RR_PO_DISTRIBUTIONS d JOIN RR_PO_SCHEDULES s ON s.SCHEDULE_ID = d.SCHEDULE_ID
                       JOIN RR_PO_HEADERS h ON h.PO_HEADER_ID = d.PO_HEADER_ID
-                      WHERE d.DISTRIBUTION_ID = ids.get_number(i) FOR UPDATE OF d.ACCRUED_AMOUNT_FUNC) LOOP
+                      WHERE d.DISTRIBUTION_ID = v_did FOR UPDATE OF d.ACCRUED_AMOUNT_FUNC) LOOP
                 op := RR_PO_UTIL_PKG.opt(d.BUSINESS_UNIT_ID);
                 IF d.ACCRUED_AMOUNT_FUNC <= 0 THEN RR_PO_UTIL_PKG.err('PO ' || d.PO_NUMBER || ': nothing accrued to write off'); END IF;
                 SELECT MAX(t.TRANSACTION_DATE) INTO v_last FROM RR_PO_RCV_TRANSACTIONS t WHERE t.SCHEDULE_ID = d.SCHEDULE_ID;
