@@ -12,8 +12,9 @@ import {
   Card, Form, Select, Input, Button, Space, Typography, Alert, Table, Tag, Tooltip, Row, Col, Statistic, Empty, Segmented, message,
   Modal, Tabs, Badge, Checkbox, InputNumber,
 } from 'antd';
+import { parsePastedAccounts } from './plPaste';
 import {
-  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, FileSearchOutlined, PlusOutlined, BulbOutlined, SwapOutlined, FolderAddOutlined, AppstoreAddOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined,
+  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, FileSearchOutlined, PlusOutlined, BulbOutlined, SwapOutlined, FolderAddOutlined, AppstoreAddOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined, SnippetsOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
@@ -451,8 +452,57 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     setAddMode(mapped.length ? 'move' : 'add');
     setAddLines(lines);
   };
-  const [addMode, setAddMode] = useState<'add' | 'move'>('add');
   const isRange = (e: PLSectionAccount) => !!(e.account_from && e.account_to);
+  // ── paste a list of accounts → add / move them to a group › section ─────────
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteSection, setPasteSection] = useState<number | undefined>();
+  const tbLines = useMemo(() => (result ? [...result.tbRev, ...result.tbExp] : []), [result]);
+  const sectionLookup = useMemo(() => {
+    const m = new Map<string, number>();
+    const norm = (x: string) => x.toLowerCase().replace(/\s+/g, ' ').replace(/\s*[›>\/]\s*/g, '>').trim();
+    for (const g of tpl.groups || []) for (const sc of g.sections || []) {
+      const gn = [g.group_label, g.group_name, g.group_code].filter(Boolean) as string[];
+      for (const sn of [sc.section_label, sc.section_name, sc.section_code].filter(Boolean) as string[]) {
+        if (!m.has(norm(sn))) m.set(norm(sn), sc.section_id);
+        gn.forEach(x => m.set(norm(`${x}>${sn}`), sc.section_id));
+      }
+    }
+    return { get: (x: string) => m.get(norm(x)) };
+  }, [tpl]);
+  // where the template picks an account up today (also for accounts with no balance in this TB)
+  const entriesFor = (acct: string): MapEntry[] => {
+    const out: MapEntry[] = [];
+    for (const g of tpl.groups || []) for (const sc of g.sections || []) {
+      const e = (sc.accounts || []).find(a => matches(acct, a));
+      if (e) out.push({ sectionId: sc.section_id, sectionName: `${g.group_label || g.group_name} › ${sc.section_label || sc.section_name}`, entry: e });
+    }
+    return out;
+  };
+  const pasted = useMemo(() => parsePastedAccounts(pasteText, {
+    knownAccounts: [...tbLines.map(l => l.account), ...(result?.unmapped || []).map(u => u.account)],
+    sectionOf: x => sectionLookup.get(x),
+  }), [pasteText, tbLines, result, sectionLookup]);
+  const pasteRows = useMemo(() => pasted.items.map(it => {
+    const tbl = tbLines.find(l => l.account === it.account);
+    const um = result?.unmapped.find(u => u.account === it.account);
+    const from = tbl?.entries.length ? tbl.entries : entriesFor(it.account);
+    const target = it.sectionId ?? pasteSection;
+    const status = !target ? 'no section' : from.some(f => isRange(f.entry) && f.sectionId !== target) ? 'range'
+      : from.length && from.every(f => f.sectionId === target) ? 'already there' : from.length ? 'move' : 'add';
+    return { account: it.account, desc: tbl?.desc ?? um?.desc ?? null, type: (tbl?.type ?? um?.type ?? '') as string,
+      ytd: tbl?.ytd ?? um?.ytd ?? 0, inTb: !!(tbl || um), from, target, fromPaste: it.sectionId !== undefined, status };
+  }), [pasted, tbLines, result, pasteSection, tpl]); // eslint-disable-line react-hooks/exhaustive-deps
+  const openPaste = () => { setPasteText(''); setPasteSection(undefined); setPasteOpen(true); };
+  const continuePaste = () => {
+    const rows = pasteRows.filter(r => r.status !== 'already there');
+    if (!rows.length) { message.info(pasteRows.length ? 'All pasted accounts are already in those sections' : 'Paste some account codes first'); return; }
+    setAddMode(rows.some(r => r.from.length) ? 'move' : 'add');
+    setAddLines(rows.map(r => ({ account: r.account, desc: r.desc, type: r.type, ytd: r.ytd, from: r.from, sectionId: r.target,
+      suggested: r.from.length ? undefined : suggestSection(r.account, r.type) })));
+    setPasteOpen(false);
+  };
+  const [addMode, setAddMode] = useState<'add' | 'move'>('add');
 
   // ── new group / new section from the TB view ─────────────────────────────
   const [newSecForm] = Form.useForm();
@@ -505,6 +555,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     return seen;
   };
   const applyNewSection = (sectionId: number, assignAll: boolean) => {
+    if (pasteOpen) setPasteSection(sectionId);
     if (assignAll) setAddLines(ls => ls && ls.map(l => ({ ...l, sectionId })));
   };
   const openNewSection = (groupCode?: string) => {
@@ -955,6 +1006,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                     onClick={() => openAdd(tbRows.flatMap(g => g.children || []).filter(r => r.missing).map(r => r.label))}>
                     Add missing to template…
                   </Button>
+                  <Button size="small" icon={<SnippetsOutlined />} onClick={openPaste} disabled={!sectionOptions.length && !groupsSorted.length}>Paste accounts…</Button>
                   <Button size="small" icon={<AppstoreAddOutlined />} onClick={() => openNewSection()} disabled={!groupsSorted.length}>New section</Button>
                   <Button size="small" icon={<FolderAddOutlined />} onClick={openNewGroup}>New group</Button>
                   <Segmented size="small" value={tbFilter} onChange={v => setTbFilter(v as 'all' | 'missing')}
@@ -1091,6 +1143,68 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
             )}
           </Modal>
 
+          <Modal open={pasteOpen} onCancel={() => setPasteOpen(false)} width={1100} zIndex={1150} maskClosable={false}
+            title={(
+              <Space direction="vertical" size={0}>
+                <span><SnippetsOutlined /> Paste accounts into “{tpl.template_name}”</span>
+                <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                  Accounts not in the template are added; accounts already in another section are moved.
+                </Text>
+              </Space>
+            )}
+            footer={[
+              <Button key="c" onClick={() => setPasteOpen(false)}>Cancel</Button>,
+              <Button key="s" type="primary" style={{ background: RED, borderColor: RED }}
+                disabled={!pasteRows.some(r => r.target && r.status !== 'already there')} onClick={continuePaste}>
+                Review {pasteRows.filter(r => r.target && r.status !== 'already there').length} account(s) →
+              </Button>,
+            ]}>
+            <Row gutter={16}>
+              <Col span={9}>
+                <Input.TextArea value={pasteText} onChange={e => setPasteText(e.target.value)} autoSize={{ minRows: 14, maxRows: 22 }}
+                  style={{ fontFamily: 'monospace', fontSize: 12 }} autoFocus
+                  placeholder={'Paste from Excel or type, one per line or separated by commas:\n\n5229101\n5229102, 5229103\n5229100-5229199   (range: TB accounts in it)\n101-1000-000-5229104-000   (full code: account found)\n\nOptional 2nd column = section name:\n5229101<TAB>Staff Cost\n5229102<TAB>Operating Expense › Other expenses'} />
+                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6 }}>
+                  {pasted.items.length} account(s) read{pasted.unknown.length ? ` · ${pasted.unknown.length} not recognised` : ''}{pasted.emptyRanges.length ? ` · ${pasted.emptyRanges.length} range(s) with no TB account` : ''}
+                </Text>
+              </Col>
+              <Col span={15}>
+                <Space style={{ marginBottom: 8 }} wrap>
+                  <Text>Put all in:</Text>
+                  <Select style={{ width: 380 }} placeholder="Group › Section" showSearch optionFilterProp="label" allowClear
+                    options={sectionOptions} {...sectionPick} value={pasteSection} onChange={(v: number | undefined) => setPasteSection(v)} />
+                  <Button size="small" icon={<AppstoreAddOutlined />} onClick={() => openNewSection()} disabled={!groupsSorted.length}>New section…</Button>
+                  <Button size="small" icon={<FolderAddOutlined />} onClick={openNewGroup}>New group…</Button>
+                </Space>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>A section named in the pasted line wins over “Put all in”.</Text>
+                {(pasted.unknown.length > 0 || pasted.emptyRanges.length > 0) && (
+                  <Alert type="warning" showIcon style={{ marginBottom: 8, padding: '4px 10px', fontSize: 12 }}
+                    message={<>
+                      {pasted.unknown.length > 0 && <div>Not recognised: {pasted.unknown.slice(0, 8).join(', ')}{pasted.unknown.length > 8 ? ` … +${pasted.unknown.length - 8}` : ''}</div>}
+                      {pasted.emptyRanges.length > 0 && <div>No TB account in: {pasted.emptyRanges.join(', ')}</div>}
+                    </>} />
+                )}
+                <Table size="small" rowKey="account" pagination={false} scroll={{ y: 340 }} dataSource={pasteRows}
+                  locale={{ emptyText: 'Paste account codes on the left' }}
+                  columns={[
+                    { title: 'Account', dataIndex: 'account', width: 95, render: (v: string, r) => <Space size={2}><Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</Text>{!r.inTb && <Tooltip title="No balance in this trial balance — it is still added to the template"><Tag style={{ fontSize: 10, marginInlineEnd: 0 }}>no TB</Tag></Tooltip>}</Space> },
+                    { title: 'Description', dataIndex: 'desc', ellipsis: true },
+                    { title: 'Now in', key: 'from', width: 190, ellipsis: true, render: (_: unknown, r) => (r.from.length
+                      ? <Text style={{ fontSize: 12 }}>{r.from.map(f => f.sectionName.split(' › ').pop()).join(', ')}</Text>
+                      : <Tag color="warning" style={{ fontSize: 11 }}>Missing</Tag>) },
+                    { title: 'To', key: 'to', width: 190, ellipsis: true, render: (_: unknown, r) => (r.target
+                      ? <Text style={{ fontSize: 12 }} strong={r.fromPaste}>{String(sectionLabel.get(r.target) || '').split(' › ').pop()}</Text>
+                      : <Text type="secondary" style={{ fontSize: 12 }}>choose section</Text>) },
+                    { title: '', key: 'st', width: 100, render: (_: unknown, r) => {
+                      const c: Record<string, [string, string]> = { add: ['blue', 'Add'], move: ['purple', 'Move'], 'already there': ['default', 'Already there'], range: ['orange', 'In a range'], 'no section': ['default', '—'] };
+                      const [col, txt] = c[r.status];
+                      return <Tag color={col} style={{ fontSize: 11 }}>{txt}</Tag>;
+                    } },
+                  ]} />
+              </Col>
+            </Row>
+          </Modal>
+
           <Modal open={!!addLines} onCancel={() => !adding && setAddLines(null)} width={1150} zIndex={1200} maskClosable={false}
             title={(
               <Space direction="vertical" size={0}>
@@ -1130,7 +1244,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                   columns={[
                     { title: 'Account', dataIndex: 'account', width: 100 },
                     { title: 'Description', dataIndex: 'desc', ellipsis: { showTitle: true } },
-                    { title: 'Type', dataIndex: 'type', width: 90, render: (t: string) => <Tag color={t === 'R' ? 'green' : 'volcano'}>{t === 'R' ? 'Revenue' : 'Expense'}</Tag> },
+                    { title: 'Type', dataIndex: 'type', width: 90, render: (t: string) => (t ? <Tag color={t === 'R' ? 'green' : 'volcano'}>{t === 'R' ? 'Revenue' : 'Expense'}</Tag> : <Text type="secondary">—</Text>) },
                     { title: 'Year to date', dataIndex: 'ytd', width: 140, align: 'right',
                       render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
                     ...(addMode === 'move' ? [{ title: 'Currently in', key: 'from', width: 260, render: (_: unknown, l: AddLine) => (
