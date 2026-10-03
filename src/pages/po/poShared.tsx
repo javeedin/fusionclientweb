@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import AccountSelector from '../../components/AccountSelector';
 import {
-  BusinessUnit, Row, ApiCall, getApiLog, clearApiLog, onApiLog, poQuery, lit, nlit, loadBusinessUnits, loadCategories, loadCurrencies, loadItems, loadLocations,
+  BusinessUnit, Row, ApiCall, poExec, PROC, getApiLog, clearApiLog, onApiLog, poQuery, lit, nlit, loadBusinessUnits, loadCategories, loadCurrencies, loadItems, loadLocations,
   loadTaxCodes, loadUoms, loadHistory, rememberBu, rememberedBu, STATUS_COLOR, label, money, n, r2,
 } from '../../services/po.service';
 
@@ -358,6 +358,8 @@ export interface EditLine {
   promisedDate?: string | null;
   locationId?: number | null;
   chargeAccount?: string | null;
+  /** charge account was filled from the category (replaced when the category changes) */
+  accountFromCategory?: boolean;
   taxCode?: string | null;
   requesterUser?: string | null;
   note?: string | null;
@@ -426,14 +428,60 @@ export const LinesEditor: React.FC<{
   /** business unit — supplier search scope */
   bu?: number | null;
 }> = ({ mode, lines, onChange, lookups, readOnly, currency, defaultLocationId, company, bu }) => {
+  const user = usePoUser();
   const [splitKey, setSplitKey] = useState<string | null>(null);
+  const [newCat, setNewCat] = useState<{ lineKey: string } | null>(null);
+  const [catBusy, setCatBusy] = useState(false);
+  const [catForm] = Form.useForm();
+  /** category default charge account, company segment set to the business unit */
+  const categoryAccount = (c: Row | undefined | null): string | null => {
+    const acc = c?.EFFECTIVE_CHARGE_ACCOUNT ?? c?.DEFAULT_CHARGE_ACCOUNT;
+    if (!acc) return null;
+    const segs = String(acc).split('-');
+    if (company && segs.length > 1) segs[0] = company;
+    return segs.join('-');
+  };
+  /** account patch for a line when its category changes */
+  const accountPatch = (cur: EditLine | undefined, c: Row | undefined | null): Partial<EditLine> => {
+    if (!cur || (cur.distributions?.length ?? 0) > 1) return {};
+    const acc = categoryAccount(c);
+    if (acc && (!cur.chargeAccount || cur.accountFromCategory)) return { chargeAccount: acc, accountFromCategory: true };
+    if (!acc && cur.accountFromCategory) return { chargeAccount: null, accountFromCategory: false };
+    return {};
+  };
+  const saveNewCategory = async () => {
+    const v = await catForm.validateFields().catch(() => null);
+    if (!v || !newCat) return;
+    setCatBusy(true);
+    try {
+      const json: Record<string, unknown> = {
+        category_code: String(v.code).trim().toUpperCase(), category_name: v.name, default_line_type: v.lineType,
+        status: 'ACTIVE', requestable_flag: 'Y',
+      };
+      if (v.parentId) json.parent_category_id = v.parentId;
+      if (v.account) json.default_charge_account = v.account;
+      if (v.natural) json.default_natural_account = v.natural;
+      const res = await poExec(PROC.saveSetup, { p_entity: 'CATEGORY', p_json: json }, user);
+      message.success(`Category ${json.category_code} created`);
+      const cur = lines.find(l => l.key === newCat.lineKey);
+      const fake = { EFFECTIVE_CHARGE_ACCOUNT: v.account || null, DEFAULT_LINE_TYPE: v.lineType };
+      upd(newCat.lineKey, {
+        categoryId: res.id, ...(cur && !cur.expenseItemId ? { lineType: v.lineType === 'AMOUNT' ? 'AMOUNT' : 'QUANTITY' } : {}),
+        ...accountPatch(cur, fake),
+      });
+      lookups.reload();
+      setNewCat(null);
+    } catch (e: any) { message.error(e.message, 8); } finally { setCatBusy(false); }
+  };
   const [splitRows, setSplitRows] = useState<Dist[]>([]);
   const upd = (key: string, patch: Partial<EditLine>) => onChange(lines.map(l => (l.key === key ? { ...l, ...patch } : l)));
 
   const pickItem = (key: string, id: number | null) => {
     const it = lookups.items.find(i => Number(i.EXPENSE_ITEM_ID) === id);
     if (!it) { upd(key, { expenseItemId: null }); return; }
+    const cur = lines.find(l => l.key === key);
     upd(key, {
+      ...accountPatch(cur, lookups.categories.find(c => Number(c.CATEGORY_ID) === Number(it.CATEGORY_ID))),
       expenseItemId: id, categoryId: Number(it.CATEGORY_ID), itemDescription: it.DESCRIPTION,
       lineType: it.LINE_TYPE === 'AMOUNT' ? 'AMOUNT' : 'QUANTITY', uomCode: it.UOM_CODE,
       unitPrice: it.LINE_TYPE === 'AMOUNT' ? null : (it.LIST_PRICE ?? null),
@@ -450,6 +498,7 @@ export const LinesEditor: React.FC<{
     const cur = lines.find(l => l.key === key);
     upd(key, {
       categoryId: id,
+      ...accountPatch(cur, c),
       ...(c && !cur?.expenseItemId ? {
         lineType: c.DEFAULT_LINE_TYPE === 'AMOUNT' ? 'AMOUNT' : 'QUANTITY',
         uomCode: cur?.uomCode || c.DEFAULT_UOM, taxCode: cur?.taxCode || c.DEFAULT_TAX_CODE,
@@ -484,7 +533,18 @@ export const LinesEditor: React.FC<{
       render: (v, l) => (
         <Select size="small" style={{ width: '100%' }} disabled={readOnly || !!l.expenseItemId} value={v ?? undefined}
           status={!v ? 'warning' : undefined} placeholder="Category" showSearch optionFilterProp="label"
-          popupMatchSelectWidth={340} onChange={val => pickCategory(l.key, val ?? null)}
+          popupMatchSelectWidth={360} onChange={val => pickCategory(l.key, val ?? null)}
+          popupRender={menu => (
+            <>
+              {menu}
+              <div style={{ borderTop: '1px solid #f0f0f0', padding: 4 }}>
+                <Button type="link" size="small" icon={<PlusOutlined />} onMouseDown={e => e.preventDefault()}
+                  onClick={() => { catForm.resetFields(); catForm.setFieldsValue({ lineType: 'AMOUNT' }); setNewCat({ lineKey: l.key }); }}>
+                  New category
+                </Button>
+              </div>
+            </>
+          )}
           options={lookups.categories.filter(c => mode === 'PO' || c.REQUESTABLE_FLAG !== 'N')
             .map(c => ({ value: Number(c.CATEGORY_ID), label: c.FULL_NAME }))} />
       ),
@@ -554,7 +614,7 @@ export const LinesEditor: React.FC<{
       ) : (
         <Space.Compact style={{ width: '100%' }}>
           <AccountInput size="small" disabled={readOnly} value={v} placeholder="auto-derived" company={company}
-            onChange={val => upd(l.key, { chargeAccount: val })} />
+            onChange={val => upd(l.key, { chargeAccount: val, accountFromCategory: false })} />
           {!readOnly && <Tooltip title="Split across accounts"><Button size="small" icon={<SplitCellsOutlined />} onClick={() => openSplit(l)} /></Tooltip>}
         </Space.Compact>
       ),
@@ -635,6 +695,26 @@ export const LinesEditor: React.FC<{
         <Button style={{ marginTop: 8 }} icon={<PlusOutlined />}
           onClick={() => onChange([...lines, newLine({ locationId: defaultLocationId ?? null })])}>Add line</Button>
       )}
+
+      <Modal open={!!newCat} title="New category" width={620} destroyOnHidden okText="Create category"
+        confirmLoading={catBusy} onCancel={() => setNewCat(null)} onOk={saveNewCategory}>
+        <Form form={catForm} layout="vertical" size="small">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', columnGap: 12 }}>
+            <Form.Item name="code" label="Code" rules={[{ required: true }, { pattern: /^[A-Za-z0-9_.-]+$/, message: 'Letters, digits, . _ -' }]}>
+              <Input placeholder="TRAVEL.AIR" maxLength={40} />
+            </Form.Item>
+            <Form.Item name="name" label="Name" rules={[{ required: true }]}><Input placeholder="Air tickets" maxLength={240} /></Form.Item>
+            <Form.Item name="parentId" label="Parent"><Select allowClear showSearch optionFilterProp="label" placeholder="(top level)"
+              options={lookups.categories.map(c => ({ value: Number(c.CATEGORY_ID), label: c.FULL_NAME }))} /></Form.Item>
+            <Form.Item name="lineType" label="Default line type"><Select options={[{ value: 'AMOUNT', label: 'Service (amount)' }, { value: 'QUANTITY', label: 'Goods (quantity)' }]} /></Form.Item>
+            <Form.Item name="account" label="Default charge account" style={{ gridColumn: '1 / -1' }}
+              extra="Full code combination — copied to lines of this category">
+              <AccountInput company={company} />
+            </Form.Item>
+            <Form.Item name="natural" label="Natural account (segment 4)" extra="Only used when there is no default charge account"><Input maxLength={30} /></Form.Item>
+          </div>
+        </Form>
+      </Modal>
 
       <Modal
         open={!!splitKey} title="Split charge account" width={640} destroyOnHidden

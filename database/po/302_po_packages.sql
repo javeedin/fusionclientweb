@@ -308,9 +308,21 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_UTIL_PKG AS
         v_out  VARCHAR2(400);
         segs   t_segs;
         v_done t_segs;
+        v_cat_acc BOOLEAN := FALSE;
+        v_c    NUMBER := p_category_id;
     BEGIN
-        SELECT MAX(CHARGE_ACCOUNT_TEMPLATE) INTO v_tpl FROM RR_PO_REQUESTER_DEFAULTS
-        WHERE  UPPER(USER_NAME) = UPPER(p_user) AND BUSINESS_UNIT_ID = p_bu;
+        -- 1) category (or parent) default charge account — full combination
+        FOR i IN 1 .. 6 LOOP
+            EXIT WHEN v_tpl IS NOT NULL OR v_c IS NULL;
+            SELECT MAX(DEFAULT_CHARGE_ACCOUNT), MAX(PARENT_CATEGORY_ID) INTO v_tpl, v_c
+            FROM RR_PO_CATEGORIES WHERE CATEGORY_ID = v_c;
+        END LOOP;
+        v_cat_acc := v_tpl IS NOT NULL;
+        -- 2) requester template + natural account
+        IF v_tpl IS NULL THEN
+            SELECT MAX(CHARGE_ACCOUNT_TEMPLATE) INTO v_tpl FROM RR_PO_REQUESTER_DEFAULTS
+            WHERE  UPPER(USER_NAME) = UPPER(p_user) AND BUSINESS_UNIT_ID = p_bu;
+        END IF;
         IF v_tpl IS NULL THEN RETURN NULL; END IF;
         v_cnt := REGEXP_COUNT(v_tpl, '-') + 1;
         FOR i IN 1 .. v_cnt LOOP segs(i) := REGEXP_SUBSTR(v_tpl, '[^-]+', 1, i); END LOOP;
@@ -321,7 +333,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_UTIL_PKG AS
             FROM RR_PO_EXPENSE_ITEMS WHERE EXPENSE_ITEM_ID = p_item_id;
         END IF;
         FOR i IN 1 .. 6 LOOP
-            EXIT WHEN v_nat IS NOT NULL OR v_cat IS NULL;
+            EXIT WHEN v_nat IS NOT NULL OR v_cat IS NULL OR v_cat_acc;   -- category combination already carries its account
             SELECT MAX(DEFAULT_NATURAL_ACCOUNT), MAX(PARENT_CATEGORY_ID) INTO v_nat, v_cat
             FROM RR_PO_CATEGORIES WHERE CATEGORY_ID = v_cat;
         END LOOP;
@@ -456,7 +468,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_SETUP_PKG AS
                    || 'PO_BOX,CONTACT_NAME,PHONE,EMAIL,SHIP_TO_FLAG,BILL_TO_FLAG,DELIVER_TO_FLAG,STATUS';
         WHEN 'CATEGORY' THEN
             p_table := 'RR_PO_CATEGORIES'; p_pk := 'CATEGORY_ID';
-            p_cols := 'CATEGORY_CODE,CATEGORY_NAME,PARENT_CATEGORY_ID,DEFAULT_NATURAL_ACCOUNT,DEFAULT_LINE_TYPE,DEFAULT_UOM,'
+            p_cols := 'CATEGORY_CODE,CATEGORY_NAME,PARENT_CATEGORY_ID,DEFAULT_NATURAL_ACCOUNT,DEFAULT_CHARGE_ACCOUNT,DEFAULT_LINE_TYPE,DEFAULT_UOM,'
                    || 'DEFAULT_TAX_CODE,RECEIPT_REQUIRED_FLAG,CAPEX_FLAG,REQUESTABLE_FLAG,STATUS';
         WHEN 'EXPENSE_ITEM' THEN
             p_table := 'RR_PO_EXPENSE_ITEMS'; p_pk := 'EXPENSE_ITEM_ID';
@@ -514,6 +526,11 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_SETUP_PKG AS
                 RR_PO_UTIL_PKG.err('Tolerances must be between 0 and 100');
             END IF;
         WHEN 'CATEGORY' THEN
+            -- default charge account must be a valid combination (company segment is replaced per BU when used)
+            FOR c IN (SELECT DEFAULT_CHARGE_ACCOUNT FROM RR_PO_CATEGORIES WHERE CATEGORY_ID = p_id AND DEFAULT_CHARGE_ACCOUNT IS NOT NULL) LOOP
+                v_e := RR_PO_UTIL_PKG.account_error(c.DEFAULT_CHARGE_ACCOUNT, NULL);
+                IF v_e IS NOT NULL AND v_e NOT LIKE '%company%' THEN RR_PO_UTIL_PKG.err('Default charge account: ' || v_e); END IF;
+            END LOOP;
             -- no cycles in the category tree
             SELECT COUNT(*) INTO v_n FROM (
                 SELECT CATEGORY_ID FROM RR_PO_CATEGORIES START WITH CATEGORY_ID = p_id

@@ -44,12 +44,14 @@ const ENTITIES: Entity[] = [
   {
     key: 'CATEGORY', title: 'Categories', rowKey: 'CATEGORY_ID',
     sql: 'SELECT * FROM RR_PO_V_CATEGORIES ORDER BY FULL_NAME',
-    help: 'Purchasing categories. The natural account (segment 4) is used to build the charge account; children inherit it from the parent.',
-    columns: ['CATEGORY_CODE', 'FULL_NAME', 'EFFECTIVE_NATURAL_ACCOUNT', 'DEFAULT_LINE_TYPE', 'DEFAULT_UOM', 'RECEIPT_REQUIRED_FLAG', 'REQUESTABLE_FLAG', 'STATUS'],
+    help: 'Purchasing categories. Lines take the category\'s default charge account (full combination); without one, the requester template + natural account (segment 4) is used. Children inherit from the parent.',
+    columns: ['CATEGORY_CODE', 'FULL_NAME', 'EFFECTIVE_CHARGE_ACCOUNT', 'EFFECTIVE_NATURAL_ACCOUNT', 'DEFAULT_LINE_TYPE', 'RECEIPT_REQUIRED_FLAG', 'REQUESTABLE_FLAG', 'STATUS'],
     fields: [
       { name: 'CATEGORY_CODE', label: 'Code', required: true }, { name: 'CATEGORY_NAME', label: 'Name', required: true },
       { name: 'PARENT_CATEGORY_ID', label: 'Parent', type: 'category' },
-      { name: 'DEFAULT_NATURAL_ACCOUNT', label: 'Natural account (segment 4)' },
+      { name: 'DEFAULT_CHARGE_ACCOUNT', label: 'Default charge account', type: 'account', span: 2,
+        help: 'Full code combination copied to PO / requisition lines of this category (company segment follows the business unit)' },
+      { name: 'DEFAULT_NATURAL_ACCOUNT', label: 'Natural account (segment 4)', help: 'Used only when no default charge account' },
       { name: 'DEFAULT_LINE_TYPE', label: 'Default line type', type: 'select', options: ['QUANTITY', 'AMOUNT'] },
       { name: 'DEFAULT_UOM', label: 'Default UOM', type: 'uom' }, { name: 'DEFAULT_TAX_CODE', label: 'Default tax code' },
       { name: 'RECEIPT_REQUIRED_FLAG', label: 'Receipt required (3-way)', type: 'yn' }, { name: 'CAPEX_FLAG', label: 'Capital', type: 'yn' },
