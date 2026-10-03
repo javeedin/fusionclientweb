@@ -96,6 +96,7 @@ import { useAuth } from '../../context/AuthContext';
 import InvoiceAttachments from '../../components/InvoiceAttachments';
 import { listAttachments } from '../../services/invoiceAttachment.service';
 import { getMpaSchedule, generateMpaSchedule } from '../../services/multiperiod.service';
+import { useInvoicePoMatch, InvoicePoMatchPanel, PoMatchCell } from '../po/InvoicePoMatch';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
@@ -848,6 +849,8 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
 
   // Saved invoice state — tracks whether we're in create or update mode
   const [savedInvoiceId, setSavedInvoiceId] = useState<number | null>(initialData?.invoiceId || null);
+  // Purchasing-RR PO match of the saved invoice (reloads when the Purchase Orders tab is opened)
+  const poMatch = useInvoicePoMatch(savedInvoiceId, activeTabKey === 'purchaseOrders');
 
   // Live status — refreshable without closing/reopening the invoice
   const [liveHoldPaidStatus,   setLiveHoldPaidStatus]   = useState(initialData?.holdPaidStatus   || '');
@@ -5400,6 +5403,12 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
       align: 'center',
       render: (val: number) => <Text type="secondary" style={{ fontSize: 12 }}>{val}</Text>,
     },
+    ...(poMatch.available && savedInvoiceId ? [{
+      title: 'PO Match',
+      key: 'poMatch',
+      width: 100,
+      render: (_: unknown, record: InvoiceLine) => <PoMatchCell state={poMatch} lineNumber={record.lineNumber} poNumber={record.poNumber} />,
+    }] : []),
     {
       title: 'Amount',
       dataIndex: 'amount',
@@ -7000,9 +7009,14 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
                   <Space size={4}>
                     <ShoppingCartOutlined />
                     <span>Purchase Orders</span>
+                    {poMatch.matched.length > 0 && <Tag color="green" style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: '16px' }}>Matched</Tag>}
                   </Space>
                 ),
                 children: (
+                  <>
+                  {savedInvoiceId && (
+                    <InvoicePoMatchPanel state={poMatch} invoiceLines={lines.map(l => ({ lineNumber: l.lineNumber, poNumber: l.poNumber, poLine: l.poLine }))} />
+                  )}
                   <Table
                     columns={poColumns}
                     dataSource={lines}
@@ -7026,6 +7040,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
                       </Table.Summary>
                     )}
                   />
+                  </>
                 ),
               },
               // Payments tab (edit mode only, shown when payments exist)
