@@ -1,99 +1,33 @@
--- =====================================================
--- RR_AP_CREATE_INVOICE_PKG
--- =====================================================
--- Purpose: Create new AP Invoice (Header + Lines) from UI
--- Target Tables: RR_AP_INVOICES_ALL (header), RR_AP_INVOICE_LINES_ALL (lines)
--- Single JSON POST with header + lines array
--- InvoiceId generated from sequence
--- NOTE: the current package body is in 147_ap_create_invoice_po_match.sql
---       (CreatedBy from patch 98 + TaxAmount + Purchasing-RR PO matching)
--- =====================================================
+-- =============================================================================
+-- PATCH 147: POST ap/createinvoicefull matches Purchasing-RR purchase orders
+--
+-- WHAT:
+--   RR_AP_CREATE_INVOICE_PKG.create_invoice now matches every Item line that
+--   references a Purchasing-RR PO, inside the same transaction, before COMMIT:
+--     lines[].PONumber + POLineNumber   (stored in PURCHASE_ORDER_NUMBER /
+--                                        PURCHASE_ORDER_LINE_NUMBER as before)
+--     lines[].POLineId, PODistributionId (optional — sent by the PO screen so a
+--                                        split PO line bills the exact distribution)
+--   RR_PO_MATCH_PKG.MATCH_AP_INVOICE checks the PO (approved, not on hold, not
+--   closed for invoicing, same supplier and currency, quantity/amount not more
+--   than received-not-billed for 3-way or ordered-not-billed for 2-way), bills the
+--   PO distributions, relieves the receipt accrual and closes fully billed lines
+--   (RR_PO_INVOICE_MATCHES links the AP invoice id / line number to the PO).
+--   If the match is refused the invoice is rolled back and the POST returns
+--   status ERROR with the reason — no AP invoice is left behind.
+--   PO numbers that are not Purchasing-RR POs stay plain references (unchanged).
+--   No AP table changes: the existing PO columns on RR_AP_INVOICE_LINES_ALL are used.
+--
+-- ALSO CARRIES (so this body is the complete current version):
+--   patch 98  — CREATED_BY from "CreatedBy" in the JSON
+--   TaxAmount — lines[].TaxAmount → TAX_CONTROL_AMOUNT
+--
+-- RUN ORDER: database/po/305_po_invoice_match.sql first, then this file.
+--   (Without the Purchasing module the call is skipped, so it is safe anywhere.)
+-- HOW TO RUN: APEX SQL Workshop → SQL Scripts — run the whole file.
+--   Only the package body is replaced; the ORDS handler is unchanged.
+-- =============================================================================
 
--- =====================================================
--- 1. Create Sequence (if not exists)
--- =====================================================
-DECLARE
-    l_count NUMBER;
-BEGIN
-    SELECT COUNT(*) INTO l_count
-    FROM user_sequences
-    WHERE sequence_name = 'RR_AP_INVOICES_ALL_SEQ';
-
-    IF l_count = 0 THEN
-        EXECUTE IMMEDIATE '
-            CREATE SEQUENCE RR_AP_INVOICES_ALL_SEQ
-                START WITH 900001
-                INCREMENT BY 1
-                NOCACHE
-                NOCYCLE
-        ';
-    END IF;
-END;
-/
-
--- Create document sequence (run once)
-DECLARE
-    l_count NUMBER;
-BEGIN
-    SELECT COUNT(*) INTO l_count
-    FROM user_sequences
-    WHERE sequence_name = 'SEQ_AP_DOCUMENT_SEQ';
-
-    IF l_count = 0 THEN
-        EXECUTE IMMEDIATE '
-            CREATE SEQUENCE SEQ_AP_DOCUMENT_SEQ
-                START WITH 1000
-                INCREMENT BY 1
-                NOCACHE
-                NOCYCLE
-        ';
-    END IF;
-END;
-/
-
--- =====================================================
--- 2. Package Specification
--- =====================================================
-CREATE OR REPLACE PACKAGE RR_AP_CREATE_INVOICE_PKG AS
-
-    -- Create invoice with header + lines in one transaction
-    -- JSON format:
-    -- {
-    --   "InvoiceNumber": "INV-001",
-    --   "InvoiceCurrency": "AED",
-    --   "InvoiceAmount": 1050,
-    --   "InvoiceDate": "2026-02-14",
-    --   "BusinessUnit": "BU_NAME",
-    --   "Supplier": "Supplier Name",
-    --   "SupplierNumber": "S0001",
-    --   "SupplierSite": "DUBAI",
-    --   "InvoiceType": "Standard",
-    --   "Description": "Test invoice",
-    --   ...
-    --   "lines": [
-    --     {
-    --       "LineNumber": 1,
-    --       "LineType": "Item",
-    --       "LineAmount": 1000,
-    --       "Description": "Line 1",
-    --       "DistributionCombination": "01-000-1234-0000-000",
-    --       ...
-    --     }
-    --   ]
-    -- }
-    PROCEDURE create_invoice(
-        p_json          IN  CLOB,
-        p_invoice_id    OUT NUMBER,
-        p_status        OUT VARCHAR2,
-        p_message       OUT VARCHAR2
-    );
-
-END RR_AP_CREATE_INVOICE_PKG;
-/
-
--- =====================================================
--- 3. Package Body
--- =====================================================
 CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
 
     PROCEDURE create_invoice(
@@ -144,6 +78,13 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
         l_line_success              NUMBER := 0;
         l_line_error                NUMBER := 0;
         l_line_acct_date            DATE;
+        -- Audit (patch 98)
+        l_created_by                VARCHAR2(240);
+        -- PO matching (Purchasing-RR)
+        l_po_lines                  NUMBER := 0;
+        l_po_matched                NUMBER;
+        l_po_status                 VARCHAR2(10);
+        l_po_message                VARCHAR2(4000);
     BEGIN
         -- Parse header fields from JSON
         l_invoice_number    := JSON_VALUE(p_json, '$.InvoiceNumber');
@@ -175,6 +116,8 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
         l_voucher_number          := JSON_VALUE(p_json, '$.VoucherNumber');
         l_first_party_tax_reg_num := JSON_VALUE(p_json, '$.FirstPartyTaxRegistrationNumber');
         l_supplier_tax_reg_num    := JSON_VALUE(p_json, '$.SupplierTaxRegistrationNumber');
+        -- Audit: use the logged-in app user if supplied, otherwise fall back to DB user (patch 98)
+        l_created_by := NVL(JSON_VALUE(p_json, '$.CreatedBy'), USER);
 
         -- Parse dates
         BEGIN
@@ -338,7 +281,7 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
             'Unpaid',
             'Not Accounted',
             'NEW',
-            USER,
+            l_created_by,
             SYSTIMESTAMP
         );
 
@@ -434,7 +377,7 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
                     TO_DATE(rec.multiperiod_end_date, 'YYYY-MM-DD'),
                     rec.multiperiod_accrual_account,
                     'NEW',
-                    USER,
+                    l_created_by,
                     SYSTIMESTAMP
                 );
                 l_line_success := l_line_success + 1;
@@ -443,6 +386,50 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
                     l_line_error := l_line_error + 1;
             END;
         END LOOP;
+
+        -- ========== PO MATCHING (Purchasing-RR) ==========
+        -- Item lines that reference a PO (PONumber + POLineNumber, or POLineId / PODistributionId)
+        -- bill the PO in this same transaction. A refused match rolls the whole invoice back.
+        -- Dynamic call: this package still compiles where the Purchasing module is not installed
+        -- (no RR_PO_MATCH_PKG → PO numbers stay plain references, as before).
+        IF l_line_error = 0 THEN
+            SELECT COUNT(*) INTO l_po_lines
+            FROM JSON_TABLE(p_json, '$.lines[*]'
+                COLUMNS (
+                    line_type     VARCHAR2(50) PATH '$.LineType',
+                    po_number     VARCHAR2(50) PATH '$.PONumber',
+                    po_line_id    NUMBER       PATH '$.POLineId'
+                )
+            ) jt
+            WHERE NVL(jt.line_type, 'Item') = 'Item'
+              AND (jt.po_number IS NOT NULL OR jt.po_line_id IS NOT NULL);
+
+            IF l_po_lines > 0 THEN
+                SELECT COUNT(*) INTO l_po_matched FROM user_objects
+                WHERE object_name = 'RR_PO_MATCH_PKG' AND object_type = 'PACKAGE BODY';
+            END IF;
+
+            IF l_po_lines > 0 AND l_po_matched > 0 THEN
+                l_po_matched := 0;
+                BEGIN
+                    EXECUTE IMMEDIATE
+                        'BEGIN RR_PO_MATCH_PKG.MATCH_AP_INVOICE(:1, :2, :3, :4, :5, :6); END;'
+                        USING IN l_invoice_id, IN p_json, IN l_created_by,
+                              OUT l_po_matched, OUT l_po_status, OUT l_po_message;
+                EXCEPTION
+                    WHEN OTHERS THEN
+                        l_po_status := 'E'; l_po_message := SQLERRM;
+                END;
+
+                IF l_po_status = 'E' THEN
+                    ROLLBACK;
+                    p_invoice_id := NULL;
+                    p_status := 'ERROR';
+                    p_message := 'PO matching failed - invoice not created: ' || REPLACE(REPLACE(l_po_message, CHR(10), ' '), CHR(13), ' ');
+                    RETURN;
+                END IF;
+            END IF;
+        END IF;
 
         -- Only commit if no line errors
         IF l_line_error = 0 THEN
@@ -456,6 +443,7 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
             END;
             p_status := 'SUCCESS';
             p_message := 'Invoice ' || l_invoice_number || ' created (ID: ' || l_invoice_id || ') with ' || l_line_success || ' lines'
+                      || CASE WHEN NVL(l_po_matched, 0) > 0 THEN ', ' || l_po_message END
                       || ' [json=' || NVL(DBMS_LOB.GETLENGTH(p_json), 0) || ' bytes, parsed=' || l_line_count || ' lines]';
         ELSE
             ROLLBACK;
@@ -476,186 +464,4 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
 END RR_AP_CREATE_INVOICE_PKG;
 /
 
--- =====================================================
--- 4. ORDS REST Handler
--- =====================================================
-
--- Template for combined create
-BEGIN
-    ORDS.DEFINE_TEMPLATE(
-        p_module_name    => 'ap',
-        p_pattern        => 'createinvoicefull',
-        p_priority       => 0,
-        p_etag_type      => 'HASH',
-        p_comments       => 'Create invoice with header + lines in one POST'
-    );
-    COMMIT;
-END;
-/
-
--- POST handler
-BEGIN
-    ORDS.DEFINE_HANDLER(
-        p_module_name    => 'ap',
-        p_pattern        => 'createinvoicefull',
-        p_method         => 'POST',
-        p_source_type    => 'plsql/block',
-        p_mimes_allowed  => 'application/json',
-        p_comments       => 'Create AP Invoice (header + lines) from single JSON',
-        p_source         => q'[
-DECLARE
-    l_blob          BLOB := :body;
-    l_clob          CLOB;
-    l_dest_offset   INTEGER := 1;
-    l_src_offset    INTEGER := 1;
-    l_lang_context  INTEGER := DBMS_LOB.DEFAULT_LANG_CTX;
-    l_warning       INTEGER;
-    l_invoice_id        NUMBER;
-    l_status            VARCHAR2(20);
-    l_message           VARCHAR2(4000);
-    l_document_sequence NUMBER;
-BEGIN
-    -- Convert BLOB to CLOB (avoids :body_text VARCHAR2 truncation)
-    IF l_blob IS NOT NULL AND DBMS_LOB.GETLENGTH(l_blob) > 0 THEN
-        DBMS_LOB.CREATETEMPORARY(l_clob, TRUE);
-        DBMS_LOB.CONVERTTOCLOB(
-            dest_lob     => l_clob,
-            src_blob     => l_blob,
-            amount       => DBMS_LOB.LOBMAXSIZE,
-            dest_offset  => l_dest_offset,
-            src_offset   => l_src_offset,
-            blob_csid    => DBMS_LOB.DEFAULT_CSID,
-            lang_context => l_lang_context,
-            warning      => l_warning
-        );
-    ELSE
-        -- Fallback to :body_text if :body is empty
-        l_clob := :body_text;
-    END IF;
-
-    RR_AP_CREATE_INVOICE_PKG.create_invoice(
-        p_json       => l_clob,
-        p_invoice_id => l_invoice_id,
-        p_status     => l_status,
-        p_message    => l_message
-    );
-
-    -- Read back the auto-generated document_sequence
-    IF l_status = 'SUCCESS' AND l_invoice_id IS NOT NULL THEN
-        BEGIN
-            SELECT document_sequence INTO l_document_sequence
-            FROM RR_AP_INVOICES_ALL
-            WHERE invoice_id = l_invoice_id;
-        EXCEPTION WHEN OTHERS THEN NULL;
-        END;
-    END IF;
-
-    :status_code := CASE WHEN l_status = 'SUCCESS' THEN 201 ELSE 400 END;
-
-    HTP.P('{"status": "' || l_status || '",'
-       || '"message": "' || REPLACE(l_message, '"', '\"') || '",'
-       || '"invoiceId": ' || NVL(TO_CHAR(l_invoice_id), 'null') || ','
-       || '"documentSequence": ' || NVL(TO_CHAR(l_document_sequence), 'null') || ','
-       || '"success": ' || CASE WHEN l_status = 'SUCCESS' THEN 'true' ELSE 'false' END
-       || '}');
-
-    -- Free temporary CLOB
-    IF DBMS_LOB.ISTEMPORARY(l_clob) = 1 THEN
-        DBMS_LOB.FREETEMPORARY(l_clob);
-    END IF;
-END;
-]'
-    );
-    COMMIT;
-END;
-/
-
--- =====================================================
--- 5. Verify
--- =====================================================
-SELECT
-    module_name,
-    uri_template,
-    method,
-    source_type
-FROM user_ords_handlers
-WHERE module_name = 'ap'
-  AND uri_template LIKE '%createinvoicefull%'
-ORDER BY uri_template, method;
-
--- =====================================================
--- Sample JSON for Postman Testing:
--- =====================================================
-/*
-POST URL: https://<your-apex-host>/ords/<schema>/reerp/ap/createinvoicefull
-Content-Type: application/json
-
-{
-    "InvoiceNumber": "TEST-INV-001",
-    "InvoiceCurrency": "AED",
-    "PaymentCurrency": "AED",
-    "InvoiceAmount": 1050.00,
-    "InvoiceDate": "2026-02-14",
-    "BusinessUnit": "BUIMERC CORP_DIFC_INVST",
-    "Supplier": "TEST SUPPLIER LLC",
-    "SupplierNumber": "T0001",
-    "SupplierSite": "DUBAI",
-    "InvoiceType": "Standard",
-    "Description": "Test invoice from UI",
-    "PaymentTerms": "Immediate",
-    "PayGroup": "Standard",
-    "PayAlone": "N",
-    "LiabilityDistribution": "01-000-2100-0000-000",
-    "ConversionRateType": "Corporate",
-    "ConversionDate": "2026-02-14",
-    "ConversionRate": 1.0,
-    "DocumentCategory": "Standard Invoices",
-    "VoucherNumber": "V-001",
-    "FirstPartyTaxRegistrationNumber": "100123456700003",
-    "SupplierTaxRegistrationNumber": "300987654321234",
-    "lines": [
-        {
-            "LineNumber": 1,
-            "LineType": "Item",
-            "LineAmount": 1000.00,
-            "Description": "Office Supplies",
-            "AccountingDate": "2026-02-14",
-            "DistributionCombination": "01-000-6310-0000-000",
-            "TaxClassification": "VAT 5%",
-            "Quantity": 10,
-            "UnitPrice": 100
-        },
-        {
-            "LineNumber": 2,
-            "LineType": "Tax",
-            "LineAmount": 50.00,
-            "Description": "VAT 5%",
-            "AccountingDate": "2026-02-14"
-        }
-    ]
-}
-
-Expected Response (success):
-{
-    "status": "SUCCESS",
-    "message": "Invoice TEST-INV-001 created (ID: 900001) with 2 lines [json=... bytes, parsed=2 lines]",
-    "invoiceId": 900001,
-    "success": true
-}
-
-Expected Response (duplicate invoice number):
-{
-    "status": "ERROR",
-    "message": "Invoice number \"TEST-INV-001\" already exists for this supplier. Please use a unique invoice number.",
-    "invoiceId": null,
-    "success": false
-}
-
-Expected Response (missing distribution on lines):
-{
-    "status": "ERROR",
-    "message": "Distribution is required for Item line(s): 1",
-    "invoiceId": null,
-    "success": false
-}
-*/
+SELECT name, type, line, text FROM user_errors WHERE name = 'RR_AP_CREATE_INVOICE_PKG' ORDER BY type, sequence;

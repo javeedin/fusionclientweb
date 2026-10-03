@@ -1,9 +1,10 @@
 // Purchasing-RR — create an AP invoice from a purchase order (line level, partial allowed).
-//   1. POST ap/createinvoicefull            AP invoice (header + one AP line per PO distribution)
+//   1. POST ap/createinvoicefull            the standard AP create: RR_AP_INVOICES_ALL + RR_AP_INVOICE_LINES_ALL
+//      (one AP line per PO distribution, carrying PONumber/POLineNumber + POLineId/PODistributionId).
+//      The same transaction matches the PO (RR_PO_MATCH_PKG.MATCH_AP_INVOICE, patch database/ap/147):
+//      a refused match (over-billing, PO on hold, …) rolls the invoice back and the POST returns ERROR.
 //   2. POST ap/createinvoice/installments   one installment for the full amount
-//   3. PUT  ap/invoices/:id/validation-status  'Validated' when the checks pass
-//   4. po/execute RR_PO_MATCH_PKG.RECORD_INVOICE  bills the PO lines (closes them for invoicing)
-// If the match is refused, the new AP invoice is cancelled again so nothing is left half-done.
+//   3. PUT  ap/invoices/:id/validation-status  'Validated' when the checks pass (mirrored on the PO match)
 // Accounts: receipt-accrued lines debit the receipt accrual (GRNI) account, others the charge account.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Form, Input, Table, InputNumber, Checkbox, Typography, Alert, Space, Tag, Select, message, Steps } from 'antd';
@@ -102,15 +103,13 @@ const PoApInvoice: React.FC<{
 
     // AP lines: one per PO distribution (AP lines carry their own account)
     const apLines: Record<string, unknown>[] = [];
-    const matchLines: Record<string, unknown>[] = [];
     let ln = 0;
     chosen.forEach(l => {
       const p = picks[Number(l.PO_LINE_ID)];
       const amt = lineAmt(l);
       const myD = dists.filter(d => Number(d.PO_LINE_ID) === Number(l.PO_LINE_ID));
-      const parts = myD.length > 1 ? myD : [{ INVOICE_ACCOUNT: l.INVOICE_ACCOUNT, PERCENT: 100 }];
+      const parts: Row[] = myD.length ? myD : [{ INVOICE_ACCOUNT: l.INVOICE_ACCOUNT, PERCENT: 100 }];
       let used = 0; let usedQ = 0;
-      const firstLine = ln + 1;
       parts.forEach((d, i) => {
         const last = i === parts.length - 1;
         const a = last ? r2(amt - used) : r2(amt * n(d.PERCENT) / 100);
@@ -124,11 +123,10 @@ const PoApInvoice: React.FC<{
           AccountingDate: v.accountingDate, DistributionCombination: d.INVOICE_ACCOUNT,
           ...(p.taxCode ? { TaxClassification: p.taxCode, TaxAmount: t, TaxControlAmount: t } : {}),
           ...(l.LINE_TYPE === 'QUANTITY' ? { Quantity: q, UnitPrice: n(l.UNIT_PRICE), UOM: l.UOM_CODE } : {}),
-          PONumber: hdr.PO_NUMBER, POLineNumber: String(l.LINE_NUM),
+          PONumber: hdr.PO_NUMBER, POLineNumber: Number(l.LINE_NUM),
+          POLineId: Number(l.PO_LINE_ID), ...(d.DISTRIBUTION_ID ? { PODistributionId: Number(d.DISTRIBUTION_ID) } : {}),
         });
       });
-      matchLines.push({ poLineId: Number(l.PO_LINE_ID), invoiceLineNumber: firstLine,
-        ...(l.LINE_TYPE === 'QUANTITY' ? { quantity: n(p.qty) } : { amount: n(p.amount) }) });
     });
     const missing = apLines.find(a => !a.DistributionCombination);
     if (missing) { setBusy(false); message.error(`Line "${missing.Description}" has no account on the PO`); return; }
@@ -146,11 +144,14 @@ const PoApInvoice: React.FC<{
 
     let invoiceId: number | null = null;
     try {
-      // 1. AP invoice
+      // 1. AP invoice + PO match (one transaction on the server)
       setStep(0);
-      const c = await call('POST', `${BASE}/ap/createinvoicefull`, payload, 'AP create invoice');
+      const c = await call('POST', `${BASE}/ap/createinvoicefull`, payload, 'AP create invoice + PO match');
       if (!c.res.ok || c.data?.success !== true || !c.data?.invoiceId) throw new Error(c.data?.message || c.data?.error || `HTTP ${c.res.status}`);
       invoiceId = Number(c.data.invoiceId);
+      if (!/matched to/i.test(String(c.data.message || ''))) {
+        message.warning('The AP invoice was created but the server did not report a PO match — run database/ap/147_ap_create_invoice_po_match.sql', 12);
+      }
       // 2. installment (one, full amount)
       setStep(1);
       const due = addDays(v.invoiceDate, termsDays(v.paymentTerms));
@@ -159,11 +160,8 @@ const PoApInvoice: React.FC<{
           PaymentPriority: 99, CreatedBy: user, LastUpdatedBy: user }],
       }, 'AP installment');
       if (!inst.res.ok) message.warning('Installment not created — open the invoice in Manage Invoices to add it');
-      // 3. match on the PO (bills the lines)
+      // 3. validation
       setStep(2);
-      await poExec(PROC.recordInvoice, { p_json: { invoiceId, invoiceNum: payload.InvoiceNumber, invoiceStatus: 'Never Validated', lines: matchLines } }, user);
-      // 4. validation
-      setStep(3);
       if (validate) {
         const okChecks = !!v.liability && apLines.every(a => a.DistributionCombination) && (!taxCodes.length || chosen.every(l => picks[Number(l.PO_LINE_ID)].taxCode));
         const status = okChecks && inst.res.ok ? 'Validated' : 'Needs Revalidation';
@@ -171,17 +169,15 @@ const PoApInvoice: React.FC<{
         await poExec(PROC.setInvoiceStatus, { p_invoice_id: invoiceId, p_invoice_status: status }, user).catch(() => null);
         if (status !== 'Validated') message.warning('Invoice saved but needs revalidation in Manage Invoices (tax code / installment)');
       }
-      setStep(4);
+      setStep(3);
       message.success(`AP invoice ${payload.InvoiceNumber} created and matched to ${hdr.PO_NUMBER}`, 6);
       onDone();
       onClose();
     } catch (e: any) {
       setStepErr(e.message);
-      // roll back: cancel the AP invoice if the PO match was refused
-      if (invoiceId) {
-        const cx = await call('POST', `${BASE}/ap/invoices/${invoiceId}/cancel`, { cancelledBy: user }, 'AP cancel (rollback)').catch(() => null);
-        message.error(`${e.message}${cx?.res.ok ? ' — the AP invoice was cancelled again' : ` — AP invoice ${invoiceId} was created; cancel it in Manage Invoices`}`, 12);
-      } else message.error(e.message, 10);
+      // a refused PO match never leaves an AP invoice behind (rolled back on the server)
+      message.error(invoiceId ? `${e.message} — AP invoice ${invoiceId} was created and matched; finish it in Manage Invoices` : e.message, 12);
+      if (invoiceId) onDone();
     } finally { setBusy(false); }
   };
 
@@ -190,8 +186,8 @@ const PoApInvoice: React.FC<{
       onOk={create} confirmLoading={busy} okButtonProps={{ disabled: !chosen.length }}
       title={<Space>Create AP invoice from {hdr.PO_NUMBER}<Tag>{hdr.SUPPLIER_NAME}</Tag></Space>}>
       {step >= 0 && (
-        <Steps size="small" style={{ marginBottom: 12 }} current={Math.min(step, 3)} status={stepErr ? 'error' : step >= 4 ? 'finish' : 'process'}
-          items={[{ title: 'AP invoice' }, { title: 'Installment' }, { title: 'Match PO' }, { title: 'Validate' }]} />
+        <Steps size="small" style={{ marginBottom: 12 }} current={Math.min(step, 2)} status={stepErr ? 'error' : step >= 3 ? 'finish' : 'process'}
+          items={[{ title: 'AP invoice + PO match' }, { title: 'Installment' }, { title: 'Validate' }]} />
       )}
       <Form form={form} layout="horizontal" size="small" labelCol={{ flex: '110px' }} labelAlign="left" colon={false}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', columnGap: 14 }}>

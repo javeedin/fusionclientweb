@@ -3,7 +3,10 @@
 --
 --   RR_PO_INVOICE_MATCHES  one row per PO distribution billed by an AP invoice line
 --   RR_PO_MATCH_PKG
---     RECORD_INVOICE(p_json)        after the AP invoice is created: bills PO lines
+--     MATCH_AP_INVOICE(...)         called by RR_AP_CREATE_INVOICE_PKG (POST ap/createinvoicefull) in the
+--                                   same transaction: AP lines carrying a PO number / line are matched,
+--                                   a refused match rolls the AP invoice back (database/ap/147_*.sql)
+--     RECORD_INVOICE(p_json)        match an existing AP invoice from po/execute: bills PO lines
 --                                   (quantity/amount), relieves receipt accruals,
 --                                   recomputes line closure (closed for invoicing)
 --     CANCEL_INVOICE(p_invoice_id)  invoice cancelled: reverses the match, lines reopen
@@ -51,6 +54,9 @@ CREATE OR REPLACE PACKAGE RR_PO_MATCH_PKG AS
                               p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
     PROCEDURE SET_INVOICE_STATUS (p_invoice_id IN VARCHAR2, p_invoice_status IN VARCHAR2, p_user IN VARCHAR2,
                                   p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
+    -- AP side: match the PO lines of an invoice created by POST ap/createinvoicefull (same transaction, no commit)
+    PROCEDURE MATCH_AP_INVOICE (p_invoice_id IN NUMBER, p_json IN CLOB, p_user IN VARCHAR2,
+                                p_matched OUT NUMBER, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
     -- internal: reverse an invoice's matches (used by CANCEL_INVOICE and the AP cancel trigger)
     PROCEDURE reverse_invoice (p_invoice_id IN NUMBER, p_user IN VARCHAR2);
 END RR_PO_MATCH_PKG;
@@ -114,73 +120,68 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
         p_relieved := NVL(v_rel, 0);
     END;
 
-    PROCEDURE RECORD_INVOICE (p_json IN CLOB, p_user IN VARCHAR2,
-                              p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
-        o        JSON_OBJECT_T := JSON_OBJECT_T.parse(p_json);
-        lines    JSON_ARRAY_T := RR_PO_UTIL_PKG.jarr(o, 'lines');
-        ln       JSON_OBJECT_T;
-        v_inv    NUMBER := RR_PO_UTIL_PKG.jnum(o, 'invoiceId');
-        v_num    VARCHAR2(100) := RR_PO_UTIL_PKG.jstr(o, 'invoiceNum');
-        v_ist    VARCHAR2(30) := RR_PO_UTIL_PKG.jstr(o, 'invoiceStatus');
-        v_line   NUMBER; v_qty NUMBER; v_amt NUMBER; v_iln NUMBER;
+    -- bill one PO line (first schedule) from one invoice line: checks, billable limit, distributions, rollup.
+    -- p_dist_id given → that distribution only (one AP line per PO distribution); else spread by what each can bill.
+    PROCEDURE match_line (p_line_id IN NUMBER, p_dist_id IN NUMBER, p_qty IN NUMBER, p_amt IN NUMBER,
+                          p_inv IN NUMBER, p_num IN VARCHAR2, p_iln IN NUMBER, p_ist IN VARCHAR2, p_user IN VARCHAR2,
+                          p_hdr OUT NUMBER, p_billed OUT NUMBER) IS
         l        RR_PO_LINES%ROWTYPE;
         s        RR_PO_SCHEDULES%ROWTYPE;
         h        RR_PO_HEADERS%ROWTYPE;
+        v_qty    NUMBER := p_qty;
+        v_amt    NUMBER := p_amt;
         v_basis  NUMBER; v_billable NUMBER; v_meas NUMBER;
         v_tot_w  NUMBER; v_dq NUMBER; v_da NUMBER; v_sq NUMBER; v_sa NUMBER; v_i NUMBER; v_cnt NUMBER;
-        v_rel    NUMBER;
-        v_total  NUMBER := 0;
-        v_n      NUMBER := 0;
-        v_hdr    NUMBER;
-        v_exists NUMBER;
+        v_rel    NUMBER; v_rate NUMBER; v_dsched NUMBER;
     BEGIN
-        IF v_inv IS NULL THEN RR_PO_UTIL_PKG.err('invoiceId is required'); END IF;
-        SELECT COUNT(*) INTO v_exists FROM RR_PO_INVOICE_MATCHES WHERE INVOICE_ID = v_inv AND MATCH_STATUS = 'MATCHED';
-        IF v_exists > 0 THEN RR_PO_UTIL_PKG.err('Invoice ' || NVL(v_num, v_inv) || ' is already matched to a purchase order'); END IF;
-        IF lines.get_size = 0 THEN RR_PO_UTIL_PKG.err('Select at least one PO line'); END IF;
+        BEGIN
+            SELECT * INTO l FROM RR_PO_LINES WHERE PO_LINE_ID = p_line_id;
+            SELECT * INTO s FROM RR_PO_SCHEDULES WHERE PO_LINE_ID = p_line_id AND SCHEDULE_NUM = 1 FOR UPDATE;
+            SELECT * INTO h FROM RR_PO_HEADERS WHERE PO_HEADER_ID = l.PO_HEADER_ID;
+        EXCEPTION WHEN NO_DATA_FOUND THEN RR_PO_UTIL_PKG.err('PO line ' || p_line_id || ' not found');
+        END;
+        IF h.DOCUMENT_STATUS <> 'APPROVED' THEN RR_PO_UTIL_PKG.err('PO ' || h.PO_NUMBER || ' is not approved'); END IF;
+        IF h.HOLD_FLAG = 'Y' THEN RR_PO_UTIL_PKG.err('PO ' || h.PO_NUMBER || ' is on hold'); END IF;
+        IF s.CLOSURE_STATUS IN ('CLOSED', 'FINALLY_CLOSED', 'CLOSED_FOR_INVOICING') OR l.LINE_STATUS = 'CANCELLED' THEN
+            RR_PO_UTIL_PKG.err(h.PO_NUMBER || ' line ' || l.LINE_NUM || ' is ' || LOWER(REPLACE(NVL(s.CLOSURE_STATUS, l.LINE_STATUS), '_', ' ')) || ' — it cannot be invoiced again');
+        END IF;
+        -- what can still be billed
+        IF l.LINE_TYPE = 'QUANTITY' THEN
+            v_basis := CASE WHEN NVL(s.MATCH_LEVEL, 'TWO_WAY') = 'THREE_WAY' THEN s.QUANTITY_RECEIVED
+                            ELSE NVL(s.QUANTITY, 0) - s.QUANTITY_CANCELLED END;
+            v_billable := v_basis - s.QUANTITY_BILLED;
+            IF v_qty IS NULL AND v_amt IS NOT NULL AND NVL(l.UNIT_PRICE, 0) <> 0 THEN v_qty := ROUND(v_amt / l.UNIT_PRICE, 6); END IF;
+            IF NVL(v_qty, 0) <= 0 THEN RR_PO_UTIL_PKG.err(h.PO_NUMBER || ' line ' || l.LINE_NUM || ': enter the quantity to invoice'); END IF;
+            v_meas := v_qty;
+            v_amt := NVL(v_amt, ROUND(v_qty * l.UNIT_PRICE, 2));
+        ELSE
+            v_basis := CASE WHEN NVL(s.MATCH_LEVEL, 'TWO_WAY') = 'THREE_WAY' THEN s.AMOUNT_RECEIVED
+                            ELSE s.AMOUNT - s.AMOUNT_CANCELLED END;
+            v_billable := v_basis - s.AMOUNT_BILLED;
+            IF NVL(v_amt, 0) <= 0 THEN RR_PO_UTIL_PKG.err(h.PO_NUMBER || ' line ' || l.LINE_NUM || ': enter the amount to invoice'); END IF;
+            v_meas := v_amt; v_qty := NULL;
+        END IF;
+        IF v_meas > v_billable + 0.000001 THEN
+            RR_PO_UTIL_PKG.err(h.PO_NUMBER || ' line ' || l.LINE_NUM || ': only ' || TO_CHAR(GREATEST(v_billable, 0), 'FM999,999,990.0999')
+                || CASE WHEN l.LINE_TYPE = 'QUANTITY' THEN ' ' || l.UOM_CODE ELSE '' END || ' can be invoiced'
+                || CASE WHEN NVL(s.MATCH_LEVEL, 'TWO_WAY') = 'THREE_WAY' THEN ' (received and not yet billed)' ELSE ' (ordered and not yet billed)' END);
+        END IF;
 
-        FOR i IN 0 .. lines.get_size - 1 LOOP
-            ln := TREAT(lines.get(i) AS JSON_OBJECT_T);
-            v_line := RR_PO_UTIL_PKG.jnum(ln, 'poLineId');
-            v_qty  := RR_PO_UTIL_PKG.jnum(ln, 'quantity');
-            v_amt  := RR_PO_UTIL_PKG.jnum(ln, 'amount');
-            v_iln  := NVL(RR_PO_UTIL_PKG.jnum(ln, 'invoiceLineNumber'), i + 1);
+        IF p_dist_id IS NOT NULL THEN
             BEGIN
-                SELECT * INTO l FROM RR_PO_LINES WHERE PO_LINE_ID = v_line;
-                SELECT * INTO s FROM RR_PO_SCHEDULES WHERE PO_LINE_ID = v_line AND SCHEDULE_NUM = 1 FOR UPDATE;
-                SELECT * INTO h FROM RR_PO_HEADERS WHERE PO_HEADER_ID = l.PO_HEADER_ID;
-            EXCEPTION WHEN NO_DATA_FOUND THEN RR_PO_UTIL_PKG.err('PO line ' || v_line || ' not found');
+                SELECT SCHEDULE_ID, RATE INTO v_dsched, v_rate FROM RR_PO_DISTRIBUTIONS WHERE DISTRIBUTION_ID = p_dist_id;
+            EXCEPTION WHEN NO_DATA_FOUND THEN v_dsched := NULL;
             END;
-            IF v_hdr IS NULL THEN v_hdr := h.PO_HEADER_ID;
-            ELSIF v_hdr <> h.PO_HEADER_ID THEN RR_PO_UTIL_PKG.err('All lines must belong to one purchase order');
+            IF NVL(v_dsched, -1) <> s.SCHEDULE_ID THEN
+                RR_PO_UTIL_PKG.err('Distribution ' || p_dist_id || ' does not belong to ' || h.PO_NUMBER || ' line ' || l.LINE_NUM);
             END IF;
-            IF h.DOCUMENT_STATUS <> 'APPROVED' THEN RR_PO_UTIL_PKG.err('PO ' || h.PO_NUMBER || ' is not approved'); END IF;
-            IF h.HOLD_FLAG = 'Y' THEN RR_PO_UTIL_PKG.err('PO ' || h.PO_NUMBER || ' is on hold'); END IF;
-            IF s.CLOSURE_STATUS IN ('CLOSED', 'FINALLY_CLOSED', 'CLOSED_FOR_INVOICING') OR l.LINE_STATUS = 'CANCELLED' THEN
-                RR_PO_UTIL_PKG.err('Line ' || l.LINE_NUM || ' is ' || LOWER(REPLACE(s.CLOSURE_STATUS, '_', ' ')) || ' — it cannot be invoiced again');
-            END IF;
-            -- what can still be billed
-            IF l.LINE_TYPE = 'QUANTITY' THEN
-                v_basis := CASE WHEN NVL(s.MATCH_LEVEL, 'TWO_WAY') = 'THREE_WAY' THEN s.QUANTITY_RECEIVED
-                                ELSE NVL(s.QUANTITY, 0) - s.QUANTITY_CANCELLED END;
-                v_billable := v_basis - s.QUANTITY_BILLED;
-                IF NVL(v_qty, 0) <= 0 THEN RR_PO_UTIL_PKG.err('Line ' || l.LINE_NUM || ': enter the quantity to invoice'); END IF;
-                v_meas := v_qty;
-                v_amt := ROUND(v_qty * l.UNIT_PRICE, 2);
-            ELSE
-                v_basis := CASE WHEN NVL(s.MATCH_LEVEL, 'TWO_WAY') = 'THREE_WAY' THEN s.AMOUNT_RECEIVED
-                                ELSE s.AMOUNT - s.AMOUNT_CANCELLED END;
-                v_billable := v_basis - s.AMOUNT_BILLED;
-                IF NVL(v_amt, 0) <= 0 THEN RR_PO_UTIL_PKG.err('Line ' || l.LINE_NUM || ': enter the amount to invoice'); END IF;
-                v_meas := v_amt; v_qty := NULL;
-            END IF;
-            IF v_meas > v_billable + 0.000001 THEN
-                RR_PO_UTIL_PKG.err('Line ' || l.LINE_NUM || ': only ' || TO_CHAR(GREATEST(v_billable, 0), 'FM999,999,990.0999')
-                    || CASE WHEN l.LINE_TYPE = 'QUANTITY' THEN ' ' || l.UOM_CODE ELSE '' END || ' can be invoiced'
-                    || CASE WHEN NVL(s.MATCH_LEVEL, 'TWO_WAY') = 'THREE_WAY' THEN ' (received and not yet billed)' ELSE ' (ordered and not yet billed)' END);
-            END IF;
-
-            -- spread over the distributions by what each can still bill
+            apply_billing(p_dist_id, v_qty, v_amt, p_user, v_rel);
+            INSERT INTO RR_PO_INVOICE_MATCHES (PO_HEADER_ID, PO_LINE_ID, SCHEDULE_ID, DISTRIBUTION_ID, INVOICE_ID, INVOICE_NUM,
+                INVOICE_LINE_NUMBER, QUANTITY_BILLED, AMOUNT_BILLED, AMOUNT_BILLED_FUNC, ACCRUAL_RELIEVED, MATCH_STATUS,
+                INVOICE_STATUS, CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
+            VALUES (h.PO_HEADER_ID, l.PO_LINE_ID, s.SCHEDULE_ID, p_dist_id, p_inv, p_num, p_iln, v_qty, v_amt,
+                ROUND(v_amt * v_rate, 2), v_rel, 'MATCHED', p_ist, p_user, p_user, SYSTIMESTAMP);
+        ELSE
             SELECT COUNT(*), SUM(GREATEST(CASE WHEN NVL(s.MATCH_LEVEL, 'TWO_WAY') = 'THREE_WAY' THEN AMOUNT_DELIVERED
                                                ELSE AMOUNT_ORDERED - AMOUNT_CANCELLED END - AMOUNT_BILLED, 0))
             INTO   v_cnt, v_tot_w
@@ -188,7 +189,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
             v_i := 0; v_sq := 0; v_sa := 0;
             FOR d IN (SELECT DISTRIBUTION_ID, RATE,
                              GREATEST(CASE WHEN NVL(s.MATCH_LEVEL, 'TWO_WAY') = 'THREE_WAY' THEN AMOUNT_DELIVERED
-                                           ELSE AMOUNT_ORDERED - AMOUNT_CANCELLED END - AMOUNT_BILLED, 0) AS W, AMOUNT_ORDERED
+                                           ELSE AMOUNT_ORDERED - AMOUNT_CANCELLED END - AMOUNT_BILLED, 0) AS W
                       FROM RR_PO_DISTRIBUTIONS WHERE SCHEDULE_ID = s.SCHEDULE_ID ORDER BY DIST_NUM) LOOP
                 v_i := v_i + 1;
                 IF v_i = v_cnt THEN
@@ -204,19 +205,144 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
                     INSERT INTO RR_PO_INVOICE_MATCHES (PO_HEADER_ID, PO_LINE_ID, SCHEDULE_ID, DISTRIBUTION_ID, INVOICE_ID, INVOICE_NUM,
                         INVOICE_LINE_NUMBER, QUANTITY_BILLED, AMOUNT_BILLED, AMOUNT_BILLED_FUNC, ACCRUAL_RELIEVED, MATCH_STATUS,
                         INVOICE_STATUS, CREATED_BY, LAST_UPDATED_BY, LAST_UPDATE_DATE)
-                    VALUES (h.PO_HEADER_ID, l.PO_LINE_ID, s.SCHEDULE_ID, d.DISTRIBUTION_ID, v_inv, v_num, v_iln, v_dq, v_da,
-                        ROUND(v_da * d.RATE, 2), v_rel, 'MATCHED', v_ist, p_user, p_user, SYSTIMESTAMP);
+                    VALUES (h.PO_HEADER_ID, l.PO_LINE_ID, s.SCHEDULE_ID, d.DISTRIBUTION_ID, p_inv, p_num, p_iln, v_dq, v_da,
+                        ROUND(v_da * d.RATE, 2), v_rel, 'MATCHED', p_ist, p_user, p_user, SYSTIMESTAMP);
                 END IF;
             END LOOP;
-            RR_PO_DOC_PKG.rollup_schedule(s.SCHEDULE_ID);
+        END IF;
+        -- schedule counters/closure now include this line, so the next invoice line sees the reduced billable
+        RR_PO_DOC_PKG.rollup_schedule(s.SCHEDULE_ID);
+        p_hdr := h.PO_HEADER_ID; p_billed := v_amt;
+    END;
+
+    PROCEDURE RECORD_INVOICE (p_json IN CLOB, p_user IN VARCHAR2,
+                              p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
+        o        JSON_OBJECT_T := JSON_OBJECT_T.parse(p_json);
+        lines    JSON_ARRAY_T := RR_PO_UTIL_PKG.jarr(o, 'lines');
+        ln       JSON_OBJECT_T;
+        v_inv    NUMBER := RR_PO_UTIL_PKG.jnum(o, 'invoiceId');
+        v_num    VARCHAR2(100) := RR_PO_UTIL_PKG.jstr(o, 'invoiceNum');
+        v_ist    VARCHAR2(30) := RR_PO_UTIL_PKG.jstr(o, 'invoiceStatus');
+        v_hdr    NUMBER; v_h NUMBER; v_amt NUMBER;
+        v_total  NUMBER := 0;
+        v_n      NUMBER := 0;
+        v_exists NUMBER;
+        v_po     VARCHAR2(40); v_cur VARCHAR2(15);
+    BEGIN
+        IF v_inv IS NULL THEN RR_PO_UTIL_PKG.err('invoiceId is required'); END IF;
+        SELECT COUNT(*) INTO v_exists FROM RR_PO_INVOICE_MATCHES WHERE INVOICE_ID = v_inv AND MATCH_STATUS = 'MATCHED';
+        IF v_exists > 0 THEN RR_PO_UTIL_PKG.err('Invoice ' || NVL(v_num, v_inv) || ' is already matched to a purchase order'); END IF;
+        IF lines.get_size = 0 THEN RR_PO_UTIL_PKG.err('Select at least one PO line'); END IF;
+        FOR i IN 0 .. lines.get_size - 1 LOOP
+            ln := TREAT(lines.get(i) AS JSON_OBJECT_T);
+            match_line(RR_PO_UTIL_PKG.jnum(ln, 'poLineId'), RR_PO_UTIL_PKG.jnum(ln, 'distributionId'),
+                       RR_PO_UTIL_PKG.jnum(ln, 'quantity'), RR_PO_UTIL_PKG.jnum(ln, 'amount'),
+                       v_inv, v_num, NVL(RR_PO_UTIL_PKG.jnum(ln, 'invoiceLineNumber'), i + 1), v_ist, p_user, v_h, v_amt);
+            IF v_hdr IS NULL THEN v_hdr := v_h;
+            ELSIF v_hdr <> v_h THEN RR_PO_UTIL_PKG.err('All lines must belong to one purchase order');
+            END IF;
             v_total := v_total + v_amt; v_n := v_n + 1;
         END LOOP;
         RR_PO_DOC_PKG.rollup_header(v_hdr);
-        SELECT * INTO h FROM RR_PO_HEADERS WHERE PO_HEADER_ID = v_hdr;
+        SELECT PO_NUMBER, CURRENCY_CODE INTO v_po, v_cur FROM RR_PO_HEADERS WHERE PO_HEADER_ID = v_hdr;
         RR_PO_UTIL_PKG.history('PO', v_hdr, 'INVOICE_MATCHED', NULL, NULL, p_user,
-                               'Invoice ' || NVL(v_num, v_inv) || ': ' || v_n || ' line(s), ' || TO_CHAR(v_total, 'FM999,999,999,990.00') || ' ' || h.CURRENCY_CODE);
-        p_id := v_hdr; p_number := h.PO_NUMBER; p_status := 'S';
-        p_message := 'Invoice ' || NVL(v_num, TO_CHAR(v_inv)) || ' matched to ' || h.PO_NUMBER || ' (' || v_n || ' line(s))';
+                               'Invoice ' || NVL(v_num, v_inv) || ': ' || v_n || ' line(s), ' || TO_CHAR(v_total, 'FM999,999,999,990.00') || ' ' || v_cur);
+        p_id := v_hdr; p_number := v_po; p_status := 'S';
+        p_message := 'Invoice ' || NVL(v_num, TO_CHAR(v_inv)) || ' matched to ' || v_po || ' (' || v_n || ' line(s))';
+    EXCEPTION WHEN OTHERS THEN
+        p_status := 'E'; p_message := RR_PO_UTIL_PKG.err_text(SQLERRM);
+    END;
+
+    -- Called by RR_AP_CREATE_INVOICE_PKG.create_invoice (POST ap/createinvoicefull) inside its transaction,
+    -- after the header and lines are in RR_AP_INVOICES_ALL / RR_AP_INVOICE_LINES_ALL and before COMMIT.
+    -- Every Item line that references a Purchasing-RR PO (PURCHASE_ORDER_NUMBER + PURCHASE_ORDER_LINE_NUMBER,
+    -- or POLineId / PODistributionId in the request) is matched. A PO number that is not a Purchasing-RR PO
+    -- stays a plain reference. Any error → p_status 'E' and the caller rolls the whole invoice back.
+    PROCEDURE MATCH_AP_INVOICE (p_invoice_id IN NUMBER, p_json IN CLOB, p_user IN VARCHAR2,
+                                p_matched OUT NUMBER, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
+        TYPE t_ids IS TABLE OF NUMBER INDEX BY PLS_INTEGER;
+        v_hdrs   t_ids;
+        v_tot    t_ids;
+        v_num    VARCHAR2(100); v_ist VARCHAR2(30); v_sup VARCHAR2(60); v_bu VARCHAR2(240); v_cur VARCHAR2(15);
+        v_line   NUMBER; v_h NUMBER; v_amt NUMBER; v_n NUMBER := 0; v_cnt NUMBER;
+        v_po     RR_PO_HEADERS%ROWTYPE;
+        v_posup  VARCHAR2(60);
+        v_pos    VARCHAR2(4000);
+    BEGIN
+        p_matched := 0;
+        SELECT INVOICE_NUMBER, VALIDATION_STATUS, SUPPLIER_NUMBER, BUSINESS_UNIT, INVOICE_CURRENCY
+        INTO   v_num, v_ist, v_sup, v_bu, v_cur
+        FROM   RR_AP_INVOICES_ALL WHERE INVOICE_ID = p_invoice_id;
+        SELECT COUNT(*) INTO v_cnt FROM RR_PO_INVOICE_MATCHES WHERE INVOICE_ID = p_invoice_id AND MATCH_STATUS = 'MATCHED';
+        IF v_cnt > 0 THEN RR_PO_UTIL_PKG.err('Invoice ' || v_num || ' is already matched to a purchase order'); END IF;
+
+        FOR r IN (SELECT al.LINE_NUMBER, al.LINE_AMOUNT, al.QUANTITY, al.PURCHASE_ORDER_NUMBER, al.PURCHASE_ORDER_LINE_NUMBER,
+                         j.PO_LINE_ID, j.PO_DIST_ID
+                  FROM   RR_AP_INVOICE_LINES_ALL al
+                  LEFT   JOIN JSON_TABLE(p_json, '$.lines[*]' COLUMNS (
+                              LINE_NUMBER NUMBER PATH '$.LineNumber',
+                              PO_LINE_ID  NUMBER PATH '$.POLineId',
+                              PO_DIST_ID  NUMBER PATH '$.PODistributionId')) j
+                         ON j.LINE_NUMBER = al.LINE_NUMBER
+                  WHERE  al.INVOICE_ID = p_invoice_id
+                  AND    NVL(al.LINE_TYPE, 'Item') = 'Item'
+                  AND    (al.PURCHASE_ORDER_NUMBER IS NOT NULL OR j.PO_LINE_ID IS NOT NULL)
+                  ORDER  BY al.LINE_NUMBER) LOOP
+            v_line := r.PO_LINE_ID;
+            IF v_line IS NULL THEN
+                -- resolve the PO by number (the BU of the invoice decides when the number exists in several BUs)
+                SELECT COUNT(*) INTO v_cnt FROM RR_PO_HEADERS WHERE PO_NUMBER = r.PURCHASE_ORDER_NUMBER;
+                IF v_cnt = 0 THEN
+                    GOTO next_line;   -- not a Purchasing-RR PO: keep as a reference only
+                ELSIF v_cnt > 1 THEN
+                    SELECT COUNT(*) INTO v_cnt FROM RR_PO_HEADERS h JOIN RR_GL_BUSINESS_UNITS bu ON bu.BUSINESS_UNIT_ID = h.BUSINESS_UNIT_ID
+                    WHERE h.PO_NUMBER = r.PURCHASE_ORDER_NUMBER AND bu.BUSINESS_UNIT_NAME = v_bu;
+                    IF v_cnt <> 1 THEN RR_PO_UTIL_PKG.err('PO ' || r.PURCHASE_ORDER_NUMBER || ' exists in several business units — invoice from the PO screen'); END IF;
+                    SELECT h.* INTO v_po FROM RR_PO_HEADERS h JOIN RR_GL_BUSINESS_UNITS bu ON bu.BUSINESS_UNIT_ID = h.BUSINESS_UNIT_ID
+                    WHERE h.PO_NUMBER = r.PURCHASE_ORDER_NUMBER AND bu.BUSINESS_UNIT_NAME = v_bu;
+                ELSE
+                    SELECT * INTO v_po FROM RR_PO_HEADERS WHERE PO_NUMBER = r.PURCHASE_ORDER_NUMBER;
+                END IF;
+                IF r.PURCHASE_ORDER_LINE_NUMBER IS NULL THEN
+                    RR_PO_UTIL_PKG.err('Invoice line ' || r.LINE_NUMBER || ': enter the PO line number for ' || v_po.PO_NUMBER);
+                END IF;
+                BEGIN
+                    SELECT PO_LINE_ID INTO v_line FROM RR_PO_LINES
+                    WHERE PO_HEADER_ID = v_po.PO_HEADER_ID AND LINE_NUM = r.PURCHASE_ORDER_LINE_NUMBER;
+                EXCEPTION WHEN NO_DATA_FOUND THEN
+                    RR_PO_UTIL_PKG.err('Invoice line ' || r.LINE_NUMBER || ': ' || v_po.PO_NUMBER || ' has no line ' || r.PURCHASE_ORDER_LINE_NUMBER);
+                END;
+            ELSE
+                SELECT h.* INTO v_po FROM RR_PO_HEADERS h JOIN RR_PO_LINES l ON l.PO_HEADER_ID = h.PO_HEADER_ID WHERE l.PO_LINE_ID = v_line;
+            END IF;
+            -- the invoice must be from the PO's supplier and in the PO's currency
+            SELECT MAX(SUPPLIER_NUMBER) INTO v_posup FROM RR_SUPPLIER_MASTER WHERE SUPPLIER_ID = v_po.SUPPLIER_ID;
+            IF v_sup IS NOT NULL AND v_posup IS NOT NULL AND v_sup <> v_posup THEN
+                RR_PO_UTIL_PKG.err('Invoice line ' || r.LINE_NUMBER || ': ' || v_po.PO_NUMBER || ' is for supplier ' || v_posup || ', not ' || v_sup);
+            END IF;
+            IF v_cur IS NOT NULL AND v_cur <> v_po.CURRENCY_CODE THEN
+                RR_PO_UTIL_PKG.err('Invoice line ' || r.LINE_NUMBER || ': ' || v_po.PO_NUMBER || ' is in ' || v_po.CURRENCY_CODE || ', the invoice is in ' || v_cur);
+            END IF;
+            match_line(v_line, r.PO_DIST_ID, r.QUANTITY, r.LINE_AMOUNT, p_invoice_id, v_num, r.LINE_NUMBER, v_ist, p_user, v_h, v_amt);
+            v_hdrs(v_h) := v_h;
+            v_tot(v_h) := CASE WHEN v_tot.EXISTS(v_h) THEN v_tot(v_h) ELSE 0 END + v_amt;
+            v_n := v_n + 1;
+            <<next_line>> NULL;
+        END LOOP;
+
+        DECLARE k NUMBER := v_hdrs.FIRST; BEGIN
+            WHILE k IS NOT NULL LOOP
+                RR_PO_DOC_PKG.rollup_header(k);
+                SELECT * INTO v_po FROM RR_PO_HEADERS WHERE PO_HEADER_ID = k;
+                RR_PO_UTIL_PKG.history('PO', k, 'INVOICE_MATCHED', NULL, NULL, p_user,
+                    'AP invoice ' || v_num || ' (ID ' || p_invoice_id || '): ' || TO_CHAR(v_tot(k), 'FM999,999,999,990.00') || ' ' || v_po.CURRENCY_CODE);
+                v_pos := v_pos || CASE WHEN v_pos IS NOT NULL THEN ', ' END || v_po.PO_NUMBER;
+                k := v_hdrs.NEXT(k);
+            END LOOP;
+        END;
+        p_matched := v_n; p_status := 'S';
+        p_message := CASE WHEN v_n = 0 THEN 'No Purchasing-RR PO lines on the invoice'
+                          ELSE v_n || ' line(s) matched to ' || v_pos END;
     EXCEPTION WHEN OTHERS THEN
         p_status := 'E'; p_message := RR_PO_UTIL_PKG.err_text(SQLERRM);
     END;
