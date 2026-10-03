@@ -46,6 +46,7 @@ const PurchaseOrderEditor: React.FC<{
   const [cos, setCos] = useState<Row[]>([]);
   const [revs, setRevs] = useState<Row[]>([]);
   const [rcv, setRcv] = useState<Row[]>([]);
+  const [invs, setInvs] = useState<Row[]>([]);
   const [loading, setLoading] = useState(!!id);
   const [busy, setBusy] = useState(false);
   const [coOpen, setCoOpen] = useState(false);
@@ -89,6 +90,9 @@ const PurchaseOrderEditor: React.FC<{
       setHdr(h); setLineRows(ls);
       if (initialId) cb.current.onSaved?.(Number(h.PO_HEADER_ID), String(h.PO_NUMBER));   // relabel the tab
       setCos(co); setRevs(rv); setRcv(rc);
+      // invoices matched to this PO (305_po_invoice_match.sql; empty until it is installed)
+      poQuery(`SELECT * FROM RR_PO_V_INVOICE_MATCHES WHERE PO_HEADER_ID = ${nlit(id)} ORDER BY INVOICE_ID DESC, LINE_NUM`)
+        .then(setInvs).catch(() => setInvs([]));
       form.setFieldsValue({
         supplierId: Number(h.SUPPLIER_ID), supplierSiteId: Number(h.SUPPLIER_SITE_ID), supplierContact: h.SUPPLIER_CONTACT,
         buyerUser: h.BUYER_USER, currencyCode: h.CURRENCY_CODE, rateType: h.RATE_TYPE, rateDate: day(h.RATE_DATE),
@@ -454,6 +458,18 @@ const PurchaseOrderEditor: React.FC<{
           ),
         },
         ...(hdr ? [
+          { key: 'invoices', label: `Invoices (${new Set(invs.filter(i => i.MATCH_STATUS === 'MATCHED').map(i => i.INVOICE_ID)).size})`, children: (
+            <Table size="small" rowKey={r => `${r.INVOICE_ID}-${r.PO_LINE_ID}-${r.MATCH_STATUS}`} dataSource={invs} pagination={false} columns={[
+              { title: 'Invoice', dataIndex: 'INVOICE_NUM', width: 170, render: (v, r) => (
+                <a onClick={() => navigate(`/ap/manage-invoices?invoiceId=${r.INVOICE_ID}`)}>{v || `#${r.INVOICE_ID}`}</a>) },
+              { title: 'PO line', dataIndex: 'LINE_NUM', width: 70 },
+              { title: 'Description', dataIndex: 'ITEM_DESCRIPTION', ellipsis: true },
+              { title: 'Qty billed', dataIndex: 'QUANTITY_BILLED', width: 100, align: 'right', render: qty },
+              { title: 'Amount', dataIndex: 'AMOUNT_BILLED', width: 130, align: 'right', render: (v, r) => `${money(v)} ${r.CURRENCY_CODE}` },
+              { title: 'Invoice status', dataIndex: 'INVOICE_STATUS', width: 140, render: v => v ? <Tag>{String(v)}</Tag> : null },
+              { title: 'Match', dataIndex: 'MATCH_STATUS', width: 110, render: v => <Tag color={v === 'MATCHED' ? 'green' : 'default'}>{v}</Tag> },
+              { title: 'Date', dataIndex: 'CREATION_DATE', width: 100, render: day },
+            ]} />) },
           { key: 'receipts', label: `Receipts (${rcv.length})`, children: (
             <Table size="small" rowKey="RCV_TRANSACTION_ID" dataSource={rcv} pagination={{ pageSize: 15 }} columns={[
               { title: 'Receipt', dataIndex: 'RECEIPT_NUMBER', width: 150 },
