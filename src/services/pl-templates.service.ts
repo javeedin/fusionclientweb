@@ -466,11 +466,17 @@ export const removeSectionAccount = async (
     let response: Response | null = null;
     let result: any = {};
     for (const url of [`${BASE_URL}/pl/section/${sectionId}/account/remove`, `${BASE_URL}/section/${sectionId}/account/remove`]) {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body,
-      });
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body,
+        });
+      } catch {
+        // ORDS answers an unknown path without CORS headers → the browser reports "Failed to fetch"
+        response = null;
+        continue;
+      }
       result = await response.json().catch(() => ({}));
       // ORDS' own 404 (no such endpoint) has no "success" field; the handler's 404 does
       const missing = response.status === 404 && result?.success === undefined;
@@ -486,6 +492,39 @@ export const removeSectionAccount = async (
     console.error('Error removing section account:', error);
     return { success: false, error: String(error) };
   }
+};
+
+// Move / add accounts to a section in ONE transaction: put in the target section and taken out of the
+// other sections of the template (single-account rows; accounts inside a range elsewhere are reported).
+// POST /pl/account/move — database/gl/rr_pl_account_move.sql
+export interface MoveAccountsResult {
+  moved: number; added: number; removed: number; unchanged: number;
+  ranged: { account: string; section: string; from: string; to: string }[];
+}
+export const moveAccounts = async (
+  sectionId: number,
+  accounts: string[],
+): Promise<ApiResponse<MoveAccountsResult> & { notDeployed?: boolean }> => {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}/pl/account/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ section_id: sectionId, accounts }),
+    });
+  } catch {
+    // unknown ORDS path has no CORS headers → "Failed to fetch"
+    return { success: false, notDeployed: true, error: 'Move service not deployed — run database/gl/rr_pl_account_move.sql' };
+  }
+  const result = await response.json().catch(() => ({} as any));
+  if (response.status === 404 && result?.success === undefined) {
+    return { success: false, notDeployed: true, error: 'Move service not deployed — run database/gl/rr_pl_account_move.sql' };
+  }
+  if (result?.success) {
+    return { success: true, data: { moved: result.moved || 0, added: result.added || 0, removed: result.removed || 0,
+      unchanged: result.unchanged || 0, ranged: result.ranged || [] } };
+  }
+  return { success: false, error: result?.error || `HTTP ${response.status}` };
 };
 
 // Delete total

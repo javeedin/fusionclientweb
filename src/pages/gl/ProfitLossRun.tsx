@@ -23,7 +23,7 @@ import { getAppBranding } from '../../config/company.config';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { buildApexUrl } from '../../config/api.helper';
 import type { PLTemplateStructure, PLSectionAccount } from '../../services/pl-templates.service';
-import { assignAccount, removeSectionAccount, addGroup, addSection, updateTotal, GROUP_TYPES } from '../../services/pl-templates.service';
+import { assignAccount, removeSectionAccount, moveAccounts, addGroup, addSection, updateTotal, GROUP_TYPES } from '../../services/pl-templates.service';
 
 const { Text, Title } = Typography;
 const BASE = APEX_DB_CONFIG.baseUrl;
@@ -348,6 +348,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
   const [missingOpen, setMissingOpen] = useState(false);
   const [tbFilter, setTbFilter] = useState<'all' | 'missing'>('all');
   const [tbSearch, setTbSearch] = useState('');
+  const [tbSel, setTbSel] = useState<string[]>([]);   // selected account codes (bulk move / add)
   const tbRows = useMemo<TbPlRow[]>(() => {
     if (!result) return [];
     const q = tbSearch.trim().toLowerCase();
@@ -432,6 +433,22 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
         sectionId: undefined as number | undefined, suggested: undefined as number | undefined }));
     if (!lines.length) { message.info('Nothing to move'); return; }
     setAddMode('move');
+    setAddLines(lines);
+  };
+  // Several accounts at once (checkboxes on the TB view): mapped ones move, missing ones are added
+  const openBulk = (accounts: string[]) => {
+    if (!result) return;
+    const set = new Set(accounts);
+    const mapped = [...result.tbRev, ...result.tbExp].filter(l => set.has(l.account) && l.entries.length)
+      .map(l => ({ account: l.account, desc: l.desc, type: l.type, ytd: l.ytd, from: l.entries,
+        sectionId: undefined as number | undefined, suggested: undefined as number | undefined }));
+    const missing = result.unmapped.filter(u => set.has(u.account)).map(u => {
+      const sug = suggestSection(u.account, u.type);
+      return { account: u.account, desc: u.desc, type: u.type, ytd: u.ytd, from: [] as MapEntry[], sectionId: undefined as number | undefined, suggested: sug };
+    });
+    const lines = [...mapped, ...missing].sort((a, b) => a.account.localeCompare(b.account));
+    if (!lines.length) { message.info('Select accounts first'); return; }
+    setAddMode(mapped.length ? 'move' : 'add');
     setAddLines(lines);
   };
   const [addMode, setAddMode] = useState<'add' | 'move'>('add');
@@ -550,6 +567,8 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     setAdding(true);
     const failed: string[] = [];
     let skipped = 0;
+    let ok = 0;
+    const ready: AddLine[] = [];
     for (const l of todo) {
       const from = l.from || [];
       const ranges = from.filter(f => isRange(f.entry));
@@ -557,27 +576,46 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
         failed.push(`${l.account}: picked up by range ${ranges.map(f => `${rangeText(f.entry)} in ${f.sectionName}`).join(', ')} — edit the range on the template`);
         continue;
       }
-      const toRemove = from.filter(f => f.sectionId !== l.sectionId);
-      if (from.length && toRemove.length === 0) { skipped++; continue; }          // already only there
-      if (!from.some(f => f.sectionId === l.sectionId)) {                          // add first: nothing lost if it fails
-        const r = await assignAccount(l.sectionId!, l.account);
-        if (!r.success) { failed.push(`${l.account}: ${r.error || 'failed'}`); continue; }
+      if (from.length && from.every(f => f.sectionId === l.sectionId)) { skipped++; continue; }   // already only there
+      ready.push(l);
+    }
+    // one call per target section: add + remove happen in one transaction on the server
+    const bySection = new Map<number, AddLine[]>();
+    ready.forEach(l => bySection.set(l.sectionId!, [...(bySection.get(l.sectionId!) || []), l]));
+    for (const [sectionId, ls] of bySection) {
+      const r = await moveAccounts(sectionId, ls.map(l => l.account));
+      if (r.success) {
+        const ranged = r.data?.ranged || [];
+        ranged.forEach(x => failed.push(`${x.account}: also picked up by range ${x.from} – ${x.to} in ${x.section} — edit the range on the template`));
+        ok += ls.length - new Set(ranged.map(x => x.account)).size;
+        continue;
       }
-      for (const f of toRemove) {
-        const r = await removeSectionAccount(f.sectionId, f.entry);
-        if (!r.success) failed.push(`${l.account}: added to the new section but not removed from ${f.sectionName} — ${r.error || 'failed'}`);
+      if (!r.notDeployed) { ls.forEach(l => failed.push(`${l.account}: ${r.error || 'failed'}`)); continue; }
+      // move service not installed yet: add, then remove (two calls per account)
+      for (const l of ls) {
+        const from = l.from || [];
+        const toRemove = from.filter(f => f.sectionId !== l.sectionId);
+        if (!from.some(f => f.sectionId === l.sectionId)) {                          // add first: nothing lost if it fails
+          const a = await assignAccount(l.sectionId!, l.account);
+          if (!a.success) { failed.push(`${l.account}: ${a.error || 'failed'}`); continue; }
+        }
+        let bad = false;
+        for (const f of toRemove) {
+          const x = await removeSectionAccount(f.sectionId, f.entry);
+          if (!x.success) { bad = true; failed.push(`${l.account}: added to the new section but not removed from ${f.sectionName} — ${x.error || 'failed'}. Run database/gl/rr_pl_account_move.sql`); }
+        }
+        if (!bad) ok++;
       }
     }
     setAdding(false);
-    const ok = todo.length - failed.length - skipped;
     if (ok) message.success(`${ok} account(s) ${addMode === 'move' ? 'moved in' : 'added to'} "${tpl.template_name}"`);
     if (skipped && !ok && !failed.length) message.info('No change — the accounts are already in those sections');
     if (failed.length) {
       Modal.error({ title: `${failed.length} account(s) could not be ${addMode === 'move' ? 'moved' : 'added'}`, content: <div style={{ fontSize: 12 }}>{failed.map(f => <div key={f}>{f}</div>)}</div>, zIndex: 1300 });
     }
-    setAddLines(null); setMissingSel([]);
+    setAddLines(null); setMissingSel([]); setTbSel([]);
     if (ok && failed.length === 0) setMissingOpen(false);
-    if (ok) await onTemplateChanged?.();   // structure reloads → statement recalculates, TB kept
+    if (ok || failed.length) await onTemplateChanged?.();   // structure reloads → statement recalculates, TB kept
   };
 
   // drill popup (group / section → accounts)
@@ -934,8 +972,29 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                   </Card>
                 </Col>
               </Row>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', marginBottom: 8, borderRadius: 6,
+                background: tbSel.length ? '#FFF6F4' : '#FAFAFA', border: `1px solid ${tbSel.length ? '#E8C4BD' : '#F0F0F0'}` }}>
+                {tbSel.length ? (
+                  <>
+                    <Text strong>{tbSel.length} account(s) selected</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>YTD {fmt(r2([...result.tbRev, ...result.tbExp].filter(l => tbSel.includes(l.account)).reduce((t, l) => t + l.ytd, 0)))}</Text>
+                    <Button size="small" type="primary" icon={<SwapOutlined />} style={{ background: RED, borderColor: RED }} onClick={() => openBulk(tbSel)}>
+                      Move / add to section…
+                    </Button>
+                    <Button size="small" onClick={() => setTbSel([])}>Clear</Button>
+                  </>
+                ) : (
+                  <Text type="secondary" style={{ fontSize: 12 }}>Tick accounts (or a whole Revenue / Expenses block) to move or add several at once — to an existing section or a new one.</Text>
+                )}
+              </div>
               <Table<TbPlRow> size="small" rowKey="key" dataSource={tbRows} pagination={false}
                 expandable={{ defaultExpandAllRows: true, indentSize: 18 }}
+                rowSelection={{
+                  selectedRowKeys: tbSel.map(a => `tb-${a}`),
+                  onChange: keys => setTbSel(keys.map(String).filter(k => k.startsWith('tb-') && !['tb-R', 'tb-E', 'tb-net'].includes(k)).map(k => k.slice(3))),
+                  checkStrictly: false,
+                  getCheckboxProps: r => ({ disabled: r.kind === 'total' || (r.kind === 'group' && !r.children?.length) }),
+                }}
                 rowClassName={r => (r.kind === 'total' ? 'pl-total pl-double' : r.kind === 'group' ? 'pl-group' : r.missing ? 'pl-missing' : '')}
                 columns={[
                   { title: 'Line', key: 'label', render: (_: unknown, r) => (r.kind === 'account'
@@ -1076,6 +1135,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                       render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
                     ...(addMode === 'move' ? [{ title: 'Currently in', key: 'from', width: 260, render: (_: unknown, l: AddLine) => (
                       <Space direction="vertical" size={0}>
+                        {!(l.from || []).length && <Tag color="warning" icon={<WarningOutlined />}>Missing — will be added</Tag>}
                         {(l.from || []).map((f, i) => (
                           <Text key={i} style={{ fontSize: 12 }} type={isRange(f.entry) ? 'warning' : undefined}>
                             {f.sectionName}{isRange(f.entry) ? ` (range ${rangeText(f.entry)} — can't move one account)` : ''}
