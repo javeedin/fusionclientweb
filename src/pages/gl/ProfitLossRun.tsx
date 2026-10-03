@@ -14,7 +14,7 @@ import {
 } from 'antd';
 import { parsePastedAccounts } from './plPaste';
 import {
-  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, FileSearchOutlined, PlusOutlined, BulbOutlined, SwapOutlined, FolderAddOutlined, AppstoreAddOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined, SnippetsOutlined,
+  PlayCircleOutlined, DownloadOutlined, FilePdfOutlined, FileSearchOutlined, PlusOutlined, BulbOutlined, SwapOutlined, FolderAddOutlined, AppstoreAddOutlined, WarningOutlined, CalculatorOutlined, ZoomInOutlined, SearchOutlined, SnippetsOutlined, EyeOutlined, PrinterOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
@@ -755,8 +755,8 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
   };
 
   // ── PDF: statement layout (A4 portrait) ───────────────────────────────────
-  const exportPdf = () => {
-    if (!result || !ran) return;
+  const buildPdf = (): { doc: jsPDF; name: string } | null => {
+    if (!result || !ran) return null;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const W = doc.internal.pageSize.getWidth();
     const M = 16;
@@ -889,7 +889,24 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
       doc.text(`${entity}  |  Statement of Profit or Loss  |  ${ran.period}`, M, H - 7.5);
       doc.text(`Generated ${stamp} by ${brand.name}  |  Page ${i} of ${pages}`, W - M, H - 7.5, { align: 'right' });
     }
-    doc.save(`PL_${tpl.template_code}_${ran.period}${ran.company ? `_${ran.company}` : ''}.pdf`);
+    return { doc, name: `PL_${tpl.template_code}_${ran.period}${ran.company ? `_${ran.company}` : ''}.pdf` };
+  };
+  const exportPdf = () => { const b = buildPdf(); if (b) b.doc.save(b.name); };
+
+  // ── PDF preview: the same document in a viewer, rebuilt when Sections / Accounts changes ──
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!previewOpen) return;
+    const b = buildPdf();
+    if (!b) return;
+    const url = URL.createObjectURL(b.doc.output('blob'));
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [previewOpen, view, result]); // eslint-disable-line react-hooks/exhaustive-deps
+  const printPreview = () => {
+    const f = document.getElementById('pl-pdf-preview') as HTMLIFrameElement | null;
+    try { f?.contentWindow?.focus(); f?.contentWindow?.print(); } catch { if (previewUrl) window.open(previewUrl, '_blank'); }
   };
 
   const exportDrill = () => {
@@ -925,6 +942,9 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
               <Button icon={<DownloadOutlined />} disabled={!result} onClick={exportExcel}>Excel</Button>
               <Tooltip title="Statement layout, A4. Uses the Sections / Accounts view shown below.">
                 <Button icon={<FilePdfOutlined />} disabled={!result} onClick={exportPdf}>PDF</Button>
+              </Tooltip>
+              <Tooltip title="Preview the PDF before downloading or printing">
+                <Button icon={<EyeOutlined />} disabled={!result} onClick={() => setPreviewOpen(true)}>Preview</Button>
               </Tooltip>
             </Space>
           </Form.Item>
@@ -1141,6 +1161,28 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                 message={`${result.duplicates.length} account(s) are in more than one section (counted twice)`}
                 description={<div style={{ fontSize: 12 }}>{result.duplicates.map(([a, secs]) => <div key={a}><Tag color="orange">{a}</Tag>in {secs.join(', ')}</div>)}</div>} />
             )}
+          </Modal>
+
+          <Modal open={previewOpen} onCancel={() => { setPreviewOpen(false); setPreviewUrl(null); }} width="min(1100px, 96vw)" zIndex={1100}
+            style={{ top: 24 }} destroyOnHidden
+            title={(
+              <Space wrap>
+                <span><EyeOutlined /> PDF preview — {tpl.template_name}</span>
+                <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                  {ran?.ledger} · {ran?.period}{ran?.company ? ` · Company ${ran.company}` : ' · All companies'}
+                </Text>
+                <Segmented size="small" value={view} onChange={v => setView(v as 'summary' | 'detail')}
+                  options={[{ label: 'Sections', value: 'summary' }, { label: 'Accounts', value: 'detail' }]} />
+              </Space>
+            )}
+            footer={[
+              <Button key="c" onClick={() => { setPreviewOpen(false); setPreviewUrl(null); }}>Close</Button>,
+              <Button key="p" icon={<PrinterOutlined />} disabled={!previewUrl} onClick={printPreview}>Print</Button>,
+              <Button key="d" type="primary" icon={<DownloadOutlined />} style={{ background: RED, borderColor: RED }} onClick={exportPdf}>Download PDF</Button>,
+            ]}>
+            {previewUrl
+              ? <iframe id="pl-pdf-preview" title="P&L PDF preview" src={`${previewUrl}#view=FitH`} style={{ width: '100%', height: '78vh', border: '1px solid #f0f0f0', borderRadius: 6 }} />
+              : <Empty description="Building preview…" />}
           </Modal>
 
           <Modal open={pasteOpen} onCancel={() => setPasteOpen(false)} width={1100} zIndex={1150} maskClosable={false}
