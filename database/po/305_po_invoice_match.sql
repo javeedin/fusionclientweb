@@ -3,9 +3,11 @@
 --
 --   RR_PO_INVOICE_MATCHES  one row per PO distribution billed by an AP invoice line
 --   RR_PO_MATCH_PKG
---     MATCH_AP_INVOICE(...)         called by RR_AP_CREATE_INVOICE_PKG (POST ap/createinvoicefull) in the
---                                   same transaction: AP lines carrying a PO number / line are matched,
---                                   a refused match rolls the AP invoice back (database/ap/147_*.sql)
+--     RESYNC_AP_INVOICE(...)        the PO match follows the AP invoice lines: reverses the invoice's match and
+--                                   matches its current lines again, in the AP transaction. Called by
+--                                   POST/PUT ap/createinvoicefull (database/ap/147, 148) and by trigger
+--                                   RR_PO_AP_LINES_SYNC_TRG for any other change to RR_AP_INVOICE_LINES_ALL
+--                                   (add / edit / delete lines). A refused match rolls the AP change back.
 --     RECORD_INVOICE(p_json)        match an existing AP invoice from po/execute: bills PO lines
 --                                   (quantity/amount), relieves receipt accruals,
 --                                   recomputes line closure (closed for invoicing)
@@ -36,9 +38,15 @@ CREATE TABLE RR_PO_INVOICE_MATCHES (
     CANCELLED_DATE      TIMESTAMP,
     CREATED_BY VARCHAR2(150), CREATION_DATE TIMESTAMP DEFAULT SYSTIMESTAMP,
     LAST_UPDATED_BY VARCHAR2(150), LAST_UPDATE_DATE TIMESTAMP, LAST_UPDATE_LOGIN VARCHAR2(100),
-    CONSTRAINT RR_PO_INV_MATCH_ST_CK CHECK (MATCH_STATUS IN ('MATCHED', 'CANCELLED'))
+    CONSTRAINT RR_PO_INV_MATCH_ST_CK CHECK (MATCH_STATUS IN ('MATCHED', 'CANCELLED', 'REPLACED'))
 )]';
 EXCEPTION WHEN OTHERS THEN IF SQLCODE NOT IN (-955) THEN RAISE; END IF; END;
+/
+-- upgrade: REPLACED = superseded by a re-match after the AP invoice lines changed
+BEGIN
+    EXECUTE IMMEDIATE 'ALTER TABLE RR_PO_INVOICE_MATCHES DROP CONSTRAINT RR_PO_INV_MATCH_ST_CK';
+    EXECUTE IMMEDIATE q'[ALTER TABLE RR_PO_INVOICE_MATCHES ADD CONSTRAINT RR_PO_INV_MATCH_ST_CK CHECK (MATCH_STATUS IN ('MATCHED', 'CANCELLED', 'REPLACED'))]';
+EXCEPTION WHEN OTHERS THEN IF SQLCODE NOT IN (-2443, -2264) THEN RAISE; END IF; END;
 /
 BEGIN EXECUTE IMMEDIATE 'CREATE INDEX RR_PO_INV_MATCH_PO_IX ON RR_PO_INVOICE_MATCHES (PO_HEADER_ID, MATCH_STATUS)';
 EXCEPTION WHEN OTHERS THEN IF SQLCODE NOT IN (-955, -1408) THEN RAISE; END IF; END;
@@ -54,15 +62,29 @@ CREATE OR REPLACE PACKAGE RR_PO_MATCH_PKG AS
                               p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
     PROCEDURE SET_INVOICE_STATUS (p_invoice_id IN VARCHAR2, p_invoice_status IN VARCHAR2, p_user IN VARCHAR2,
                                   p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
-    -- AP side: match the PO lines of an invoice created by POST ap/createinvoicefull (same transaction, no commit)
+    -- AP side (same transaction as the AP change, no commit): re-match the invoice to the PO from its current
+    -- RR_AP_INVOICE_LINES_ALL lines. p_status 'E' → the caller rolls the AP change back.
+    PROCEDURE RESYNC_AP_INVOICE (p_invoice_id IN NUMBER, p_json IN CLOB, p_user IN VARCHAR2,
+                                 p_matched OUT NUMBER, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
     PROCEDURE MATCH_AP_INVOICE (p_invoice_id IN NUMBER, p_json IN CLOB, p_user IN VARCHAR2,
                                 p_matched OUT NUMBER, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
+    -- the AP create/update packages suspend the line trigger for their own transaction and resync explicitly
+    PROCEDURE suspend_sync;
+    PROCEDURE resume_sync;
+    FUNCTION  sync_suspended RETURN VARCHAR2;
     -- internal: reverse an invoice's matches (used by CANCEL_INVOICE and the AP cancel trigger)
     PROCEDURE reverse_invoice (p_invoice_id IN NUMBER, p_user IN VARCHAR2);
 END RR_PO_MATCH_PKG;
 /
 
 CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
+
+    TYPE t_num IS TABLE OF NUMBER INDEX BY PLS_INTEGER;
+    g_susp_txn  VARCHAR2(200);   -- transaction in which the AP line trigger is suspended
+    g_hint_dist t_num;           -- invoice line number → distribution it billed before (resync)
+    g_hint_line t_num;           -- invoice line number → PO line it billed before (resync)
+    g_new_tot   t_num;           -- PO header → amount billed by the current resync
+    g_prev_pl   t_num;           -- PO line → amount this invoice billed before the resync
 
     -- billed counters of a distribution + its receipt distributions (FIFO), accrual relief
     PROCEDURE apply_billing (p_dist_id IN NUMBER, p_qty IN NUMBER, p_amt IN NUMBER, p_user IN VARCHAR2,
@@ -132,7 +154,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
         v_amt    NUMBER := p_amt;
         v_basis  NUMBER; v_billable NUMBER; v_meas NUMBER;
         v_tot_w  NUMBER; v_dq NUMBER; v_da NUMBER; v_sq NUMBER; v_sa NUMBER; v_i NUMBER; v_cnt NUMBER;
-        v_rel    NUMBER; v_rate NUMBER; v_dsched NUMBER;
+        v_rel    NUMBER; v_rate NUMBER; v_dsched NUMBER; v_prev NUMBER;
     BEGIN
         BEGIN
             SELECT * INTO l FROM RR_PO_LINES WHERE PO_LINE_ID = p_line_id;
@@ -140,11 +162,6 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
             SELECT * INTO h FROM RR_PO_HEADERS WHERE PO_HEADER_ID = l.PO_HEADER_ID;
         EXCEPTION WHEN NO_DATA_FOUND THEN RR_PO_UTIL_PKG.err('PO line ' || p_line_id || ' not found');
         END;
-        IF h.DOCUMENT_STATUS <> 'APPROVED' THEN RR_PO_UTIL_PKG.err('PO ' || h.PO_NUMBER || ' is not approved'); END IF;
-        IF h.HOLD_FLAG = 'Y' THEN RR_PO_UTIL_PKG.err('PO ' || h.PO_NUMBER || ' is on hold'); END IF;
-        IF s.CLOSURE_STATUS IN ('CLOSED', 'FINALLY_CLOSED', 'CLOSED_FOR_INVOICING') OR l.LINE_STATUS = 'CANCELLED' THEN
-            RR_PO_UTIL_PKG.err(h.PO_NUMBER || ' line ' || l.LINE_NUM || ' is ' || LOWER(REPLACE(NVL(s.CLOSURE_STATUS, l.LINE_STATUS), '_', ' ')) || ' — it cannot be invoiced again');
-        END IF;
         -- what can still be billed
         IF l.LINE_TYPE = 'QUANTITY' THEN
             v_basis := CASE WHEN NVL(s.MATCH_LEVEL, 'TWO_WAY') = 'THREE_WAY' THEN s.QUANTITY_RECEIVED
@@ -161,6 +178,17 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
             IF NVL(v_amt, 0) <= 0 THEN RR_PO_UTIL_PKG.err(h.PO_NUMBER || ' line ' || l.LINE_NUM || ': enter the amount to invoice'); END IF;
             v_meas := v_amt; v_qty := NULL;
         END IF;
+        -- PO status checks apply to new billing; a re-match (AP lines edited) may keep what this invoice
+        -- already billed on the line even if the PO was put on hold / closed since
+        v_prev := CASE WHEN g_prev_pl.EXISTS(p_line_id) THEN g_prev_pl(p_line_id) ELSE 0 END;
+        IF v_amt > v_prev + 0.001 THEN
+            IF h.DOCUMENT_STATUS <> 'APPROVED' THEN RR_PO_UTIL_PKG.err('PO ' || h.PO_NUMBER || ' is not approved'); END IF;
+            IF h.HOLD_FLAG = 'Y' THEN RR_PO_UTIL_PKG.err('PO ' || h.PO_NUMBER || ' is on hold'); END IF;
+            IF s.CLOSURE_STATUS IN ('CLOSED', 'FINALLY_CLOSED', 'CLOSED_FOR_INVOICING') OR l.LINE_STATUS = 'CANCELLED' THEN
+                RR_PO_UTIL_PKG.err(h.PO_NUMBER || ' line ' || l.LINE_NUM || ' is ' || LOWER(REPLACE(NVL(s.CLOSURE_STATUS, l.LINE_STATUS), '_', ' ')) || ' — it cannot be invoiced again');
+            END IF;
+        END IF;
+        IF g_prev_pl.EXISTS(p_line_id) THEN g_prev_pl(p_line_id) := GREATEST(v_prev - v_amt, 0); END IF;
         IF v_meas > v_billable + 0.000001 THEN
             RR_PO_UTIL_PKG.err(h.PO_NUMBER || ' line ' || l.LINE_NUM || ': only ' || TO_CHAR(GREATEST(v_billable, 0), 'FM999,999,990.0999')
                 || CASE WHEN l.LINE_TYPE = 'QUANTITY' THEN ' ' || l.UOM_CODE ELSE '' END || ' can be invoiced'
@@ -253,31 +281,43 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
         p_status := 'E'; p_message := RR_PO_UTIL_PKG.err_text(SQLERRM);
     END;
 
-    -- Called by RR_AP_CREATE_INVOICE_PKG.create_invoice (POST ap/createinvoicefull) inside its transaction,
-    -- after the header and lines are in RR_AP_INVOICES_ALL / RR_AP_INVOICE_LINES_ALL and before COMMIT.
-    -- Every Item line that references a Purchasing-RR PO (PURCHASE_ORDER_NUMBER + PURCHASE_ORDER_LINE_NUMBER,
-    -- or POLineId / PODistributionId in the request) is matched. A PO number that is not a Purchasing-RR PO
-    -- stays a plain reference. Any error → p_status 'E' and the caller rolls the whole invoice back.
-    PROCEDURE MATCH_AP_INVOICE (p_invoice_id IN NUMBER, p_json IN CLOB, p_user IN VARCHAR2,
-                                p_matched OUT NUMBER, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
-        TYPE t_ids IS TABLE OF NUMBER INDEX BY PLS_INTEGER;
-        v_hdrs   t_ids;
-        v_tot    t_ids;
+    -- ── AP invoice ⇄ PO sync ────────────────────────────────────────────────────
+    -- The PO match always follows the AP invoice lines as they are now: RESYNC_AP_INVOICE reverses the
+    -- invoice's current match (rows → REPLACED) and matches the current lines again. It runs
+    --   · explicitly from POST ap/createinvoicefull and PUT ap/createinvoicefull/:id (database/ap/147, 148),
+    --     which suspend the line trigger for their own transaction and return a clear error;
+    --   · from trigger RR_PO_AP_LINES_SYNC_TRG for every other change to RR_AP_INVOICE_LINES_ALL.
+    -- A refused match raises → the AP change is rolled back. Cancelled / deleted invoices only reverse.
+    PROCEDURE suspend_sync IS
+    BEGIN
+        g_susp_txn := DBMS_TRANSACTION.LOCAL_TRANSACTION_ID(TRUE);
+    END;
+
+    PROCEDURE resume_sync IS
+    BEGIN
+        g_susp_txn := NULL;
+    END;
+
+    -- suspension is tied to the transaction: it ends by itself at COMMIT / ROLLBACK (pooled sessions stay safe)
+    FUNCTION sync_suspended RETURN VARCHAR2 IS
+    BEGIN
+        RETURN CASE WHEN g_susp_txn IS NOT NULL AND g_susp_txn = DBMS_TRANSACTION.LOCAL_TRANSACTION_ID THEN 'Y' ELSE 'N' END;
+    END;
+
+    -- match the PO-referencing Item lines of an AP invoice (raises on any refusal; no history, no header rollup)
+    PROCEDURE match_ap_lines (p_invoice_id IN NUMBER, p_json IN CLOB, p_user IN VARCHAR2, p_n OUT NUMBER) IS
         v_num    VARCHAR2(100); v_ist VARCHAR2(30); v_sup VARCHAR2(60); v_bu VARCHAR2(240); v_cur VARCHAR2(15);
-        v_line   NUMBER; v_h NUMBER; v_amt NUMBER; v_n NUMBER := 0; v_cnt NUMBER;
+        v_line   NUMBER; v_dist NUMBER; v_h NUMBER; v_amt NUMBER; v_cnt NUMBER; v_nd NUMBER;
         v_po     RR_PO_HEADERS%ROWTYPE;
         v_posup  VARCHAR2(60);
-        v_pos    VARCHAR2(4000);
     BEGIN
-        p_matched := 0;
+        p_n := 0;
         SELECT INVOICE_NUMBER, VALIDATION_STATUS, SUPPLIER_NUMBER, BUSINESS_UNIT, INVOICE_CURRENCY
         INTO   v_num, v_ist, v_sup, v_bu, v_cur
         FROM   RR_AP_INVOICES_ALL WHERE INVOICE_ID = p_invoice_id;
-        SELECT COUNT(*) INTO v_cnt FROM RR_PO_INVOICE_MATCHES WHERE INVOICE_ID = p_invoice_id AND MATCH_STATUS = 'MATCHED';
-        IF v_cnt > 0 THEN RR_PO_UTIL_PKG.err('Invoice ' || v_num || ' is already matched to a purchase order'); END IF;
 
         FOR r IN (SELECT al.LINE_NUMBER, al.LINE_AMOUNT, al.QUANTITY, al.PURCHASE_ORDER_NUMBER, al.PURCHASE_ORDER_LINE_NUMBER,
-                         j.PO_LINE_ID, j.PO_DIST_ID
+                         al.DISTRIBUTION_COMBINATION, j.PO_LINE_ID, j.PO_DIST_ID
                   FROM   RR_AP_INVOICE_LINES_ALL al
                   LEFT   JOIN JSON_TABLE(p_json, '$.lines[*]' COLUMNS (
                               LINE_NUMBER NUMBER PATH '$.LineNumber',
@@ -286,6 +326,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
                          ON j.LINE_NUMBER = al.LINE_NUMBER
                   WHERE  al.INVOICE_ID = p_invoice_id
                   AND    NVL(al.LINE_TYPE, 'Item') = 'Item'
+                  AND    NVL(al.LINE_AMOUNT, 0) > 0
                   AND    (al.PURCHASE_ORDER_NUMBER IS NOT NULL OR j.PO_LINE_ID IS NOT NULL)
                   ORDER  BY al.LINE_NUMBER) LOOP
             v_line := r.PO_LINE_ID;
@@ -323,28 +364,108 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
             IF v_cur IS NOT NULL AND v_cur <> v_po.CURRENCY_CODE THEN
                 RR_PO_UTIL_PKG.err('Invoice line ' || r.LINE_NUMBER || ': ' || v_po.PO_NUMBER || ' is in ' || v_po.CURRENCY_CODE || ', the invoice is in ' || v_cur);
             END IF;
-            match_line(v_line, r.PO_DIST_ID, r.QUANTITY, r.LINE_AMOUNT, p_invoice_id, v_num, r.LINE_NUMBER, v_ist, p_user, v_h, v_amt);
-            v_hdrs(v_h) := v_h;
-            v_tot(v_h) := CASE WHEN v_tot.EXISTS(v_h) THEN v_tot(v_h) ELSE 0 END + v_amt;
-            v_n := v_n + 1;
+            -- which distribution: request (PODistributionId) → previous match of this line → the one whose account the line debits
+            v_dist := r.PO_DIST_ID;
+            IF v_dist IS NULL AND g_hint_line.EXISTS(r.LINE_NUMBER) AND g_hint_line(r.LINE_NUMBER) = v_line THEN
+                v_dist := g_hint_dist(r.LINE_NUMBER);
+            END IF;
+            IF v_dist IS NULL AND r.DISTRIBUTION_COMBINATION IS NOT NULL THEN
+                SELECT COUNT(*), MIN(CASE WHEN CASE WHEN s.ACCRUE_AT_RECEIPT_FLAG = 'Y' THEN NVL(d.ACCRUAL_ACCOUNT, d.CHARGE_ACCOUNT) ELSE d.CHARGE_ACCOUNT END
+                                              = r.DISTRIBUTION_COMBINATION THEN d.DISTRIBUTION_ID END),
+                       COUNT(CASE WHEN CASE WHEN s.ACCRUE_AT_RECEIPT_FLAG = 'Y' THEN NVL(d.ACCRUAL_ACCOUNT, d.CHARGE_ACCOUNT) ELSE d.CHARGE_ACCOUNT END
+                                       = r.DISTRIBUTION_COMBINATION THEN 1 END)
+                INTO   v_nd, v_dist, v_cnt
+                FROM   RR_PO_DISTRIBUTIONS d JOIN RR_PO_SCHEDULES s ON s.SCHEDULE_ID = d.SCHEDULE_ID
+                WHERE  d.PO_LINE_ID = v_line AND s.SCHEDULE_NUM = 1;
+                IF v_nd < 2 OR v_cnt <> 1 THEN v_dist := NULL; END IF;   -- single distribution or ambiguous: spread
+            END IF;
+            match_line(v_line, v_dist, r.QUANTITY, r.LINE_AMOUNT, p_invoice_id, v_num, r.LINE_NUMBER, v_ist, p_user, v_h, v_amt);
+            g_new_tot(v_h) := CASE WHEN g_new_tot.EXISTS(v_h) THEN g_new_tot(v_h) ELSE 0 END + v_amt;
+            p_n := p_n + 1;
             <<next_line>> NULL;
         END LOOP;
+    END;
 
-        DECLARE k NUMBER := v_hdrs.FIRST; BEGIN
-            WHILE k IS NOT NULL LOOP
-                RR_PO_DOC_PKG.rollup_header(k);
-                SELECT * INTO v_po FROM RR_PO_HEADERS WHERE PO_HEADER_ID = k;
-                RR_PO_UTIL_PKG.history('PO', k, 'INVOICE_MATCHED', NULL, NULL, p_user,
-                    'AP invoice ' || v_num || ' (ID ' || p_invoice_id || '): ' || TO_CHAR(v_tot(k), 'FM999,999,999,990.00') || ' ' || v_po.CURRENCY_CODE);
-                v_pos := v_pos || CASE WHEN v_pos IS NOT NULL THEN ', ' END || v_po.PO_NUMBER;
-                k := v_hdrs.NEXT(k);
-            END LOOP;
+    PROCEDURE RESYNC_AP_INVOICE (p_invoice_id IN NUMBER, p_json IN CLOB, p_user IN VARCHAR2,
+                                 p_matched OUT NUMBER, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
+        v_old    t_num;
+        v_sched  t_num;
+        v_rel    NUMBER;
+        v_cancel VARCHAR2(1);
+        v_num    VARCHAR2(100);
+        v_o NUMBER; v_n NUMBER;
+        v_po     RR_PO_HEADERS%ROWTYPE;
+        v_pos    VARCHAR2(4000);
+        k        PLS_INTEGER;
+        v_user   VARCHAR2(150) := SUBSTR(NVL(p_user, USER), 1, 150);
+    BEGIN
+        p_matched := 0;
+        g_hint_dist.DELETE; g_hint_line.DELETE; g_new_tot.DELETE; g_prev_pl.DELETE;
+        BEGIN
+            SELECT NVL(CANCELED_FLAG, 'N'), INVOICE_NUMBER INTO v_cancel, v_num FROM RR_AP_INVOICES_ALL WHERE INVOICE_ID = p_invoice_id;
+        EXCEPTION WHEN NO_DATA_FOUND THEN v_cancel := 'Y';   -- invoice deleted
         END;
-        p_matched := v_n; p_status := 'S';
-        p_message := CASE WHEN v_n = 0 THEN 'No Purchasing-RR PO lines on the invoice'
-                          ELSE v_n || ' line(s) matched to ' || v_pos END;
+        -- remember which distribution each invoice line billed (keeps split lines exact after an edit)
+        FOR x IN (SELECT INVOICE_LINE_NUMBER, MIN(PO_LINE_ID) PL, MIN(DISTRIBUTION_ID) D, COUNT(DISTINCT DISTRIBUTION_ID) C
+                  FROM RR_PO_INVOICE_MATCHES WHERE INVOICE_ID = p_invoice_id AND MATCH_STATUS = 'MATCHED'
+                  GROUP BY INVOICE_LINE_NUMBER) LOOP
+            IF x.C = 1 AND x.INVOICE_LINE_NUMBER IS NOT NULL THEN
+                g_hint_line(x.INVOICE_LINE_NUMBER) := x.PL; g_hint_dist(x.INVOICE_LINE_NUMBER) := x.D;
+            END IF;
+        END LOOP;
+        -- take the current match off the PO
+        FOR m IN (SELECT * FROM RR_PO_INVOICE_MATCHES WHERE INVOICE_ID = p_invoice_id AND MATCH_STATUS = 'MATCHED' FOR UPDATE) LOOP
+            apply_billing(m.DISTRIBUTION_ID, -m.QUANTITY_BILLED, -m.AMOUNT_BILLED, v_user, v_rel);
+            UPDATE RR_PO_INVOICE_MATCHES SET MATCH_STATUS = 'REPLACED', CANCELLED_BY = v_user, CANCELLED_DATE = SYSTIMESTAMP,
+                   LAST_UPDATED_BY = v_user, LAST_UPDATE_DATE = SYSTIMESTAMP
+            WHERE MATCH_ID = m.MATCH_ID;
+            g_prev_pl(m.PO_LINE_ID) := CASE WHEN g_prev_pl.EXISTS(m.PO_LINE_ID) THEN g_prev_pl(m.PO_LINE_ID) ELSE 0 END + m.AMOUNT_BILLED;
+            v_old(m.PO_HEADER_ID) := CASE WHEN v_old.EXISTS(m.PO_HEADER_ID) THEN v_old(m.PO_HEADER_ID) ELSE 0 END + m.AMOUNT_BILLED;
+            v_sched(m.SCHEDULE_ID) := 1;
+        END LOOP;
+        k := v_sched.FIRST;
+        WHILE k IS NOT NULL LOOP RR_PO_DOC_PKG.rollup_schedule(k); k := v_sched.NEXT(k); END LOOP;
+        -- match the lines as they are now
+        IF v_cancel <> 'Y' THEN
+            match_ap_lines(p_invoice_id, p_json, v_user, p_matched);
+        END IF;
+        -- headers touched before or after: roll up + history when the billed amount changed
+        k := v_old.FIRST;
+        WHILE k IS NOT NULL LOOP
+            IF NOT g_new_tot.EXISTS(k) THEN g_new_tot(k) := 0; END IF;
+            k := v_old.NEXT(k);
+        END LOOP;
+        k := g_new_tot.FIRST;
+        WHILE k IS NOT NULL LOOP
+            v_o := CASE WHEN v_old.EXISTS(k) THEN v_old(k) ELSE 0 END; v_n := g_new_tot(k);
+            RR_PO_DOC_PKG.rollup_header(k);
+            SELECT * INTO v_po FROM RR_PO_HEADERS WHERE PO_HEADER_ID = k;
+            IF ABS(v_n - v_o) > 0.001 THEN
+                RR_PO_UTIL_PKG.history('PO', k,
+                    CASE WHEN v_o = 0 THEN 'INVOICE_MATCHED' WHEN v_n = 0 THEN 'INVOICE_UNMATCHED' ELSE 'INVOICE_REMATCHED' END, NULL, NULL, v_user,
+                    'AP invoice ' || NVL(v_num, TO_CHAR(p_invoice_id)) || ' (ID ' || p_invoice_id || '): '
+                    || CASE WHEN v_o = 0 THEN 'matched ' || TO_CHAR(v_n, 'FM999,999,999,990.00')
+                            WHEN v_n = 0 THEN 'no longer matched — lines reopened (' || TO_CHAR(v_o, 'FM999,999,999,990.00') || ')'
+                            ELSE 'changed ' || TO_CHAR(v_o, 'FM999,999,999,990.00') || ' → ' || TO_CHAR(v_n, 'FM999,999,999,990.00') END
+                    || ' ' || v_po.CURRENCY_CODE);
+            END IF;
+            IF v_n > 0 THEN v_pos := v_pos || CASE WHEN v_pos IS NOT NULL THEN ', ' END || v_po.PO_NUMBER; END IF;
+            k := g_new_tot.NEXT(k);
+        END LOOP;
+        g_hint_dist.DELETE; g_hint_line.DELETE; g_new_tot.DELETE; g_prev_pl.DELETE;
+        p_status := 'S';
+        p_message := CASE WHEN p_matched = 0 THEN 'No Purchasing-RR PO lines on the invoice'
+                          ELSE p_matched || ' line(s) matched to ' || v_pos END;
     EXCEPTION WHEN OTHERS THEN
+        g_hint_dist.DELETE; g_hint_line.DELETE; g_new_tot.DELETE; g_prev_pl.DELETE;
         p_status := 'E'; p_message := RR_PO_UTIL_PKG.err_text(SQLERRM);
+    END;
+
+    -- kept for callers of the first version of patch 147
+    PROCEDURE MATCH_AP_INVOICE (p_invoice_id IN NUMBER, p_json IN CLOB, p_user IN VARCHAR2,
+                                p_matched OUT NUMBER, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
+    BEGIN
+        RESYNC_AP_INVOICE(p_invoice_id, p_json, p_user, p_matched, p_status, p_message);
     END;
 
     PROCEDURE reverse_invoice (p_invoice_id IN NUMBER, p_user IN VARCHAR2) IS
@@ -411,6 +532,7 @@ SELECT m.INVOICE_ID, m.INVOICE_NUM, m.INVOICE_LINE_NUMBER, m.PO_HEADER_ID, h.PO_
 FROM   RR_PO_INVOICE_MATCHES m
 JOIN   RR_PO_HEADERS h ON h.PO_HEADER_ID = m.PO_HEADER_ID
 JOIN   RR_PO_LINES l   ON l.PO_LINE_ID = m.PO_LINE_ID
+WHERE  m.MATCH_STATUS <> 'REPLACED'
 GROUP  BY m.INVOICE_ID, m.INVOICE_NUM, m.INVOICE_LINE_NUMBER, m.PO_HEADER_ID, h.PO_NUMBER, m.PO_LINE_ID, l.LINE_NUM,
           l.ITEM_DESCRIPTION, l.LINE_TYPE, l.UOM_CODE, h.CURRENCY_CODE, m.MATCH_STATUS;
 
@@ -462,14 +584,16 @@ COMMIT;
 BEGIN
     EXECUTE IMMEDIATE q'[
 CREATE OR REPLACE TRIGGER RR_PO_AP_INVOICE_SYNC_TRG
-AFTER UPDATE OF CANCELED_FLAG, VALIDATION_STATUS ON RR_AP_INVOICES_ALL
+AFTER UPDATE OF CANCELED_FLAG, VALIDATION_STATUS OR DELETE ON RR_AP_INVOICES_ALL
 FOR EACH ROW
 DECLARE
     v_n NUMBER;
 BEGIN
-    SELECT COUNT(*) INTO v_n FROM RR_PO_INVOICE_MATCHES WHERE INVOICE_ID = :NEW.INVOICE_ID AND MATCH_STATUS = 'MATCHED';
+    SELECT COUNT(*) INTO v_n FROM RR_PO_INVOICE_MATCHES WHERE INVOICE_ID = NVL(:NEW.INVOICE_ID, :OLD.INVOICE_ID) AND MATCH_STATUS = 'MATCHED';
     IF v_n = 0 THEN RETURN; END IF;
-    IF NVL(:NEW.CANCELED_FLAG, 'N') = 'Y' AND NVL(:OLD.CANCELED_FLAG, 'N') <> 'Y' THEN
+    IF DELETING THEN
+        RR_PO_MATCH_PKG.reverse_invoice(:OLD.INVOICE_ID, 'AP (invoice deleted)');
+    ELSIF NVL(:NEW.CANCELED_FLAG, 'N') = 'Y' AND NVL(:OLD.CANCELED_FLAG, 'N') <> 'Y' THEN
         RR_PO_MATCH_PKG.reverse_invoice(:NEW.INVOICE_ID, NVL(:NEW.CANCELED_BY, 'AP'));
     ELSIF NVL(:NEW.VALIDATION_STATUS, '~') <> NVL(:OLD.VALIDATION_STATUS, '~') THEN
         UPDATE RR_PO_INVOICE_MATCHES SET INVOICE_STATUS = SUBSTR(:NEW.VALIDATION_STATUS, 1, 30), LAST_UPDATE_DATE = SYSTIMESTAMP
@@ -478,6 +602,50 @@ BEGIN
 END;]';
 EXCEPTION WHEN OTHERS THEN
     DBMS_OUTPUT.PUT_LINE('RR_PO_AP_INVOICE_SYNC_TRG not created: ' || SQLERRM || ' — the PO screen calls RR_PO_MATCH_PKG.CANCEL_INVOICE instead');
+END;
+/
+
+-- RR_AP_INVOICE_LINES_ALL → PO: any add / edit / delete of lines on an invoice that references a PO
+-- re-matches it (statement level, so the delete-all + re-insert of an edit is handled). A refused match
+-- raises ORA-20951 and the AP change is rolled back. Skipped inside POST/PUT ap/createinvoicefull,
+-- which resync explicitly (suspend_sync is tied to their transaction).
+BEGIN
+    EXECUTE IMMEDIATE q'[
+CREATE OR REPLACE TRIGGER RR_PO_AP_LINES_SYNC_TRG
+FOR INSERT OR UPDATE OR DELETE ON RR_AP_INVOICE_LINES_ALL
+COMPOUND TRIGGER
+    TYPE t_ids IS TABLE OF NUMBER INDEX BY PLS_INTEGER;
+    g_ids  t_ids;
+    g_user VARCHAR2(240);
+
+    AFTER EACH ROW IS
+    BEGIN
+        IF (:NEW.PURCHASE_ORDER_NUMBER IS NOT NULL OR :OLD.PURCHASE_ORDER_NUMBER IS NOT NULL)
+           AND RR_PO_MATCH_PKG.sync_suspended = 'N' THEN
+            g_ids(NVL(:NEW.INVOICE_ID, :OLD.INVOICE_ID)) := 1;
+            g_user := NVL(:NEW.CREATED_BY, g_user);
+        END IF;
+    END AFTER EACH ROW;
+
+    AFTER STATEMENT IS
+        k     PLS_INTEGER := g_ids.FIRST;
+        v_m   NUMBER;
+        v_s   VARCHAR2(10);
+        v_msg VARCHAR2(4000);
+    BEGIN
+        WHILE k IS NOT NULL LOOP
+            RR_PO_MATCH_PKG.RESYNC_AP_INVOICE(k, NULL, NVL(g_user, USER), v_m, v_s, v_msg);
+            IF v_s = 'E' THEN
+                g_ids.DELETE;
+                RAISE_APPLICATION_ERROR(-20951, 'PO matching: ' || v_msg);
+            END IF;
+            k := g_ids.NEXT(k);
+        END LOOP;
+        g_ids.DELETE;
+    END AFTER STATEMENT;
+END RR_PO_AP_LINES_SYNC_TRG;]';
+EXCEPTION WHEN OTHERS THEN
+    DBMS_OUTPUT.PUT_LINE('RR_PO_AP_LINES_SYNC_TRG not created: ' || SQLERRM);
 END;
 /
 
@@ -497,6 +665,6 @@ END;
 /
 
 SELECT object_name, object_type, status FROM user_objects
-WHERE object_name IN ('RR_PO_INVOICE_MATCHES', 'RR_PO_MATCH_PKG', 'RR_PO_AP_INVOICE_SYNC_TRG', 'RR_PO_V_INVOICE_MATCHES', 'RR_PO_V_INVOICEABLE_LINES', 'RR_PO_V_INVOICE_DIST_ACCOUNTS')
+WHERE object_name IN ('RR_PO_INVOICE_MATCHES', 'RR_PO_MATCH_PKG', 'RR_PO_AP_INVOICE_SYNC_TRG', 'RR_PO_AP_LINES_SYNC_TRG', 'RR_PO_V_INVOICE_MATCHES', 'RR_PO_V_INVOICEABLE_LINES', 'RR_PO_V_INVOICE_DIST_ACCOUNTS')
 ORDER BY object_name, object_type;
-SELECT name, type, line, text FROM user_errors WHERE name = 'RR_PO_MATCH_PKG' ORDER BY type, sequence;
+SELECT name, type, line, text FROM user_errors WHERE name IN ('RR_PO_MATCH_PKG', 'RR_PO_AP_LINES_SYNC_TRG', 'RR_PO_AP_INVOICE_SYNC_TRG') ORDER BY type, sequence;

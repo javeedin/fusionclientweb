@@ -12,7 +12,10 @@ Design: `docs/design/PO_Module_Requirements_Design.md` (RD v1.1).
 | 4 | `303_po_execute.sql` | `RR_PO_EXECUTE` dispatcher, procedure registry, ORDS `POST reerp/po/execute` |
 | 5 | `304_po_attachments.sql` | `RR_PO_ATTACHMENTS`, `RR_PO_ATTACH_PKG`, ORDS `po/attachments/:entity_type/:entity_id[/:attachment_id]` (PO and requisition attachments) |
 | 6 | `305_po_invoice_match.sql` | `RR_PO_INVOICE_MATCHES`, `RR_PO_MATCH_PKG` (record / cancel / status of AP invoices created from POs), `RR_PO_V_INVOICEABLE_LINES`, `RR_PO_V_INVOICE_MATCHES`, trigger `RR_PO_AP_INVOICE_SYNC_TRG` on `RR_AP_INVOICES_ALL` (cancel in AP reopens PO lines) |
-| 7 | `../ap/147_ap_create_invoice_po_match.sql` | Replaces the `RR_AP_CREATE_INVOICE_PKG` body: `POST ap/createinvoicefull` matches AP lines that carry `PONumber`/`POLineNumber` (or `POLineId`/`PODistributionId`) to the PO **in the same transaction**. A refused match rolls the invoice back. No AP table changes |
+| 7 | `../ap/147_ap_create_invoice_po_match.sql` | `RR_AP_CREATE_INVOICE_PKG` body: `POST ap/createinvoicefull` matches AP lines that carry `PONumber`/`POLineNumber` (or `POLineId`/`PODistributionId`) to the PO **in the same transaction**. A refused match rolls the invoice back |
+| 8 | `../ap/148_ap_update_invoice_po_match.sql` | `RR_AP_UPDATE_INVOICE_PKG` body: `PUT ap/createinvoicefull/:id` re-matches the PO from the edited lines (previous match reversed → `REPLACED`). A refused re-match rolls the edit back |
+
+The PO match always follows the AP invoice lines. Any other insert, update or delete on `RR_AP_INVOICE_LINES_ALL` is re-matched by trigger `RR_PO_AP_LINES_SYNC_TRG` (305). A refused re-match raises ORA-20951 and rolls back that change. Cancelling or deleting the invoice reverses the match (`RR_PO_AP_INVOICE_SYNC_TRG`). No AP table changes.
 
 Every script can be run again safely. After step 3, the last query must return no rows from `user_errors`. After step 4, every `RR_PO_%` object must be `VALID`.
 

@@ -1,52 +1,26 @@
--- =====================================================
--- NOTE: the current package body is in 148_ap_update_invoice_po_match.sql (Purchasing-RR PO re-match)
--- PUT Handler for /ap/createinvoicefull/:id
--- =====================================================
--- Purpose: Update an existing AP Invoice (Header + Lines)
---          using the same flat JSON structure as the POST create.
--- Strategy: Update header fields, then DELETE all existing lines
---           and re-INSERT from the payload (replace-all approach).
--- Business Rules:
---   - Invoice must exist
---   - Invoice must not be Paid or Accounted
---   - After update, VALIDATION_STATUS is reset to 'Needs Revalidation'
--- Target Tables: RR_AP_INVOICES_ALL (header), RR_AP_INVOICE_LINES_ALL (lines)
--- =====================================================
+-- =============================================================================
+-- PATCH 148: PUT ap/createinvoicefull/:id keeps the Purchasing-RR PO match in step
+--
+-- WHAT:
+--   RR_AP_UPDATE_INVOICE_PKG.update_invoice replaces the invoice lines (delete all +
+--   re-insert). Before COMMIT it now calls RR_PO_MATCH_PKG.RESYNC_AP_INVOICE, which
+--   reverses the invoice's previous PO match and matches the edited lines again:
+--     · quantity / amount changed      → PO billed figures follow (partial ↔ full)
+--     · PO line removed from invoice   → that PO line reopens for invoicing
+--     · PO line added / PO changed     → checked and billed like a new invoice
+--     · over-billing, wrong supplier/currency, PO on hold (for new billing)
+--                                      → the edit is rolled back, status ERROR + reason
+--   Split PO lines keep billing the same distribution (previous match of the line).
+--   No AP table changes. Without the Purchasing module this behaves exactly as before.
+--
+-- OTHER LINE CHANGES (manage-invoice add/update/delete lines, tax-amount fix, …)
+--   are re-matched by trigger RR_PO_AP_LINES_SYNC_TRG from 305.
+--
+-- RUN ORDER: database/po/305_po_invoice_match.sql, ap/147, then this file.
+-- HOW TO RUN: APEX SQL Workshop → SQL Scripts — run the whole file.
+--   Only the package body is replaced; the ORDS handler is unchanged.
+-- =============================================================================
 
--- =====================================================
--- 1. Package Specification
--- =====================================================
-CREATE OR REPLACE PACKAGE RR_AP_UPDATE_INVOICE_PKG AS
-
-    -- Update invoice header + replace all lines in one transaction
-    -- JSON format: same flat structure as POST /ap/createinvoicefull
-    -- {
-    --   "InvoiceId": 900009,
-    --   "InvoiceNumber": "INV-001",
-    --   "InvoiceCurrency": "AED",
-    --   "InvoiceAmount": 1050,
-    --   "InvoiceDate": "2026-02-14",
-    --   "BusinessUnit": "BU_NAME",
-    --   "Supplier": "Supplier Name",
-    --   ...
-    --   "lines": [
-    --     { "LineNumber": 1, "LineType": "Item", "LineAmount": 1000, ... },
-    --     { "LineNumber": 2, "LineType": "Tax",  "LineAmount": 50,   ... }
-    --   ]
-    -- }
-    PROCEDURE update_invoice(
-        p_json          IN  CLOB,
-        p_invoice_id    OUT NUMBER,
-        p_status        OUT VARCHAR2,
-        p_message       OUT VARCHAR2
-    );
-
-END RR_AP_UPDATE_INVOICE_PKG;
-/
-
--- =====================================================
--- 2. Package Body
--- =====================================================
 CREATE OR REPLACE PACKAGE BODY RR_AP_UPDATE_INVOICE_PKG AS
 
     PROCEDURE update_invoice(
@@ -102,6 +76,12 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_UPDATE_INVOICE_PKG AS
         l_line_success              NUMBER := 0;
         l_line_error                NUMBER := 0;
         l_line_acct_date            DATE;
+        -- PO matching (Purchasing-RR)
+        l_po_pkg                    NUMBER := 0;
+        l_po_matched                NUMBER;
+        l_po_status                 VARCHAR2(10);
+        l_po_message                VARCHAR2(4000);
+        l_user                      VARCHAR2(240);
     BEGIN
         -- ========== PARSE INVOICE ID ==========
         l_invoice_id := JSON_VALUE(p_json, '$.InvoiceId' RETURNING NUMBER);
@@ -301,6 +281,13 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_UPDATE_INVOICE_PKG AS
             RETURN;
         END IF;
 
+        -- PO matching runs explicitly below: keep the AP-line sync trigger out of this transaction
+        SELECT COUNT(*) INTO l_po_pkg FROM user_objects
+        WHERE object_name = 'RR_PO_MATCH_PKG' AND object_type = 'PACKAGE BODY';
+        IF l_po_pkg > 0 THEN
+            EXECUTE IMMEDIATE 'BEGIN RR_PO_MATCH_PKG.suspend_sync; END;';
+        END IF;
+
         -- ========== REPLACE LINES (delete all + re-insert) ==========
         DELETE FROM RR_AP_INVOICE_LINES_ALL
         WHERE  invoice_id = l_invoice_id;
@@ -410,6 +397,31 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_UPDATE_INVOICE_PKG AS
             END;
         END LOOP;
 
+        -- ========== PO MATCHING (Purchasing-RR) ==========
+        -- The PO match follows the edited lines: the invoice's previous match is reversed and the
+        -- current lines are matched again (changed quantities/amounts, added/removed PO lines).
+        -- A refused match rolls the whole edit back.
+        IF l_line_error = 0 AND l_po_pkg > 0 THEN
+            l_user := NVL(JSON_VALUE(p_json, '$.LastUpdatedBy'), NVL(JSON_VALUE(p_json, '$.CreatedBy'), USER));
+            BEGIN
+                EXECUTE IMMEDIATE
+                    'BEGIN RR_PO_MATCH_PKG.RESYNC_AP_INVOICE(:1, :2, :3, :4, :5, :6); END;'
+                    USING IN l_invoice_id, IN p_json, IN l_user,
+                          OUT l_po_matched, OUT l_po_status, OUT l_po_message;
+            EXCEPTION
+                WHEN OTHERS THEN
+                    l_po_status := 'E'; l_po_message := SQLERRM;
+            END;
+
+            IF l_po_status = 'E' THEN
+                ROLLBACK;
+                p_invoice_id := l_invoice_id;
+                p_status     := 'ERROR';
+                p_message    := 'PO matching failed - invoice not updated: ' || REPLACE(REPLACE(l_po_message, CHR(10), ' '), CHR(13), ' ');
+                RETURN;
+            END IF;
+        END IF;
+
         -- Only commit if no line errors
         IF l_line_error = 0 THEN
             COMMIT;
@@ -422,7 +434,8 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_UPDATE_INVOICE_PKG AS
             END;
             p_status     := 'SUCCESS';
             p_message    := 'Invoice ' || l_invoice_number || ' updated (ID: ' || l_invoice_id || ') with '
-                         || l_line_success || ' lines (replaced ' || l_lines_deleted || ' previous lines)';
+                         || l_line_success || ' lines (replaced ' || l_lines_deleted || ' previous lines)'
+                         || CASE WHEN NVL(l_po_matched, 0) > 0 THEN ', ' || l_po_message END;
         ELSE
             ROLLBACK;
             p_invoice_id := l_invoice_id;
@@ -441,196 +454,4 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_UPDATE_INVOICE_PKG AS
 END RR_AP_UPDATE_INVOICE_PKG;
 /
 
--- =====================================================
--- 3. ORDS Template for createinvoicefull/:id
--- =====================================================
-BEGIN
-    ORDS.DEFINE_TEMPLATE(
-        p_module_name    => 'ap',
-        p_pattern        => 'createinvoicefull/:id',
-        p_priority       => 0,
-        p_etag_type      => 'HASH',
-        p_comments       => 'Update invoice (header + lines) by ID via PUT'
-    );
-    COMMIT;
-END;
-/
-
--- =====================================================
--- 4. PUT Handler
--- =====================================================
-BEGIN
-    ORDS.DEFINE_HANDLER(
-        p_module_name    => 'ap',
-        p_pattern        => 'createinvoicefull/:id',
-        p_method         => 'PUT',
-        p_source_type    => 'plsql/block',
-        p_mimes_allowed  => 'application/json',
-        p_comments       => 'Update AP Invoice (header + lines) by ID',
-        p_source         => q'[
-DECLARE
-    l_blob          BLOB := :body;
-    l_clob          CLOB;
-    l_dest_offset   INTEGER := 1;
-    l_src_offset    INTEGER := 1;
-    l_lang_context  INTEGER := DBMS_LOB.DEFAULT_LANG_CTX;
-    l_warning       INTEGER;
-    l_invoice_id    NUMBER;
-    l_status        VARCHAR2(20);
-    l_message       VARCHAR2(4000);
-    l_merged_json   CLOB;
-BEGIN
-    -- Convert BLOB to CLOB (avoids :body_text VARCHAR2 truncation)
-    IF l_blob IS NOT NULL AND DBMS_LOB.GETLENGTH(l_blob) > 0 THEN
-        DBMS_LOB.CREATETEMPORARY(l_clob, TRUE);
-        DBMS_LOB.CONVERTTOCLOB(
-            dest_lob     => l_clob,
-            src_blob     => l_blob,
-            amount       => DBMS_LOB.LOBMAXSIZE,
-            dest_offset  => l_dest_offset,
-            src_offset   => l_src_offset,
-            blob_csid    => DBMS_LOB.DEFAULT_CSID,
-            lang_context => l_lang_context,
-            warning      => l_warning
-        );
-    ELSE
-        l_clob := :body_text;
-    END IF;
-
-    -- Inject InvoiceId from URL path parameter into the JSON body
-    SELECT JSON_MERGEPATCH(
-        l_clob,
-        '{"InvoiceId":' || :id || '}'
-    ) INTO l_merged_json FROM DUAL;
-
-    RR_AP_UPDATE_INVOICE_PKG.update_invoice(
-        p_json       => l_merged_json,
-        p_invoice_id => l_invoice_id,
-        p_status     => l_status,
-        p_message    => l_message
-    );
-
-    :status_code := CASE WHEN l_status = 'SUCCESS' THEN 200 ELSE 400 END;
-
-    HTP.P('{"status": "' || l_status || '",'
-       || '"message": "' || l_message || '",'
-       || '"invoiceId": ' || NVL(TO_CHAR(l_invoice_id), 'null') || ','
-       || '"success": ' || CASE WHEN l_status = 'SUCCESS' THEN 'true' ELSE 'false' END
-       || '}');
-
-    -- Free temporary CLOB
-    IF l_clob IS NOT NULL AND DBMS_LOB.ISTEMPORARY(l_clob) = 1 THEN
-        DBMS_LOB.FREETEMPORARY(l_clob);
-    END IF;
-    IF l_merged_json IS NOT NULL AND DBMS_LOB.ISTEMPORARY(l_merged_json) = 1 THEN
-        DBMS_LOB.FREETEMPORARY(l_merged_json);
-    END IF;
-END;
-]'
-    );
-    COMMIT;
-END;
-/
-
--- =====================================================
--- 5. Verify
--- =====================================================
-SELECT
-    module_name,
-    uri_template,
-    method,
-    source_type
-FROM user_ords_handlers
-WHERE module_name = 'ap'
-  AND uri_template LIKE '%createinvoicefull%'
-ORDER BY uri_template, method;
-
--- =====================================================
--- 6. Sample curl for Testing
--- =====================================================
-/*
-
--- ===== UPDATE INVOICE 900009 =====
--- curl -X PUT /ap/createinvoicefull/900009
-
-PUT URL: https://<your-apex-host>/ords/<schema>/reerp/ap/createinvoicefull/900009
-Content-Type: application/json
-
-{
-    "InvoiceNumber": "TEST-INV-001",
-    "InvoiceCurrency": "AED",
-    "PaymentCurrency": "AED",
-    "InvoiceAmount": 2100.00,
-    "InvoiceDate": "2026-02-14",
-    "BusinessUnit": "BUIMERC CORP_DIFC_INVST",
-    "Supplier": "TEST SUPPLIER LLC",
-    "SupplierNumber": "T0001",
-    "SupplierSite": "DUBAI",
-    "InvoiceType": "Standard",
-    "Description": "Updated invoice from UI",
-    "PaymentTerms": "Immediate",
-    "PayGroup": "Standard",
-    "PayAlone": "N",
-    "LiabilityDistribution": "01-000-2100-0000-000",
-    "ConversionRateType": "Corporate",
-    "ConversionDate": "2026-02-14",
-    "ConversionRate": 1.0,
-    "DocumentCategory": "Standard Invoices",
-    "VoucherNumber": "V-002",
-    "FirstPartyTaxRegistrationNumber": "100123456700003",
-    "SupplierTaxRegistrationNumber": "300987654321234",
-    "lines": [
-        {
-            "LineNumber": 1,
-            "LineType": "Item",
-            "LineAmount": 2000.00,
-            "Description": "Updated Office Supplies",
-            "AccountingDate": "2026-02-14",
-            "DistributionCombination": "01-000-6310-0000-000",
-            "TaxClassification": "VAT 5%",
-            "Quantity": 20,
-            "UnitPrice": 100
-        },
-        {
-            "LineNumber": 2,
-            "LineType": "Tax",
-            "LineAmount": 100.00,
-            "Description": "VAT 5%",
-            "AccountingDate": "2026-02-14"
-        }
-    ]
-}
-
-Expected Response (success):
-{
-    "status": "SUCCESS",
-    "message": "Invoice TEST-INV-001 updated (ID: 900009) with 2 lines (replaced 2 previous lines)",
-    "invoiceId": 900009,
-    "success": true
-}
-
-Expected Response (invoice not found):
-{
-    "status": "ERROR",
-    "message": "Invoice not found: 900009",
-    "invoiceId": null,
-    "success": false
-}
-
-Expected Response (already paid):
-{
-    "status": "ERROR",
-    "message": "Invoice cannot be edited: already Paid",
-    "invoiceId": 900009,
-    "success": false
-}
-
--- ===== BUSINESS RULES =====
--- Invoice is EDITABLE when:
---   PAID_STATUS       != 'Paid'
---   ACCOUNTING_STATUS != 'Accounted'
---
--- After update, VALIDATION_STATUS is reset to 'Needs Revalidation'
--- Lines strategy: DELETE ALL existing lines, then INSERT new lines from payload
-
-*/
+SELECT name, type, line, text FROM user_errors WHERE name = 'RR_AP_UPDATE_INVOICE_PKG' ORDER BY type, sequence;

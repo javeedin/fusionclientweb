@@ -8,7 +8,7 @@
 --                                        PURCHASE_ORDER_LINE_NUMBER as before)
 --     lines[].POLineId, PODistributionId (optional — sent by the PO screen so a
 --                                        split PO line bills the exact distribution)
---   RR_PO_MATCH_PKG.MATCH_AP_INVOICE checks the PO (approved, not on hold, not
+--   RR_PO_MATCH_PKG.RESYNC_AP_INVOICE checks the PO (approved, not on hold, not
 --   closed for invoicing, same supplier and currency, quantity/amount not more
 --   than received-not-billed for 3-way or ordered-not-billed for 2-way), bills the
 --   PO distributions, relieves the receipt accrual and closes fully billed lines
@@ -21,6 +21,9 @@
 -- ALSO CARRIES (so this body is the complete current version):
 --   patch 98  — CREATED_BY from "CreatedBy" in the JSON
 --   TaxAmount — lines[].TaxAmount → TAX_CONTROL_AMOUNT
+--
+-- Edits are covered too: PUT ap/createinvoicefull/:id (patch 148) and trigger
+--   RR_PO_AP_LINES_SYNC_TRG (305) re-match the PO whenever the invoice lines change.
 --
 -- RUN ORDER: database/po/305_po_invoice_match.sql first, then this file.
 --   (Without the Purchasing module the call is skipped, so it is safe anywhere.)
@@ -82,6 +85,7 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
         l_created_by                VARCHAR2(240);
         -- PO matching (Purchasing-RR)
         l_po_lines                  NUMBER := 0;
+        l_po_pkg                    NUMBER := 0;
         l_po_matched                NUMBER;
         l_po_status                 VARCHAR2(10);
         l_po_message                VARCHAR2(4000);
@@ -285,6 +289,13 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
             SYSTIMESTAMP
         );
 
+        -- PO matching runs explicitly below: keep the AP-line sync trigger out of this transaction
+        SELECT COUNT(*) INTO l_po_pkg FROM user_objects
+        WHERE object_name = 'RR_PO_MATCH_PKG' AND object_type = 'PACKAGE BODY';
+        IF l_po_pkg > 0 THEN
+            EXECUTE IMMEDIATE 'BEGIN RR_PO_MATCH_PKG.suspend_sync; END;';
+        END IF;
+
         -- ========== INSERT LINES ==========
         FOR rec IN (
             SELECT jt.*
@@ -404,16 +415,10 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
             WHERE NVL(jt.line_type, 'Item') = 'Item'
               AND (jt.po_number IS NOT NULL OR jt.po_line_id IS NOT NULL);
 
-            IF l_po_lines > 0 THEN
-                SELECT COUNT(*) INTO l_po_matched FROM user_objects
-                WHERE object_name = 'RR_PO_MATCH_PKG' AND object_type = 'PACKAGE BODY';
-            END IF;
-
-            IF l_po_lines > 0 AND l_po_matched > 0 THEN
-                l_po_matched := 0;
+            IF l_po_lines > 0 AND l_po_pkg > 0 THEN
                 BEGIN
                     EXECUTE IMMEDIATE
-                        'BEGIN RR_PO_MATCH_PKG.MATCH_AP_INVOICE(:1, :2, :3, :4, :5, :6); END;'
+                        'BEGIN RR_PO_MATCH_PKG.RESYNC_AP_INVOICE(:1, :2, :3, :4, :5, :6); END;'
                         USING IN l_invoice_id, IN p_json, IN l_created_by,
                               OUT l_po_matched, OUT l_po_status, OUT l_po_message;
                 EXCEPTION
