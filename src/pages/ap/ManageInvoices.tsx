@@ -1754,6 +1754,27 @@ const ManageInvoices: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning, activeTour?.id]);
 
+  // Open a specific invoice when navigated from another module (e.g. Purchasing PO → Invoices tab)
+  //   navigate('/ap/manage-invoices', { state: { openInvoiceId, openInvoiceNumber } })
+  const openInvoiceHandled = useRef<string | null>(null);
+  useEffect(() => {
+    const state = location.state as any;
+    if (!state?.openInvoiceNumber) return;
+    if (openInvoiceHandled.current === location.key) return;
+    openInvoiceHandled.current = location.key;
+    (async () => {
+      try {
+        const res = await fetch(`${APEX_INVOICE_URL}?invoice_number=${encodeURIComponent(state.openInvoiceNumber)}`, { headers: { Accept: 'application/json' } });
+        const data = await res.json();
+        const recs: InvoiceRecord[] = (data.items || data || []).map(mapApiToInvoiceRecord);
+        const rec = recs.find(r => String(r.invoiceId) === String(state.openInvoiceId)) || recs[0];
+        if (rec) openInvoiceTab(rec);
+        else message.warning(`Invoice ${state.openInvoiceNumber} not found`);
+      } catch (e: any) { message.error(`Could not open invoice: ${e.message}`); }
+    })();
+    window.history.replaceState({}, document.title);
+  }, [location.state, location.key]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Handle quick-create from FloatingMenu or Autopilot navigation state
   useEffect(() => {
     const state = location.state as any;

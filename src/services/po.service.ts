@@ -137,6 +137,9 @@ export const PROC = {
   cancelAccrual: 'RR_PO_ACCT_PKG.CANCEL_ACCRUAL_RUN',
   writeOff: 'RR_PO_ACCT_PKG.WRITE_OFF',
   decide: 'RR_PO_APPROVAL_PKG.DECIDE',
+  recordInvoice: 'RR_PO_MATCH_PKG.RECORD_INVOICE',
+  cancelInvoiceMatch: 'RR_PO_MATCH_PKG.CANCEL_INVOICE',
+  setInvoiceStatus: 'RR_PO_MATCH_PKG.SET_INVOICE_STATUS',
 } as const;
 
 // ── Lookups ────────────────────────────────────────────────────────────────
@@ -207,7 +210,8 @@ export const STATUS_COLOR: Record<string, string> = {
   WITHDRAWN: 'default', OPEN: 'blue', CLOSED: 'purple', FINALLY_CLOSED: 'magenta', CLOSED_FOR_RECEIVING: 'cyan',
   CLOSED_FOR_INVOICING: 'geekblue', ON_PO: 'green', RETURNED: 'orange', UNACCOUNTED: 'orange', ACCOUNTED: 'green',
   DRAFT: 'default', POSTED: 'green', PENDING: 'gold', ACTIVE: 'green', INACTIVE: 'default', RECEIVE: 'green',
-  RETURN: 'orange', RETURN_TO_SUPPLIER: 'orange', CORRECT: 'blue',
+  RETURN: 'orange', RETURN_TO_SUPPLIER: 'orange', CORRECT: 'blue', MATCHED: 'green',
+  NOT_INVOICED: 'default', PARTIALLY_INVOICED: 'gold', FULLY_INVOICED: 'green',
 };
 export const label = (s: unknown) => String(s ?? '').replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 

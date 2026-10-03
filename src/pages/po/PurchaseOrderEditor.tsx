@@ -8,7 +8,7 @@ import {
 import {
   SaveOutlined, SendOutlined, RollbackOutlined, StopOutlined, DeleteOutlined, CopyOutlined,
   PrinterOutlined, MailOutlined, LockOutlined, UnlockOutlined, PauseCircleOutlined, PlayCircleOutlined, EditOutlined,
-  InboxOutlined, FileDoneOutlined, DownOutlined, PlusOutlined, PaperClipOutlined, FileTextOutlined,
+  InboxOutlined, FileDoneOutlined, DollarOutlined, DownOutlined, PlusOutlined, PaperClipOutlined, FileTextOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { poQuery, poExec, PROC, nlit, money, qty, day, plusDays, Row, n, r2 } from '../../services/po.service';
@@ -18,6 +18,9 @@ import {
 } from './poShared';
 import { buildPoPdf } from './poPdf';
 import PoAttachments from './PoAttachments';
+import PoApInvoice from './PoApInvoice';
+import { APEX_DB_CONFIG } from '../../config/api.config';
+import { logApi } from '../../services/po.service';
 
 const { Text } = Typography;
 const EDITABLE = ['INCOMPLETE', 'REJECTED'];
@@ -47,6 +50,7 @@ const PurchaseOrderEditor: React.FC<{
   const [revs, setRevs] = useState<Row[]>([]);
   const [rcv, setRcv] = useState<Row[]>([]);
   const [invs, setInvs] = useState<Row[]>([]);
+  const [invOpen, setInvOpen] = useState(false);
   const [loading, setLoading] = useState(!!id);
   const [busy, setBusy] = useState(false);
   const [coOpen, setCoOpen] = useState(false);
@@ -289,6 +293,45 @@ const PurchaseOrderEditor: React.FC<{
     </div>
   );
 
+  // PO invoice status (line level: billed vs what can be billed)
+  const invBasis = (l: Row) => {
+    const three = l.MATCH_LEVEL === 'THREE_WAY';
+    return l.LINE_TYPE === 'QUANTITY'
+      ? { basis: three ? n(l.QUANTITY_RECEIVED) : n(l.QUANTITY) - n(l.QUANTITY_CANCELLED), billed: n(l.QUANTITY_BILLED) }
+      : { basis: three ? n(l.AMOUNT_RECEIVED) : n(l.AMOUNT) - n(l.AMOUNT_CANCELLED), billed: n(l.AMOUNT_BILLED) };
+  };
+  const liveLines = lineRows.filter(l => l.LINE_STATUS !== 'CANCELLED');
+  const canInvoice = st === 'APPROVED' && hdr?.HOLD_FLAG !== 'Y' && liveLines.some(l => {
+    const b = invBasis(l);
+    return !['CLOSED', 'FINALLY_CLOSED', 'CLOSED_FOR_INVOICING'].includes(l.CLOSURE_STATUS) && b.basis - b.billed > 0.000001;
+  });
+  const anyBilled = liveLines.some(l => invBasis(l).billed > 0);
+  const allBilled = liveLines.length > 0 && liveLines.every(l => { const b = invBasis(l); const ord = l.LINE_TYPE === 'QUANTITY' ? n(l.QUANTITY) - n(l.QUANTITY_CANCELLED) : n(l.AMOUNT) - n(l.AMOUNT_CANCELLED); return b.billed >= ord - 0.000001; });
+  const invoiceStatus = allBilled ? 'FULLY_INVOICED' : anyBilled ? 'PARTIALLY_INVOICED' : 'NOT_INVOICED';
+
+  const openApInvoice = (r: Row) => navigate('/ap/manage-invoices', { state: { openInvoiceId: r.INVOICE_ID, openInvoiceNumber: r.INVOICE_NUM } });
+  const cancelApInvoice = (r: Row) => {
+    Modal.confirm({
+      title: `Cancel AP invoice ${r.INVOICE_NUM}?`, okText: 'Cancel invoice', okButtonProps: { danger: true },
+      content: 'The invoice is cancelled in Payables (accounting reversed if posted) and the PO lines open again for invoicing.',
+      onOk: async () => {
+        const base = APEX_DB_CONFIG.baseUrl.replace(/\/+$/, '');
+        const el = await fetch(`${base}/ap/invoices/${r.INVOICE_ID}/cancel-eligibility`).then(x => x.json()).catch(() => null);
+        if (el && el.eligible === false) {
+          const why = (el.checks || []).filter((c: any) => !c.passed).map((c: any) => c.detail || c.check).join('; ');
+          message.error(`Cannot cancel: ${why || 'not eligible'}`, 10); throw new Error('not eligible');
+        }
+        const t0 = performance.now();
+        const res = await fetch(`${base}/ap/invoices/${r.INVOICE_ID}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cancelledBy: user }) });
+        const data = await res.json().catch(() => null);
+        logApi({ method: 'POST', url: `${base}/ap/invoices/${r.INVOICE_ID}/cancel`, body: { cancelledBy: user }, status: res.status, ok: res.ok, ms: Math.round(performance.now() - t0), response: data, label: 'AP cancel invoice' });
+        if (!res.ok || data?.status === 'error') { message.error(data?.message || `HTTP ${res.status}`, 10); throw new Error('cancel failed'); }
+        // the AP trigger reverses the match; this call is a no-op then (and covers installs without the trigger)
+        await exec(PROC.cancelInvoiceMatch, { p_invoice_id: r.INVOICE_ID });
+      },
+    });
+  };
+
   const actions = (
     <Space wrap size={6}>
       {editable && <Button icon={<SaveOutlined />} loading={busy} onClick={save}>Save</Button>}
@@ -297,6 +340,9 @@ const PurchaseOrderEditor: React.FC<{
         <Button icon={<RollbackOutlined />} loading={busy}>Withdraw</Button></Popconfirm>}
       {st === 'APPROVED' && hdr?.CLOSURE_STATUS !== 'FINALLY_CLOSED' && <>
         <Button icon={<InboxOutlined />} type="primary" disabled={hdr?.HOLD_FLAG === 'Y'} onClick={() => navigate(`/po/receiving?po=${encodeURIComponent(hdr!.PO_NUMBER)}`)}>Receive</Button>
+        <Tooltip title={canInvoice ? 'Create a Payables invoice for received / ordered quantities not yet billed' : 'Nothing left to invoice (receive first for 3-way match lines)'}>
+          <Button icon={<DollarOutlined />} disabled={!canInvoice} onClick={() => setInvOpen(true)}>Create AP invoice</Button>
+        </Tooltip>
         <Button icon={<EditOutlined />} disabled={!!pendingCo} onClick={openCo}>Change order</Button>
         <Dropdown menu={{ items: closeMenu, onClick: ({ key }) => doClose(key) }}><Button icon={<LockOutlined />}>Close <DownOutlined /></Button></Dropdown>
         {hdr?.HOLD_FLAG === 'Y'
@@ -338,7 +384,7 @@ const PurchaseOrderEditor: React.FC<{
             <Space size={8} wrap>
               <Text strong style={{ fontSize: 16 }}>{hdr ? hdr.PO_NUMBER : 'New purchase order'}</Text>
               {hdr && n(hdr.REVISION_NUM) > 0 && <Tag>Rev {hdr.REVISION_NUM}</Tag>}
-              {hdr ? <><StatusTag s={st} />{st === 'APPROVED' && <StatusTag s={hdr.CLOSURE_STATUS} />}</> : <Tag color="blue">Draft</Tag>}
+              {hdr ? <><StatusTag s={st} />{st === 'APPROVED' && <StatusTag s={hdr.CLOSURE_STATUS} />}{st === 'APPROVED' && <StatusTag s={invoiceStatus} />}</> : <Tag color="blue">Draft</Tag>}
               {hdr?.HOLD_FLAG === 'Y' && <Tooltip title={hdr.HOLD_REASON}><Tag color="red">ON HOLD</Tag></Tooltip>}
               {n(hdr?.PENDING_CHANGES) > 0 && <Tag color="gold">Change pending</Tag>}
             </Space>
@@ -461,7 +507,7 @@ const PurchaseOrderEditor: React.FC<{
           { key: 'invoices', label: `Invoices (${new Set(invs.filter(i => i.MATCH_STATUS === 'MATCHED').map(i => i.INVOICE_ID)).size})`, children: (
             <Table size="small" rowKey={r => `${r.INVOICE_ID}-${r.PO_LINE_ID}-${r.MATCH_STATUS}`} dataSource={invs} pagination={false} columns={[
               { title: 'Invoice', dataIndex: 'INVOICE_NUM', width: 170, render: (v, r) => (
-                <a onClick={() => navigate(`/ap/manage-invoices?invoiceId=${r.INVOICE_ID}`)}>{v || `#${r.INVOICE_ID}`}</a>) },
+                <a onClick={() => openApInvoice(r)}>{v || `#${r.INVOICE_ID}`}</a>) },
               { title: 'PO line', dataIndex: 'LINE_NUM', width: 70 },
               { title: 'Description', dataIndex: 'ITEM_DESCRIPTION', ellipsis: true },
               { title: 'Qty billed', dataIndex: 'QUANTITY_BILLED', width: 100, align: 'right', render: qty },
@@ -469,6 +515,8 @@ const PurchaseOrderEditor: React.FC<{
               { title: 'Invoice status', dataIndex: 'INVOICE_STATUS', width: 140, render: v => v ? <Tag>{String(v)}</Tag> : null },
               { title: 'Match', dataIndex: 'MATCH_STATUS', width: 110, render: v => <Tag color={v === 'MATCHED' ? 'green' : 'default'}>{v}</Tag> },
               { title: 'Date', dataIndex: 'CREATION_DATE', width: 100, render: day },
+              { title: '', width: 120, render: (_, r) => r.MATCH_STATUS === 'MATCHED' ? (
+                <Button size="small" danger onClick={() => cancelApInvoice(r)}>Cancel invoice</Button>) : null },
             ]} />) },
           { key: 'receipts', label: `Receipts (${rcv.length})`, children: (
             <Table size="small" rowKey="RCV_TRANSACTION_ID" dataSource={rcv} pagination={{ pageSize: 15 }} columns={[
@@ -504,6 +552,9 @@ const PurchaseOrderEditor: React.FC<{
         { key: 'attachments', label: <span><PaperClipOutlined /> Attachments</span>, disabled: !id,
           children: id ? <PoAttachments entityType="PO" entityId={id} user={user} readOnly={st === 'CANCELLED' || hdr?.CLOSURE_STATUS === 'FINALLY_CLOSED'} /> : null },
       ]} />
+
+      {hdr && <PoApInvoice open={invOpen} onClose={() => setInvOpen(false)} onDone={() => load()} hdr={hdr}
+        buName={buRow?.BUSINESS_UNIT_NAME || ''} company={buRow?.COMPANY} fc={fc} taxCodes={lookups.taxCodes} user={user} />}
 
       <Modal open={coOpen} width={1200} title={`Change order — ${hdr?.PO_NUMBER}`} destroyOnHidden onCancel={() => setCoOpen(false)}
         onOk={submitCo} okText={`Submit change (${coChanges.length})`} confirmLoading={busy}>

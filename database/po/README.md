@@ -11,6 +11,7 @@ Design: `docs/design/PO_Module_Requirements_Design.md` (RD v1.1).
 | 3 | `302_po_packages.sql` | `RR_PO_UTIL/SETUP/REQ/DOC/RCV/ACCT/APPROVAL_PKG`, `BUSINESS_UNIT_ID` + `CATEGORY_CODE` on `RR_APPROVAL_RULES`, trigger `RR_PO_APPROVAL_DECISION_TRG` |
 | 4 | `303_po_execute.sql` | `RR_PO_EXECUTE` dispatcher, procedure registry, ORDS `POST reerp/po/execute` |
 | 5 | `304_po_attachments.sql` | `RR_PO_ATTACHMENTS`, `RR_PO_ATTACH_PKG`, ORDS `po/attachments/:entity_type/:entity_id[/:attachment_id]` (PO and requisition attachments) |
+| 6 | `305_po_invoice_match.sql` | `RR_PO_INVOICE_MATCHES`, `RR_PO_MATCH_PKG` (record / cancel / status of AP invoices created from POs), `RR_PO_V_INVOICEABLE_LINES`, `RR_PO_V_INVOICE_MATCHES`, trigger `RR_PO_AP_INVOICE_SYNC_TRG` on `RR_AP_INVOICES_ALL` (cancel in AP reopens PO lines) |
 
 Every script can be run again safely. After step 3, the last query must return no rows from `user_errors`. After step 4, every `RR_PO_%` object must be `VALID`.
 
