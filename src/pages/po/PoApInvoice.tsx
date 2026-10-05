@@ -46,6 +46,7 @@ const PoApInvoice: React.FC<{
   const [step, setStep] = useState(-1);
   const [stepErr, setStepErr] = useState<string | null>(null);
   const [validate, setValidate] = useState(true);
+  const [liabSrc, setLiabSrc] = useState<string | null>(null);   // where the liability account came from
   const rateOf = (code?: string | null) => n(taxCodes.find(t => t.TAX_CODE === code)?.TAX_RATE) / 100;
 
   useEffect(() => {
@@ -55,6 +56,17 @@ const PoApInvoice: React.FC<{
     try { liab = localStorage.getItem(LIAB_KEY + hdr.BUSINESS_UNIT_ID); } catch { /* ignore */ }
     form.setFieldsValue({ invoiceNumber: '', invoiceDate: today(), accountingDate: today(), description: `PO ${hdr.PO_NUMBER}${hdr.DESCRIPTION ? ` — ${hdr.DESCRIPTION}` : ''}`,
       paymentTerms: hdr.PAYMENT_TERMS, liability: liab, rate: n(hdr.RATE) || 1 });
+    setLiabSrc(liab ? 'last used here' : null);
+    // liability: supplier site (BU assignment) → Purchasing options → supplier's latest AP invoice → last used here
+    poQuery(`SELECT * FROM RR_PO_V_PO_LIABILITY WHERE PO_HEADER_ID = ${nlit(hdr.PO_HEADER_ID)}`)
+      .then(([r]) => {
+        if (!r) return;
+        const pick: [unknown, string][] = [[r.SITE_LIABILITY_ACCOUNT, 'supplier site'], [r.BU_LIABILITY_ACCOUNT, 'Purchasing options'],
+          [r.LAST_AP_LIABILITY_ACCOUNT, "supplier's last AP invoice"]];
+        const hit = pick.find(([a]) => a);
+        if (hit) { form.setFieldValue('liability', String(hit[0])); setLiabSrc(hit[1]); }
+      })
+      .catch(() => { /* view not installed yet: keep the remembered account */ });
     setLoading(true);
     Promise.all([
       poQuery(`SELECT * FROM RR_PO_V_INVOICEABLE_LINES WHERE PO_HEADER_ID = ${nlit(hdr.PO_HEADER_ID)} ORDER BY LINE_NUM`),
@@ -196,8 +208,9 @@ const PoApInvoice: React.FC<{
           </Form.Item>
           <Form.Item name="invoiceDate" label="Invoice date" rules={[{ required: true }]} style={{ marginBottom: 8 }}><Input type="date" /></Form.Item>
           <Form.Item name="accountingDate" label="GL date" rules={[{ required: true }]} style={{ marginBottom: 8 }}><Input type="date" /></Form.Item>
-          <Form.Item name="liability" label="Liability acct" rules={[{ required: true, message: 'AP liability account is required' }]} style={{ marginBottom: 8, gridColumn: 'span 2' }}>
-            <AccountInput company={company} />
+          <Form.Item name="liability" label="Liability acct" rules={[{ required: true, message: 'AP liability account is required' }]} style={{ marginBottom: 8, gridColumn: 'span 2' }}
+            extra={liabSrc === 'entered' ? undefined : liabSrc ? <Text type="secondary" style={{ fontSize: 11 }}>Default from {liabSrc}</Text> : <Text type="warning" style={{ fontSize: 11 }}>No liability account on the supplier site or in Purchasing options — choose one</Text>}>
+            <AccountInput company={company} onChange={() => setLiabSrc('entered')} />
           </Form.Item>
           <Form.Item name="paymentTerms" label="Payment terms" style={{ marginBottom: 8 }}><Input /></Form.Item>
           <Form.Item name="description" label="Description" style={{ marginBottom: 8, gridColumn: 'span 2' }}><Input maxLength={240} /></Form.Item>

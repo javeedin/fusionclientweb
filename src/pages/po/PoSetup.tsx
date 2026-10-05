@@ -192,6 +192,7 @@ const BU_OPTION_FIELDS: { section: string; fields: Field[] }[] = [
   { section: 'Accounting', fields: [
     { name: 'ACCRUE_AT_RECEIPT_FLAG', label: 'Accrue at receipt', type: 'yn', help: 'N = accrue at period end', required: true },
     { name: 'RECEIPT_ACCRUAL_ACCOUNT', label: 'Receipt accrual (GRNI) account', type: 'account', requiredWhen: { field: 'ACCRUE_AT_RECEIPT_FLAG', equals: 'Y' }, help: 'Required when accruing at receipt' },
+    { name: 'AP_LIABILITY_ACCOUNT', label: 'Default AP liability account', type: 'account', help: 'Used for AP invoices created from POs when the supplier site has no liability account for this BU' },
     { name: 'PRICE_VARIANCE_ACCOUNT', label: 'Invoice price variance account', type: 'account' },
     { name: 'EXCHANGE_GAIN_ACCOUNT', label: 'Exchange gain account', type: 'account' },
     { name: 'EXCHANGE_LOSS_ACCOUNT', label: 'Exchange loss account', type: 'account' },
