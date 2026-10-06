@@ -111,6 +111,7 @@ const BenchmarkComparison     = lazy(() => import('./pages/pms').then(m => ({ de
 const InvestmentHoldings      = lazy(() => import('./pages/pms/InvestmentHoldings'));
 const AIStockAnalysis         = lazy(() => import('./pages/pms/AIStockAnalysis'));
 const PMSWatchlist            = lazy(() => import('./pages/pms/Watchlist'));
+const PMSVentureCapital       = lazy(() => import('./pages/pms/VentureCapital'));
 const PMSPortfolio            = lazy(() => import('./pages/pms/Portfolio'));
 const RMModule                = lazy(() => import('./pages/rm').then(m => ({ default: m.RMModule })));
 const ManageAgreements        = lazy(() => import('./pages/rm').then(m => ({ default: m.ManageAgreements })));
@@ -379,6 +380,7 @@ function App() {
               <Route path="pms/fees" element={<FeeManagementPage />} />
               <Route path="pms/benchmark" element={<BenchmarkComparison />} />
               <Route path="pms/investment-holdings" element={<InvestmentHoldings />} />
+              <Route path="pms/venture-capital" element={<PMSVentureCapital />} />
               <Route path="pms/ai-analysis" element={<AIStockAnalysis />} />
               <Route path="pms/*" element={<PMSModule />} />
               {/* Rental Management */}

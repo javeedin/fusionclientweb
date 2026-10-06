@@ -3,10 +3,16 @@
 // in fixed order so a company keeps its colour across refreshes and filters; a 9th+ company folds into "Other".
 import React from 'react';
 import { Tooltip } from 'antd';
-import { CaretUpFilled, CaretDownFilled } from '@ant-design/icons';
+import { CaretUpFilled, CaretDownFilled, BarChartOutlined, FundProjectionScreenOutlined } from '@ant-design/icons';
 import { fmtShort, fmtPct } from '../../services/pms.service';
 
 export type Look = 'classic' | 'midnight' | 'aurora';
+
+/** PMS → Modules menu (only the live modules) */
+export const PMS_MODULES = [
+  { key: '/pms/investment-holdings', icon: <BarChartOutlined />, label: 'Investment Holdings' },
+  { key: '/pms/venture-capital', icon: <FundProjectionScreenOutlined />, label: 'Venture Capital' },
+];
 
 export interface Theme {
   look: Look; dark: boolean;

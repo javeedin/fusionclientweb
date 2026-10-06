@@ -19,7 +19,7 @@ import * as XLSX from 'xlsx';
 import {
   loadPortfolio, totals, fmtShort, fmtPct, fmtNum, curSym, tone, type PmsData, type PmsPosition,
 } from '../../services/pms.service';
-import { THEMES, colorMap, surfaceStyle, Donut, Movers, type Look, type Theme, type Slice, type Mover } from './pmsVisuals';
+import { THEMES, colorMap, surfaceStyle, Donut, Movers, PMS_MODULES, type Look, type Theme, type Slice, type Mover } from './pmsVisuals';
 
 type Basis = 'ORIGINAL' | 'REVALUED' | 'COMPARE';
 type Filter = 'ALL' | 'GAIN' | 'LOSS';
@@ -32,22 +32,6 @@ const readPref = <T extends string>(k: string, ok: readonly T[], d: T): T => {
 };
 const writePref = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
 
-const MODULES = [
-  { key: '/pms/funds', icon: <BankOutlined />, label: 'Fund Management' },
-  { key: '/pms/watchlist', icon: <EyeOutlined />, label: 'Watchlist' },
-  { key: '/pms/portfolio', icon: <PieChartOutlined />, label: 'Portfolio' },
-  { key: '/pms/investment-holdings', icon: <BarChartOutlined />, label: 'Investment Holdings' },
-  { key: '/pms/orders', icon: <SwapOutlined />, label: 'Order Management' },
-  { key: '/pms/transactions', icon: <CalendarOutlined />, label: 'Transactions' },
-  { key: '/pms/investors', icon: <TeamOutlined />, label: 'Investors' },
-  { key: '/pms/risk', icon: <ThunderboltOutlined />, label: 'Risk Analytics' },
-  { key: '/pms/compliance', icon: <SafetyCertificateOutlined />, label: 'Compliance' },
-  { key: '/pms/model-portfolio', icon: <SettingOutlined />, label: 'Model Portfolio' },
-  { key: '/pms/benchmark', icon: <LineChartOutlined />, label: 'Benchmark' },
-  { key: '/pms/fees', icon: <DollarOutlined />, label: 'Fee Management' },
-  { key: '/pms/reports', icon: <FileTextOutlined />, label: 'Reports' },
-  { key: '/pms/ai-analysis', icon: <RobotOutlined />, label: 'AI Stock Analysis' },
-];
 
 // ── small building blocks (all themed) ────────────────────────────────────────
 const toneColor = (t: Theme, v: number) => ({ pos: t.pos, neg: t.neg, neu: t.neu }[tone(v)]);
@@ -230,7 +214,7 @@ const PMSModule: React.FC = () => {
     ] : []),
   ];
 
-  const modulesMenu = { items: MODULES.map(m => ({ key: m.key, icon: m.icon, label: m.label })), onClick: ({ key }: { key: string }) => navigate(key) };
+  const modulesMenu = { items: PMS_MODULES.map(m => ({ key: m.key, icon: m.icon, label: m.label })), onClick: ({ key }: { key: string }) => navigate(key) };
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   const modern = look !== 'classic';
   const basisBadge = basis === 'ORIGINAL' ? 'Cost basis: Original WAC' : basis === 'REVALUED' ? `Cost basis: Revalued ${revDateText}` : 'Comparing both bases';

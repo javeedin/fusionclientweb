@@ -113,18 +113,8 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
 
   // ── PMS (Portfolio Management) ───────────────────────────────────────────────
   { key: 'pms',                   label: 'Portfolio Management',        module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms',                            description: 'PMS module home', keywords: 'investment portfolio pms fund' },
-  { key: 'pms-watchlist',         label: 'Watchlist',                   module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/watchlist',                  description: 'Monitor watched securities' },
-  { key: 'pms-portfolio',         label: 'Portfolio',                   module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/portfolio',                  description: 'View portfolio positions and performance' },
-  { key: 'pms-funds',             label: 'Fund Management',             module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/funds',                      description: 'Manage investment funds' },
-  { key: 'pms-orders',            label: 'Order Management',            module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/orders',                     description: 'Manage trade orders', keywords: 'trade order buy sell' },
-  { key: 'pms-transactions',      label: 'Transactions',                module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/transactions',               description: 'View transaction history' },
-  { key: 'pms-investors',         label: 'Investors / Clients',         module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/investors',                  description: 'Manage investor and client records', keywords: 'client investor customer' },
-  { key: 'pms-risk',              label: 'Risk Analytics',              module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/risk',                       description: 'Portfolio risk metrics and analytics' },
-  { key: 'pms-compliance',        label: 'Compliance',                  module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/compliance',                 description: 'Regulatory compliance tracking' },
-  { key: 'pms-reports',           label: 'PMS Reports',                 module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/reports',                    description: 'Portfolio management reports' },
-  { key: 'pms-model-portfolio',   label: 'Model Portfolio',             module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/model-portfolio',            description: 'Define and manage model portfolios' },
-  { key: 'pms-fees',              label: 'Fee Management',              module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/fees',                       description: 'Manage investment management fees' },
-  { key: 'pms-benchmark',         label: 'Benchmark Comparison',        module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/benchmark',                  description: 'Compare portfolio against benchmarks' },
+  { key: 'pms-investment-holdings', label: 'Investment Holdings',       module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/investment-holdings',        description: 'NRE / NRO equity holdings and P&L', keywords: 'stock equity holdings nre nro' },
+  { key: 'pms-venture-capital',   label: 'Venture Capital',             module: 'PMS',  moduleLabel: 'Portfolio Management',    path: '/pms/venture-capital',            description: 'Trust-fund commitments, paid-in capital and deployment', keywords: 'vc vcap trust fund commitment drawdown deployment' },
 
   // ── Fusion Supply Chain / Inventory ─────────────────────────────────────────
   { key: 'fsc-item-master',       label: 'Item Master',                module: 'FSC',  moduleLabel: 'Fusion Supply Chain',     path: '/inventory/items',                                   description: 'Item catalog with attributes, pricing and flags', keywords: 'item master inventory product' },
