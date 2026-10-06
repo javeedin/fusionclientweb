@@ -236,36 +236,28 @@ const PMSModule: React.FC = () => {
   const basisBadge = basis === 'ORIGINAL' ? 'Cost basis: Original WAC' : basis === 'REVALUED' ? `Cost basis: Revalued ${revDateText}` : 'Comparing both bases';
 
   // ── hero banner (modern looks) ───────────────────────────────────────────────
-  const Hero: React.FC<{ eyebrow: string; title: string; value: string; sub: React.ReactNode; pill?: React.ReactNode; stats: [string, React.ReactNode][]; right?: React.ReactNode }> =
-    ({ eyebrow, title, value, sub, pill, stats, right }) => (
-      <div style={{ background: t.heroBg, color: t.heroInk, borderRadius: t.radius + 4, padding: '24px 28px', marginBottom: 18, position: 'relative', overflow: 'hidden',
-        boxShadow: look === 'aurora' ? '0 20px 50px rgba(124,58,237,.28)' : t.shadow, border: look === 'midnight' ? `1px solid ${t.line}` : 'none' }}>
-        {look === 'aurora' && <>
-          <div style={{ position: 'absolute', width: 340, height: 340, borderRadius: '50%', background: 'rgba(255,255,255,.10)', right: -90, top: -150 }} />
-          <div style={{ position: 'absolute', width: 220, height: 220, borderRadius: '50%', background: 'rgba(255,255,255,.08)', right: 160, bottom: -140 }} />
-        </>}
-        <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          <div style={{ minWidth: 260 }}>
-            <div style={labelStyle(t, true)}>{eyebrow}</div>
-            <div style={{ fontSize: 13, color: t.heroMuted, marginTop: 4 }}>{title}</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 6 }}>
-              <span style={{ fontSize: 40, fontWeight: 800, letterSpacing: -0.5, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
-              {pill}
-            </div>
-            <div style={{ fontSize: 12, color: t.heroMuted, marginTop: 4 }}>{sub}</div>
-          </div>
-          {right}
-        </div>
-        <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: `repeat(${stats.length}, minmax(120px, 1fr))`, gap: 10, marginTop: 20 }}>
-          {stats.map(([l, v]) => (
-            <div key={l} style={{ background: t.heroChip, borderRadius: t.radius - 6, padding: '10px 14px' }}>
-              <div style={labelStyle(t, true)}>{l}</div>
-              <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>{v}</div>
-            </div>
-          ))}
-        </div>
+  // ── hero strip (modern looks): one slim line — value + pill left, stats inline right ──
+  const hero = ({ eyebrow, value, pill, sub, stats }: { eyebrow: string; value: string; pill?: React.ReactNode; sub?: React.ReactNode; stats: [string, React.ReactNode][] }) => (
+    <div style={{ background: t.heroBg, color: t.heroInk, borderRadius: t.radius, padding: '12px 20px', marginBottom: 16, position: 'relative', overflow: 'hidden',
+      boxShadow: look === 'aurora' ? '0 10px 28px rgba(124,58,237,.22)' : t.shadow, border: look === 'midnight' ? `1px solid ${t.line}` : 'none',
+      display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+      {look === 'aurora' && <div style={{ position: 'absolute', width: 220, height: 220, borderRadius: '50%', background: 'rgba(255,255,255,.08)', right: -60, top: -120 }} />}
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', minWidth: 0 }}>
+        <span style={labelStyle(t, true)}>{eyebrow}</span>
+        <span style={{ fontSize: 24, fontWeight: 800, letterSpacing: -0.3, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{value}</span>
+        {pill && <span style={{ alignSelf: 'center' }}>{pill}</span>}
+        {sub && <span style={{ fontSize: 11, color: t.heroMuted, whiteSpace: 'nowrap' }}>{sub}</span>}
       </div>
-    );
+      <div style={{ position: 'relative', marginLeft: 'auto', display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+        {stats.map(([l, v], i) => (
+          <div key={l} style={{ padding: '2px 16px', borderLeft: i ? `1px solid ${look === 'aurora' ? 'rgba(255,255,255,.25)' : t.line}` : 'none' }}>
+            <div style={{ ...labelStyle(t, true), fontSize: 9 }}>{l}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   const lookSwitch = (
     <Segmented size="small" value={look} onChange={v => changeLook(v as Look)} options={[
@@ -415,10 +407,9 @@ const PMSModule: React.FC = () => {
             <>
               {modern ? (
                 <>
-                  <Hero eyebrow="Group portfolio" title="Current market value" value={`AED ${fmtShort(group.market)}`}
-                    pill={<Pill t={t} v={group.gain} text={`${fmtPct(group.ret)} · AED ${fmtShort(group.gain)}`} onHero />}
-                    sub={<>$ {fmtShort(group.marketUsd)} USD · invested AED {fmtShort(group.cost)}</>}
-                    stats={[['Portfolio cost', `AED ${fmtShort(group.cost)}`], ['Gain / loss', `AED ${fmtShort(group.gain)}`], ['Holdings', `${group.stocks} stocks`], ['Companies', `${group.companies}`]]} />
+                  {hero({ eyebrow: 'Market value', value: `AED ${fmtShort(group.market)}`,
+                    pill: <Pill t={t} v={group.gain} text={fmtPct(group.ret)} onHero />, sub: `$ ${fmtShort(group.marketUsd)}`,
+                    stats: [['Cost', `AED ${fmtShort(group.cost)}`], ['Gain / loss', `AED ${fmtShort(group.gain)}`], ['Holdings', `${group.stocks} stocks`], ['Companies', `${group.companies}`]] })}
                   <Row gutter={[18, 18]} style={{ marginBottom: 18 }}>
                     <Col xs={24} xl={12} style={{ display: 'flex' }}>
                       <Section t={t} title="Allocation by company" style={{ flex: 1 }} extra={<span style={{ fontSize: 11, color: t.muted }}>market value · AED</span>}>
@@ -476,22 +467,15 @@ const PMSModule: React.FC = () => {
               {holdings.length === 0 ? <Empty description={`No open holdings for company ${company}`} /> : (
                 <>
                   {modern ? (
-                    <Hero eyebrow={`${company} · equity portfolio`} title="Current market value" value={`AED ${fmtShort(co.market)}`}
-                      pill={basis === 'COMPARE' ? undefined : <Pill t={t} v={basis === 'REVALUED' ? co.revGain : co.gain}
-                        text={`${fmtPct(basis === 'REVALUED' ? co.revRet : co.ret)} · AED ${fmtShort(basis === 'REVALUED' ? co.revGain : co.gain)}`} onHero />}
-                      sub={<>$ {fmtShort(co.marketUsd)} USD · {co.stocks} stocks{revDate ? ` · last revaluation ${revDateText}` : ''}</>}
-                      right={basis === 'COMPARE' ? (
-                        <div style={{ minWidth: 280, background: t.heroChip, borderRadius: t.radius - 6, padding: '12px 16px' }}>
-                          <div style={labelStyle(t, true)}>Compare both bases</div>
-                          <CompareRow t={t} onHero label="Invested (original)" value={`AED ${fmtShort(co.cost)}`} />
-                          <CompareRow t={t} onHero label={`Revalued (${revDateText})`} value={`AED ${fmtShort(co.revAed)}`} />
-                          <CompareRow t={t} onHero label="Gain vs original" value={`AED ${fmtShort(co.gain)} · ${fmtPct(co.ret)}`} />
-                          <CompareRow t={t} onHero label="Gain since reval." value={`AED ${fmtShort(co.revGain)} · ${fmtPct(co.revRet)}`} />
-                        </div>
-                      ) : undefined}
-                      stats={basis === 'REVALUED'
-                        ? [[`Revalued cost (${revDateText})`, `AED ${fmtShort(co.revAed)}`], ['Gain since reval.', `AED ${fmtShort(co.revGain)}`], ['Return since reval.', fmtPct(co.revRet)], ['Holdings', `${co.stocks} stocks`]]
-                        : [['Invested (original)', `AED ${fmtShort(co.cost)}`], ['Gain / loss', `AED ${fmtShort(co.gain)}`], ['Return', fmtPct(co.ret)], ['Holdings', `${co.stocks} stocks`]]} />
+                    hero({ eyebrow: 'Market value', value: `AED ${fmtShort(co.market)}`,
+                      pill: basis === 'COMPARE' ? undefined : <Pill t={t} v={basis === 'REVALUED' ? co.revGain : co.gain} text={fmtPct(basis === 'REVALUED' ? co.revRet : co.ret)} onHero />,
+                      sub: `$ ${fmtShort(co.marketUsd)} · ${co.stocks} stocks`,
+                      stats: basis === 'COMPARE'
+                        ? [['Invested (original)', `AED ${fmtShort(co.cost)}`], [`Revalued (${revDateText})`, `AED ${fmtShort(co.revAed)}`],
+                          ['Gain vs original', `AED ${fmtShort(co.gain)} · ${fmtPct(co.ret)}`], ['Gain since reval.', `AED ${fmtShort(co.revGain)} · ${fmtPct(co.revRet)}`]]
+                        : basis === 'REVALUED'
+                          ? [[`Revalued cost (${revDateText})`, `AED ${fmtShort(co.revAed)}`], ['Gain since reval.', `AED ${fmtShort(co.revGain)}`]]
+                          : [['Invested (original)', `AED ${fmtShort(co.cost)}`], ['Gain / loss', `AED ${fmtShort(co.gain)}`], ...(revDate ? [['Last revaluation', revDateText] as [string, string]] : [])] })
                   ) : (
                     <Row gutter={[13, 13]} style={{ marginBottom: 15 }}>
                       <Col xs={24} sm={12} lg={6} style={{ display: 'flex' }}><Kpi t={t} label="Market value" value={`AED ${fmtShort(co.market)}`} note={`$ ${fmtShort(co.marketUsd)} USD`} /></Col>

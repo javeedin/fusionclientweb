@@ -108,11 +108,15 @@ export const Donut: React.FC<{ slices: Slice[]; t: Theme; centerTop: string; cen
 // ── Top movers: return % since purchase, diverging bars around zero (sign + arrow carry polarity) ──
 export interface Mover { key: string; label: string; sub: string; ret: number; gainText: string; company: string }
 export const Movers: React.FC<{ movers: Mover[]; t: Theme; onPick?: (company: string) => void }> = ({ movers, t, onPick }) => {
-  const max = Math.max(1, ...movers.map(m => Math.abs(m.ret)));
+  // one extreme return (e.g. +8,000,000% on a near-zero cost) must not flatten every other bar:
+  // scale to the runner-up and draw the outlier full-width with a break mark
+  const mags = movers.map(m => Math.abs(m.ret)).sort((x, y) => y - x);
+  const max = Math.max(1, mags.length > 1 && mags[0] > mags[1] * 3 ? mags[1] * 1.25 : mags[0] || 1);
   return (
     <div style={{ display: 'grid', gap: 6 }}>
       {movers.map(m => {
-        const w = (Math.abs(m.ret) / max) * 50;
+        const capped = Math.abs(m.ret) > max;
+        const w = Math.min(Math.abs(m.ret) / max, 1) * 50;
         const up = m.ret >= 0;
         const col = up ? t.pos : t.neg;
         return (
@@ -126,6 +130,8 @@ export const Movers: React.FC<{ movers: Mover[]; t: Theme; onPick?: (company: st
                 <div style={{ position: 'absolute', left: '50%', top: -2, bottom: -2, width: 1, background: t.line }} />
                 <div style={{ position: 'absolute', top: 2, height: 10, borderRadius: up ? '0 4px 4px 0' : '4px 0 0 4px', background: col,
                   left: up ? '50%' : `${50 - w}%`, width: `${Math.max(w, 0.6)}%` }} />
+                {capped && <div title="Off scale" style={{ position: 'absolute', top: 0, height: 14, width: 6, background: t.dark ? '#121a2e' : '#fff', transform: 'skewX(-20deg)',
+                  left: up ? 'calc(50% + 40%)' : 'calc(10% - 6px)' }} />}
               </div>
               <div style={{ fontSize: 12, fontWeight: 700, color: col, textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
                 {up ? <CaretUpFilled /> : <CaretDownFilled />} {fmtPct(m.ret)}
