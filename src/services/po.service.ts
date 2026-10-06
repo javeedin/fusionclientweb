@@ -57,8 +57,8 @@ const errText = (text: string, data: any, status: number) => {
 };
 
 /** Run one SELECT through the gateway; rows come back as objects keyed by UPPER column name. */
-export async function poQuery(sql: string, maxRows = 1000): Promise<Row[]> {
-  const reqBody = { sql: sql.trim().replace(/;\s*$/, ''), maxRows, appUser: 'PURCHASING' };
+export async function poQuery(sql: string, maxRows = 1000, appUser = 'PURCHASING'): Promise<Row[]> {
+  const reqBody = { sql: sql.trim().replace(/;\s*$/, ''), maxRows, appUser };
   const t0 = performance.now();
   const res = await fetch(`${BASE}/ai/executequery`, {
     method: 'POST',
