@@ -1,4 +1,13 @@
-// Run a Profit & Loss statement from an Income Statement Template.
+// Run a financial statement from a template: Income Statement (P&L), Balance Sheet or Cash Flow
+// (indirect method) — the template's TEMPLATE_TYPE decides (pl-templates.service statementKindOf).
+//   P&L:  Credit − Debit; Period = PTD movement, YTD = fiscal-year-to-date.
+//   BS:   closing balances — "As at <period>" and "Start of year" (YTD opening); assets Debit − Credit,
+//         liabilities / equity Credit − Debit. Profit for the year is added to Equity unless the template maps
+//         P&L accounts itself; retained earnings B/F comes from GET gl/rr-trialbalance/standardRE.
+//   CF:   profit for the period + cash effect of balance-sheet movements (opening − closing, debit basis) +
+//         non-cash P&L items mapped to it (added back); a "Cash" group gives opening / closing cash and the
+//         reconciliation against the cash accounts.
+// Original notes for the P&L:
 // The template's groups → sections → accounts (single natural accounts or from–to
 // ranges) are applied to the GL trial balance of the chosen ledger/period
 // (GET gl/rr-trialbalance/standard — RR_V_STANDARD_TB), and the template totals
@@ -24,29 +33,67 @@ import { getAppBranding } from '../../config/company.config';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { buildApexUrl } from '../../config/api.helper';
 import type { PLTemplateStructure, PLSectionAccount } from '../../services/pl-templates.service';
-import { assignAccount, removeSectionAccount, moveAccounts, addGroup, addSection, updateTotal, GROUP_TYPES } from '../../services/pl-templates.service';
+import { assignAccount, removeSectionAccount, moveAccounts, addGroup, addSection, updateTotal, GROUP_TYPES_BY_KIND, statementKindOf, type StatementKind } from '../../services/pl-templates.service';
 
 const { Text, Title } = Typography;
 const BASE = APEX_DB_CONFIG.baseUrl;
 const RED = '#C74634';
 
+// what each statement shows: titles, the two amount columns, which TB account types belong to it
+const TYPE_TAG: Record<string, [string, string]> = {
+  R: ['green', 'Revenue'], E: ['volcano', 'Expense'], A: ['blue', 'Asset'], L: ['purple', 'Liability'], O: ['gold', 'Equity'],
+};
+const TypeTag = ({ t }: { t: string }) => { const [c, l] = TYPE_TAG[t] || ['default', t]; return <Tag color={c}>{l}</Tag>; };
+
+const KIND: Record<StatementKind, {
+  title: string; short: string; file: string; col1: (p: string) => string; col2: string; pdfSub: (p: string) => string;
+  tbTypes: [string, string][]; tbTitle: string; tbIntro: string; tbNetLabel: string; acctWord: string; signNote: string;
+  pctTitle?: string; mainField: 'ptd' | 'ytd'; subNote: string;
+}> = {
+  PL: {
+    title: 'Statement of Profit or Loss', short: 'P&L', file: 'PL', col1: p => `Period ${p}`, col2: 'Year to date',
+    pdfSub: p => `For the period ${p} and the year to date`,
+    tbTypes: [['R', 'Revenue (account type R)'], ['E', 'Expenses (account type E)']],
+    tbTitle: 'Profit & Loss as per Trial Balance', tbIntro: 'Every income (type R) and expense (type E) account in the trial balance',
+    tbNetLabel: 'Net profit / (loss) as per TB', acctWord: 'income/expense', pctTitle: '% of revenue', mainField: 'ytd', subNote: 'Credit − Debit (expenses in brackets)',
+    signNote: 'Amounts are credit less debit: income is shown positive, expenses in brackets.',
+  },
+  BS: {
+    title: 'Statement of Financial Position', short: 'Balance Sheet', file: 'BS', col1: p => `As at ${p}`, col2: 'Start of year',
+    pdfSub: p => `As at the end of ${p}, with the start of the financial year`,
+    tbTypes: [['A', 'Assets (account type A)'], ['L', 'Liabilities (account type L)'], ['O', 'Equity (account type O)']],
+    tbTitle: 'Balance Sheet as per Trial Balance', tbIntro: 'Every asset (A), liability (L) and equity (O) account in the trial balance — liabilities and equity shown credit-positive',
+    tbNetLabel: 'Check: assets − liabilities − equity − profit for the year', acctWord: 'balance-sheet', pctTitle: '% of total assets', mainField: 'ptd', subNote: 'Balances at period end and at the start of the year',
+    signNote: 'Assets are debit balances; liabilities and equity credit balances, all shown positive. Profit for the year is included in equity.',
+  },
+  CF: {
+    title: 'Statement of Cash Flows', short: 'Cash Flow', file: 'CF', col1: p => `Period ${p}`, col2: 'Year to date',
+    pdfSub: p => `For the period ${p} and the year to date (indirect method)`,
+    tbTypes: [['A', 'Assets (account type A)'], ['L', 'Liabilities (account type L)'], ['O', 'Equity (account type O)']],
+    tbTitle: 'Balance-sheet movements as per Trial Balance', tbIntro: 'Cash effect of every asset, liability and equity account (opening − closing; an increase in an asset is cash out)',
+    tbNetLabel: 'Check: profit + all balance-sheet movements incl. cash (= 0)', acctWord: 'balance-sheet', mainField: 'ytd', subNote: 'Indirect method · cash out in brackets',
+    signNote: 'Indirect method: profit, plus non-cash items, plus the cash effect of balance-sheet movements (cash in positive, cash out in brackets).',
+  },
+};
+
 interface TbRow {
   account: string; account_desc: string | null; account_type: string | null; company: string | null;
   debit: number; credit: number; ytd_debit: number; ytd_credit: number;
+  opening: number; closing: number; ytd_opening: number;   // debit-positive balances (BS / CF)
 }
 interface Amt { ptd: number; ytd: number }
 interface AcctLine { account: string; desc: string | null; ptd: number; ytd: number }
-type RowKind = 'group' | 'section' | 'account' | 'groupTotal' | 'total' | 'error';
+type RowKind = 'group' | 'section' | 'account' | 'groupTotal' | 'total' | 'error' | 'check' | 'info';
 interface MapEntry { sectionId: number; sectionName: string; entry: PLSectionAccount }
-interface TbPlLine { account: string; desc: string | null; type: 'R' | 'E'; ptd: number; ytd: number; sections: string[]; entries: MapEntry[] }
+interface TbPlLine { account: string; desc: string | null; type: string; ptd: number; ytd: number; sections: string[]; entries: MapEntry[] }
 interface TbPlRow {
   key: string; kind: 'group' | 'account' | 'total'; label: string; desc?: string | null; ptd: number; ytd: number;
-  sections?: string[]; missing?: boolean; children?: TbPlRow[]; type?: 'R' | 'E';
+  sections?: string[]; missing?: boolean; children?: TbPlRow[]; type?: string;
 }
 interface DrillLine { account: string; desc: string | null; section: string; ptd: number; ytd: number }
 interface PLRow {
   key: string; kind: RowKind; label: string; code?: string; ptd?: number; ytd?: number;
-  indent: number; style?: string; error?: string; children?: PLRow[];
+  indent: number; style?: string; error?: string; children?: PLRow[]; ok?: boolean;
   drill?: DrillLine[];   // group / section: the accounts behind the amount
 }
 
@@ -108,6 +155,8 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
   onTemplateChanged?: () => void | Promise<void>;   // after accounts are added to the template
 }) {
   const tpl = structure.template;
+  const kind = statementKindOf(tpl.template_type);
+  const cfg = KIND[kind];
   const [form] = Form.useForm();
   const [ledgers, setLedgers] = useState<string[]>([]);
   const [periods, setPeriods] = useState<{ name: string; year?: number }[]>([]);
@@ -196,10 +245,41 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
             account: String(i.account ?? '').trim(), account_desc: i.account_desc ?? null,
             account_type: i.account_type ?? null, company: i.company ?? null,
             debit: num(i.debit), credit: num(i.credit), ytd_debit: num(i.ytd_debit), ytd_credit: num(i.ytd_credit),
+            opening: num(i.opening), ytd_opening: num(i.ytd_opening),
+            closing: i.closing == null ? num(i.opening) + num(i.debit) - num(i.credit) : num(i.closing),
           });
         }
         if (!d.hasMore || !items.length) break;
         offset += items.length;
+      }
+      // Balance Sheet / Cash Flow: retained earnings brought forward from the saved year-end row (same as the TB page)
+      if (kind !== 'PL') {
+        const year = periods.find(p => p.name === v.period)?.year;
+        if (year) {
+          try {
+            const rp = new URLSearchParams({ ledger_name: v.ledger, period_year: String(year) });
+            const rr = await fetch(`${BASE}/${APEX_DB_CONFIG.endpoints.rrTrialBalanceStandardRE}?${rp}`, { headers: { Accept: 'application/json' } });
+            const rd = rr.ok ? await rr.json().catch(() => ({})) : {};
+            const company = v.company?.trim();
+            for (const re of ((rd.items || []) as any[]).filter(r => !company || !r.company || String(r.company) === company)) {
+              const acct = String(re.account ?? '').trim();
+              if (!acct) continue;
+              const bf = num(re.opening);
+              const hits = rows.filter(r => r.account === acct && (!re.company || !r.company || String(r.company) === String(re.company)));
+              if (hits.length) {
+                hits.forEach((h, i) => {
+                  const mvt = h.closing - h.opening;
+                  const b = i === 0 ? bf : 0;            // B/F once per account / company
+                  h.opening = b; h.ytd_opening = b; h.closing = b + mvt;
+                  h.account_desc = h.account_desc || 'Retained Earnings';
+                });
+              } else {
+                rows.push({ account: acct, account_desc: 'Retained Earnings', account_type: 'O', company: re.company ?? null,
+                  debit: 0, credit: 0, ytd_debit: 0, ytd_credit: 0, opening: bf, ytd_opening: bf, closing: bf });
+              }
+            }
+          } catch { /* no saved retained earnings: the TB balances are used as they are */ }
+        }
       }
       setTb(rows);
       setRan({ ledger: v.ledger, period: v.period, company: v.company?.trim() || undefined, currency: currency || undefined });
@@ -215,29 +295,55 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
   // ── compute the statement ──────────────────────────────────────────────────
   const result = useMemo(() => {
     if (!tb) return null;
-    // net per natural account, Credit − Debit
-    const byAcct = new Map<string, AcctLine>();
+    const normType = (t: string | null) => { const u = (t || '').toUpperCase(); return u === 'OE' ? 'O' : u; };
+    const isPlType = (t: string) => t === 'R' || t === 'E';
+    // per natural account: the two amounts this statement shows (see header), plus balances for the cash rows
+    type Line = AcctLine & { type: string; open: number; openY: number; close: number };
+    const byAcct = new Map<string, Line>();
+    let profitPtd = 0; let profitYtd = 0;
     for (const r of tb) {
       if (!r.account) continue;
-      const a = byAcct.get(r.account) || { account: r.account, desc: r.account_desc, ptd: 0, ytd: 0 };
-      a.ptd += r.credit - r.debit;
-      a.ytd += r.ytd_credit - r.ytd_debit;
+      const type = normType(r.account_type);
+      const a = byAcct.get(r.account) || { account: r.account, desc: r.account_desc, ptd: 0, ytd: 0, type, open: 0, openY: 0, close: 0 };
+      if (isPlType(type)) { profitPtd += r.credit - r.debit; profitYtd += r.ytd_credit - r.ytd_debit; }
+      if (kind === 'PL') { a.ptd += r.credit - r.debit; a.ytd += r.ytd_credit - r.ytd_debit; }
+      else if (kind === 'BS') { a.ptd += r.closing; a.ytd += r.ytd_opening; }
+      else if (isPlType(type)) { a.ptd += r.debit - r.credit; a.ytd += r.ytd_debit - r.ytd_credit; }   // CF: non-cash P&L item added back
+      else { a.ptd += r.opening - r.closing; a.ytd += r.ytd_opening - r.closing; }                       // CF: asset up = cash out, liability up = cash in
+      a.open += r.opening; a.openY += r.ytd_opening; a.close += r.closing;
       if (!a.desc && r.account_desc) a.desc = r.account_desc;
+      if (!a.type && type) a.type = type;
       byAcct.set(r.account, a);
     }
-    const acctType = new Map(tb.map(r => [r.account, r.account_type]));
     const used = new Map<string, string[]>();   // account → sections using it
     const usedNames = new Map<string, string[]>();   // account → section names (As per TB tab)
     const usedEntries = new Map<string, MapEntry[]>();   // account → template rows that pick it up (Move)
     const groupVal = new Map<string, Amt>();
     const groups = [...(tpl.groups || [])].sort((a, b) => a.display_order - b.display_order);
     const groupRows = new Map<string, PLRow>();
+    const gtype = (g: { group_type: string }) => String(g.group_type || '').toUpperCase();
     let revenueYtd = 0; let revenuePtd = 0;
 
+    // automatic profit line: BS → in Equity (unless the template maps P&L accounts itself); CF → top of Operating
+    const plMapped = kind === 'BS' && [...byAcct.values()].some(l => isPlType(l.type)
+      && groups.some(g => (g.sections || []).some(s => (s.accounts || []).some(a => matches(l.account, a)))));
+    const autoProfit: Amt | null = kind === 'BS' ? (plMapped ? null : { ptd: profitYtd, ytd: 0 })
+      : kind === 'CF' ? { ptd: profitPtd, ytd: profitYtd } : null;
+    const autoLabel = kind === 'BS' ? 'Profit / (loss) for the year' : 'Profit / (loss) for the period';
+    const autoHome = autoProfit ? groups.find(g => gtype(g) === (kind === 'BS' ? 'EQUITY' : 'OPERATING')) : undefined;
+    const cash = { open: 0, openY: 0, close: 0, found: false };
+    const hiddenGroups = new Set<string>();
+
     for (const g of groups) {
+      const isCash = kind === 'CF' && gtype(g) === 'CASH';
+      const sign = kind === 'BS' && gtype(g) !== 'ASSET' ? -1 : 1;
       const gAmt: Amt = { ptd: 0, ytd: 0 };
       const secRows: PLRow[] = [];
       const gDrill: DrillLine[] = [];
+      if (autoProfit && autoHome === g) {
+        gAmt.ptd += autoProfit.ptd; gAmt.ytd += autoProfit.ytd;
+        secRows.push({ key: `auto-profit-${g.group_id}`, kind: 'section', label: autoLabel, code: 'P&L', ptd: autoProfit.ptd, ytd: autoProfit.ytd, indent: 2 });
+      }
       for (const s of [...(g.sections || [])].sort((a, b) => a.display_order - b.display_order)) {
         const sAmt: Amt = { ptd: 0, ytd: 0 };
         const acctRows: PLRow[] = [];
@@ -245,15 +351,18 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
         const secName = s.section_label || s.section_name;
         for (const [acct, line] of byAcct) {
           if (!(s.accounts || []).some(a => matches(acct, a))) continue;
-          sAmt.ptd += line.ptd; sAmt.ytd += line.ytd;
+          // cash group: the change in the cash balances; other groups: the statement amount (BS sign per group)
+          const v: Amt = isCash ? { ptd: line.close - line.open, ytd: line.close - line.openY } : { ptd: line.ptd * sign, ytd: line.ytd * sign };
+          if (isCash) { cash.open += line.open; cash.openY += line.openY; cash.close += line.close; cash.found = true; }
+          sAmt.ptd += v.ptd; sAmt.ytd += v.ytd;
           used.set(acct, [...(used.get(acct) || []), `${g.group_code}/${s.section_code}`]);
           usedNames.set(acct, [...(usedNames.get(acct) || []), secName]);
           usedEntries.set(acct, [...(usedEntries.get(acct) || []),
             { sectionId: s.section_id, sectionName: `${g.group_label || g.group_name} › ${secName}`, entry: (s.accounts || []).find(a => matches(acct, a))! }]);
-          if (Math.abs(line.ptd) >= 0.005 || Math.abs(line.ytd) >= 0.005) {
-            sDrill.push({ account: acct, desc: line.desc, section: secName, ptd: line.ptd, ytd: line.ytd });
+          if (Math.abs(v.ptd) >= 0.005 || Math.abs(v.ytd) >= 0.005) {
+            sDrill.push({ account: acct, desc: line.desc, section: secName, ptd: v.ptd, ytd: v.ytd });
             acctRows.push({ key: `a-${s.section_id}-${acct}`, kind: 'account', label: `${acct}${line.desc ? ` · ${line.desc}` : ''}`,
-              code: acct, ptd: line.ptd, ytd: line.ytd, indent: 3 });
+              code: acct, ptd: v.ptd, ytd: v.ytd, indent: 3 });
           }
         }
         acctRows.sort((a, b) => String(a.code).localeCompare(String(b.code)));
@@ -264,6 +373,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
           ptd: sAmt.ptd, ytd: sAmt.ytd, indent: 2, children: acctRows.length ? acctRows : undefined, drill: sDrill });
       }
       groupVal.set(g.group_code.toUpperCase(), gAmt);
+      if (isCash) { hiddenGroups.add(g.group_code); continue; }     // shown as the opening / closing cash rows below
       if (g.group_type === 'REVENUE') { revenueYtd += gAmt.ytd; revenuePtd += gAmt.ptd; }
       groupRows.set(g.group_code, {
         key: `g-${g.group_id}`, kind: 'group', label: g.group_label || g.group_name, code: g.group_code,
@@ -299,7 +409,12 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
 
     // statement rows: groups and totals in display order
     type Item = { order: number; row: PLRow };
-    const items: Item[] = groups.map(g => ({ order: g.display_order, row: groupRows.get(g.group_code)! }));
+    const items: Item[] = groups.filter(g => !hiddenGroups.has(g.group_code)).map(g => ({ order: g.display_order, row: groupRows.get(g.group_code)! }));
+    const stray = autoProfit && !autoHome ? autoProfit : null;      // no Equity / Operating group to hold the profit
+    if (stray) {
+      items.push({ order: Math.max(0, ...groups.map(g => g.display_order)) + 0.5,
+        row: { key: 'auto-profit', kind: 'group', label: `${autoLabel} (add a ${kind === 'BS' ? 'Equity' : 'Operating'} group to place it)`, code: 'P&L', ptd: stray.ptd, ytd: stray.ytd, indent: 1 } });
+    }
     for (const t of totals) {
       let row: PLRow;
       try {
@@ -312,37 +427,89 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     }
     items.sort((a, b) => a.order - b.order);
 
-    // checks: unmapped P&L accounts, accounts used by several sections, TB net income
-    const unmapped: (AcctLine & { type: string })[] = [];
-    const tbLines: TbPlLine[] = [];   // P&L as per TB: every R/E account with a balance
-    let tbNetYtd = 0; let tbNetPtd = 0;
-    for (const [acct, line] of byAcct) {
-      const type = (acctType.get(acct) || '').toUpperCase();
-      if (type === 'R' || type === 'E') {
-        tbNetYtd += line.ytd; tbNetPtd += line.ptd;
-        const nonZero = Math.abs(line.ptd) >= 0.005 || Math.abs(line.ytd) >= 0.005;
-        if (!used.has(acct) && nonZero) unmapped.push({ ...line, type });
-        if (nonZero) tbLines.push({ account: acct, desc: line.desc, type, ptd: line.ptd, ytd: line.ytd, sections: usedNames.get(acct) || [], entries: usedEntries.get(acct) || [] });
+    // system rows: BS balance check; CF net change, opening / closing cash and the reconciliation
+    const sumType = (types: string[]): Amt => groups.filter(g => types.includes(gtype(g)))
+      .reduce((s, g) => { const v = groupVal.get(g.group_code.toUpperCase()); return { ptd: s.ptd + (v?.ptd || 0), ytd: s.ytd + (v?.ytd || 0) }; }, { ptd: 0, ytd: 0 });
+    const sys: PLRow[] = [];
+    const near0 = (v: number) => Math.abs(v) < 0.5;
+    const kpis: { title: string; value: number; color?: string; ok?: boolean; note?: string }[] = [];
+    if (kind === 'BS') {
+      const assets = sumType(['ASSET']); const liab = sumType(['LIABILITY']); const eq = sumType(['EQUITY']);
+      const eqAll = { ptd: eq.ptd + (stray?.ptd || 0), ytd: eq.ytd + (stray?.ytd || 0) };
+      const diff = { ptd: assets.ptd - liab.ptd - eqAll.ptd, ytd: assets.ytd - liab.ytd - eqAll.ytd };
+      sys.push({ key: 'sys-check', kind: 'check', label: 'Check: total assets − (liabilities + equity)', ptd: diff.ptd, ytd: diff.ytd, indent: 0, ok: near0(diff.ptd) && near0(diff.ytd) });
+      kpis.push({ title: 'Total assets', value: assets.ptd }, { title: 'Total liabilities', value: liab.ptd },
+        { title: 'Total equity (incl. profit)', value: eqAll.ptd },
+        { title: 'Balance check', value: diff.ptd, ok: near0(diff.ptd), note: near0(diff.ptd) ? 'Balanced' : 'Out of balance' });
+    }
+    if (kind === 'CF') {
+      const op = sumType(['OPERATING']); const inv = sumType(['INVESTING']); const fin = sumType(['FINANCING']);
+      const net = { ptd: op.ptd + inv.ptd + fin.ptd + (stray?.ptd || 0), ytd: op.ytd + inv.ytd + fin.ytd + (stray?.ytd || 0) };
+      sys.push({ key: 'sys-net', kind: 'total', label: 'Net increase / (decrease) in cash and cash equivalents', ptd: net.ptd, ytd: net.ytd, indent: 0 });
+      if (cash.found) {
+        const end = { ptd: cash.open + net.ptd, ytd: cash.openY + net.ytd };
+        const diff = { ptd: end.ptd - cash.close, ytd: end.ytd - cash.close };
+        sys.push({ key: 'sys-open', kind: 'info', label: 'Cash and cash equivalents at beginning of period', ptd: cash.open, ytd: cash.openY, indent: 0 });
+        sys.push({ key: 'sys-end', kind: 'total', label: 'Cash and cash equivalents at end of period', ptd: end.ptd, ytd: end.ytd, indent: 0, style: 'DOUBLE_LINE' });
+        sys.push({ key: 'sys-check', kind: 'check', label: 'Check: vs cash accounts at end of period', ptd: diff.ptd, ytd: diff.ytd, indent: 0, ok: near0(diff.ptd) && near0(diff.ytd) });
+        kpis.push({ title: 'Operating activities', value: op.ptd + (stray?.ptd || 0) }, { title: 'Investing activities', value: inv.ptd }, { title: 'Financing activities', value: fin.ptd },
+          { title: 'Cash at end of period', value: end.ptd, ok: near0(diff.ptd), note: near0(diff.ptd) ? 'Agrees with the cash accounts' : `Differs from cash accounts by ${fmt(diff.ptd)}` });
+      } else {
+        sys.push({ key: 'sys-nocash', kind: 'error', label: 'Cash and cash equivalents', indent: 0, error: 'Add a group of type "Cash" with the bank / cash accounts to show opening and closing cash and reconcile' });
+        kpis.push({ title: 'Operating activities', value: op.ptd + (stray?.ptd || 0) }, { title: 'Investing activities', value: inv.ptd }, { title: 'Financing activities', value: fin.ptd },
+          { title: 'Net change in cash', value: net.ptd });
       }
     }
+
+    // checks: accounts of this statement missing from the template, accounts used by several sections, TB view
+    const relevant = (t: string) => (kind === 'PL' ? isPlType(t) : t === 'A' || t === 'L' || t === 'O');
+    const unmapped: (AcctLine & { type: string })[] = [];
+    const tbLines: TbPlLine[] = [];
+    let tbNetYtd = 0; let tbNetPtd = 0;
+    for (const [acct, line] of byAcct) {
+      const type = line.type;
+      if (!relevant(type)) continue;
+      const shown = kind === 'BS' && type !== 'A' ? -1 : 1;           // BS view: liabilities / equity credit-positive
+      const v = { ptd: line.ptd * shown, ytd: line.ytd * shown };
+      tbNetPtd += line.ptd; tbNetYtd += line.ytd;                       // raw: P&L net, BS debit total, CF cash effect total
+      const nonZero = Math.abs(v.ptd) >= 0.005 || Math.abs(v.ytd) >= 0.005;
+      if (!used.has(acct) && nonZero) unmapped.push({ account: acct, desc: line.desc, ptd: v.ptd, ytd: v.ytd, type });
+      if (nonZero) tbLines.push({ account: acct, desc: line.desc, type, ptd: v.ptd, ytd: v.ytd, sections: usedNames.get(acct) || [], entries: usedEntries.get(acct) || [] });
+    }
+    if (kind === 'BS') { tbNetPtd -= profitYtd; }                       // Σ BS debit balances = profit for the year
+    if (kind === 'CF') { tbNetPtd += profitPtd; tbNetYtd += profitYtd; } // profit + Σ movements = 0
     tbLines.sort((a, b) => a.account.localeCompare(b.account));
     const sum = (ls: TbPlLine[]) => ls.reduce((t, l) => ({ ptd: t.ptd + l.ptd, ytd: t.ytd + l.ytd }), { ptd: 0, ytd: 0 });
-    const tbRev = tbLines.filter(l => l.type === 'R');
-    const tbExp = tbLines.filter(l => l.type === 'E');
-    unmapped.sort((a, b) => Math.abs(b.ytd) - Math.abs(a.ytd));
+    const tbGroups = cfg.tbTypes.map(([type, label]) => { const lines = tbLines.filter(l => l.type === type); return { type, label, lines, amt: sum(lines) }; });
+    unmapped.sort((a, b) => Math.abs(b[cfg.mainField]) - Math.abs(a[cfg.mainField]));
     const duplicates = [...used.entries()].filter(([, secs]) => secs.length > 1);
+    const allRows = [...items.map(i => i.row), ...sys];
     // the statement's bottom line = the last total that is not "comprehensive"-only
     const bottom = [...items].reverse().find(i => i.row.kind === 'total' && !/comprehensive/i.test(i.row.label))
       || [...items].reverse().find(i => i.row.kind === 'total');
     const mappedYtd = [...used.keys()].reduce((s, a) => s + (byAcct.get(a)?.ytd || 0), 0);
+    const totalAssets = kind === 'BS' ? sumType(['ASSET']).ptd : 0;
     return {
-      rows: items.map(i => i.row), unmapped, duplicates, revenueYtd, revenuePtd,
+      rows: allRows, unmapped, duplicates, revenueYtd, revenuePtd,
       tbNetYtd, tbNetPtd, bottom: bottom?.row, mappedYtd,
       unmappedYtd: unmapped.reduce((s, a) => s + a.ytd, 0),
       unmappedPtd: unmapped.reduce((s, a) => s + a.ptd, 0),
-      tbRev, tbExp, tbRevAmt: sum(tbRev), tbExpAmt: sum(tbExp),
+      tbGroups, tbAll: tbLines, profitPtd, profitYtd, kpis, totalAssets,
     };
-  }, [tb, tpl]);
+  }, [tb, tpl, kind, cfg]);
+
+  const pct = (v: number | undefined, base: number) => {
+    if (v === undefined || !base) return '';
+    const p1 = Math.round((v / Math.abs(base)) * 1000) / 10;
+    return `${(p1 === 0 ? 0 : p1).toFixed(1)}%`;
+  };
+  // % column: P&L → YTD as % of YTD revenue; BS → as % of total assets (period end)
+  const pctOf = (r: PLRow): string => {
+    if (!result || r.kind === 'account' || r.kind === 'check' || r.kind === 'error') return '';
+    if (kind === 'PL') return pct(r.ytd, result.revenueYtd || 0);
+    if (kind === 'BS') return pct(r.ptd, result.totalAssets || 0);
+    return '';
+  };
 
   // tabs: the template statement | P&L as per TB (account type R / E)
   const [plTab, setPlTab] = useState<'template' | 'tb'>('template');
@@ -357,15 +524,15 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
       && (!q || `${l.account} ${l.desc || ''} ${l.sections.join(' ')}`.toLowerCase().includes(q));
     const toRow = (l: TbPlLine): TbPlRow => ({ key: `tb-${l.account}`, kind: 'account', label: l.account, desc: l.desc,
       ptd: l.ptd, ytd: l.ytd, sections: l.sections, missing: !l.sections.length, type: l.type });
-    const rev = result.tbRev.filter(keep).map(toRow);
-    const exp = result.tbExp.filter(keep).map(toRow);
     return [
-      { key: 'tb-R', kind: 'group', label: 'Revenue (account type R)', ptd: result.tbRevAmt.ptd, ytd: result.tbRevAmt.ytd, children: rev.length ? rev : undefined },
-      { key: 'tb-E', kind: 'group', label: 'Expenses (account type E)', ptd: result.tbExpAmt.ptd, ytd: result.tbExpAmt.ytd, children: exp.length ? exp : undefined },
-      { key: 'tb-net', kind: 'total', label: 'Net profit / (loss) as per TB', ptd: result.tbNetPtd, ytd: result.tbNetYtd },
+      ...result.tbGroups.map(g => {
+        const ch = g.lines.filter(keep).map(toRow);
+        return { key: `tb-${g.type}`, kind: 'group' as const, label: g.label, ptd: g.amt.ptd, ytd: g.amt.ytd, children: ch.length ? ch : undefined };
+      }),
+      { key: 'tb-net', kind: 'total' as const, label: cfg.tbNetLabel, ptd: result.tbNetPtd, ytd: result.tbNetYtd },
     ];
-  }, [result, tbFilter, tbSearch]);
-  const tbRevYtd = result?.tbRevAmt.ytd || 0;
+  }, [result, tbFilter, tbSearch, cfg]);
+  const tbRevYtd = kind === 'PL' ? (result?.tbGroups[0]?.amt.ytd || 0) : 0;
 
   // ── add missing accounts to the template ─────────────────────────────────
   // sections of the template, labelled "Group › Section"
@@ -399,7 +566,10 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
         if (c && c.trim()) known.push({ code: c.trim(), sectionId: sct.section_id, type: typeOf.get(c.trim()) });
       }
     }
-    const firstOfType = (t: string) => sectionOptions.find(g => (t === 'R' ? g.groupType === 'REVENUE' : g.groupType !== 'REVENUE'))?.options[0]?.value;
+    const prefer: Record<string, string[]> = kind === 'PL' ? { R: ['REVENUE', 'OTHER_INCOME'], E: ['EXPENSE', 'OTHER_EXPENSE', 'TAX'] }
+      : kind === 'BS' ? { A: ['ASSET'], L: ['LIABILITY'], O: ['EQUITY'] } : { A: ['OPERATING'], L: ['OPERATING'], O: ['FINANCING'] };
+    const firstOfType = (t: string) => (sectionOptions.find(g => (prefer[t] || []).includes(g.groupType))
+      || (kind === 'PL' ? sectionOptions.find(g => (t === 'R' ? g.groupType === 'REVENUE' : g.groupType !== 'REVENUE')) : undefined))?.options[0]?.value;
     return (acct: string, type: string): number | undefined => {
       let best: { score: number; dist: number; id: number } | null = null;
       for (const k of known) {
@@ -410,7 +580,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
       }
       return best && best.score >= 4 ? best.id : firstOfType(type);   // at least 2 matching leading digits
     };
-  }, [tpl, tb, sectionOptions]);
+  }, [tpl, tb, sectionOptions, kind]);
 
   interface AddLine { account: string; desc: string | null; type: string; ytd: number; sectionId?: number; suggested?: number; from?: MapEntry[] }
   const [addLines, setAddLines] = useState<AddLine[] | null>(null);
@@ -429,7 +599,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
   // Move mapped accounts to another section (also fixes accounts that sit in two sections)
   const openMove = (accounts: string[]) => {
     if (!result) return;
-    const lines = [...result.tbRev, ...result.tbExp].filter(l => accounts.includes(l.account) && l.entries.length)
+    const lines = result.tbAll.filter(l => accounts.includes(l.account) && l.entries.length)
       .map(l => ({ account: l.account, desc: l.desc, type: l.type, ytd: l.ytd, from: l.entries,
         sectionId: undefined as number | undefined, suggested: undefined as number | undefined }));
     if (!lines.length) { message.info('Nothing to move'); return; }
@@ -440,7 +610,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
   const openBulk = (accounts: string[]) => {
     if (!result) return;
     const set = new Set(accounts);
-    const mapped = [...result.tbRev, ...result.tbExp].filter(l => set.has(l.account) && l.entries.length)
+    const mapped = result.tbAll.filter(l => set.has(l.account) && l.entries.length)
       .map(l => ({ account: l.account, desc: l.desc, type: l.type, ytd: l.ytd, from: l.entries,
         sectionId: undefined as number | undefined, suggested: undefined as number | undefined }));
     const missing = result.unmapped.filter(u => set.has(u.account)).map(u => {
@@ -457,7 +627,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [pasteSection, setPasteSection] = useState<number | undefined>();
-  const tbLines = useMemo(() => (result ? [...result.tbRev, ...result.tbExp] : []), [result]);
+  const tbLines = useMemo(() => (result ? result.tbAll : []), [result]);
   const sectionLookup = useMemo(() => {
     const m = new Map<string, number>();
     const norm = (x: string) => x.toLowerCase().replace(/\s+/g, ' ').replace(/\s*[›>\/]\s*/g, '>').trim();
@@ -581,14 +751,15 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     // default position: after the last group (before the closing totals)
     const lastGroup = groupsSorted[groupsSorted.length - 1];
     const after = lastGroup ? `G:${lastGroup.group_code}` : statementItems[statementItems.length - 1]?.key;
-    newGrpForm.setFieldsValue({ group_name: '', group_type: 'EXPENSE', after, first_section: '', totals: suggestTotals(after),
+    newGrpForm.setFieldsValue({ group_name: '', group_type: kind === 'BS' ? 'ASSET' : kind === 'CF' ? 'OPERATING' : 'EXPENSE', after, first_section: '', totals: suggestTotals(after),
       assign_all: (addLines?.length || 0) > 0 });
     setNewGrpOpen(true);
   };
   const createGroup = async () => {
     const v = await newGrpForm.validateFields();
     const code = nextGroupCode();
-    const sign = ['REVENUE', 'OTHER_INCOME', 'COMPREHENSIVE'].includes(v.group_type) ? 1 : -1;
+    const sign = kind === 'PL' ? (['REVENUE', 'OTHER_INCOME', 'COMPREHENSIVE'].includes(v.group_type) ? 1 : -1)
+      : kind === 'BS' ? (v.group_type === 'ASSET' ? 1 : -1) : 1;
     setCreating(true);
     const g = await addGroup(tpl.template_id, code, v.group_name, v.group_name, v.group_type, orderAfter(v.after), sign);
     if (!g.success || !g.data?.group_id) { setCreating(false); message.error(g.error || 'Group could not be created'); return; }
@@ -679,11 +850,6 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     return q ? drillRow.drill.filter(l => `${l.account} ${l.desc || ''} ${l.section}`.toLowerCase().includes(q)) : drillRow.drill;
   }, [drillRow, drillSearch]);
 
-  const pct = (v: number | undefined, base: number) => {
-    if (v === undefined || !base) return '';
-    const p1 = Math.round((v / Math.abs(base)) * 1000) / 10;
-    return `${(p1 === 0 ? 0 : p1).toFixed(1)}%`;
-  };
   const rowsForView = useMemo(() => {
     if (!result) return [];
     if (view === 'detail') return result.rows;
@@ -699,6 +865,8 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
       render: (_: unknown, r) => {
         if (r.kind === 'error') return <Space><Text strong>{r.label}</Text><Tag color="error" icon={<WarningOutlined />}>{r.error}</Tag></Space>;
         if (r.kind === 'total') return <Text strong style={{ fontSize: 14 }}>{r.label}</Text>;
+        if (r.kind === 'check') return <Space><Text type="secondary">{r.label}</Text>{r.ok ? <Tag color="success">Balanced</Tag> : <Tag color="error" icon={<WarningOutlined />}>Out of balance</Tag>}</Space>;
+        if (r.kind === 'info') return <Text>{r.label}</Text>;
         const drillIcon = r.drill ? <ZoomInOutlined className="pl-drill-icon" style={{ marginLeft: 6, color: '#1677ff', fontSize: 12 }} /> : null;
         if (r.kind === 'group') return <a onClick={() => openDrill(r)} style={{ color: 'inherit' }}><Text strong>{r.label} <Text type="secondary" style={{ fontSize: 11 }}>({r.code})</Text></Text>{drillIcon}</a>;
         if (r.kind === 'section') return <a onClick={() => openDrill(r)} style={{ color: 'inherit' }}><Text>{r.label}</Text>{drillIcon}</a>;
@@ -706,52 +874,51 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
       },
     },
     {
-      title: ran ? `Period ${ran.period}` : 'Period', dataIndex: 'ptd', key: 'ptd', align: 'right', width: 170,
+      title: ran ? cfg.col1(ran.period) : 'Period', dataIndex: 'ptd', key: 'ptd', align: 'right', width: 170,
       onCell: r => ({ onClick: () => openDrill(r), style: r.drill ? { cursor: 'pointer' } : undefined }),
       render: (v: number | undefined, r) => <Text strong={r.kind === 'total' || r.kind === 'group'}
         style={{ fontVariantNumeric: 'tabular-nums', color: (v ?? 0) < 0 ? RED : undefined }}>{fmt(v)}</Text>,
     },
     {
-      title: 'Year to date', dataIndex: 'ytd', key: 'ytd', align: 'right', width: 170,
+      title: cfg.col2, dataIndex: 'ytd', key: 'ytd', align: 'right', width: 170,
       onCell: r => ({ onClick: () => openDrill(r), style: r.drill ? { cursor: 'pointer' } : undefined }),
       render: (v: number | undefined, r) => <Text strong={r.kind === 'total' || r.kind === 'group'}
         style={{ fontVariantNumeric: 'tabular-nums', color: (v ?? 0) < 0 ? RED : undefined }}>{fmt(v)}</Text>,
     },
-    {
-      title: <Tooltip title="Year-to-date amount as % of year-to-date revenue (REVENUE groups)">% of revenue</Tooltip>,
-      key: 'pct', align: 'right', width: 110,
-      render: (_: unknown, r) => <Text type="secondary" style={{ fontSize: 12 }}>{r.kind === 'account' ? '' : pct(r.ytd, result?.revenueYtd || 0)}</Text>,
-    },
+    ...(cfg.pctTitle ? [{
+      title: <Tooltip title={kind === 'BS' ? 'Period-end amount as % of total assets' : 'Year-to-date amount as % of year-to-date revenue (REVENUE groups)'}>{cfg.pctTitle}</Tooltip>,
+      key: 'pct', align: 'right' as const, width: 110,
+      render: (_: unknown, r: PLRow) => <Text type="secondary" style={{ fontSize: 12 }}>{pctOf(r)}</Text>,
+    }] : []),
   ];
 
   const exportExcel = () => {
     if (!result || !ran) return;
     const out: (string | number)[][] = [
       [tpl.template_name], [`Ledger: ${ran.ledger}`, `Period: ${ran.period}`, ran.company ? `Company: ${ran.company}` : ''], [],
-      ['Line', 'Code', `Period ${ran.period}`, 'Year to date', '% of revenue'],
+      ['Line', 'Code', cfg.col1(ran.period), cfg.col2, ...(cfg.pctTitle ? [cfg.pctTitle] : [])],
     ];
     const walk = (rows: PLRow[], depth: number) => {
       for (const r of rows) {
         out.push([`${'   '.repeat(depth)}${r.label}${r.error ? ` — ${r.error}` : ''}`, r.code || '',
-          r.ptd === undefined ? '' : r2(r.ptd), r.ytd === undefined ? '' : r2(r.ytd),
-          r.kind === 'account' || r.ytd === undefined || !result.revenueYtd ? '' : r2((r.ytd / Math.abs(result.revenueYtd)) * 100)]);
+          r.ptd === undefined ? '' : r2(r.ptd), r.ytd === undefined ? '' : r2(r.ytd), ...(cfg.pctTitle ? [pctOf(r)] : [])]);
         if (r.children) walk(r.children, depth + 1);
       }
     };
     walk(result.rows, 0);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(out), 'Profit and Loss');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([...result.tbRev, ...result.tbExp].map(l => ({
-      Type: l.type === 'R' ? 'Revenue' : 'Expense', Account: l.account, Description: l.desc,
-      [`Period ${ran.period}`]: r2(l.ptd), 'Year to date': r2(l.ytd),
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(out), cfg.short.replace('&', 'and'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(result.tbAll.map(l => ({
+      Type: cfg.tbTypes.find(([t]) => t === l.type)?.[1] || l.type, Account: l.account, Description: l.desc,
+      [cfg.col1(ran.period)]: r2(l.ptd), [cfg.col2]: r2(l.ytd),
       'In template': l.sections.length ? l.sections.join(', ') : 'MISSING',
     }))), 'As per TB');
     if (result.unmapped.length) {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(result.unmapped.map(u => ({
-        Account: u.account, Description: u.desc, Type: u.type, [`Period ${ran.period}`]: r2(u.ptd), 'Year to date': r2(u.ytd),
+        Account: u.account, Description: u.desc, Type: u.type, [cfg.col1(ran.period)]: r2(u.ptd), [cfg.col2]: r2(u.ytd),
       }))), 'Missing from template');
     }
-    XLSX.writeFile(wb, `PL_${tpl.template_code}_${ran.period}${ran.company ? `_${ran.company}` : ''}.xlsx`);
+    XLSX.writeFile(wb, `${cfg.file}_${tpl.template_code}_${ran.period}${ran.company ? `_${ran.company}` : ''}.xlsx`);
   };
 
   // ── PDF: statement layout (A4 portrait) ───────────────────────────────────
@@ -770,7 +937,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
       const t = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       return v < 0 ? `(${t})` : t;
     };
-    const pdfPct = (v: number | undefined) => (v === undefined || !result.revenueYtd ? '' : `${((v / Math.abs(result.revenueYtd)) * 100).toFixed(1)}%`);
+    const pdfPct = (r: PLRow) => pctOf(r);
     const entity = ran.company
       ? `${companyNames.get(ran.company) || `Company ${ran.company}`}${companyNames.get(ran.company) ? ` (${ran.company})` : ''}`
       : `${ran.ledger} - all companies`;
@@ -779,9 +946,9 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     doc.setFillColor(...ACCENT); doc.rect(0, 0, W, 3, 'F');
     doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
     doc.text(entity, W / 2, 16, { align: 'center' });
-    doc.setFontSize(12); doc.text('Statement of Profit or Loss', W / 2, 23, { align: 'center' });
+    doc.setFontSize(12); doc.text(cfg.title, W / 2, 23, { align: 'center' });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(...MUTED);
-    doc.text(`For the period ${ran.period} and the year to date`, W / 2, 29, { align: 'center' });
+    doc.text(cfg.pdfSub(ran.period), W / 2, 29, { align: 'center' });
     doc.text(`${tpl.template_name}  |  Ledger: ${ran.ledger}${ran.currency ? `  |  Amounts in ${ran.currency}` : ''}`, W / 2, 34, { align: 'center' });
     doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(M, 38, W - M, 38);
 
@@ -794,23 +961,28 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     for (const r of result.rows) {
       if (r.kind === 'group') {
         const secs = r.children || [];
-        if (!secs.length) { body.push({ kind: 'plain', cells: [r.label, pdfAmt(r.ptd), pdfAmt(r.ytd), pdfPct(r.ytd)] }); body.push({ kind: 'gap', cells: ['', '', '', ''] }); continue; }
+        if (!secs.length) { body.push({ kind: 'plain', cells: [r.label, pdfAmt(r.ptd), pdfAmt(r.ytd), pdfPct(r)] }); body.push({ kind: 'gap', cells: ['', '', '', ''] }); continue; }
         body.push({ kind: 'heading', cells: [r.label, '', '', ''] });
         for (const sct of secs) {
-          body.push({ kind: 'line', cells: [`    ${sct.label}`, pdfAmt(sct.ptd), pdfAmt(sct.ytd), pdfPct(sct.ytd)] });
+          body.push({ kind: 'line', cells: [`    ${sct.label}`, pdfAmt(sct.ptd), pdfAmt(sct.ytd), pdfPct(sct)] });
           if (withAccounts) for (const a of sct.children || []) {
             body.push({ kind: 'account', cells: [`         ${a.label}`, pdfAmt(a.ptd), pdfAmt(a.ytd), ''] });
           }
         }
         if (!ownTotal.has(String(r.code || '').toUpperCase())) {
-          body.push({ kind: 'subtotal', cells: [`Total ${r.label.toLowerCase()}`, pdfAmt(r.ptd), pdfAmt(r.ytd), pdfPct(r.ytd)] });
+          body.push({ kind: 'subtotal', cells: [`Total ${r.label.toLowerCase()}`, pdfAmt(r.ptd), pdfAmt(r.ytd), pdfPct(r)] });
           body.push({ kind: 'gap', cells: ['', '', '', ''] });
         }
       } else if (r.kind === 'total') {
-        body.push({ kind: r.style === 'DOUBLE_LINE' ? 'double' : 'total', cells: [r.label, pdfAmt(r.ptd), pdfAmt(r.ytd), pdfPct(r.ytd)] });
+        body.push({ kind: r.style === 'DOUBLE_LINE' ? 'double' : 'total', cells: [r.label, pdfAmt(r.ptd), pdfAmt(r.ytd), pdfPct(r)] });
         body.push({ kind: 'gap', cells: ['', '', '', ''] });
       } else if (r.kind === 'error') {
         body.push({ kind: 'error', cells: [`${r.label}: ${r.error}`, '', '', ''] });
+      } else if (r.kind === 'info') {
+        body.push({ kind: 'line', cells: [r.label, pdfAmt(r.ptd), pdfAmt(r.ytd), ''] });
+      } else if (r.kind === 'check') {
+        body.push({ kind: 'gap', cells: ['', '', '', ''] });
+        body.push({ kind: r.ok ? 'account' : 'error', cells: [`${r.label}${r.ok ? ' — balanced' : ' — OUT OF BALANCE'}`, pdfAmt(r.ptd), pdfAmt(r.ytd), ''] });
       }
     }
     while (body.length && body[body.length - 1].kind === 'gap') body.pop();
@@ -818,7 +990,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     autoTable(doc, {
       startY: 43,
       margin: { left: M, right: M, top: 20, bottom: 18 },
-      head: [['', `Period\n${ran.period}`, 'Year to\ndate', '% of\nrevenue']],
+      head: [['', cfg.col1(ran.period).replace(' ', '\n'), cfg.col2.replace(' ', '\n'), cfg.pctTitle ? cfg.pctTitle.replace(/ (?=\S+$)/, '\n') : '']],
       body: body.map(b => b.cells),
       theme: 'plain',
       styles: { font: 'helvetica', fontSize: 9.5, textColor: INK, cellPadding: { top: 1.6, bottom: 1.6, left: 1.5, right: 1.5 }, overflow: 'linebreak' },
@@ -865,9 +1037,9 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     // notes under the statement
     let y = (doc as any).lastAutoTable.finalY + 8;
     const notes: string[] = [];
-    notes.push('Amounts are credit less debit: income is shown positive, expenses in brackets.');
+    notes.push(cfg.signNote);
     if (result.unmapped.length) {
-      notes.push(`${result.unmapped.length} income/expense account(s) with a year-to-date balance of ${pdfAmt(result.unmappedYtd)} are not mapped to this template and are excluded.`);
+      notes.push(`${result.unmapped.length} ${cfg.acctWord} account(s) (${pdfAmt(kind === 'BS' ? result.unmappedPtd : result.unmappedYtd)}) are not mapped to this template and are excluded.`);
     }
     if (result.duplicates.length) notes.push(`${result.duplicates.length} account(s) are mapped to more than one section and are counted in each.`);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...MUTED);
@@ -886,10 +1058,10 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
       doc.setPage(i);
       doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.2); doc.line(M, H - 12, W - M, H - 12);
       doc.setFontSize(7.5); doc.setTextColor(...MUTED);
-      doc.text(`${entity}  |  Statement of Profit or Loss  |  ${ran.period}`, M, H - 7.5);
+      doc.text(`${entity}  |  ${cfg.title}  |  ${ran.period}`, M, H - 7.5);
       doc.text(`Generated ${stamp} by ${brand.name}  |  Page ${i} of ${pages}`, W - M, H - 7.5, { align: 'right' });
     }
-    return { doc, name: `PL_${tpl.template_code}_${ran.period}${ran.company ? `_${ran.company}` : ''}.pdf` };
+    return { doc, name: `${cfg.file}_${tpl.template_code}_${ran.period}${ran.company ? `_${ran.company}` : ''}.pdf` };
   };
   const exportPdf = () => { const b = buildPdf(); if (b) b.doc.save(b.name); };
 
@@ -913,9 +1085,9 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
     if (!drillRow?.drill || !ran) return;
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(drillLines.map(l => ({
-      Account: l.account, Description: l.desc, Section: l.section, [`Period ${ran.period}`]: r2(l.ptd), 'Year to date': r2(l.ytd),
+      Account: l.account, Description: l.desc, Section: l.section, [cfg.col1(ran.period)]: r2(l.ptd), [cfg.col2]: r2(l.ytd),
     }))), 'Accounts');
-    XLSX.writeFile(wb, `PL_${tpl.template_code}_${drillRow.code || 'drill'}_${ran.period}.xlsx`);
+    XLSX.writeFile(wb, `${cfg.file}_${tpl.template_code}_${drillRow.code || 'drill'}_${ran.period}.xlsx`);
   };
 
   return (
@@ -938,7 +1110,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
           <Form.Item>
             <Space>
               <Button type="primary" htmlType="submit" icon={<PlayCircleOutlined />} loading={running}
-                style={{ background: RED, borderColor: RED }}>Run P&amp;L</Button>
+                style={{ background: RED, borderColor: RED }}>Run {cfg.short}</Button>
               <Button icon={<DownloadOutlined />} disabled={!result} onClick={exportExcel}>Excel</Button>
               <Tooltip title="Statement layout, A4. Uses the Sections / Accounts view shown below.">
                 <Button icon={<FilePdfOutlined />} disabled={!result} onClick={exportPdf}>PDF</Button>
@@ -951,13 +1123,14 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
         </Form>
       </Card>
 
-      {error && <Alert type="error" showIcon message="Could not run the P&L" description={error} style={{ marginBottom: 12 }} />}
+      {error && <Alert type="error" showIcon message={`Could not run the ${cfg.short}`} description={error} style={{ marginBottom: 12 }} />}
       {!result && !error && (
         <Card><Empty description={`Choose a ledger and period, then Run — the "${tpl.template_name}" structure is applied to the GL balances`} /></Card>
       )}
 
       {result && ran && (
         <>
+          {kind === 'PL' ? (
           <Row gutter={12} style={{ marginBottom: 12 }}>
             <Col flex="1"><Card size="small"><Statistic title={`Revenue (${ran.period})`} value={result.revenuePtd} precision={2} /></Card></Col>
             <Col flex="1">
@@ -974,6 +1147,19 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
               </Card>
             </Col>
           </Row>
+          ) : (
+          <Row gutter={12} style={{ marginBottom: 12 }}>
+            {result.kpis.map(k => (
+              <Col flex="1" key={k.title}>
+                <Card size="small" style={k.ok === undefined ? undefined : { background: k.ok ? '#F0FAF4' : '#FFF6F4', borderColor: k.ok ? '#B7E1C6' : '#E8C4BD' }}>
+                  <Statistic title={k.title} value={k.value} precision={2}
+                    valueStyle={k.ok === undefined ? undefined : { color: k.ok ? '#1D7B4D' : RED }} />
+                  {k.note && <Text type="secondary" style={{ fontSize: 11, color: k.ok === false ? RED : undefined }}>{k.note}</Text>}
+                </Card>
+              </Col>
+            ))}
+          </Row>
+          )}
 
           <Tabs type="card" activeKey={plTab} onChange={k => setPlTab(k as 'template' | 'tb')} style={{ marginBottom: 0 }}
             items={[
@@ -983,7 +1169,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                   <Space size={8}>
                     <CalculatorOutlined />{tpl.template_name}
                     {(result.unmapped.length > 0 || result.duplicates.length > 0) && (
-                      <Tooltip title={`${result.unmapped.length} TB income/expense account(s) are missing from this template${result.duplicates.length ? `, ${result.duplicates.length} are in more than one section` : ''} — click to see`}>
+                      <Tooltip title={`${result.unmapped.length} TB ${cfg.acctWord} account(s) are missing from this template${result.duplicates.length ? `, ${result.duplicates.length} are in more than one section` : ''} — click to see`}>
                         <Badge count={result.unmapped.length + result.duplicates.length} size="small" overflowCount={999} offset={[4, -2]}>
                           <WarningOutlined style={{ color: '#D48806', fontSize: 15, cursor: 'pointer' }}
                             onClick={e => { e.stopPropagation(); setMissingOpen(true); }} />
@@ -1012,9 +1198,9 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
             <Card size="small" style={{ borderRadius: '0 8px 8px 8px' }}
               title={(
                 <Space direction="vertical" size={0}>
-                  <Title level={5} style={{ margin: 0 }}><FileSearchOutlined style={{ color: RED }} /> Profit &amp; Loss as per Trial Balance</Title>
+                  <Title level={5} style={{ margin: 0 }}><FileSearchOutlined style={{ color: RED }} /> {cfg.tbTitle}</Title>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    Every income (type R) and expense (type E) account in the trial balance · {ran.ledger} · Period {ran.period}{ran.company ? ` · Company ${ran.company}` : ' · All companies'}
+                    {cfg.tbIntro} · {ran.ledger} · Period {ran.period}{ran.company ? ` · Company ${ran.company}` : ' · All companies'}
                   </Text>
                 </Space>
               )}
@@ -1034,12 +1220,17 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                 </Space>
               )}>
               <Row gutter={12} style={{ marginBottom: 12 }}>
-                <Col flex="1"><Card size="small"><Statistic title="Net profit as per TB (YTD)" value={result.tbNetYtd} precision={2}
-                  valueStyle={{ color: result.tbNetYtd < 0 ? RED : '#1D7B4D' }} /></Card></Col>
-                <Col flex="1"><Card size="small"><Statistic title={`${result.bottom?.label || 'Result'} as per template (YTD)`} value={result.bottom?.ytd ?? 0} precision={2} /></Card></Col>
+                <Col flex="1"><Card size="small"><Statistic title={kind === 'PL' ? `${cfg.tbNetLabel} (YTD)` : cfg.tbNetLabel}
+                  value={kind === 'BS' ? result.tbNetPtd : result.tbNetYtd} precision={2}
+                  valueStyle={{ color: kind === 'PL' ? (result.tbNetYtd < 0 ? RED : '#1D7B4D') : (Math.abs(kind === 'BS' ? result.tbNetPtd : result.tbNetYtd) < 0.5 ? '#1D7B4D' : RED) }} /></Card></Col>
+                {kind === 'PL'
+                  ? <Col flex="1"><Card size="small"><Statistic title={`${result.bottom?.label || 'Result'} as per template (YTD)`} value={result.bottom?.ytd ?? 0} precision={2} /></Card></Col>
+                  : <Col flex="1"><Card size="small"><Statistic title={kind === 'BS' ? `Profit / (loss) for the year (to ${ran.period})` : `Profit / (loss) (${ran.period})`}
+                      value={kind === 'BS' ? result.profitYtd : result.profitPtd} precision={2} /></Card></Col>}
                 <Col flex="1">
                   <Card size="small" hoverable onClick={() => setTbFilter('missing')} style={{ background: result.unmapped.length ? '#FFFBE6' : undefined }}>
-                    <Statistic title={`Missing from template: ${result.unmapped.length} account(s) (YTD)`} value={result.unmappedYtd} precision={2}
+                    <Statistic title={`Missing from template: ${result.unmapped.length} account(s) (${kind === 'BS' ? ran.period : 'YTD'})`}
+                      value={kind === 'BS' ? result.unmappedPtd : result.unmappedYtd} precision={2}
                       valueStyle={{ color: result.unmapped.length ? '#D48806' : '#1D7B4D' }} />
                   </Card>
                 </Col>
@@ -1049,21 +1240,21 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                 {tbSel.length ? (
                   <>
                     <Text strong>{tbSel.length} account(s) selected</Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>YTD {fmt(r2([...result.tbRev, ...result.tbExp].filter(l => tbSel.includes(l.account)).reduce((t, l) => t + l.ytd, 0)))}</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>YTD {fmt(r2(result.tbAll.filter(l => tbSel.includes(l.account)).reduce((t, l) => t + l.ytd, 0)))}</Text>
                     <Button size="small" type="primary" icon={<SwapOutlined />} style={{ background: RED, borderColor: RED }} onClick={() => openBulk(tbSel)}>
                       Move / add to section…
                     </Button>
                     <Button size="small" onClick={() => setTbSel([])}>Clear</Button>
                   </>
                 ) : (
-                  <Text type="secondary" style={{ fontSize: 12 }}>Tick accounts (or a whole Revenue / Expenses block) to move or add several at once — to an existing section or a new one.</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>Tick accounts (or a whole {kind === 'PL' ? 'Revenue / Expenses' : 'Assets / Liabilities / Equity'} block) to move or add several at once — to an existing section or a new one.</Text>
                 )}
               </div>
               <Table<TbPlRow> size="small" rowKey="key" dataSource={tbRows} pagination={false}
                 expandable={{ defaultExpandAllRows: true, indentSize: 18 }}
                 rowSelection={{
                   selectedRowKeys: tbSel.map(a => `tb-${a}`),
-                  onChange: keys => setTbSel(keys.map(String).filter(k => k.startsWith('tb-') && !['tb-R', 'tb-E', 'tb-net'].includes(k)).map(k => k.slice(3))),
+                  onChange: keys => setTbSel(keys.map(String).filter(k => k.startsWith('tb-') && !['tb-net', ...(result?.tbGroups || []).map(g => `tb-${g.type}`)].includes(k)).map(k => k.slice(3))),
                   checkStrictly: false,
                   getCheckboxProps: r => ({ disabled: r.kind === 'total' || (r.kind === 'group' && !r.children?.length) }),
                 }}
@@ -1087,12 +1278,12 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                           </Tooltip>
                         </Space>
                       )) },
-                  { title: `Period ${ran.period}`, dataIndex: 'ptd', align: 'right', width: 160,
+                  { title: cfg.col1(ran.period), dataIndex: 'ptd', align: 'right', width: 160,
                     render: (v: number, r) => <Text strong={r.kind !== 'account'} style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
-                  { title: 'Year to date', dataIndex: 'ytd', align: 'right', width: 160,
+                  { title: cfg.col2, dataIndex: 'ytd', align: 'right', width: 160,
                     render: (v: number, r) => <Text strong={r.kind !== 'account'} style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
-                  { title: '% of revenue', key: 'pct', align: 'right', width: 100,
-                    render: (_: unknown, r) => <Text type="secondary" style={{ fontSize: 12 }}>{pct(r.ytd, tbRevYtd)}</Text> },
+                  ...(kind === 'PL' ? [{ title: '% of revenue', key: 'pct', align: 'right' as const, width: 100,
+                    render: (_: unknown, r: TbPlRow) => <Text type="secondary" style={{ fontSize: 12 }}>{pct(r.ytd, tbRevYtd)}</Text> }] : []),
                 ]} />
               <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
                 Highlighted accounts are in the trial balance but not in any section of “{tpl.template_name}” — add them on the template with <b>Add Account</b>.
@@ -1105,7 +1296,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
               <Space direction="vertical" size={0}>
                 <Title level={5} style={{ margin: 0 }}><CalculatorOutlined style={{ color: RED }} /> {tpl.template_name}</Title>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  {ran.ledger} · Period {ran.period}{ran.company ? ` · Company ${ran.company}${companyNames.get(ran.company) ? ` - ${companyNames.get(ran.company)}` : ''}` : ' · All companies'} · Credit − Debit (expenses in brackets)
+                  {ran.ledger} · Period {ran.period}{ran.company ? ` · Company ${ran.company}${companyNames.get(ran.company) ? ` - ${companyNames.get(ran.company)}` : ''}` : ' · All companies'} · {cfg.subNote}
                 </Text>
               </Space>
             )}
@@ -1124,7 +1315,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
               <Space direction="vertical" size={0}>
                 <span><WarningOutlined style={{ color: '#D48806' }} /> Accounts missing from “{tpl.template_name}”</span>
                 <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
-                  In the trial balance (type R / E, with a balance) but in no section of the template — not included in the statement
+                  In the trial balance ({cfg.tbTypes.map(([t]) => t).join(' / ')}, with a balance) but in no section of the template — not included in the statement
                 </Text>
               </Space>
             )}
@@ -1141,10 +1332,10 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
               columns={[
                 { title: 'Account', dataIndex: 'account', width: 110 },
                 { title: 'Description', dataIndex: 'desc', ellipsis: true },
-                { title: 'Type', dataIndex: 'type', width: 90, render: (t: string) => <Tag color={t === 'R' ? 'green' : 'volcano'}>{t === 'R' ? 'Revenue' : 'Expense'}</Tag> },
-                { title: `Period ${ran.period}`, dataIndex: 'ptd', align: 'right', width: 150,
+                { title: 'Type', dataIndex: 'type', width: 90, render: (t: string) => <TypeTag t={t} /> },
+                { title: cfg.col1(ran.period), dataIndex: 'ptd', align: 'right', width: 150,
                   render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
-                { title: 'Year to date', dataIndex: 'ytd', align: 'right', width: 150,
+                { title: cfg.col2, dataIndex: 'ytd', align: 'right', width: 150,
                   render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
               ]}
               summary={() => (
@@ -1286,8 +1477,8 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                   columns={[
                     { title: 'Account', dataIndex: 'account', width: 100 },
                     { title: 'Description', dataIndex: 'desc', ellipsis: { showTitle: true } },
-                    { title: 'Type', dataIndex: 'type', width: 90, render: (t: string) => (t ? <Tag color={t === 'R' ? 'green' : 'volcano'}>{t === 'R' ? 'Revenue' : 'Expense'}</Tag> : <Text type="secondary">—</Text>) },
-                    { title: 'Year to date', dataIndex: 'ytd', width: 140, align: 'right',
+                    { title: 'Type', dataIndex: 'type', width: 90, render: (t: string) => (t ? <TypeTag t={t} /> : <Text type="secondary">—</Text>) },
+                    { title: cfg.col2, dataIndex: 'ytd', width: 140, align: 'right',
                       render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
                     ...(addMode === 'move' ? [{ title: 'Currently in', key: 'from', width: 260, render: (_: unknown, l: AddLine) => (
                       <Space direction="vertical" size={0}>
@@ -1348,7 +1539,7 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                 </Col>
                 <Col span={10}>
                   <Form.Item name="group_type" label="Type" rules={[{ required: true }]}>
-                    <Select options={GROUP_TYPES.filter(t => t.value !== 'CALCULATED')} />
+                    <Select options={GROUP_TYPES_BY_KIND[kind].filter(t => t.value !== 'CALCULATED')} />
                   </Form.Item>
                 </Col>
               </Row>
@@ -1415,9 +1606,9 @@ export default function ProfitLossRun({ structure, onTemplateChanged }: {
                 ...(drillRow?.kind === 'group' ? [{ title: 'Section', dataIndex: 'section', width: 190, ellipsis: true,
                   filters: [...new Set((drillRow.drill || []).map(l => l.section))].map(v => ({ text: v, value: v })),
                   onFilter: (v: any, l: DrillLine) => l.section === v }] : []),
-                { title: `Period ${ran.period}`, dataIndex: 'ptd', align: 'right' as const, width: 150, sorter: (a, b) => a.ptd - b.ptd,
+                { title: cfg.col1(ran.period), dataIndex: 'ptd', align: 'right' as const, width: 150, sorter: (a, b) => a.ptd - b.ptd,
                   render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
-                { title: 'Year to date', dataIndex: 'ytd', align: 'right' as const, width: 150, sorter: (a, b) => a.ytd - b.ytd,
+                { title: cfg.col2, dataIndex: 'ytd', align: 'right' as const, width: 150, sorter: (a, b) => a.ytd - b.ytd,
                   render: (v: number) => <Text style={{ fontVariantNumeric: 'tabular-nums', color: v < 0 ? RED : undefined }}>{fmt(v)}</Text> },
               ]}
               summary={rows => {

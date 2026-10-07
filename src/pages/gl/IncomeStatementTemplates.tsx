@@ -57,6 +57,8 @@ import * as plService from '../../services/pl-templates.service';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
+const TYPE_COLOR = { PL: 'blue', BS: 'purple', CF: 'cyan' } as const;
+const typeLabel = (t?: string) => plService.TEMPLATE_TYPES.find(x => x.value === t)?.label || t || '';
 const { TextArea } = Input;
 
 // Oracle Redwood Color Palette
@@ -83,6 +85,13 @@ const GROUP_TYPE_COLORS: Record<string, string> = {
   TAX: '#722ed1',
   COMPREHENSIVE: '#13c2c2',
   CALCULATED: '#8c8c8c',
+  ASSET: '#1677ff',
+  LIABILITY: '#722ed1',
+  EQUITY: '#d48806',
+  OPERATING: '#389e0d',
+  INVESTING: '#0958d9',
+  FINANCING: '#c41d7f',
+  CASH: '#08979c',
 };
 
 interface TemplateTab {
@@ -562,7 +571,7 @@ const IncomeStatementTemplates: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '4px 0' }}>
             <Space>
               <Tag color={GROUP_TYPE_COLORS[group.group_type]} style={{ margin: 0 }}>
-                {group.group_type}
+                {plService.groupTypeLabel(group.group_type)}
               </Tag>
               <Text strong style={{ fontSize: 14 }}>{group.group_name}</Text>
               <Text type="secondary" style={{ fontSize: 12 }}>({group.group_code})</Text>
@@ -744,11 +753,11 @@ const IncomeStatementTemplates: React.FC = () => {
         title: 'Type',
         dataIndex: 'template_type',
         key: 'template_type',
-        width: 120,
+        width: 200,
+        filters: (['PL', 'BS', 'CF'] as const).map(k => ({ text: plService.STATEMENT_LABEL[k], value: k })),
+        onFilter: (v: any, r: any) => plService.statementKindOf(r.template_type) === v,
         render: (type: string) => (
-          <Tag color={type === 'STANDARD' ? 'blue' : type === 'CUSTOM' ? 'green' : 'default'}>
-            {type}
-          </Tag>
+          <Tag color={TYPE_COLOR[plService.statementKindOf(type)]}>{typeLabel(type)}</Tag>
         ),
       },
       {
@@ -905,7 +914,7 @@ const IncomeStatementTemplates: React.FC = () => {
               <Space>
                 <Tag color="blue" style={{ fontSize: 14, padding: '4px 12px' }}>{template.template_code}</Tag>
                 <Title level={4} style={{ margin: 0 }}>{template.template_name}</Title>
-                <Tag>{template.template_type}</Tag>
+                <Tag color={TYPE_COLOR[plService.statementKindOf(template.template_type)]}>{typeLabel(template.template_type)}</Tag>
                 {template.is_default === 'Y' && <Tag color="green">Default</Tag>}
               </Space>
               {template.description && (
@@ -921,7 +930,7 @@ const IncomeStatementTemplates: React.FC = () => {
                   icon={<PlayCircleOutlined />}
                   onClick={() => openRunTab(tab.templateId, template.template_name)}
                 >
-                  Run P&amp;L
+                  Run {plService.STATEMENT_LABEL[plService.statementKindOf(template.template_type)]}
                 </Button>
                 <Button
                   icon={<FileExcelOutlined />}
@@ -960,9 +969,11 @@ const IncomeStatementTemplates: React.FC = () => {
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => {
+                const k = plService.statementKindOf(template.template_type);
                 groupForm.setFieldsValue({
                   display_order: ((template.groups || []).length + 1) * 10,
                   sign_convention: 1,
+                  group_type: k === 'BS' ? 'ASSET' : k === 'CF' ? 'OPERATING' : undefined,
                 });
                 setGroupModalVisible(true);
               }}
@@ -1097,7 +1108,7 @@ const IncomeStatementTemplates: React.FC = () => {
         width={700}
       >
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <Title level={4}>Profit and Loss Statement</Title>
+          <Title level={4}>{plService.STATEMENT_LABEL[plService.statementKindOf(template.template_type)]}</Title>
           <Text type="secondary">For the Period Ending December 31, 2024</Text>
         </div>
 
@@ -1484,7 +1495,7 @@ const IncomeStatementTemplates: React.FC = () => {
       label: (
         <span>
           {tab.kind === 'run' ? <PlayCircleOutlined /> : <EditOutlined />}
-          {tab.kind === 'run' ? `P&L: ${tab.label}` : tab.label}
+          {tab.kind === 'run' ? `${({ PL: 'P&L', BS: 'BS', CF: 'CF' } as const)[plService.statementKindOf(tab.template?.template?.template_type)]}: ${tab.label}` : tab.label}
         </span>
       ),
       children: tab.kind === 'run'
@@ -1509,7 +1520,7 @@ const IncomeStatementTemplates: React.FC = () => {
             items={[
               { title: <Link to="/home"><HomeOutlined /> Home</Link> },
               { title: <Link to="/gl">General Ledger</Link> },
-              { title: 'Income Statement Templates' },
+              { title: 'Financial Statements' },
             ]}
           />
         </div>
@@ -1629,7 +1640,7 @@ const IncomeStatementTemplates: React.FC = () => {
                   label="Group Type"
                   rules={[{ required: true, message: 'Select group type' }]}
                 >
-                  <Select options={plService.GROUP_TYPES} placeholder="Select type" />
+                  <Select options={plService.GROUP_TYPES_BY_KIND[plService.statementKindOf(getCurrentTemplateTab()?.template?.template?.template_type)]} placeholder="Select type" />
                 </Form.Item>
               </Col>
             </Row>

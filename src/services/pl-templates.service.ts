@@ -562,10 +562,38 @@ export const GROUP_TYPES = [
   { value: 'CALCULATED', label: 'Calculated' },
 ];
 
+// ── Financial statements: the same template model runs a P&L, a Balance Sheet or a Cash Flow ──
+// The statement is chosen by the template's TEMPLATE_TYPE (BALANCE_SHEET / CASH_FLOW; anything else is a P&L).
+// Group types for BS / CF need database/gl/rr_fs_statements.sql (extends the group-type check constraint).
+export type StatementKind = 'PL' | 'BS' | 'CF';
+export const statementKindOf = (templateType?: string | null): StatementKind =>
+  templateType === 'BALANCE_SHEET' ? 'BS' : templateType === 'CASH_FLOW' ? 'CF' : 'PL';
+export const STATEMENT_LABEL: Record<StatementKind, string> = { PL: 'Income Statement', BS: 'Balance Sheet', CF: 'Cash Flow' };
+export const GROUP_TYPES_BY_KIND: Record<StatementKind, { value: string; label: string }[]> = {
+  PL: GROUP_TYPES,
+  BS: [
+    { value: 'ASSET', label: 'Assets' },
+    { value: 'LIABILITY', label: 'Liabilities' },
+    { value: 'EQUITY', label: 'Equity' },
+    { value: 'CALCULATED', label: 'Calculated' },
+  ],
+  CF: [
+    { value: 'OPERATING', label: 'Operating activities' },
+    { value: 'INVESTING', label: 'Investing activities' },
+    { value: 'FINANCING', label: 'Financing activities' },
+    { value: 'CASH', label: 'Cash and cash equivalents' },
+    { value: 'CALCULATED', label: 'Calculated' },
+  ],
+};
+export const groupTypeLabel = (v: string) =>
+  [...GROUP_TYPES_BY_KIND.PL, ...GROUP_TYPES_BY_KIND.BS, ...GROUP_TYPES_BY_KIND.CF].find(t => t.value === v)?.label || v;
+
 // Template types for dropdown
 export const TEMPLATE_TYPES = [
-  { value: 'STANDARD', label: 'Standard' },
-  { value: 'MANAGEMENT', label: 'Management' },
-  { value: 'REGULATORY', label: 'Regulatory' },
-  { value: 'CUSTOM', label: 'Custom' },
+  { value: 'STANDARD', label: 'Income Statement — Standard' },
+  { value: 'MANAGEMENT', label: 'Income Statement — Management' },
+  { value: 'REGULATORY', label: 'Income Statement — Regulatory' },
+  { value: 'CUSTOM', label: 'Income Statement — Custom' },
+  { value: 'BALANCE_SHEET', label: 'Balance Sheet' },
+  { value: 'CASH_FLOW', label: 'Cash Flow Statement' },
 ];
