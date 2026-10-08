@@ -38,6 +38,8 @@ const REDWOOD = {
   surface:    '#FFFFFF',
 };
 const FA_COLOR = '#CA7700';
+/** Show the "Preview … Depreciation" / "Post Depreciation" run buttons on the Calculate tab. */
+const SHOW_RUN_ACTIONS = false;
 
 const fmt = (v: number | null | undefined) =>
   v == null ? '—' : v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1429,7 +1431,8 @@ const CalculateDeprn: React.FC = () => {
                   </Card>
                 </Col>
 
-                {/* Action buttons */}
+                {/* Action buttons — hidden (set SHOW_RUN_ACTIONS to true to restore) */}
+                {SHOW_RUN_ACTIONS && (
                 <Col xs={24} sm={12} md={10}>
                   <Space wrap>
                     <Button
@@ -1459,6 +1462,7 @@ const CalculateDeprn: React.FC = () => {
                     )}
                   </Space>
                 </Col>
+                )}
               </Row>
 
               {/* Toggle tabs */}
