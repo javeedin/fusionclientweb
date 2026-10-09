@@ -527,6 +527,130 @@ export const moveAccounts = async (
   return { success: false, error: result?.error || `HTTP ${response.status}` };
 };
 
+// ============================================================================
+// Account overlap checks — shared by the template editor and the statement run.
+// A template line is a single natural account (account_code) or a from–to range.
+// ============================================================================
+const trimS = (v?: string | null) => String(v ?? '').trim();
+const isNumeric = (v: string) => /^\d+$/.test(v);
+
+/** True when the template line is a from–to range (both ends set). */
+export const isRangeEntry = (a: PLSectionAccount): boolean => !!(trimS(a.account_from) && trimS(a.account_to));
+
+/** How a template line reads: "4100" or "4000 - 4999". */
+export const entryLabel = (a: PLSectionAccount): string =>
+  isRangeEntry(a) ? `${trimS(a.account_from)} - ${trimS(a.account_to)}` : trimS(a.account_code);
+
+/** Natural account matches a template line: exact code, or from–to range (numeric
+ *  comparison when both ends and the account are numeric, else text comparison). */
+export const accountMatches = (acct: string, a: PLSectionAccount): boolean => {
+  const from = trimS(a.account_from); const to = trimS(a.account_to);
+  if (from && to) {
+    if (isNumeric(acct) && isNumeric(from) && isNumeric(to)) {
+      const n = Number(acct); return n >= Number(from) && n <= Number(to);
+    }
+    return acct >= from && acct <= to;
+  }
+  return !!a.account_code && acct === trimS(a.account_code);
+};
+
+/** Two from–to ranges intersect (same comparison rules as accountMatches). */
+export const rangesOverlap = (a: PLSectionAccount, b: PLSectionAccount): boolean => {
+  if (!isRangeEntry(a) || !isRangeEntry(b)) return false;
+  const af = trimS(a.account_from), at = trimS(a.account_to), bf = trimS(b.account_from), bt = trimS(b.account_to);
+  if ([af, at, bf, bt].every(isNumeric)) return Number(af) <= Number(bt) && Number(bf) <= Number(at);
+  return af <= bt && bf <= at;
+};
+
+/** One template line that picks up an account, and where it sits. */
+export interface AccountUse {
+  groupCode: string; groupName: string;
+  sectionId: number; sectionCode: string; sectionName: string;
+  entry: PLSectionAccount;
+}
+/** An account picked up by more than one template line. */
+export interface DuplicateAccount {
+  account: string; description?: string; uses: AccountUse[];
+  /** number of distinct sections — above 1 the account is counted in each when the statement runs */
+  sectionCount: number;
+}
+/** Two from–to ranges that intersect. */
+export interface RangeOverlap { a: AccountUse; b: AccountUse }
+export interface DuplicateReport {
+  /** account → every template line that picks it up: the single codes in the template, plus the
+   *  GL accounts inside from–to ranges when the chart of accounts is supplied */
+  uses: Map<string, AccountUse[]>;
+  duplicates: DuplicateAccount[];
+  overlaps: RangeOverlap[];
+  /** template lines involved in a duplicate or an overlap (object identity, for flagging the tree) */
+  flagged: Set<PLSectionAccount>;
+}
+export const EMPTY_DUPLICATE_REPORT: DuplicateReport = { uses: new Map(), duplicates: [], overlaps: [], flagged: new Set() };
+
+/** Every account line of the template with its group and section. */
+export const allAccountUses = (template: PLTemplateStructure | null | undefined): AccountUse[] => {
+  const out: AccountUse[] = [];
+  for (const g of template?.template?.groups || []) {
+    for (const s of g.sections || []) {
+      for (const entry of s.accounts || []) {
+        out.push({
+          groupCode: g.group_code, groupName: g.group_label || g.group_name,
+          sectionId: s.section_id, sectionCode: s.section_code, sectionName: s.section_label || s.section_name,
+          entry,
+        });
+      }
+    }
+  }
+  return out;
+};
+
+/** Existing lines a new line would clash with: for a single code, the lines that pick it up;
+ *  for a range, the single codes inside it and the ranges that intersect it. */
+export const conflictsForEntry = (uses: AccountUse[], entry: PLSectionAccount): AccountUse[] => {
+  if (isRangeEntry(entry)) {
+    return uses.filter(u => (isRangeEntry(u.entry) ? rangesOverlap(u.entry, entry) : accountMatches(trimS(u.entry.account_code), entry)));
+  }
+  const code = trimS(entry.account_code);
+  return code ? uses.filter(u => accountMatches(code, u.entry)) : [];
+};
+
+/** Find accounts that more than one template line picks up. With the chart of accounts, every
+ *  GL account is checked against the ranges too; without it, ranges are checked by overlap only. */
+export const findTemplateDuplicates = (
+  template: PLTemplateStructure | null | undefined,
+  glAccounts: GLAccount[] = [],
+): DuplicateReport => {
+  const all = allAccountUses(template);
+  if (!all.length) return EMPTY_DUPLICATE_REPORT;
+  const ranges = all.filter(u => isRangeEntry(u.entry));
+  const uses = new Map<string, AccountUse[]>();
+  const add = (acct: string, u: AccountUse) => uses.set(acct, [...(uses.get(acct) || []), u]);
+  for (const u of all) {
+    if (isRangeEntry(u.entry)) continue;
+    const code = trimS(u.entry.account_code);
+    if (code) add(code, u);
+  }
+  if (ranges.length) {
+    const codes = new Set<string>([...uses.keys(), ...glAccounts.map(a => trimS(a.account)).filter(Boolean)]);
+    for (const code of codes) for (const r of ranges) if (accountMatches(code, r.entry)) add(code, r);
+  }
+  const desc = new Map(glAccounts.map(a => [trimS(a.account), a.description] as const));
+  const duplicates: DuplicateAccount[] = [...uses.entries()]
+    .filter(([, us]) => us.length > 1)
+    .map(([account, us]) => ({ account, description: desc.get(account), uses: us, sectionCount: new Set(us.map(u => u.sectionId)).size }))
+    .sort((a, b) => a.account.localeCompare(b.account, undefined, { numeric: true }));
+  const overlaps: RangeOverlap[] = [];
+  for (let i = 0; i < ranges.length; i++) {
+    for (let j = i + 1; j < ranges.length; j++) {
+      if (rangesOverlap(ranges[i].entry, ranges[j].entry)) overlaps.push({ a: ranges[i], b: ranges[j] });
+    }
+  }
+  const flagged = new Set<PLSectionAccount>();
+  for (const d of duplicates) for (const u of d.uses) flagged.add(u.entry);
+  for (const o of overlaps) { flagged.add(o.a.entry); flagged.add(o.b.entry); }
+  return { uses, duplicates, overlaps, flagged };
+};
+
 // Delete total
 export const deleteTotal = async (totalId: number): Promise<ApiResponse<void>> => plDelete('total', totalId);
 

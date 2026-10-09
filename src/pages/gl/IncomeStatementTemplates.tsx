@@ -23,6 +23,8 @@ import {
   Col,
   Tabs,
   Tree,
+  Alert,
+  Checkbox,
 } from 'antd';
 import type { DataNode } from 'antd/es/tree';
 import ProfitLossRun from './ProfitLossRun';
@@ -51,6 +53,7 @@ import {
   PlayCircleOutlined,
   CaretDownOutlined,
   CaretRightOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import * as plService from '../../services/pl-templates.service';
@@ -141,6 +144,10 @@ const IncomeStatementTemplates: React.FC = () => {
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [accountSearchText, setAccountSearchText] = useState('');
 
+  // Duplicate accounts: the same account picked up by more than one template line
+  const [dupModalVisible, setDupModalVisible] = useState(false);
+  const [hideUsedAccounts, setHideUsedAccounts] = useState(true);   // account picker: hide accounts already in the template
+
   // Load GL accounts
   const loadGLAccounts = async (silent = false) => {
     setGlAccountsLoading(true);
@@ -163,6 +170,32 @@ const IncomeStatementTemplates: React.FC = () => {
     for (const a of glAccounts) if (a.account && a.description) m.set(String(a.account).trim(), a.description);
     return m;
   }, [glAccounts]);
+
+  // Duplicate report per open template: which template lines pick up the same account.
+  // With the chart of accounts loaded, accounts inside from–to ranges are checked too.
+  const dupReports = useMemo(() => {
+    const m = new Map<number, plService.DuplicateReport>();
+    for (const t of templateTabs) {
+      if (t.template && !m.has(t.templateId)) m.set(t.templateId, plService.findTemplateDuplicates(t.template, glAccounts));
+    }
+    return m;
+  }, [templateTabs, glAccounts]);
+  const dupReportFor = (templateId: number) => dupReports.get(templateId) || plService.EMPTY_DUPLICATE_REPORT;
+  const sectionPath = (u: plService.AccountUse) => `${u.groupName} › ${u.sectionName}`;
+  const useLabel = (u: plService.AccountUse) => `${sectionPath(u)} (${plService.entryLabel(u.entry)})`;
+  // the other template lines that share an account with this line — for the "Duplicate" tag in the tree
+  const dupPartners = (report: plService.DuplicateReport, entry: plService.PLSectionAccount): string[] => {
+    const others = new Set<string>();
+    for (const d of report.duplicates) {
+      if (!d.uses.some(u => u.entry === entry)) continue;
+      for (const u of d.uses) if (u.entry !== entry) others.add(useLabel(u));
+    }
+    for (const o of report.overlaps) {
+      if (o.a.entry === entry) others.add(useLabel(o.b));
+      if (o.b.entry === entry) others.add(useLabel(o.a));
+    }
+    return [...others];
+  };
   const hasEditTab = templateTabs.some(t => t.kind !== 'run');
   useEffect(() => {
     if (hasEditTab && glAccounts.length === 0 && !glAccountsLoading) loadGLAccounts(true);
@@ -451,6 +484,24 @@ const IncomeStatementTemplates: React.FC = () => {
   // Account CRUD
   const handleAssignAccount = async (values: any) => {
     if (!selectedSectionId) return;
+    const code = String(values.account_code || '').trim();
+    const from = String(values.account_from || '').trim();
+    const to = String(values.account_to || '').trim();
+    if (!code && !(from && to)) {
+      message.warning('Enter a single account code, or both ends of a range');
+      return;
+    }
+    // no duplicates: the new line must not pick up an account another line of this template already has
+    const entry: plService.PLSectionAccount = { account_code: code, account_from: from || null, account_to: to || null };
+    const clashes = plService.conflictsForEntry(plService.allAccountUses(getCurrentTemplateTab()?.template), entry);
+    if (clashes.length) {
+      const where = [...new Set(clashes.map(useLabel))];
+      message.error({
+        duration: 6,
+        content: `${plService.entryLabel(entry)} is already in this template: ${where.slice(0, 4).join(', ')}${where.length > 4 ? ` and ${where.length - 4} more` : ''}. Remove it there first, or use the Duplicates check.`,
+      });
+      return;
+    }
     try {
       const response = await plService.assignAccount(
         selectedSectionId,
@@ -479,10 +530,20 @@ const IncomeStatementTemplates: React.FC = () => {
       return;
     }
 
+    // no duplicates: skip accounts another line of this template already picks up
+    const tab = getCurrentTemplateTab();
+    const used = tab ? dupReportFor(tab.templateId).uses : plService.EMPTY_DUPLICATE_REPORT.uses;
+    const toAssign = selectedAccounts.filter(a => !used.has(String(a).trim()));
+    const skipped = selectedAccounts.length - toAssign.length;
+    if (toAssign.length === 0) {
+      message.warning('All the selected accounts are already in this template');
+      return;
+    }
+
     let successCount = 0;
     let failCount = 0;
 
-    for (const accountCode of selectedAccounts) {
+    for (const accountCode of toAssign) {
       try {
         const response = await plService.assignAccount(
           selectedSectionId,
@@ -505,6 +566,9 @@ const IncomeStatementTemplates: React.FC = () => {
     }
     if (failCount > 0) {
       message.error(`${failCount} account(s) failed to assign`);
+    }
+    if (skipped > 0) {
+      message.info(`${skipped} account(s) skipped — already in this template`);
     }
 
     setAccountModalVisible(false);
@@ -560,6 +624,7 @@ const IncomeStatementTemplates: React.FC = () => {
     // Safe access with defaults
     const groups = templateData?.template?.groups || [];
     const totals = templateData?.template?.totals || [];
+    const report = dupReportFor(templateData?.template?.template_id);
 
     const treeData: DataNode[] = [];
 
@@ -614,6 +679,15 @@ const IncomeStatementTemplates: React.FC = () => {
               <Space>
                 <Text style={{ fontSize: 13 }}>{section.section_name}</Text>
                 <Text type="secondary" style={{ fontSize: 11 }}>({section.section_code})</Text>
+                {(() => {
+                  const n = (section.accounts || []).filter(a => report.flagged.has(a)).length;
+                  return n > 0 ? (
+                    <Tag color="orange" icon={<WarningOutlined />} style={{ margin: 0, fontSize: 11, cursor: 'pointer' }}
+                      onClick={e => { e.stopPropagation(); setDupModalVisible(true); }}>
+                      {n} duplicate{n > 1 ? 's' : ''}
+                    </Tag>
+                  ) : null;
+                })()}
               </Space>
               <Space size="small" onClick={e => e.stopPropagation()}>
                 <Tooltip title="Add Account">
@@ -662,6 +736,14 @@ const IncomeStatementTemplates: React.FC = () => {
                   const d = accountDesc.get(String(account.account_code || '').trim());
                   return d ? <Text type="secondary" style={{ fontSize: 12 }}>{d}</Text> : null;
                 })()}
+                {report.flagged.has(account) && (
+                  <Tooltip title={<div><b>Also in:</b>{dupPartners(report, account).map(x => <div key={x}>{x}</div>)}</div>}>
+                    <Tag color="orange" icon={<WarningOutlined />} style={{ margin: 0, fontSize: 11, cursor: 'pointer' }}
+                      onClick={e => { e.stopPropagation(); setDupModalVisible(true); }}>
+                      Duplicate
+                    </Tag>
+                  </Tooltip>
+                )}
                 <Popconfirm
                   title="Remove this account from the section?"
                   description={`${account.account_from && account.account_to ? `${account.account_from} - ${account.account_to}` : account.account_code} will no longer be included in ${section.section_name}.`}
@@ -904,6 +986,9 @@ const IncomeStatementTemplates: React.FC = () => {
 
     const template = tab.template.template;
     const treeData = buildTreeData(tab.template);
+    const report = dupReportFor(tab.templateId);
+    const issues = report.duplicates.length + report.overlaps.length;
+    const doubleCounted = report.duplicates.filter(d => d.sectionCount > 1).length;
 
     return (
       <div style={{ padding: 16 }}>
@@ -951,6 +1036,15 @@ const IncomeStatementTemplates: React.FC = () => {
                 >
                   Preview
                 </Button>
+                <Tooltip title="Find accounts that are in more than one section (or listed twice) in this template">
+                  <Button
+                    icon={issues ? <WarningOutlined /> : <CheckCircleOutlined />}
+                    onClick={() => setDupModalVisible(true)}
+                    style={issues ? { color: '#d46b08', borderColor: '#ffa940', background: '#fff7e6' } : { color: REDWOOD.success, borderColor: REDWOOD.success }}
+                  >
+                    {issues ? `${issues} Duplicate${issues > 1 ? 's' : ''}` : 'No Duplicates'}
+                  </Button>
+                </Tooltip>
                 <Button
                   icon={<ReloadOutlined />}
                   onClick={refreshCurrentTab}
@@ -995,6 +1089,16 @@ const IncomeStatementTemplates: React.FC = () => {
           </Space>
         </Card>
 
+        {issues > 0 && (
+          <Alert
+            type="warning" showIcon style={{ marginBottom: 16, borderRadius: 8 }}
+            message={doubleCounted > 0
+              ? `${doubleCounted} account${doubleCounted > 1 ? 's are' : ' is'} in more than one section and will be counted in each when the statement runs.`
+              : 'This template has accounts listed twice or overlapping ranges.'}
+            action={<Button size="small" onClick={() => setDupModalVisible(true)}>Review duplicates</Button>}
+          />
+        )}
+
         {/* Hierarchical Tree View */}
         <Card
           title={
@@ -1029,6 +1133,101 @@ const IncomeStatementTemplates: React.FC = () => {
           )}
         </Card>
       </div>
+    );
+  };
+
+  // Duplicates Modal — every account picked up by more than one line of the open template, with
+  // a remove action per occurrence so the account can be kept in just one section
+  const renderDuplicatesModal = () => {
+    const tab = getCurrentTemplateTab();
+    const report = tab ? dupReportFor(tab.templateId) : plService.EMPTY_DUPLICATE_REPORT;
+    const chartLoaded = glAccounts.length > 0;
+    const nothing = report.duplicates.length === 0 && report.overlaps.length === 0;
+    return (
+      <Modal
+        title={
+          <Space>
+            <WarningOutlined style={{ color: '#d46b08' }} />
+            <span>Duplicate Accounts{tab?.template ? ` — ${tab.template.template.template_name}` : ''}</span>
+          </Space>
+        }
+        open={dupModalVisible}
+        onCancel={() => setDupModalVisible(false)}
+        footer={<Button onClick={() => setDupModalVisible(false)}>Close</Button>}
+        width={900}
+      >
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+          An account that two different sections pick up is counted in each of them when the statement runs.
+          Click a section chip to remove the account from that section and keep it in the other one.
+        </Text>
+        {!chartLoaded && (
+          <Alert
+            type="info" showIcon style={{ marginBottom: 12 }}
+            message="Chart of accounts not loaded — accounts inside from–to ranges are checked by range overlap only."
+            action={<Button size="small" loading={glAccountsLoading} onClick={() => loadGLAccounts()}>Load accounts</Button>}
+          />
+        )}
+        {nothing ? (
+          <Empty image={<CheckCircleOutlined style={{ fontSize: 40, color: REDWOOD.success }} />} description="No duplicate accounts in this template" />
+        ) : (
+          <>
+            {report.duplicates.length > 0 && (
+              <Table<plService.DuplicateAccount>
+                size="small"
+                rowKey="account"
+                dataSource={report.duplicates}
+                pagination={{ pageSize: 10, hideOnSinglePage: true, showTotal: t => `${t} duplicate account(s)` }}
+                columns={[
+                  {
+                    title: 'Account', dataIndex: 'account', width: 120,
+                    render: (a: string) => <Text strong style={{ fontFamily: 'monospace' }}>{a}</Text>,
+                  },
+                  { title: 'Description', dataIndex: 'description', ellipsis: true, render: (d?: string) => d || <Text type="secondary">—</Text> },
+                  {
+                    title: 'Effect', width: 170,
+                    render: (_: unknown, d) => d.sectionCount > 1
+                      ? <Tag color="orange">Counted {d.sectionCount}× in the statement</Tag>
+                      : <Tag>Listed twice in one section</Tag>,
+                  },
+                  {
+                    title: 'In sections — click to remove from one',
+                    render: (_: unknown, d) => (
+                      <Space wrap size={4}>
+                        {d.uses.map((u, i) => (
+                          <Popconfirm
+                            key={i}
+                            title={`Remove ${plService.entryLabel(u.entry)} from ${u.sectionName}?`}
+                            description={plService.isRangeEntry(u.entry)
+                              ? `This removes the whole range ${plService.entryLabel(u.entry)} from ${u.sectionName}.`
+                              : `${d.account} will no longer be included in ${u.sectionName}.`}
+                            onConfirm={() => handleRemoveAccount(u.sectionId, u.entry)}
+                            okText="Remove"
+                            okButtonProps={{ danger: true }}
+                          >
+                            <Tag closable onClose={e => e.preventDefault()} color={plService.isRangeEntry(u.entry) ? 'geekblue' : 'blue'} style={{ cursor: 'pointer' }}>
+                              {sectionPath(u)}{plService.isRangeEntry(u.entry) ? ` (${plService.entryLabel(u.entry)})` : ''}
+                            </Tag>
+                          </Popconfirm>
+                        ))}
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
+            )}
+            {report.overlaps.length > 0 && (
+              <>
+                <Divider titlePlacement="start" style={{ fontSize: 13 }}>Overlapping ranges</Divider>
+                {report.overlaps.map((o, i) => (
+                  <div key={i} style={{ fontSize: 12, marginBottom: 6 }}>
+                    <Tag color="geekblue">{useLabel(o.a)}</Tag> overlaps <Tag color="geekblue">{useLabel(o.b)}</Tag>
+                  </div>
+                ))}
+              </>
+            )}
+          </>
+        )}
+      </Modal>
     );
   };
 
@@ -1731,11 +1930,19 @@ const IncomeStatementTemplates: React.FC = () => {
         </Modal>
 
         {/* Add Account Modal */}
+        {(() => {
+          // accounts the open template already picks up (any section) — these cannot be added again
+          const curTab = getCurrentTemplateTab();
+          const usedAccounts = curTab ? dupReportFor(curTab.templateId).uses : plService.EMPTY_DUPLICATE_REPORT.uses;
+          const isUsed = (code: string) => usedAccounts.has(String(code || '').trim());
+          const usedCount = glAccounts.filter(a => isUsed(a.account)).length;
+          const targetSection = (curTab?.template?.template.groups || []).flatMap(g => g.sections || []).find(sec => sec.section_id === selectedSectionId);
+          return (
         <Modal
           title={
             <Space>
               <BankOutlined style={{ color: REDWOOD.primary }} />
-              <span>Assign Accounts to Section</span>
+              <span>Assign Accounts to Section{targetSection ? ` — ${targetSection.section_name}` : ''}</span>
             </Space>
           }
           open={accountModalVisible}
@@ -1792,7 +1999,7 @@ const IncomeStatementTemplates: React.FC = () => {
                 </Button>
               </Col>
             </Row>
-            <div style={{ marginTop: 8 }}>
+            <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <Text type="secondary">
                 {selectedAccounts.length > 0 ? (
                   <Tag color="blue">{selectedAccounts.length} account(s) selected</Tag>
@@ -1800,6 +2007,11 @@ const IncomeStatementTemplates: React.FC = () => {
                   'Select accounts from the list below'
                 )}
               </Text>
+              <Tooltip title="An account can be in only one section of a template. Accounts already in it cannot be selected.">
+                <Checkbox checked={hideUsedAccounts} onChange={e => setHideUsedAccounts(e.target.checked)} style={{ fontSize: 12 }}>
+                  Hide accounts already in this template{usedCount ? ` (${usedCount})` : ''}
+                </Checkbox>
+              </Tooltip>
             </div>
           </div>
 
@@ -1808,9 +2020,11 @@ const IncomeStatementTemplates: React.FC = () => {
             <Table
               loading={glAccountsLoading}
               dataSource={glAccounts.filter(acc =>
-                accountSearchText === '' ||
-                acc.account.toLowerCase().includes(accountSearchText.toLowerCase()) ||
-                acc.description.toLowerCase().includes(accountSearchText.toLowerCase())
+                (!hideUsedAccounts || !isUsed(acc.account)) && (
+                  accountSearchText === '' ||
+                  acc.account.toLowerCase().includes(accountSearchText.toLowerCase()) ||
+                  acc.description.toLowerCase().includes(accountSearchText.toLowerCase())
+                )
               )}
               rowKey="account"
               size="small"
@@ -1821,6 +2035,7 @@ const IncomeStatementTemplates: React.FC = () => {
                 onChange: (selectedRowKeys) => {
                   setSelectedAccounts(selectedRowKeys as string[]);
                 },
+                getCheckboxProps: (record) => ({ disabled: isUsed(record.account) }),
               }}
               columns={[
                 {
@@ -1864,6 +2079,24 @@ const IncomeStatementTemplates: React.FC = () => {
                     return <Tag color={info.color}>{info.label}</Tag>;
                   },
                 },
+                ...(hideUsedAccounts ? [] : [{
+                  title: 'Already in',
+                  key: 'in_template',
+                  width: 220,
+                  render: (_: unknown, record: plService.GLAccount) => {
+                    const us = usedAccounts.get(String(record.account || '').trim());
+                    if (!us?.length) return <Text type="secondary">—</Text>;
+                    const labels = [...new Set(us.map(useLabel))];
+                    return (
+                      <Tooltip title={labels.map(l => <div key={l}>{l}</div>)}>
+                        <Space size={2} wrap>
+                          {us.slice(0, 2).map((u, i) => <Tag key={i} color="orange" style={{ margin: 0, fontSize: 11 }}>{u.sectionName}</Tag>)}
+                          {us.length > 2 && <Tag style={{ margin: 0, fontSize: 11 }}>+{us.length - 2}</Tag>}
+                        </Space>
+                      </Tooltip>
+                    );
+                  },
+                }]),
               ]}
             />
           </div>
@@ -1891,6 +2124,8 @@ const IncomeStatementTemplates: React.FC = () => {
             </Form>
           </div>
         </Modal>
+          );
+        })()}
 
         {/* Add Total Modal */}
         <Modal
@@ -2099,6 +2334,7 @@ const IncomeStatementTemplates: React.FC = () => {
 
         {/* Preview Modal */}
         {renderPreviewModal()}
+        {renderDuplicatesModal()}
 
         {/* Excel View Modal */}
         {renderExcelModal()}

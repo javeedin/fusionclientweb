@@ -33,7 +33,7 @@ import { getAppBranding } from '../../config/company.config';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { buildApexUrl } from '../../config/api.helper';
 import type { PLTemplateStructure, PLSectionAccount } from '../../services/pl-templates.service';
-import { assignAccount, removeSectionAccount, moveAccounts, addGroup, addSection, updateTotal, GROUP_TYPES_BY_KIND, statementKindOf, type StatementKind } from '../../services/pl-templates.service';
+import { assignAccount, removeSectionAccount, moveAccounts, addGroup, addSection, updateTotal, accountMatches, GROUP_TYPES_BY_KIND, statementKindOf, type StatementKind } from '../../services/pl-templates.service';
 
 const { Text, Title } = Typography;
 const BASE = APEX_DB_CONFIG.baseUrl;
@@ -106,18 +106,8 @@ const fmt = (n: number | undefined) => {
   return v < 0 ? `(${s})` : s;
 };
 
-// natural account matches a template line: exact code, or from–to range (numeric
-// comparison when both ends and the account are numeric, else text comparison)
-const matches = (acct: string, a: PLSectionAccount) => {
-  const from = a.account_from?.trim(); const to = a.account_to?.trim();
-  if (from && to) {
-    if (/^\d+$/.test(acct) && /^\d+$/.test(from) && /^\d+$/.test(to)) {
-      const n = Number(acct); return n >= Number(from) && n <= Number(to);
-    }
-    return acct >= from && acct <= to;
-  }
-  return !!a.account_code && acct === a.account_code.trim();
-};
+// natural account matches a template line: exact code, or from–to range — shared with the template editor
+const matches = accountMatches;
 
 // ── formula evaluator: codes (G1, T2, …), numbers, + - * / and ( ) ────────────
 const evalFormula = (formula: string, lookup: (code: string) => number): number => {
