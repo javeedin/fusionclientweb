@@ -4,7 +4,15 @@ import autoTable from 'jspdf-autotable';
 import { getAppBranding } from '../../config/company.config';
 import { Row, money, qty, day, n } from '../../services/po.service';
 
-export function buildPoPdf(h: Row, lines: Row[], extra: { buName?: string; terms?: string | null; shipTo?: Row | null; billTo?: Row | null }) {
+/** One printed clause (merge fields already filled in). */
+export interface PrintClause { title: string; text: string }
+
+export function buildPoPdf(h: Row, lines: Row[], extra: {
+  buName?: string;
+  /** numbered clauses, or one block of text (old single-text terms) */
+  terms?: PrintClause[] | string | null;
+  shipTo?: Row | null; billTo?: Row | null;
+}) {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const W = doc.internal.pageSize.getWidth();
   const M = 40;
@@ -83,7 +91,44 @@ export function buildPoPdf(h: Row, lines: Row[], extra: { buName?: string; terms
     doc.setFont('helvetica', 'normal'); doc.text(parts, M, fy); fy += parts.length * 12 + 10;
   };
   para('Notes', String(h.NOTE_TO_SUPPLIER || ''));
-  para('Terms and conditions', String(extra.terms || ''));
+
+  // ── terms and conditions: numbered clauses that flow across pages ──
+  const clauses: PrintClause[] = typeof extra.terms === 'string'
+    ? (extra.terms.trim() ? [{ title: '', text: extra.terms.trim() }] : [])
+    : (extra.terms || []).filter(c => (c.title || '').trim() || (c.text || '').trim());
+  if (clauses.length) {
+    const H = doc.internal.pageSize.getHeight();
+    const bottom = H - 46;
+    const lh = 11;
+    const indent = clauses.length > 1 || clauses[0].title ? 16 : 0;
+    const heading = (cont: boolean) => {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...red);
+      doc.text(cont ? 'TERMS AND CONDITIONS (continued)' : 'TERMS AND CONDITIONS', M, fy);
+      doc.setDrawColor(...red); doc.setLineWidth(0.8); doc.line(M, fy + 4, W - M, fy + 4);
+      doc.setTextColor(0); doc.setFontSize(9); fy += 18;
+    };
+    const newPage = () => { doc.addPage(); fy = 50; heading(true); };
+    if (fy + 90 > bottom) { doc.addPage(); fy = 50; } else fy += 6;
+    heading(false);
+    clauses.forEach((c, i) => {
+      const title = (c.title || '').trim();
+      const body: string[] = doc.splitTextToSize((c.text || '').trim(), W - 2 * M - indent);
+      // keep a clause title with at least two lines of its text
+      if (fy + (title ? 13 : 0) + Math.min(body.length, 2) * lh > bottom) newPage();
+      if (title || indent) {
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+        doc.text(`${i + 1}.`, M, fy);
+        if (title) { doc.text(doc.splitTextToSize(title, W - 2 * M - indent)[0], M + indent, fy); fy += 13; }
+      }
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      body.forEach(line => {
+        if (fy + lh > bottom) newPage();
+        doc.text(line, M + indent, fy);
+        fy += lh;
+      });
+      fy += 7;
+    });
+  }
 
   const pages: number = (doc.internal as any).getNumberOfPages();
   for (let i = 1; i <= pages; i++) {

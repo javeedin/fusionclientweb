@@ -140,6 +140,10 @@ export const PROC = {
   recordInvoice: 'RR_PO_MATCH_PKG.RECORD_INVOICE',
   cancelInvoiceMatch: 'RR_PO_MATCH_PKG.CANCEL_INVOICE',
   setInvoiceStatus: 'RR_PO_MATCH_PKG.SET_INVOICE_STATUS',
+  saveTerm: 'RR_PO_TERMS_PKG.SAVE_TERM',
+  deleteTerm: 'RR_PO_TERMS_PKG.DELETE_TERM',
+  setTermOrder: 'RR_PO_TERMS_PKG.SET_TERM_ORDER',
+  setPoTerms: 'RR_PO_TERMS_PKG.SET_PO_TERMS',
 } as const;
 
 // ── Lookups ────────────────────────────────────────────────────────────────

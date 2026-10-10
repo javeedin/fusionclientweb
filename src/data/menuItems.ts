@@ -99,6 +99,7 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
   { key: 'po-accruals',           label: 'Receipt Accounting & Accruals', module: 'PO', moduleLabel: 'Purchasing-RR',           path: '/po/accruals',                    description: 'GRNI journals, period-end accruals and write-offs', keywords: 'grni accrual uninvoiced receipts write-off' },
   { key: 'po-approvals',          label: 'Purchasing Approvals',        module: 'PO',   moduleLabel: 'Purchasing-RR',           path: '/po/approvals',                   description: 'Approve requisitions, purchase orders and change orders', keywords: 'approve reject approval' },
   { key: 'po-reports',            label: 'Purchasing Reports',          module: 'PO',   moduleLabel: 'Purchasing-RR',           path: '/po/reports',                     description: 'Spend analysis, overdue receipts, backlog', keywords: 'spend report overdue backlog' },
+  { key: 'po-terms',              label: 'Terms & Conditions',          module: 'PO',   moduleLabel: 'Purchasing-RR',           path: '/po/terms',                       description: 'Clause library printed on purchase orders', keywords: 't&c terms conditions clauses contract legal po print' },
   { key: 'po-setup',              label: 'Purchasing Setup',            module: 'PO',   moduleLabel: 'Purchasing-RR',           path: '/po/setup',                       description: 'Purchasing options, categories, items, buyers, locations', keywords: 'setup options category buyer location uom' },
 
   // ── Petty Cash ──────────────────────────────────────────────────────────────

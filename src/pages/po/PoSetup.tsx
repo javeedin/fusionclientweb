@@ -202,7 +202,6 @@ const BU_OPTION_FIELDS: { section: string; fields: Field[] }[] = [
   { section: 'Purchase order document', fields: [
     { name: 'PO_EMAIL_SUBJECT', label: 'E-mail subject', span: 3 },
     { name: 'PO_EMAIL_BODY', label: 'E-mail body', type: 'textarea', span: 3 },
-    { name: 'PO_TERMS_TEXT', label: 'Terms and conditions (printed on the PO)', type: 'textarea', span: 3 },
   ] },
 ];
 
@@ -352,7 +351,7 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
   useEffect(() => {
     if (!buState.bu) return;
     setLoading(true);
-    const cols = all.map(f => (['PO_TERMS_TEXT', 'PO_EMAIL_BODY'].includes(f.name)
+    const cols = all.map(f => (['PO_EMAIL_BODY'].includes(f.name)
       ? `CAST(SUBSTR(${f.name}, 1, 3900) AS VARCHAR2(3900)) AS ${f.name}` : f.name)).join(', ');
     const applyDefaults = () => form.setFieldsValue({
             FUNCTIONAL_CURRENCY: buState.current?.FUNCTIONAL_CURRENCY || 'AED', DEFAULT_RATE_TYPE: 'Corporate', REQUIRE_REQUISITION: 'N',
@@ -403,6 +402,11 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
         {BU_OPTION_FIELDS.map(s => (
           <div key={s.section}>
             <Divider titlePlacement="start" style={{ color: PO_RED, marginTop: 4 }}>{s.section}</Divider>
+            {s.section === 'Purchase order document' && (
+              <Alert type="info" showIcon style={{ marginBottom: 12 }} message="Terms and conditions"
+                description={<span>The clauses printed on purchase orders are kept in a library — per business unit or for all, with default and
+                  mandatory clauses. {' '}<a onClick={() => navigate('/po/terms')}><LinkOutlined /> Open Terms &amp; Conditions</a></span>} />
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', columnGap: 16 }}>
               {s.fields.map(f => (
                 <Form.Item key={f.name} name={f.name} label={f.label} rules={ruleFor(f)} required={isReq(f, { ACCRUE_AT_RECEIPT_FLAG: accrue })}

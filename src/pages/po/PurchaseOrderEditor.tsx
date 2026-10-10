@@ -9,6 +9,7 @@ import {
   SaveOutlined, SendOutlined, RollbackOutlined, StopOutlined, DeleteOutlined, CopyOutlined,
   PrinterOutlined, MailOutlined, LockOutlined, UnlockOutlined, PauseCircleOutlined, PlayCircleOutlined, EditOutlined,
   InboxOutlined, FileDoneOutlined, DollarOutlined, DownOutlined, PlusOutlined, PaperClipOutlined, FileTextOutlined,
+  FileProtectOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { poQuery, poExec, PROC, nlit, money, qty, day, plusDays, Row, n, r2 } from '../../services/po.service';
@@ -17,6 +18,8 @@ import {
   lineAmount, siteOptions, YesNo, SupplierSelect, useSupplierSites, PO_RED,
 } from './poShared';
 import { buildPoPdf } from './poPdf';
+import { loadPoTerms, orderContext, printableClauses, savePoTerms, withMandatory } from './poTerms';
+import { PoTermsButton, PoTermsPanel, usePoTerms } from './PoTermsUi';
 import PoAttachments from './PoAttachments';
 import PoApInvoice from './PoApInvoice';
 import { APEX_DB_CONFIG } from '../../config/api.config';
@@ -76,6 +79,23 @@ const PurchaseOrderEditor: React.FC<{
   const currencyCode = Form.useWatch('currencyCode', form) || fc;
   const st = hdr?.DOCUMENT_STATUS as string | undefined;
   const editable = !hdr || EDITABLE.includes(st!);
+
+  // terms and conditions (database/po/306_po_terms.sql): toolbar icon, Terms tab, printed PO
+  const terms = usePoTerms(id, bu);
+  const [termsDirty, setTermsDirty] = useState(false);
+  const [tab, setTab] = useState('lines');
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const termsCtx = useMemo(() => {
+    const locName = (lid: unknown) => lookups.locations.find(l => Number(l.LOCATION_ID) === Number(lid))?.LOCATION_NAME;
+    return orderContext(hdr, { buName: buRow?.BUSINESS_UNIT_NAME, shipTo: locName(hdr?.SHIP_TO_LOCATION_ID), billTo: locName(hdr?.BILL_TO_LOCATION_ID) });
+  }, [hdr, buRow, lookups.locations]);
+  const openTermsTab = () => { setTab('terms'); setTimeout(() => tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); };
+  // a copied order keeps this order's clauses (the database gives it the defaults first)
+  const copyTermsTo = async (newId: number) => {
+    if (!terms.installed || !terms.data) return;
+    try { await savePoTerms(newId, withMandatory(terms.data.clauses, terms.library, bu), user); }
+    catch (e: any) { message.warning(`The copy has the default terms — copying this order's terms failed: ${e.message}`, 8); }
+  };
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -178,10 +198,11 @@ const PurchaseOrderEditor: React.FC<{
   const printPdf = async (mark = false) => {
     if (!hdr) return;
     try {
-      const [terms] = await poQuery(`SELECT CAST(SUBSTR(PO_TERMS_TEXT, 1, 3900) AS VARCHAR2(3900)) AS TERMS
-                                     FROM RR_PO_BU_OPTIONS WHERE BUSINESS_UNIT_ID = ${nlit(bu)}`);
+      const saved = await loadPoTerms(id, bu);   // what is saved on the order, never unsaved edits
+      if (termsDirty) message.warning('The PDF uses the saved terms — save the Terms & Conditions tab to include your changes', 6);
       const loc = (lid: unknown) => lookups.locations.find(l => Number(l.LOCATION_ID) === Number(lid)) || null;
-      const doc = buildPoPdf(hdr, lineRows, { buName: buRow?.BUSINESS_UNIT_NAME, terms: terms?.TERMS, shipTo: loc(hdr.SHIP_TO_LOCATION_ID), billTo: loc(hdr.BILL_TO_LOCATION_ID) });
+      const doc = buildPoPdf(hdr, lineRows, { buName: buRow?.BUSINESS_UNIT_NAME, terms: printableClauses(saved.clauses, termsCtx),
+        shipTo: loc(hdr.SHIP_TO_LOCATION_ID), billTo: loc(hdr.BILL_TO_LOCATION_ID) });
       doc.save(`${hdr.PO_NUMBER}${n(hdr.REVISION_NUM) ? `-R${hdr.REVISION_NUM}` : ''}.pdf`);
       if (mark && st === 'APPROVED') await exec(PROC.communicated, { p_po_header_id: id, p_method: 'PRINT', p_to: null });
     } catch (e: any) { message.error(e.message); }
@@ -352,9 +373,13 @@ const PurchaseOrderEditor: React.FC<{
           }}>Hold</Button>}
         <Button danger icon={<StopOutlined />} onClick={() => doCancel()}>Cancel PO</Button>
       </>}
+      <PoTermsButton state={terms} ctx={termsCtx} poNumber={hdr?.PO_NUMBER} dirty={termsDirty}
+        onManage={editable && id ? openTermsTab : undefined} />
       {hdr && <Button icon={<PrinterOutlined />} onClick={() => printPdf(st === 'APPROVED' && !hdr.COMMUNICATED_DATE)}>Print PDF</Button>}
       {st === 'APPROVED' && <Button icon={<MailOutlined />} onClick={email}>E-mail supplier</Button>}
-      {hdr && <Button icon={<CopyOutlined />} loading={busy} onClick={() => exec(PROC.copyPo, { p_po_header_id: id }, r => { if (r.id) onOpenOther?.(r.id); })}>Copy</Button>}
+      {hdr && <Button icon={<CopyOutlined />} loading={busy} onClick={() => exec(PROC.copyPo, { p_po_header_id: id }, r => {
+        if (r.id) { const newId = r.id; copyTermsTo(newId).finally(() => onOpenOther?.(newId)); }
+      })}>Copy</Button>}
       {st === 'INCOMPLETE' && !hdr?.APPROVED_DATE && hdr && <Popconfirm title="Delete this draft purchase order?"
         onConfirm={() => exec(PROC.deletePo, { p_po_header_id: id }, () => onBack())}>
         <Button danger icon={<DeleteOutlined />} loading={busy}>Delete</Button></Popconfirm>}
@@ -494,7 +519,8 @@ const PurchaseOrderEditor: React.FC<{
         </Card>
       </div>
 
-      <Tabs defaultActiveKey="lines" items={[
+      <div ref={tabsRef} style={{ scrollMarginTop: 70 }} />
+      <Tabs activeKey={tab} onChange={setTab} items={[
         {
           key: 'lines', label: `Lines (${editable ? lines.length : lineRows.length})`,
           children: editable ? (
@@ -549,6 +575,8 @@ const PurchaseOrderEditor: React.FC<{
               { title: 'When', dataIndex: 'CREATION_DATE', width: 160, render: v => String(v ?? '').replace('T', ' ').slice(0, 16) },
             ]} />) },
         ] : []),
+        { key: 'terms', label: <span><FileProtectOutlined /> Terms & Conditions ({terms.shown.length}){termsDirty && editable ? ' •' : ''}</span>,
+          children: <PoTermsPanel state={terms} poId={id} bu={bu} editable={editable} user={user} ctx={termsCtx} onDirtyChange={setTermsDirty} /> },
         { key: 'attachments', label: <span><PaperClipOutlined /> Attachments</span>, disabled: !id,
           children: id ? <PoAttachments entityType="PO" entityId={id} user={user} readOnly={st === 'CANCELLED' || hdr?.CLOSURE_STATUS === 'FINALLY_CLOSED'} /> : null },
       ]} />

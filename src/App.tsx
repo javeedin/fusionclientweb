@@ -96,6 +96,7 @@ const PoAccruals              = lazy(() => import('./pages/po/Accruals'));
 const PoApprovals             = lazy(() => import('./pages/po/PoApprovals'));
 const PoReports               = lazy(() => import('./pages/po/PoReports'));
 const PoSetup                 = lazy(() => import('./pages/po/PoSetup'));
+const PoTerms                 = lazy(() => import('./pages/po/TermsConditions'));
 const APModule                = lazy(() => import('./pages/ap').then(m => ({ default: m.APModule })));
 const PMSModule               = lazy(() => import('./pages/pms').then(m => ({ default: m.PMSModule })));
 const FundManagement          = lazy(() => import('./pages/pms').then(m => ({ default: m.FundManagement })));
@@ -433,6 +434,7 @@ function App() {
               <Route path="po/approvals" element={<PoApprovals />} />
               <Route path="po/reports" element={<PoReports />} />
               <Route path="po/setup" element={<PoSetup />} />
+              <Route path="po/terms" element={<PoTerms />} />
               {/* Cash Management */}
               <Route path="cash" element={<CashModule />} />
               <Route path="cash/bank-transfers" element={<ManageBankTransfers module="cash" />} />
