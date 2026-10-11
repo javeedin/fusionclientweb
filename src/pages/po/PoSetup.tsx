@@ -237,6 +237,33 @@ const ruleFor = (f: Field) => (f.required ? [{ required: true, message: `${f.lab
         ? Promise.reject(new Error(`${f.label} is required`)) : Promise.resolve()),
     })] : undefined);
 
+// A database that missed a later upgrade has no column for some fields (ORA-00904: "COLUMN": invalid identifier).
+const UPGRADE_SCRIPT = 'database/po/308_po_upgrade_columns.sql';
+const missingColumn = (e: unknown): string | null => {
+  const m = /ORA-00904:\s*(?:"[^"]*"\.)?"?([A-Z0-9_$#]+)"?\s*:\s*invalid identifier/i.exec(String((e as any)?.message || e));
+  return m ? m[1].toUpperCase() : null;
+};
+/** Save a setup row; a column the database does not have yet is left out (and reported) instead of failing the save. */
+async function saveSetupRow(entity: string, json: Record<string, unknown>, user: string) {
+  const skipped: string[] = [];
+  for (;;) {
+    try {
+      const r = await poExec(PROC.saveSetup, { p_entity: entity, p_json: json }, user);
+      return { r, skipped };
+    } catch (e) {
+      const col = missingColumn(e);
+      if (!col || !(col.toLowerCase() in json) || skipped.length >= 5) throw e;
+      delete json[col.toLowerCase()];
+      skipped.push(col);
+    }
+  }
+}
+const skippedWarning = (skipped: string[], fields: Field[]) => {
+  if (!skipped.length) return;
+  const names = skipped.map(c => fields.find(f => f.name === c)?.label || c).join(', ');
+  message.warning(`Saved without ${names} — the database has no column for ${skipped.length > 1 ? 'them' : 'it'} yet. Run ${UPGRADE_SCRIPT}.`, 10);
+};
+
 const toJson = (fields: Field[], v: Record<string, any>, isNew: boolean) => {
   const o: Record<string, unknown> = {};
   fields.forEach(f => {
@@ -282,8 +309,9 @@ const EntityGrid: React.FC<{ e: Entity; lk: SetupLookups; onChanged: () => void 
     if (!isNew && e.key !== 'UOM') json[e.rowKey.toLowerCase()] = edit![e.rowKey];
     setBusy(true);
     try {
-      const r = await poExec(PROC.saveSetup, { p_entity: e.key, p_json: json }, user);
+      const { r, skipped } = await saveSetupRow(e.key, json, user);
       message.success(r.message || 'Saved');
+      skippedWarning(skipped, e.fields);
       setEdit(null); load(); onChanged();
     } catch (err: any) { message.error(err.message, 8); } finally { setBusy(false); }
   };
@@ -345,14 +373,15 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [exists, setExists] = useState(false);
+  const [missing, setMissing] = useState<string[]>([]);   // fields whose column the database does not have yet
   const all = BU_OPTION_FIELDS.flatMap(s => s.fields);
   const accrue = Form.useWatch('ACCRUE_AT_RECEIPT_FLAG', form);
 
   useEffect(() => {
     if (!buState.bu) return;
     setLoading(true);
-    const cols = all.map(f => (['PO_EMAIL_BODY'].includes(f.name)
-      ? `CAST(SUBSTR(${f.name}, 1, 3900) AS VARCHAR2(3900)) AS ${f.name}` : f.name)).join(', ');
+    const colOf = (f: Field) => (['PO_EMAIL_BODY'].includes(f.name)
+      ? `CAST(SUBSTR(${f.name}, 1, 3900) AS VARCHAR2(3900)) AS ${f.name}` : f.name);
     const applyDefaults = () => form.setFieldsValue({
             FUNCTIONAL_CURRENCY: buState.current?.FUNCTIONAL_CURRENCY || 'AED', DEFAULT_RATE_TYPE: 'Corporate', REQUIRE_REQUISITION: 'N',
             ALLOW_AFTER_FACT_PO: 'N', AUTOCREATE_MODE: 'MANUAL', STATUS: 'ACTIVE', REQ_APPROVAL_REQUIRED: 'Y', PO_APPROVAL_REQUIRED: 'Y',
@@ -360,8 +389,21 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
             MATCH_LEVEL_AMOUNT: 'TWO_WAY', OVER_RECEIPT_TOLERANCE_PCT: 0, OVER_RECEIPT_ACTION: 'REJECT', RECEIPT_CLOSE_TOLERANCE_PCT: 0,
             INVOICE_CLOSE_TOLERANCE_PCT: 0, INVOICE_QTY_TOLERANCE_PCT: 0, INVOICE_PRICE_TOLERANCE_PCT: 5, ACCRUE_AT_RECEIPT_FLAG: 'Y',
           });
-    poQuery(`SELECT BU_OPTION_ID, ${cols} FROM RR_PO_BU_OPTIONS WHERE BUSINESS_UNIT_ID = ${nlit(buState.bu)}`)
-      .then(([r]) => {
+    // load the columns the table has: a column a later upgrade adds is dropped (and its field disabled) when missing
+    const read = async (skip: string[]): Promise<{ row: Row | undefined; skip: string[] }> => {
+      const cols = all.filter(f => !skip.includes(f.name)).map(colOf).join(', ');
+      try {
+        const [row] = await poQuery(`SELECT BU_OPTION_ID, ${cols} FROM RR_PO_BU_OPTIONS WHERE BUSINESS_UNIT_ID = ${nlit(buState.bu)}`);
+        return { row, skip };
+      } catch (e) {
+        const col = missingColumn(e);
+        if (col && all.some(f => f.name === col) && !skip.includes(col) && skip.length < 5) return read([...skip, col]);
+        throw e;
+      }
+    };
+    read([])
+      .then(({ row: r, skip }) => {
+        setMissing(skip);
         form.resetFields();
         setExists(!!r);
         if (r) {
@@ -380,10 +422,12 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
     if (!v) return null;
     setBusy(true);
     try {
-      const json = toJson(all, v, !exists);
+      const json = toJson(all.filter(f => !missing.includes(f.name)), v, !exists);
       json.business_unit_id = buState.bu;
-      const r = await poExec(PROC.saveSetup, { p_entity: 'BU_OPTIONS', p_json: json }, user);
+      const { r, skipped } = await saveSetupRow('BU_OPTIONS', json, user);
       message.success(r.message || 'Saved');
+      skippedWarning(skipped, all);
+      if (skipped.length) setMissing(m => [...new Set([...m, ...skipped])]);
       setExists(true);
     } catch (e: any) { message.error(e.message, 8); } finally { setBusy(false); }
   };
@@ -398,6 +442,12 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
         description={<span>Approvals use the existing approval engine — add rules with module <b>PROCUREMENT</b> and transaction types
           <b> REQUISITION</b>, <b>PURCHASE_ORDER</b> and <b>PO_CHANGE_ORDER</b> (optionally per business unit / category).
           {' '}<a onClick={() => navigate('/admin/approvals')}><LinkOutlined /> Open Approval Engine</a></span>} />
+      {missing.length > 0 && (
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+          message={`The database is missing ${missing.length === 1 ? 'a column' : `${missing.length} columns`} from a later upgrade`}
+          description={<span>{missing.map(c => all.find(f => f.name === c)?.label || c).join(', ')} cannot be saved yet — everything else saves normally.
+            Run <Text code>{UPGRADE_SCRIPT}</Text> in APEX SQL Workshop, then reopen this page.</span>} />
+      )}
       <Form form={form} layout="vertical">
         {BU_OPTION_FIELDS.map(s => (
           <div key={s.section}>
@@ -408,7 +458,12 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
                   mandatory clauses. {' '}<a onClick={() => navigate('/po/terms')}><LinkOutlined /> Open Terms &amp; Conditions</a></span>} />
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', columnGap: 16 }}>
-              {s.fields.map(f => (
+              {s.fields.map(f => missing.includes(f.name) ? (
+                <Form.Item key={f.name} label={f.label} extra={`Needs the database update (${UPGRADE_SCRIPT})`}
+                  style={f.span ? { gridColumn: `span ${f.span}` } : undefined}>
+                  <Input disabled placeholder="Not available yet" />
+                </Form.Item>
+              ) : (
                 <Form.Item key={f.name} name={f.name} label={f.label} rules={ruleFor(f)} required={isReq(f, { ACCRUE_AT_RECEIPT_FLAG: accrue })}
                   dependencies={f.requiredWhen ? [f.requiredWhen.field] : undefined}
                   extra={f.help} style={f.span ? { gridColumn: `span ${f.span}` } : undefined}>
