@@ -2,6 +2,7 @@
 // and merge fields ({PO_NUMBER}, {SUPPLIER_NAME} …) filled in on screen and in the printed PO.
 // Database: database/po/306_po_terms.sql (RR_PO_V_TERMS, RR_PO_V_ORDER_TERMS, RR_PO_TERMS_PKG).
 import { poQuery, poExec, PROC, nlit, money, day, n, Row, ExecResult } from '../../services/po.service';
+import { escapeHtml, htmlToPlain, isRichText, plainToHtml, sanitizeHtml } from '../../components/RichText/richText';
 
 /** A clause in the library (RR_PO_V_TERMS). */
 export interface LibraryTerm {
@@ -83,6 +84,26 @@ export const orderContext = (h: Row | null | undefined, extra: { buName?: string
 /** Replace {FIELD} with its value; unknown fields and fields without a value stay as typed. */
 export const fillMergeFields = (text: string, ctx: MergeContext) =>
   String(text || '').replace(FIELD_RE, (m, k: string) => (ctx[k] ? ctx[k] : m));
+
+/** Clause text (rich or plain) → HTML with merge fields filled in (values escaped) — for printing. */
+export const fillMergeFieldsHtml = (text: string, ctx: MergeContext) => {
+  const html = isRichText(text) ? String(text) : plainToHtml(text);
+  return html.replace(FIELD_RE, (m, k: string) => (ctx[k] ? escapeHtml(ctx[k]) : m));
+};
+
+/** Clause text → display HTML: cleaned, merge fields highlighted (filled / no value yet / unknown). */
+export const clauseDisplayHtml = (text: string, ctx: MergeContext) => {
+  const base = isRichText(text) ? sanitizeHtml(text) : plainToHtml(text);
+  return base.replace(FIELD_RE, (m, k: string) => {
+    if (ctx[k]) return `<span class="rt-field" title="{${k}}">${escapeHtml(ctx[k])}</span>`;
+    return FIELD_KEYS.has(k)
+      ? `<span class="rt-field-missing" title="{${k}} — no value on this order yet">${m}</span>`
+      : `<span class="rt-field-unknown" title="{${k}} is not a known merge field">${m}</span>`;
+  });
+};
+
+/** Clause text as one line of plain text (list previews, search). */
+export const clausePlain = (text: string) => htmlToPlain(text);
 
 /** Split text into plain parts and merge fields, for highlighting in previews. */
 export const mergeParts = (text: string, ctx: MergeContext) => {
@@ -199,23 +220,23 @@ export const savePoTerms = (poHeaderId: number, clauses: PoClause[], user: strin
     p_json: clauses.map(c => ({ termId: c.termId, title: c.title.trim(), text: c.text.trim() })),
   }, user);
 
-/** Clauses with merge fields filled in, as printed. */
+/** Clauses with merge fields filled in, as printed (text as HTML — rich formatting kept). */
 export const printableClauses = (clauses: PoClause[], ctx: MergeContext) =>
-  clauses.map(c => ({ title: fillMergeFields(c.title, ctx), text: fillMergeFields(c.text, ctx) }));
+  clauses.map(c => ({ title: fillMergeFields(c.title, ctx), text: fillMergeFieldsHtml(c.text, ctx) }));
 
 /** Problems that stop a clause from being saved. */
 export const clauseProblems = (c: Pick<PoClause, 'title' | 'text'>) => {
   const p: string[] = [];
   if (!c.title.trim()) p.push('Title is required');
   if (byteLength(c.title) > 240) p.push('Title is longer than 240 characters');
-  if (!c.text.trim()) p.push('Text is required');
+  if (!htmlToPlain(c.text).trim()) p.push('Text is required');
   if (byteLength(c.text) > MAX_CLAUSE_BYTES) p.push(`Text is longer than ${MAX_CLAUSE_BYTES} bytes`);
   return p;
 };
 
 /** Split one long text into clauses: numbered / bulleted items, else paragraphs. */
 export const splitProposal = (text: string): { title: string; text: string }[] => {
-  const norm = String(text || '').replace(/\r\n?/g, '\n').trim();
+  const norm = htmlToPlain(String(text || '')).replace(/\r\n?/g, '\n').trim();
   if (!norm) return [];
   const marker = /^\s*(?:\(?\d{1,2}[.)]|\(?[a-z][.)](?=\s)|[•\-–*](?=\s))\s*/i;
   const lines = norm.split('\n');

@@ -11,27 +11,28 @@ import {
 import { Link } from 'react-router-dom';
 import {
   LibraryTerm, PoClause, PoTerms, MergeContext, categoryInfo, clauseKey, clauseProblems, defaultClauses, fromLibrary,
-  libraryChanged, loadPoTerms, loadTermLibrary, mergeParts, missingMandatory, savePoTerms, termsNotInstalled, appliesToBu,
-  withMandatory, byteLength, MAX_CLAUSE_BYTES, MERGE_FIELDS,
+  libraryChanged, loadPoTerms, loadTermLibrary, missingMandatory, savePoTerms, termsNotInstalled, appliesToBu,
+  withMandatory, byteLength, MAX_CLAUSE_BYTES, MERGE_FIELDS, clauseDisplayHtml, clausePlain,
 } from './poTerms';
 import { PO_RED } from './poShared';
+import { RichTextEditor, ensureRichStyles } from '../../components/RichText/RichTextEditor';
+import { isRichText } from '../../components/RichText/richText';
 
 const { Text } = Typography;
 
-// ── text with merge fields highlighted ─────────────────────────────────────────
-export const ClauseText: React.FC<{ text: string; ctx: MergeContext; style?: React.CSSProperties }> = ({ text, ctx, style }) => (
-  <span style={{ whiteSpace: 'pre-wrap', ...style }}>
-    {mergeParts(text, ctx).map((p, i) => !p.field ? <React.Fragment key={i}>{p.text}</React.Fragment> : (
-      <Tooltip key={i} title={p.known ? `{${p.field}}${p.filled ? '' : ' — no value on this order yet'}` : `{${p.field}} is not a known merge field`}>
-        <span style={p.filled
-          ? { borderBottom: `1px dotted ${PO_RED}`, background: `${PO_RED}0d` }
-          : { color: p.known ? '#d46b08' : '#cf1322', background: p.known ? '#fff7e6' : '#fff1f0', borderRadius: 3, padding: '0 2px', fontFamily: 'monospace', fontSize: '0.92em' }}>
-          {p.text}
-        </span>
-      </Tooltip>
-    ))}
-  </span>
-);
+// ── clause text (rich or plain) with merge fields highlighted ────────────────────────
+export const ClauseText: React.FC<{
+  text: string; ctx: MergeContext; style?: React.CSSProperties;
+  /** one paragraph of plain text (list previews that are clamped to a few lines) */
+  preview?: boolean;
+}> = ({ text, ctx, style, preview }) => {
+  ensureRichStyles();
+  const source = preview ? clausePlain(text).replace(/\s*\n\s*/g, ' · ') : text;
+  const html = clauseDisplayHtml(source, ctx);
+  return isRichText(source)
+    ? <div className="rt-content" style={style} dangerouslySetInnerHTML={{ __html: html }} />
+    : <span className="rt-content" style={style} dangerouslySetInnerHTML={{ __html: html }} />;
+};
 
 // ── the terms as they print: heading + numbered clauses ─────────────────────────
 export const TermsDocument: React.FC<{ clauses: PoClause[]; ctx: MergeContext; compact?: boolean; emptyText?: React.ReactNode }> =
@@ -159,7 +160,7 @@ const LibraryPicker: React.FC<{
                       {already && <Tag style={{ fontSize: 11 }}>On this order</Tag>}
                     </Space>
                     <div style={{ fontSize: 12, color: '#595959', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                      <ClauseText text={t.TERM_TEXT} ctx={ctx} />
+                      <ClauseText text={t.TERM_TEXT} ctx={ctx} preview />
                     </div>
                   </div>
                 </div>
@@ -285,15 +286,12 @@ export const PoTermsPanel: React.FC<{
                     <div>
                       <Input value={c.title} placeholder="Clause title" maxLength={240} style={{ marginBottom: 6 }}
                         onChange={e => update(c.key, { title: e.target.value })} />
-                      <Input.TextArea value={c.text} autoSize={{ minRows: 3, maxRows: 14 }} placeholder="Clause text — merge fields like {SUPPLIER_NAME} are filled in when printed"
-                        onChange={e => update(c.key, { text: e.target.value })} />
-                      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-                        <Space size={4} wrap>
-                          {MERGE_FIELDS.map(f => <Tag key={f.key} style={{ cursor: 'pointer', fontSize: 11 }}
-                            onClick={() => update(c.key, { text: `${c.text}${c.text && !c.text.endsWith(' ') ? ' ' : ''}{${f.key}}` })}>+ {f.label}</Tag>)}
-                        </Space>
+                      <RichTextEditor value={c.text} onChange={html => update(c.key, { text: html })} minHeight={110} maxHeight={360}
+                        fields={MERGE_FIELDS} status={byteLength(c.text) > MAX_CLAUSE_BYTES ? 'error' : undefined}
+                        placeholder="Clause text — use Field to add {SUPPLIER_NAME}, {PO_NUMBER} … (filled in when printed)" />
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
                         <Text type={byteLength(c.text) > MAX_CLAUSE_BYTES ? 'danger' : 'secondary'} style={{ fontSize: 11 }}>
-                          {byteLength(c.text)} / {MAX_CLAUSE_BYTES}</Text>
+                          {byteLength(c.text)} / {MAX_CLAUSE_BYTES} bytes (formatting included)</Text>
                       </div>
                     </div>
                   ) : (

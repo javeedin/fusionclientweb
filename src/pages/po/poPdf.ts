@@ -3,6 +3,76 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getAppBranding } from '../../config/company.config';
 import { Row, money, qty, day, n } from '../../services/po.service';
+import { parseRichBlocks, type RichRun } from '../../components/RichText/richText';
+
+/**
+ * Draw rich clause text (HTML subset or plain text) with wrapping, bold / italic / underline / strike,
+ * bullets, numbering, indents and alignment. Calls newPage() when the page is full; returns the next y.
+ */
+export function drawRichText(doc: jsPDF, html: string, o: {
+  x: number; y: number; width: number; bottom: number; fontSize?: number; lineHeight?: number; newPage: () => number;
+}): number {
+  const fs = o.fontSize ?? 9;
+  const lh = o.lineHeight ?? Math.round(fs * 1.25 * 10) / 10;
+  let y = o.y;
+  const fontOf = (r: RichRun) => (r.b && r.i ? 'bolditalic' : r.b ? 'bold' : r.i ? 'italic' : 'normal');
+  const width = (t: string, r: RichRun) => { doc.setFont('helvetica', fontOf(r)); doc.setFontSize(fs); return doc.getTextWidth(t); };
+  for (const b of parseRichBlocks(html)) {
+    if (b.blank) { y += lh * 0.7; continue; }
+    const indent = Math.max(0, b.level - (b.list ? 1 : 0)) * 16;
+    const prefix = b.list === 'ul' ? (b.level > 1 ? '-' : '\u2022') : b.list === 'ol' ? `${b.index}.` : '';
+    const textX = o.x + indent + (prefix ? 14 : 0);
+    const avail = Math.max(40, o.width - (textX - o.x));
+    // words with their style; '\n' forces a line break
+    type Tok = { t: string; r: RichRun; w: number; br?: boolean; space?: boolean };
+    const toks: Tok[] = [];
+    b.runs.forEach(r => r.text.split(/(\n| +)/).forEach(part => {
+      if (!part) return;
+      if (part === '\n') toks.push({ t: '', r, w: 0, br: true });
+      else if (/^ +$/.test(part)) toks.push({ t: ' ', r, w: width(' ', r), space: true });
+      else {
+        // a word wider than the line is cut into pieces
+        let rest = part;
+        while (rest) {
+          let cut = rest.length;
+          while (cut > 1 && width(rest.slice(0, cut), r) > avail) cut = Math.floor(cut * 0.8);
+          toks.push({ t: rest.slice(0, cut), r, w: width(rest.slice(0, cut), r) });
+          rest = rest.slice(cut);
+        }
+      }
+    }));
+    const lines: Tok[][] = [[]];
+    let lw = 0;
+    toks.forEach(k => {
+      const line = lines[lines.length - 1];
+      if (k.br) { lines.push([]); lw = 0; return; }
+      if (k.space && !line.length) return;                      // no space at the start of a line
+      if (lw + k.w > avail && line.length && !k.space) { lines.push([k]); lw = k.w; return; }
+      line.push(k); lw += k.w;
+    });
+    lines.forEach((line, li) => {
+      while (line.length && line[line.length - 1].space) line.pop();
+      if (y + lh > o.bottom) y = o.newPage();
+      const total = line.reduce((s2, k) => s2 + k.w, 0);
+      let cx = textX + (b.align === 'center' ? (avail - total) / 2 : b.align === 'right' ? avail - total : 0);
+      if (li === 0 && prefix) {
+        doc.setFont('helvetica', b.list === 'ol' ? 'bold' : 'normal'); doc.setFontSize(fs);
+        doc.text(prefix, o.x + indent, y);
+      }
+      line.forEach(k => {
+        doc.setFont('helvetica', fontOf(k.r)); doc.setFontSize(fs);
+        if (k.t.trim()) doc.text(k.t, cx, y);
+        if (k.r.u) { doc.setLineWidth(0.5); doc.line(cx, y + 1.5, cx + k.w, y + 1.5); }
+        if (k.r.s) { doc.setLineWidth(0.5); doc.line(cx, y - fs * 0.3, cx + k.w, y - fs * 0.3); }
+        cx += k.w;
+      });
+      y += lh;
+    });
+    y += 2;
+  }
+  doc.setFont('helvetica', 'normal');
+  return y;
+}
 
 /** One printed clause (merge fields already filled in). */
 export interface PrintClause { title: string; text: string }
@@ -112,21 +182,17 @@ export function buildPoPdf(h: Row, lines: Row[], extra: {
     heading(false);
     clauses.forEach((c, i) => {
       const title = (c.title || '').trim();
-      const body: string[] = doc.splitTextToSize((c.text || '').trim(), W - 2 * M - indent);
       // keep a clause title with at least two lines of its text
-      if (fy + (title ? 13 : 0) + Math.min(body.length, 2) * lh > bottom) newPage();
+      if (fy + (title ? 13 : 0) + 2 * lh > bottom) newPage();
       if (title || indent) {
         doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
         doc.text(`${i + 1}.`, M, fy);
         if (title) { doc.text(doc.splitTextToSize(title, W - 2 * M - indent)[0], M + indent, fy); fy += 13; }
       }
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-      body.forEach(line => {
-        if (fy + lh > bottom) newPage();
-        doc.text(line, M + indent, fy);
-        fy += lh;
-      });
-      fy += 7;
+      // clause text: rich (bold, lists, alignment …) or plain, wrapped and continued on new pages
+      fy = drawRichText(doc, (c.text || '').trim(), { x: M + indent, y: fy, width: W - 2 * M - indent, bottom, fontSize: 9, lineHeight: lh,
+        newPage: () => { newPage(); return fy; } });
+      fy += 5;
     });
   }
 

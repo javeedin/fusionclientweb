@@ -20,6 +20,8 @@ import {
 import { buildPoPdf } from './poPdf';
 import { loadPoTerms, orderContext, printableClauses, savePoTerms, withMandatory } from './poTerms';
 import { PoTermsButton, PoTermsPanel, usePoTerms } from './PoTermsUi';
+import PdfPreviewModal from '../../components/PdfPreviewModal';
+import type jsPDF from 'jspdf';
 import PoAttachments from './PoAttachments';
 import PoApInvoice from './PoApInvoice';
 import { APEX_DB_CONFIG } from '../../config/api.config';
@@ -83,6 +85,7 @@ const PurchaseOrderEditor: React.FC<{
   // terms and conditions (database/po/306_po_terms.sql): toolbar icon, Terms tab, printed PO
   const terms = usePoTerms(id, bu);
   const [termsDirty, setTermsDirty] = useState(false);
+  const [pdfPreview, setPdfPreview] = useState<{ doc: jsPDF; mark: boolean } | null>(null);
   const [tab, setTab] = useState('lines');
   const tabsRef = useRef<HTMLDivElement>(null);
   const termsCtx = useMemo(() => {
@@ -195,17 +198,24 @@ const PurchaseOrderEditor: React.FC<{
     if (savedId) await exec(PROC.submitPo, { p_po_header_id: savedId }, () => { load(); });
   };
 
+  const pdfName = () => (hdr ? `${hdr.PO_NUMBER}${n(hdr.REVISION_NUM) ? `-R${hdr.REVISION_NUM}` : ''}.pdf` : 'purchase-order.pdf');
+  const buildPdf = async (): Promise<jsPDF | null> => {
+    if (!hdr) return null;
+    const saved = await loadPoTerms(id, bu);   // what is saved on the order, never unsaved edits
+    if (termsDirty) message.warning('The PDF uses the saved terms — save the Terms & Conditions tab to include your changes', 6);
+    const loc = (lid: unknown) => lookups.locations.find(l => Number(l.LOCATION_ID) === Number(lid)) || null;
+    return buildPoPdf(hdr, lineRows, { buName: buRow?.BUSINESS_UNIT_NAME, terms: printableClauses(saved.clauses, termsCtx),
+      shipTo: loc(hdr.SHIP_TO_LOCATION_ID), billTo: loc(hdr.BILL_TO_LOCATION_ID) });
+  };
+  // Print PDF: preview first; saving or printing an approved order records it as sent (by print)
   const printPdf = async (mark = false) => {
-    if (!hdr) return;
-    try {
-      const saved = await loadPoTerms(id, bu);   // what is saved on the order, never unsaved edits
-      if (termsDirty) message.warning('The PDF uses the saved terms — save the Terms & Conditions tab to include your changes', 6);
-      const loc = (lid: unknown) => lookups.locations.find(l => Number(l.LOCATION_ID) === Number(lid)) || null;
-      const doc = buildPoPdf(hdr, lineRows, { buName: buRow?.BUSINESS_UNIT_NAME, terms: printableClauses(saved.clauses, termsCtx),
-        shipTo: loc(hdr.SHIP_TO_LOCATION_ID), billTo: loc(hdr.BILL_TO_LOCATION_ID) });
-      doc.save(`${hdr.PO_NUMBER}${n(hdr.REVISION_NUM) ? `-R${hdr.REVISION_NUM}` : ''}.pdf`);
-      if (mark && st === 'APPROVED') await exec(PROC.communicated, { p_po_header_id: id, p_method: 'PRINT', p_to: null });
-    } catch (e: any) { message.error(e.message); }
+    try { const doc = await buildPdf(); if (doc) setPdfPreview({ doc, mark: mark && st === 'APPROVED' }); }
+    catch (e: any) { message.error(e.message); }
+  };
+  const markPrinted = async () => {
+    if (!pdfPreview?.mark) return;
+    setPdfPreview(p => (p ? { ...p, mark: false } : p));
+    await exec(PROC.communicated, { p_po_header_id: id, p_method: 'PRINT', p_to: null });
   };
 
   const email = async () => {
@@ -213,7 +223,7 @@ const PurchaseOrderEditor: React.FC<{
     const to = site?.PO_EMAIL || '';
     const addr = window.prompt('Send the purchase order to (e-mail)', to);
     if (!addr) return;
-    await printPdf(false);
+    try { (await buildPdf())?.save(pdfName()); } catch (e: any) { message.error(e.message); return; }
     window.location.href = `mailto:${encodeURIComponent(addr)}?subject=${encodeURIComponent(`Purchase Order ${hdr.PO_NUMBER}`)}`
       + `&body=${encodeURIComponent(`Dear ${hdr.SUPPLIER_NAME},\n\nPlease find attached purchase order ${hdr.PO_NUMBER} for ${money(hdr.TOTAL_AMOUNT)} ${hdr.CURRENCY_CODE}.\n\nRegards,\n${user}`)}`;
     await exec(PROC.communicated, { p_po_header_id: id, p_method: 'EMAIL', p_to: addr });
@@ -580,6 +590,11 @@ const PurchaseOrderEditor: React.FC<{
         { key: 'attachments', label: <span><PaperClipOutlined /> Attachments</span>, disabled: !id,
           children: id ? <PoAttachments entityType="PO" entityId={id} user={user} readOnly={st === 'CANCELLED' || hdr?.CLOSURE_STATUS === 'FINALLY_CLOSED'} /> : null },
       ]} />
+
+      <PdfPreviewModal open={!!pdfPreview} doc={pdfPreview?.doc ?? null} fileName={pdfName()}
+        title={<span>Purchase order {hdr?.PO_NUMBER}{n(hdr?.REVISION_NUM) ? ` · Rev ${hdr?.REVISION_NUM}` : ''}</span>}
+        onClose={() => setPdfPreview(null)} onSaved={markPrinted} onPrinted={markPrinted}
+        note={pdfPreview?.mark ? 'Saving or printing records the purchase order as sent to the supplier (by print).' : undefined} />
 
       {hdr && <PoApInvoice open={invOpen} onClose={() => setInvOpen(false)} onDone={() => load()} hdr={hdr}
         buName={buRow?.BUSINESS_UNIT_NAME || ''} company={buRow?.COMPANY} fc={fc} taxCodes={lookups.taxCodes} user={user} />}

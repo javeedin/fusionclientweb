@@ -14,10 +14,13 @@ import {
 import { poExec, PROC, Row } from '../../services/po.service';
 import { PoBar, useBusinessUnits, usePoUser, PO_RED } from './poShared';
 import { buildPoPdf } from './poPdf';
+import PdfPreviewModal from '../../components/PdfPreviewModal';
+import type jsPDF from 'jspdf';
 import {
   LibraryTerm, MERGE_FIELDS, MAX_CLAUSE_BYTES, TERM_CATEGORIES, appliesToBu, byteLength, categoryInfo, defaultClauses,
-  loadTermLibrary, printableClauses, sampleContext, splitProposal, termsNotInstalled, unknownFields,
+  loadTermLibrary, printableClauses, sampleContext, splitProposal, termsNotInstalled, unknownFields, clausePlain,
 } from './poTerms';
+import { RichTextEditor, type RichTextEditorHandle } from '../../components/RichText/RichTextEditor';
 import { ClauseText, TermsDocument } from './PoTermsUi';
 
 const { Text } = Typography;
@@ -54,8 +57,8 @@ const ClauseEditor: React.FC<{
 }> = ({ open, initial, onClose, onSaved, bus, lib, user }) => {
   const [d, setD] = useState<Draft | null>(initial);
   const [busy, setBusy] = useState(false);
-  const caret = useRef<number | null>(null);
-  useEffect(() => { setD(initial); caret.current = null; }, [initial]);
+  const editor = useRef<RichTextEditorHandle>(null);
+  useEffect(() => { setD(initial); }, [initial]);
   if (!d) return null;
   const set = (p: Partial<Draft>) => setD(x => (x ? { ...x, ...p } : x));
   const bytes = byteLength(d.termText);
@@ -63,16 +66,10 @@ const ClauseEditor: React.FC<{
   const codeTaken = lib.some(t => t.TERM_CODE === d.termCode.trim().toUpperCase() && t.TERM_ID !== d.termId);
   const errors = [
     !d.termCode.trim() && 'Code is required', codeTaken && 'This code is already used',
-    !d.title.trim() && 'Title is required', !d.termText.trim() && 'Clause text is required',
+    !d.title.trim() && 'Title is required', !clausePlain(d.termText).trim() && 'Clause text is required',
     bytes > MAX_CLAUSE_BYTES && `Text is ${bytes} bytes — at most ${MAX_CLAUSE_BYTES}. Split it into two clauses.`,
   ].filter(Boolean) as string[];
-  const insert = (key: string) => {
-    const at = caret.current ?? d.termText.length;
-    const token = `{${key}}`;
-    set({ termText: d.termText.slice(0, at) + token + d.termText.slice(at) });
-    caret.current = at + token.length;
-  };
-  const trackCaret = (e: React.SyntheticEvent<HTMLTextAreaElement>) => { caret.current = e.currentTarget.selectionStart; };
+  const insert = (key: string) => editor.current?.insertText(`{${key}}`);
   const save = async () => {
     if (errors.length) { message.warning(errors[0]); return; }
     setBusy(true);
@@ -97,13 +94,12 @@ const ClauseEditor: React.FC<{
           </div>
           <Form.Item label="Clause text" required style={{ marginBottom: 6 }}
             extra={<div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>Click a field below to insert it at the cursor.</span>
-              <Text type={bytes > MAX_CLAUSE_BYTES ? 'danger' : 'secondary'} style={{ fontSize: 12 }}>{bytes} / {MAX_CLAUSE_BYTES} bytes</Text>
+              <span>Format with the toolbar; paste from Word keeps bold, italic, underline and lists. Click a field below to insert it at the cursor.</span>
+              <Text type={bytes > MAX_CLAUSE_BYTES ? 'danger' : 'secondary'} style={{ fontSize: 12, whiteSpace: 'nowrap', marginLeft: 8 }}>{bytes} / {MAX_CLAUSE_BYTES} bytes</Text>
             </div>}>
-            <Input.TextArea value={d.termText} autoSize={{ minRows: 8, maxRows: 18 }}
-              placeholder="The supplier shall deliver the goods to {SHIP_TO} by the need-by date shown on purchase order {PO_NUMBER}…"
-              onChange={e => { set({ termText: e.target.value }); caret.current = e.target.selectionStart; }}
-              onSelect={trackCaret} onClick={trackCaret} onKeyUp={trackCaret} />
+            <RichTextEditor ref={editor} value={d.termText} onChange={html => set({ termText: html })} minHeight={200} maxHeight={420}
+              fields={MERGE_FIELDS} status={bytes > MAX_CLAUSE_BYTES ? 'error' : undefined}
+              placeholder="The supplier shall deliver the goods to {SHIP_TO} by the need-by date shown on purchase order {PO_NUMBER}…" />
           </Form.Item>
           <Space size={[4, 4]} wrap style={{ marginBottom: 12 }}>
             {MERGE_FIELDS.map(f => (
@@ -227,6 +223,7 @@ const PoTerms: React.FC = () => {
   const [editing, setEditing] = useState<Draft | null>(null);
   const [splitting, setSplitting] = useState<LibraryTerm | null>(null);
   const [showFields, setShowFields] = useState<'sample' | 'fields'>('sample');
+  const [sample, setSample] = useState<jsPDF | null>(null);
   const dragFrom = useRef<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
 
@@ -246,7 +243,7 @@ const PoTerms: React.FC = () => {
     return scoped
       .filter(t => status === 'ALL' || t.STATUS === status)
       .filter(t => !cat || t.TERM_CATEGORY === cat)
-      .filter(t => !s || `${t.TERM_CODE} ${t.TITLE} ${t.TERM_TEXT}`.toLowerCase().includes(s))
+      .filter(t => !s || `${t.TERM_CODE} ${t.TITLE} ${clausePlain(t.TERM_TEXT)}`.toLowerCase().includes(s))
       .sort((a, b) => a.DISPLAY_ORDER - b.DISPLAY_ORDER || a.TERM_CODE.localeCompare(b.TERM_CODE));
   }, [scoped, search, cat, status]);
   const onNewPo = useMemo(() => defaultClauses(lib, bu), [lib, bu]);
@@ -293,8 +290,7 @@ const PoTerms: React.FC = () => {
       { LINE_NUM: 1, ITEM_DESCRIPTION: 'Sample item — office chairs', NEED_BY_DATE: ctx.PO_DATE, LINE_TYPE: 'QUANTITY', QUANTITY: 50, UOM_CODE: 'EA', UNIT_PRICE: 1500, AMOUNT: 75000 },
       { LINE_NUM: 2, ITEM_DESCRIPTION: 'Sample service — installation', NEED_BY_DATE: ctx.PO_DATE, LINE_TYPE: 'AMOUNT', AMOUNT: 50000 },
     ];
-    const doc = buildPoPdf(h, lines, { buName: buName || undefined, terms: printableClauses(onNewPo, ctx) });
-    doc.save(`Sample PO terms${buName ? ` - ${buName}` : ''}.pdf`);
+    setSample(buildPoPdf(h, lines, { buName: buName || undefined, terms: printableClauses(onNewPo, ctx) }));
   };
 
   return (
@@ -374,7 +370,7 @@ const PoTerms: React.FC = () => {
                       {t.PO_COUNT > 0 && <Tooltip title="Purchase orders that carry this clause"><Tag color="blue" style={{ fontSize: 11 }}>On {t.PO_COUNT} PO{t.PO_COUNT > 1 ? 's' : ''}</Tag></Tooltip>}
                     </Space>
                     <div style={{ fontSize: 12.5, color: '#595959', marginTop: 3, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                      <ClauseText text={t.TERM_TEXT} ctx={showFields === 'sample' ? sampleContext() : {}} />
+                      <ClauseText text={t.TERM_TEXT} ctx={showFields === 'sample' ? sampleContext() : {}} preview />
                     </div>
                   </div>
                   <Space size={0} style={{ alignSelf: 'flex-start' }}>
@@ -414,6 +410,9 @@ const PoTerms: React.FC = () => {
 
       <ClauseEditor open={!!editing} initial={editing} onClose={() => setEditing(null)} onSaved={load}
         bus={buState.bus as unknown as { BUSINESS_UNIT_ID: number; BUSINESS_UNIT_NAME: string }[]} lib={lib} user={user} />
+      <PdfPreviewModal open={!!sample} doc={sample} fileName={`Sample PO terms${buName ? ` - ${buName}` : ''}.pdf`}
+        title={<span>Sample purchase order{buName ? ` · ${buName}` : ''}</span>} onClose={() => setSample(null)}
+        note="Sample order with the clauses a new order gets — merge fields show sample values." />
       <SplitModal term={splitting} onClose={() => setSplitting(null)} onDone={load} lib={lib} user={user} />
     </div>
   );
