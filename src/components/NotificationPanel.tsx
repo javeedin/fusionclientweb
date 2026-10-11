@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Drawer, Button, Badge, Tag, Typography, Space, Tooltip, Empty, Spin, Tabs,
-  Table, Select, Modal, Descriptions, Divider, Input, message,
+  Table, Select, Modal, Descriptions, Divider, Input, Alert, message,
 } from 'antd';
+import { useNavigate } from 'react-router-dom';
 import {
   BellOutlined, CheckOutlined, DeleteOutlined, ReloadOutlined,
   WarningOutlined, InfoCircleOutlined, CloseCircleOutlined, ApiOutlined,
@@ -171,6 +172,40 @@ const ProcessMonitor: React.FC<{ active: boolean }> = ({ active }) => {
 };
 
 // ── Transaction Detail Modal ──────────────────────────────────────────────────
+// The AP endpoints answer in snake_case, UPPER_CASE or PascalCase depending on the handler — read any of them.
+const pick = (o: any, ...keys: string[]) => {
+  if (!o || typeof o !== 'object') return undefined;
+  for (const k of keys) {
+    for (const v of [k, k.toUpperCase(), k.replace(/(^|_)(\w)/g, (_m, _u, c: string) => c.toUpperCase())]) {
+      if (o[v] != null && o[v] !== '') return o[v];
+    }
+  }
+  return undefined;
+};
+const itemsOf = (d: any): any[] => (Array.isArray(d?.items) ? d.items : Array.isArray(d) ? d : []);
+const getJson = async (url: string) => {
+  const r = await fetch(url, { headers: { Accept: 'application/json' } });
+  return r.ok ? r.json().catch(() => null) : null;
+};
+
+/** Invoice header: the invoice search by number (matched on the id), then by id, then the single-invoice endpoint. */
+async function loadApInvoiceHeader(invoiceId: number, invoiceNumber?: string): Promise<any | null> {
+  const base = APEX_DB_CONFIG.baseUrl;
+  const same = (r: any) => String(pick(r, 'invoice_id')) === String(invoiceId);
+  if (invoiceNumber) {
+    const hit = itemsOf(await getJson(`${base}/ap/createinvoice?invoice_number=${encodeURIComponent(invoiceNumber)}`).catch(() => null)).find(same);
+    if (hit) return hit;
+  }
+  const byId = itemsOf(await getJson(`${base}/ap/createinvoice?invoice_id=${invoiceId}`).catch(() => null)).find(same);
+  if (byId) return byId;
+  const d = await getJson(`${base}/ap/createinvoice/${invoiceId}`).catch(() => null);
+  const one = itemsOf(d)[0] || d?.header || d;
+  return one && pick(one, 'invoice_number', 'invoice_num') ? one : null;
+}
+
+const fmtMoney = (v: any) => (v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const fmtDay = (v: any) => (v && dayjs(v).isValid() ? dayjs(v).format('DD-MMM-YYYY') : v || '—');
+
 const TransactionDetailModal: React.FC<{
   notif: AppNotification | null;
   open: boolean;
@@ -178,7 +213,9 @@ const TransactionDetailModal: React.FC<{
   onApprove: () => void;
   onReject: (comments: string) => void;
   acting: boolean;
-}> = ({ notif, open, onClose, onApprove, onReject, acting }) => {
+  /** open the full invoice (attachments, accounting …) */
+  onOpenInvoice?: (invoiceId: number, invoiceNumber: string) => void;
+}> = ({ notif, open, onClose, onApprove, onReject, acting, onOpenInvoice }) => {
   const [invoiceLines, setInvoiceLines] = useState<any[]>([]);
   const [linesLoading, setLinesLoading] = useState(false);
   const [apHeader, setApHeader] = useState<any>(null);
@@ -194,29 +231,32 @@ const TransactionDetailModal: React.FC<{
       setApHeader(null);
       return;
     }
-    // Fetch AP invoice lines
+    let cancelled = false;
+    const id = notif.transactionId;
+    // Invoice lines (item and tax lines)
     setLinesLoading(true);
-    fetch(`${APEX_DB_CONFIG.baseUrl}/ap/createinvoiceslines?P_INVOICE_ID=${notif.transactionId}`, {
-      headers: { Accept: 'application/json' },
-    })
-      .then(r => r.json())
-      .then(d => setInvoiceLines(d.items ?? []))
-      .catch(() => {})
-      .finally(() => setLinesLoading(false));
-    // Fetch AP invoice header
-    setApHeaderLoading(true);
-    fetch(`${APEX_DB_CONFIG.baseUrl}/ap/createinvoice/${notif.transactionId}`, {
-      headers: { Accept: 'application/json' },
-    })
-      .then(r => r.json())
+    getJson(`${APEX_DB_CONFIG.baseUrl}/ap/createinvoiceslines?P_INVOICE_ID=${id}`)
       .then(d => {
-        const arr = d?.items;
-        if (Array.isArray(arr) && arr.length > 0) setApHeader(arr[0]);
-        else setApHeader(d?.header || d || null);
+        if (cancelled) return;
+        setInvoiceLines(itemsOf(d).map((l: any, i: number) => ({
+          key: pick(l, 'line_id') ?? i,
+          lineNumber: pick(l, 'line_number', 'line_num') ?? i + 1,
+          lineType: pick(l, 'line_type') || 'Item',
+          description: pick(l, 'description', 'line_description') || '',
+          amount: Number(pick(l, 'line_amount', 'amount') ?? 0),
+          distribution: pick(l, 'distribution_combination', 'dist_code_combination', 'distribution') || '',
+        })));
       })
-      .catch(() => {})
-      .finally(() => setApHeaderLoading(false));
-  }, [open, notif?.transactionId, notif?.approvalModule]);
+      .catch(() => { if (!cancelled) setInvoiceLines([]); })
+      .finally(() => { if (!cancelled) setLinesLoading(false); });
+    // Invoice header
+    setApHeaderLoading(true);
+    loadApInvoiceHeader(id, notif.trxNo)
+      .then(h => { if (!cancelled) setApHeader(h); })
+      .catch(() => { if (!cancelled) setApHeader(null); })
+      .finally(() => { if (!cancelled) setApHeaderLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, notif?.transactionId, notif?.approvalModule, notif?.trxNo]);
 
   React.useEffect(() => {
     if (!open || !notif?.transactionId || notif.approvalModule !== 'CASH') {
@@ -249,14 +289,17 @@ const TransactionDetailModal: React.FC<{
     : '—';
 
   const lineColumns: ColumnsType<any> = [
-    { title: 'Line #',  dataIndex: 'LINE_NUMBER',  key: 'ln',  width: 60 },
-    { title: 'Type',    dataIndex: 'LINE_TYPE',     key: 'lt',  width: 80 },
-    { title: 'Description', dataIndex: 'DESCRIPTION', key: 'ld', ellipsis: true },
-    { title: 'Amount',  dataIndex: 'LINE_AMOUNT',   key: 'la',  width: 110,
-      render: (v: number) => <Text style={{ fontFamily: 'monospace' }}>{Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</Text> },
-    { title: 'Distribution', dataIndex: 'DISTRIBUTION_COMBINATION', key: 'dc', width: 160,
-      render: (v: string) => <Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{v || '—'}</Text> },
+    { title: 'Line #',  dataIndex: 'lineNumber',  key: 'ln',  width: 60 },
+    { title: 'Type',    dataIndex: 'lineType',    key: 'lt',  width: 80,
+      render: (v: string) => <Tag color={/tax/i.test(v) ? 'purple' : 'default'} style={{ fontSize: 10, margin: 0 }}>{v}</Tag> },
+    { title: 'Description', dataIndex: 'description', key: 'ld', ellipsis: true,
+      render: (v: string) => <Tooltip title={v}><span>{v || '—'}</span></Tooltip> },
+    { title: 'Amount',  dataIndex: 'amount',      key: 'la',  width: 120, align: 'right',
+      render: (v: number) => <Text style={{ fontFamily: 'monospace' }}>{fmtMoney(v)}</Text> },
+    { title: 'Distribution', dataIndex: 'distribution', key: 'dc', width: 200, ellipsis: true,
+      render: (v: string) => <Tooltip title={v}><Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{v || '—'}</Text></Tooltip> },
   ];
+  const linesTotal = invoiceLines.reduce((t, l) => t + (Number(l.amount) || 0), 0);
 
   return (
     <Modal
@@ -319,27 +362,54 @@ const TransactionDetailModal: React.FC<{
 
       {notif.approvalModule === 'AP' && notif.transactionId && (
         <>
-          <Divider style={{ margin: '8px 0', fontSize: 12 }}>Invoice Header</Divider>
+          <Divider style={{ margin: '8px 0', fontSize: 12 }}>
+            <Space size={8}>
+              <span>Invoice</span>
+              {onOpenInvoice && (
+                <Button size="small" type="link" icon={<EyeOutlined />} style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                  onClick={() => onOpenInvoice(notif.transactionId!, String(pick(apHeader, 'invoice_number') || notif.trxNo))}>
+                  Open invoice
+                </Button>
+              )}
+            </Space>
+          </Divider>
           {apHeaderLoading
             ? <div style={{ textAlign: 'center', padding: 8 }}><Spin size="small" /></div>
             : apHeader
               ? <Descriptions bordered size="small" column={2} style={{ marginBottom: 8 }}>
-                  <Descriptions.Item label="Invoice #">{apHeader.invoice_number || apHeader.INVOICE_NUMBER || '—'}</Descriptions.Item>
-                  <Descriptions.Item label="Type">{apHeader.invoice_type || apHeader.INVOICE_TYPE || '—'}</Descriptions.Item>
-                  <Descriptions.Item label="Supplier">{apHeader.supplier || apHeader.SUPPLIER || apHeader.supplier_name || '—'}</Descriptions.Item>
-                  <Descriptions.Item label="Invoice Date">{(apHeader.invoice_date || apHeader.INVOICE_DATE) ? dayjs(apHeader.invoice_date || apHeader.INVOICE_DATE).format('DD-MMM-YYYY') : '—'}</Descriptions.Item>
-                  <Descriptions.Item label="Business Unit">{apHeader.business_unit || apHeader.BUSINESS_UNIT || '—'}</Descriptions.Item>
-                  <Descriptions.Item label="Currency">{apHeader.invoice_currency || apHeader.INVOICE_CURRENCY || '—'}</Descriptions.Item>
-                  <Descriptions.Item label="Validation">{apHeader.validation_status || apHeader.VALIDATION_STATUS || '—'}</Descriptions.Item>
-                  <Descriptions.Item label="Approval">{apHeader.approval_status || apHeader.APPROVAL_STATUS || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Invoice #">{pick(apHeader, 'invoice_number', 'invoice_num') || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Type">{pick(apHeader, 'invoice_type') || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Supplier">{pick(apHeader, 'supplier', 'supplier_name', 'party') || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Supplier Site">{pick(apHeader, 'supplier_site') || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Invoice Date">{fmtDay(pick(apHeader, 'invoice_date'))}</Descriptions.Item>
+                  <Descriptions.Item label="Accounting Date">{fmtDay(pick(apHeader, 'accounting_date'))}</Descriptions.Item>
+                  <Descriptions.Item label="Business Unit">{pick(apHeader, 'business_unit') || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Amount">
+                    <Text strong style={{ fontFamily: 'monospace' }}>{pick(apHeader, 'invoice_currency') || notif.approvalCurrency || ''} {fmtMoney(pick(apHeader, 'invoice_amount'))}</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Payment Terms">{pick(apHeader, 'payment_terms', 'terms_name') || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Created By">{pick(apHeader, 'created_by') || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Validation"><Tag style={{ margin: 0 }}>{pick(apHeader, 'validation_status') || 'Never validated'}</Tag></Descriptions.Item>
+                  <Descriptions.Item label="Liability Account">
+                    <Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{pick(apHeader, 'liability_distribution') || '—'}</Text>
+                  </Descriptions.Item>
                 </Descriptions>
-              : null
+              : <Alert type="warning" showIcon style={{ marginBottom: 8, fontSize: 12 }}
+                  message={`Invoice ${notif.trxNo} (id ${notif.transactionId}) could not be loaded — use Open invoice to check it.`} />
           }
-          <Divider style={{ margin: '8px 0', fontSize: 12 }}>Invoice Lines</Divider>
+          <Divider style={{ margin: '8px 0', fontSize: 12 }}>Invoice Lines{invoiceLines.length ? ` (${invoiceLines.length})` : ''}</Divider>
           {linesLoading
             ? <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
             : invoiceLines.length > 0
-              ? <Table dataSource={invoiceLines} columns={lineColumns} rowKey="LINE_NUMBER" size="small" pagination={false} />
+              ? <Table dataSource={invoiceLines} columns={lineColumns} rowKey="key" size="small" pagination={false}
+                  scroll={invoiceLines.length > 8 ? { y: 260 } : undefined}
+                  summary={() => (
+                    <Table.Summary.Row>
+                      <Table.Summary.Cell index={0} colSpan={3}><Text strong>Total</Text></Table.Summary.Cell>
+                      <Table.Summary.Cell index={3} align="right"><Text strong style={{ fontFamily: 'monospace' }}>{fmtMoney(linesTotal)}</Text></Table.Summary.Cell>
+                      <Table.Summary.Cell index={4} />
+                    </Table.Summary.Row>
+                  )} />
               : <Text type="secondary" style={{ fontSize: 12 }}>No lines found</Text>
           }
         </>
@@ -396,6 +466,7 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
   const [detailNotif, setDetailNotif]         = useState<AppNotification | null>(null);
   const [actingId, setActingId]               = useState<string | null>(null);
   const [tab, setTab]                         = useState<'notifs' | 'procs'>('notifs');
+  const navigate = useNavigate();
 
   const filtered = notifications.filter(n => {
     if (activeModule !== 'All' && n.module !== activeModule) return false;
@@ -754,6 +825,11 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
         acting={!!actingId}
         onApprove={() => detailNotif && handleApprove(detailNotif)}
         onReject={(comments) => detailNotif && handleReject(detailNotif, comments)}
+        onOpenInvoice={(openInvoiceId, openInvoiceNumber) => {
+          setDetailNotif(null);
+          onClose();
+          navigate('/ap/manage-invoices', { state: { openInvoiceId, openInvoiceNumber } });
+        }}
       />
 
       {/* PDC API Inspector Modal */}
