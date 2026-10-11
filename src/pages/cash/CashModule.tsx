@@ -3,7 +3,7 @@ import { Layout, Breadcrumb, Typography, Card, Row, Col } from 'antd';
 import {
   HomeOutlined, BankOutlined, SwapOutlined, ReconciliationOutlined,
   BarChartOutlined, FileTextOutlined, SettingOutlined, CheckCircleOutlined,
-  TeamOutlined,
+  TeamOutlined, ContainerOutlined,
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 
@@ -35,6 +35,7 @@ const transferItems: MenuItemType[] = [
 const reconItems: MenuItemType[] = [
   { key: 'bank-statements',  icon: <FileTextOutlined />,       label: 'Manage Bank Statements',     description: 'Import, create and review bank statements',  color: REDWOOD.info,    path: '/cash/bank-statements' },
   { key: 'reconciliation',   icon: <ReconciliationOutlined />, label: 'Bank Reconciliation',        description: 'Reconcile bank statements with system',       color: REDWOOD.primary, path: '/cash/bank-reconciliation' },
+  { key: 'archived-statements', icon: <ContainerOutlined />, label: 'Archived Statements', description: 'Archived bank reconciliations and their working papers', color: REDWOOD.success, path: '/cash/archived-statements' },
   { key: 'transaction-codes', icon: <SettingOutlined />,        label: 'Transaction Codes',          description: 'Maintain bank statement transaction codes',   color: REDWOOD.warning, path: '/cash/transaction-codes' },
   { key: 'pdf-templates',    icon: <FileTextOutlined />,       label: 'PDF Statement Templates',    description: 'Design templates for parsing PDF bank statements', color: REDWOOD.info,   path: '/cash/pdf-templates' },
 ];

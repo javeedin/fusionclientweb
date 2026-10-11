@@ -42,6 +42,7 @@ const PAGE_MAP: Record<string, { module: string; pageName: string }> = {
   '/cash/bank-transfers':         { module: 'Cash Management',  pageName: 'Bank Transfers' },
   '/cash/bank-statements':        { module: 'Cash Management',  pageName: 'Bank Statements' },
   '/cash/bank-reconciliation':    { module: 'Cash Management',  pageName: 'Bank Reconciliation' },
+  '/cash/archived-statements':    { module: 'Cash Management',  pageName: 'Archived Statements' },
   '/cash':                        { module: 'Cash Management',  pageName: 'Cash Module Home' },
   '/sync':                        { module: 'Data Sync',        pageName: 'Sync Data' },
   '/admin/users':                 { module: 'Administration',   pageName: 'User Management' },

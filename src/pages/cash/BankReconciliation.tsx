@@ -13,7 +13,7 @@ import {
   CheckOutlined, CloseOutlined, ReconciliationOutlined, FileTextOutlined,
   ApiOutlined, CopyOutlined, PlusOutlined, ThunderboltOutlined, DownloadOutlined,
   CheckCircleOutlined, CloseCircleOutlined, SyncOutlined, InfoCircleOutlined, LinkOutlined,
-  UndoOutlined, ReadOutlined, RobotOutlined,
+  UndoOutlined, ReadOutlined, RobotOutlined, ContainerOutlined, ContainerFilled,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -21,6 +21,8 @@ import AccountSelector, { validateAccountCode } from '../../components/AccountSe
 import { ReconciliationViewer } from '../../components/ReconciliationViewer';
 import { reconcileWithClaude, type ReconciliationResult } from '../../services/claudeReconciliation.service';
 import ReconAgent from './ReconAgent';
+import ArchiveDetail, { type StatementSeed } from './archive/ArchiveDetail';
+import { archivesForStatements } from '../../services/cmArchive.service';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
@@ -130,6 +132,7 @@ interface BankStatement {
   statementNumber: string;
   statementDate: string;
   bankAccountName: string;
+  bankAccountNumber?: string;
   businessUnitName?: string;
   openingBalance?: number;
   closingBalance?: number;
@@ -376,6 +379,50 @@ const StatementSelector: React.FC<StatementSelectorProps> = ({
   const [jlFilter,  setJlFilter]  = useState('');
   const [jlAcctDesc, setJlAcctDesc] = useState('');
 
+  // ── archive bank reconciliation (database/cash/170_cm_archive_bank_statements.sql) ──
+  const { user: authUser } = useAuth();
+  const archiveUser = authUser?.username || authUser?.email || 'BANK_RECON';
+  const [archived, setArchived] = useState<Map<number, { id: number; number: string }>>(new Map());
+  const [archiveOpen, setArchiveOpen] = useState<{ seed?: StatementSeed; archiveId?: number; title: string } | null>(null);
+  const reloadArchived = useCallback(() => {
+    archivesForStatements(statements.map(s => s.statementId)).then(setArchived);
+  }, [statements]);
+  useEffect(() => { reloadArchived(); }, [reloadArchived]);
+  const matchBankAccount = (r: BankStatement) => {
+    const cleanName = stripCurrencySuffix(r.bankAccountName || '').toLowerCase();
+    return bankAccounts.find(b => (r.bankAccountNumber && b.bankAccountNumber === r.bankAccountNumber))
+      || bankAccounts.find(b => {
+        const bl = stripCurrencySuffix(b.label).toLowerCase();
+        return bl === cleanName || bl.includes(cleanName) || cleanName.includes(bl);
+      });
+  };
+  const openArchive = (r: BankStatement | undefined, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!r) { message.info('Select a bank statement first'); return; }
+    const existing = archived.get(r.statementId);
+    if (existing) { setArchiveOpen({ archiveId: existing.id, title: `${existing.number} — ${r.statementNumber}` }); return; }
+    const acct = matchBankAccount(r);
+    const d = dayjs(r.statementDate);
+    // period: the day after the previous statement of the same bank account, else the start of the month
+    const prev = statements
+      .filter(s => s.statementId !== r.statementId && s.bankAccountName === r.bankAccountName && dayjs(s.statementDate).isBefore(d, 'day'))
+      .sort((a, b) => dayjs(b.statementDate).valueOf() - dayjs(a.statementDate).valueOf())[0];
+    setArchiveOpen({
+      title: `Archive ${r.statementNumber}`,
+      seed: {
+        statementId: r.statementId, statementNumber: r.statementNumber, statementDate: d.format('YYYY-MM-DD'),
+        businessUnitName: r.businessUnitName, bankAccountName: r.bankAccountName,
+        bankAccountNumber: r.bankAccountNumber || acct?.bankAccountNumber, currencyCode: r.currencyCode || acct?.currencyCode,
+        cashAccount: acct?.cashAccount || null, openingBalance: r.openingBalance, closingBalance: r.closingBalance,
+        totalLines: r.totalLines ?? r.lineCount, reconLines: r.reconLines, unreconLines: r.unreconLines,
+        defaultFrom: (prev ? dayjs(prev.statementDate).add(1, 'day') : d.startOf('month')).format('YYYY-MM-DD'),
+        defaultTo: d.format('YYYY-MM-DD'),
+      },
+    });
+  };
+  const selectedStmt = statements.find(s => s.statementId === selectedId);
+  const selectedArchive = selectedStmt ? archived.get(selectedStmt.statementId) : undefined;
+
   const fetchJournalLines = async (dateFrom: string, dateTo: string, cashAcct: string) => {
     setJlLoading(true);
     try {
@@ -565,10 +612,42 @@ const StatementSelector: React.FC<StatementSelectorProps> = ({
         </Tooltip>
       ),
     },
+    {
+      title: '',
+      key: 'archiveAction',
+      width: 40,
+      align: 'center' as const,
+      render: (_: unknown, r: BankStatement) => {
+        const a = archived.get(r.statementId);
+        return (
+          <Tooltip title={a ? `Archived as ${a.number} — open` : 'Archive this reconciliation'}>
+            <Button type="text" size="small" aria-label={a ? 'Open archive' : 'Archive'}
+              icon={a ? <ContainerFilled style={{ color: REDWOOD.success }} /> : <ContainerOutlined style={{ color: REDWOOD.neutral600 }} />}
+              onClick={e => openArchive(r, e)} />
+          </Tooltip>
+        );
+      },
+    },
   ];
 
   return (
     <>
+    <Modal
+      open={!!archiveOpen}
+      onCancel={() => setArchiveOpen(null)}
+      maskClosable={false}
+      destroyOnHidden
+      footer={null}
+      width={1240}
+      style={{ top: 24 }}
+      title={<Space><ContainerOutlined style={{ color: REDWOOD.primary }} /><span style={{ fontWeight: 600 }}>Archive Bank Reconciliation</span>
+        <Text type="secondary" style={{ fontSize: 12 }}>{archiveOpen?.title}</Text></Space>}
+    >
+      {archiveOpen && (
+        <ArchiveDetail seed={archiveOpen.seed} archiveId={archiveOpen.archiveId} user={archiveUser}
+          onSaved={() => reloadArchived()} onClose={() => setArchiveOpen(null)} />
+      )}
+    </Modal>
     <Modal
       open={jlOpen}
       onCancel={() => setJlOpen(false)}
@@ -783,6 +862,15 @@ const StatementSelector: React.FC<StatementSelectorProps> = ({
           <span style={{ fontWeight: 600 }}>Select a Bank Statement</span>
           <Badge count={statements.length} style={{ backgroundColor: REDWOOD.info }} showZero />
         </Space>
+      }
+      extra={
+        <Tooltip title={!selectedStmt ? 'Select a bank statement to archive its reconciliation'
+          : selectedArchive ? `Already archived as ${selectedArchive.number} — open it` : `Archive ${selectedStmt.statementNumber}`}>
+          <Button size="small" disabled={!selectedStmt} onClick={() => openArchive(selectedStmt)} style={{ marginRight: 32 }}
+            icon={selectedArchive ? <ContainerFilled style={{ color: REDWOOD.success }} /> : <ContainerOutlined />}>
+            {selectedArchive ? selectedArchive.number : 'Archive'}
+          </Button>
+        </Tooltip>
       }
       style={{ marginBottom: 16, border: `1px solid ${REDWOOD.neutral200}` }}
       styles={{ body: { padding: 0 } }}
