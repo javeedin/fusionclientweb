@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { buildApexUrl } from '../config/api.helper';
 import { useAuth } from './AuthContext';
-import { getApprovalRequests, updateApprovalStatus } from '../services/approvals.service';
+import { getApprovalRequests, emitApprovalsChanged, onApprovalsChanged } from '../services/approvals.service';
 import type { ApprovalRequest } from '../services/approvals.service';
 import dayjs from 'dayjs';
 
@@ -108,6 +108,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const didMountCheck = useRef(false);
   const seenApprovalIdsRef = useRef<Set<number>>(new Set());
   const approvalIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const notificationsRef = useRef<AppNotification[]>([]);
+  notificationsRef.current = notifications;
 
   const addNotification = useCallback((n: Omit<AppNotification, 'id' | 'createdAt'>) => {
     const notif: AppNotification = { ...n, id: uid(), createdAt: Date.now() };
@@ -256,6 +258,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }
     setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, status: 'Actioned' } : n));
     setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== notifId)), 1500);
+    // let open screens (invoices, external transactions) show the decision right away
+    const n = notificationsRef.current.find(x => x.id === notifId);
+    emitApprovalsChanged({ reason: 'decided', module: n?.approvalModule, transactionId: n?.transactionId, transactionRef: n?.trxNo, status, actorName });
   }, [actorName, actorEmail]);
 
   const approveNotification = useCallback(async (requestId: number, notifId: string) => {
@@ -273,6 +278,11 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     checkPdcMaturity();
     checkPendingApprovals();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A request was just sent from this app → show it in the bell now (no wait for the next poll)
+  React.useEffect(() => onApprovalsChanged(d => {
+    if (d.reason === 'sent') setTimeout(checkPendingApprovals, 400);
+  }), [checkPendingApprovals]);
 
   // Poll approvals every 60 seconds
   React.useEffect(() => {

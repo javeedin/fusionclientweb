@@ -6,7 +6,7 @@ import {
   Layout, Breadcrumb, Typography, Card, Table, Button, Form, Input, Select,
   DatePicker, InputNumber, Row, Col, Space, Tag, Tooltip, Tabs, Collapse,
   message, Empty, Divider, Badge, Modal, Alert, Spin, Segmented, Upload, Popconfirm, AutoComplete,
-  Popover,
+  Popover, Checkbox,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -35,7 +35,11 @@ import { APEX_DB_CONFIG } from '../../config/api.config';
 import { searchCombinations, type DistCombination } from '../../services/distCombinations.service';
 import { validateGlPayload, persistValidationLog, type GlJournalPayload } from '../../services/glValidation.service';
 import { useGlValidation } from '../../context/GlValidationContext';
-import { getApprovalUsers, getApprovalRules, sendExternalTxnApproval, type ApprovalUser } from '../../services/approvals.service';
+import {
+  getApprovalUsers, getApprovalRules, sendExternalTxnApproval, approvalState, canSendForApproval, onApprovalsChanged, storedDecision,
+  APPROVAL_STATE_LOOK as APPROVAL_LOOK, type ApprovalUser,
+} from '../../services/approvals.service';
+import ApprovalStatusModal from '../../components/approvals/ApprovalStatusModal';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -258,27 +262,6 @@ const statusLabel = (s: string) => {
   };
   return m[s] ?? s;
 };
-
-// Approval status as stored — PENDING, 'Manually approved' (in-app) / APPROVED, 'Rejected' / REJECTED,
-// CANCELLED / RECALLED — reduced to one state for colours, labels and what the user can do next.
-type ApprovalState = 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
-const approvalState = (s?: string | null): ApprovalState => {
-  const v = String(s ?? '').trim().toUpperCase();
-  if (!v || v === 'NONE') return 'NONE';
-  if (v.includes('APPROVED')) return 'APPROVED';
-  if (v.startsWith('REJECT')) return 'REJECTED';
-  if (v === 'CANCELLED' || v === 'CANCELED' || v === 'RECALLED') return 'CANCELLED';
-  return 'PENDING';
-};
-const APPROVAL_LOOK: Record<ApprovalState, { label: string; tag: string; color: string }> = {
-  NONE:      { label: 'Not sent',         tag: 'default', color: REDWOOD.neutral600 },
-  PENDING:   { label: 'Pending Approval', tag: 'orange',  color: REDWOOD.warning },
-  APPROVED:  { label: 'Approved',         tag: 'green',   color: REDWOOD.success },
-  REJECTED:  { label: 'Rejected',         tag: 'red',     color: REDWOOD.error },
-  CANCELLED: { label: 'Cancelled',        tag: 'default', color: REDWOOD.neutral600 },
-};
-/** Nothing active — the transaction can be sent (again). */
-const canSendForApproval = (s?: string | null) => ['NONE', 'CANCELLED'].includes(approvalState(s));
 
 interface BankAcctProgressRow {
   extTxnId:      number;
@@ -874,6 +857,7 @@ const ExternalTxnForm: React.FC<{
   const [fApprovalLoadingUsers, setFApprovalLoadingUsers] = useState(false);
   const [fApprovalSending, setFApprovalSending]       = useState(false);
   const [fSelectedApprover, setFSelectedApprover]     = useState<string | undefined>(undefined);
+  const [fAlsoEmail, setFAlsoEmail]                   = useState(false);
   const [fApprovalStatusOpen, setFApprovalStatusOpen] = useState(false);
   const [fDebugSteps, setFDebugSteps]                 = useState<import('../../services/approvals.service').ApprovalDebugStep[]>([]);
   const [fDebugOpen, setFDebugOpen]                   = useState(false);
@@ -1594,6 +1578,16 @@ const ExternalTxnForm: React.FC<{
       .finally(() => setFApprovalLoadingUsers(false));
   };
 
+  // Approved / rejected from the notification bell → update this form right away
+  useEffect(() => onApprovalsChanged(d => {
+    const id = savedExtId ?? initialValues?.externalTransactionId;
+    if (d.reason !== 'decided' || d.module !== 'CASH' || !d.status || !id) return;
+    if (d.transactionId !== id && d.transactionRef !== `CASH-EXT-${id}`) return;
+    setFApprovalStatus(storedDecision(d.status));
+    setFApprovedDate(new Date().toISOString());
+    if (d.actorName) setFApproverName(d.actorName);
+  }), [savedExtId, initialValues?.externalTransactionId]);
+
   const handleFSendApproval = async () => {
     const approver = fApprovalUsers.find(u => u.email === fSelectedApprover);
     if (!approver) return;
@@ -1613,6 +1607,7 @@ const ExternalTxnForm: React.FC<{
         approverEmail: approver.email,
         approverName:  approver.fullName,
         sentBy:        loggedUser,
+        sendEmail:     fAlsoEmail,
       });
       setFDebugSteps(result.debug ?? []);
       if (result.success) {
@@ -1625,6 +1620,7 @@ const ExternalTxnForm: React.FC<{
         setFApproverName(approver.fullName);
         setFApproverEmail(approver.email);
         setFApprovalRef(ref);
+        setFApprovedDate(undefined);
         setFApprovalModalOpen(false);
       } else {
         message.error(result.message);
@@ -2909,6 +2905,9 @@ const ExternalTxnForm: React.FC<{
             value: u.email,
           }))}
         />
+        <Checkbox checked={fAlsoEmail} onChange={e => setFAlsoEmail(e.target.checked)} style={{ marginTop: 12, fontSize: 12 }}>
+          Also email the approver (approve / reject links)
+        </Checkbox>
         {fApprovalUsers.length === 0 && !fApprovalLoadingUsers && (
           <Alert type="warning" style={{ marginTop: 12 }} showIcon
             message="No approvers found. Create an approval rule for module CASH, transaction type EXTERNAL_TXN in the Approval Engine." />
@@ -2944,42 +2943,22 @@ const ExternalTxnForm: React.FC<{
         )}
       </Modal>
 
-      {/* ── View Approval Status (form) ──────────────────────────── */}
-      <Modal
-        title={<Space><AuditOutlined style={{ color: REDWOOD.info }} /><span>Approval Status</span></Space>}
+      {/* ── Approval status + history (form) ─────────────────────── */}
+      <ApprovalStatusModal
         open={fApprovalStatusOpen}
-        onCancel={() => setFApprovalStatusOpen(false)}
-        footer={<Space>
-          {approvalState(fApprovalStatus) !== 'APPROVED' && (
-            <Tooltip title={approvalState(fApprovalStatus) === 'PENDING' ? 'Send to another approver — replaces the pending request' : 'Send for approval again'}>
-              <Button icon={<SendOutlined />} onClick={() => { setFApprovalStatusOpen(false); openFApprovalModal(); }}>Send again</Button>
-            </Tooltip>
-          )}
-          <Button onClick={() => setFApprovalStatusOpen(false)}>Close</Button>
-        </Space>}
-        width={460}
-      >
-        <div>
-          <div style={{ textAlign: 'center', marginBottom: 20 }}>
-            <Tag color={APPROVAL_LOOK[approvalState(fApprovalStatus)].tag} style={{ fontSize: 14, padding: '4px 16px' }}>{APPROVAL_LOOK[approvalState(fApprovalStatus)].label}</Tag>
-          </div>
-          <div style={{ background: REDWOOD.neutral100, borderRadius: 8, padding: '12px 16px', fontSize: 13 }}>
-            {[
-              { label: 'Approval Ref',   value: fApprovalRef },
-              { label: 'Sent By',        value: fApprovalSentBy },
-              { label: 'Sent Date',      value: fApprovalSentDate ? dayjs(fApprovalSentDate).format('D MMM YYYY HH:mm') : undefined },
-              { label: 'Approver',       value: fApproverName },
-              { label: 'Approver Email', value: fApproverEmail },
-              { label: 'Approved Date',  value: fApprovedDate ? dayjs(fApprovedDate).format('D MMM YYYY HH:mm') : undefined },
-            ].map(row => (
-              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text type="secondary">{row.label}</Text>
-                <Text strong>{row.value || '—'}</Text>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Modal>
+        onClose={() => setFApprovalStatusOpen(false)}
+        module="CASH"
+        transactionId={savedExtId ?? initialValues?.externalTransactionId ?? undefined}
+        transactionRef={fApprovalRef}
+        title={form.getFieldValue('referenceText') || initialValues?.referenceText || `#${savedTxnId ?? initialValues?.transactionId ?? ''}`}
+        status={fApprovalStatus}
+        sentBy={fApprovalSentBy}
+        sentDate={fApprovalSentDate}
+        approverName={fApproverName}
+        approverEmail={fApproverEmail}
+        decisionDate={fApprovedDate}
+        onSendAgain={() => { setFApprovalStatusOpen(false); openFApprovalModal(); }}
+      />
     </div>
   );
 };
@@ -3057,6 +3036,16 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
   const [selectedApproverEmail, setSelectedApproverEmail] = useState<string | undefined>(undefined);
   const [approvalStatusOpen, setApprovalStatusOpen]     = useState(false);
   const [approvalStatusTxn, setApprovalStatusTxn]       = useState<ExternalTxnRecord | null>(null);
+  const [approvalAlsoEmail, setApprovalAlsoEmail]       = useState(false);
+
+  // Approved / rejected from the notification bell → show it in the list right away
+  useEffect(() => onApprovalsChanged(d => {
+    if (d.reason !== 'decided' || d.module !== 'CASH' || !d.status) return;
+    const hit = (t: ExternalTxnRecord) => t.externalTransactionId === d.transactionId || (!!d.transactionRef && t.approvalRef === d.transactionRef);
+    const patch = { approvalStatus: storedDecision(d.status), approvedDate: new Date().toISOString(), ...(d.actorName ? { approvalApproverName: d.actorName } : {}) };
+    setTransactions(prev => prev.map(t => (hit(t) ? { ...t, ...patch } : t)));
+    setApprovalStatusTxn(prev => (prev && hit(prev) ? { ...prev, ...patch } : prev));
+  }), []);
   const [approvalDebugSteps, setApprovalDebugSteps]     = useState<import('../../services/approvals.service').ApprovalDebugStep[]>([]);
   const [approvalDebugOpen, setApprovalDebugOpen]       = useState(false);
 
@@ -4672,6 +4661,7 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
         approverEmail: approver.email,
         approverName:  approver.fullName,
         sentBy:        currentUser,
+        sendEmail:     approvalAlsoEmail,
       });
       setApprovalDebugSteps(result.debug ?? []);
       if (result.success) {
@@ -4687,6 +4677,7 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                 approvalApproverName:  approver.fullName,
                 approvalApproverEmail: approver.email,
                 approvalRef:           `CASH-EXT-${approvalTargetTxn.externalTransactionId}`,
+                approvedDate:          undefined,
               }
             : t
         ));
@@ -5561,6 +5552,9 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                   return { label, value: u.email };
                 })}
               />
+              <Checkbox checked={approvalAlsoEmail} onChange={e => setApprovalAlsoEmail(e.target.checked)} style={{ marginTop: 12, fontSize: 12 }}>
+                Also email the approver (approve / reject links)
+              </Checkbox>
               {approvalUsers.length === 0 && !approvalLoadingUsers && (
                 <Alert
                   type="warning"
@@ -5602,47 +5596,22 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
           )}
         </Modal>
 
-        {/* ── View Approval Status Modal ──────────────────────────── */}
-        <Modal
-          title={<Space><AuditOutlined style={{ color: REDWOOD.info }} /><span>Approval Status</span></Space>}
+        {/* ── Approval status + history ──────────────────────────── */}
+        <ApprovalStatusModal
           open={approvalStatusOpen}
-          onCancel={() => setApprovalStatusOpen(false)}
-          footer={<Space>
-            {approvalStatusTxn && approvalState(approvalStatusTxn.approvalStatus) !== 'APPROVED' && (
-              <Tooltip title={approvalState(approvalStatusTxn.approvalStatus) === 'PENDING' ? 'Send to another approver — replaces the pending request' : 'Send for approval again'}>
-                <Button icon={<SendOutlined />} onClick={() => { setApprovalStatusOpen(false); openApprovalModal(approvalStatusTxn); }}>Send again</Button>
-              </Tooltip>
-            )}
-            <Button onClick={() => setApprovalStatusOpen(false)}>Close</Button>
-          </Space>}
-          width={480}
-        >
-          {approvalStatusTxn && (() => {
-            const st = approvalState(approvalStatusTxn.approvalStatus);
-            return (
-              <div>
-                <div style={{ textAlign: 'center', marginBottom: 20 }}>
-                  <Tag color={APPROVAL_LOOK[st].tag} style={{ fontSize: 14, padding: '4px 16px' }}>{APPROVAL_LOOK[st].label}</Tag>
-                </div>
-                <div style={{ background: REDWOOD.neutral100, borderRadius: 8, padding: '12px 16px', fontSize: 13 }}>
-                  {[
-                    { label: 'Approval Ref',  value: approvalStatusTxn.approvalRef },
-                    { label: 'Sent By',       value: approvalStatusTxn.approvalSentBy },
-                    { label: 'Sent Date',     value: approvalStatusTxn.approvalSentDate ? dayjs(approvalStatusTxn.approvalSentDate).format('D MMM YYYY HH:mm') : undefined },
-                    { label: 'Approver',      value: approvalStatusTxn.approvalApproverName },
-                    { label: 'Approver Email',value: approvalStatusTxn.approvalApproverEmail },
-                    { label: 'Approved Date', value: approvalStatusTxn.approvedDate ? dayjs(approvalStatusTxn.approvedDate).format('D MMM YYYY HH:mm') : undefined },
-                  ].map(row => (
-                    <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                      <Text type="secondary">{row.label}</Text>
-                      <Text strong>{row.value || '—'}</Text>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-        </Modal>
+          onClose={() => setApprovalStatusOpen(false)}
+          module="CASH"
+          transactionId={approvalStatusTxn?.externalTransactionId}
+          transactionRef={approvalStatusTxn?.approvalRef}
+          title={approvalStatusTxn ? `${approvalStatusTxn.referenceText || `#${approvalStatusTxn.transactionId}`}` : ''}
+          status={approvalStatusTxn?.approvalStatus}
+          sentBy={approvalStatusTxn?.approvalSentBy}
+          sentDate={approvalStatusTxn?.approvalSentDate}
+          approverName={approvalStatusTxn?.approvalApproverName}
+          approverEmail={approvalStatusTxn?.approvalApproverEmail}
+          decisionDate={approvalStatusTxn?.approvedDate}
+          onSendAgain={approvalStatusTxn ? () => { setApprovalStatusOpen(false); openApprovalModal(approvalStatusTxn); } : undefined}
+        />
 
         {/* ── Show Accounting for All Transactions Modal ──────────────────── */}
         <Modal

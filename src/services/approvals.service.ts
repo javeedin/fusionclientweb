@@ -619,6 +619,132 @@ function buildTxnApprovalEmailHtml(params: {
 </body></html>`;
 }
 
+// ─── Approval status shown on the screens ────────────────────────────────────
+// Stored values differ by path: PENDING, 'Manually approved' (in-app) / 'Workflow approved' / APPROVED,
+// 'Rejected' / REJECTED, CANCELLED / RECALLED / Withdrawn, 'Not required' / 'Required' (not sent yet).
+
+export type ApprovalState = 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+
+export function approvalState(s?: string | null): ApprovalState {
+  const v = String(s ?? '').trim().toUpperCase();
+  if (!v || v === 'NONE' || v === 'NOT REQUIRED' || v === 'REQUIRED') return 'NONE';
+  if (v.includes('APPROVED')) return 'APPROVED';
+  if (v.startsWith('REJECT')) return 'REJECTED';
+  if (['CANCELLED', 'CANCELED', 'RECALLED', 'WITHDRAWN', 'STOPPED'].includes(v)) return 'CANCELLED';
+  return 'PENDING';
+}
+
+export const APPROVAL_STATE_LOOK: Record<ApprovalState, { label: string; tag: string; color: string }> = {
+  NONE:      { label: 'Not sent',         tag: 'default', color: '#6B6B6B' },
+  PENDING:   { label: 'Pending Approval', tag: 'orange',  color: '#D4A800' },
+  APPROVED:  { label: 'Approved',         tag: 'green',   color: '#1D7B4D' },
+  REJECTED:  { label: 'Rejected',         tag: 'red',     color: '#D93025' },
+  CANCELLED: { label: 'Cancelled',        tag: 'default', color: '#6B6B6B' },
+};
+
+/** Nothing active — the transaction can be sent (again). */
+export const canSendForApproval = (s?: string | null) => ['NONE', 'CANCELLED'].includes(approvalState(s));
+
+/** One line for a tooltip: "Sent for approval — waiting for Javeed", "Approved by Javeed · 11-Oct-2026" … */
+export function approvalSummary(s: string | null | undefined, who?: { approverName?: string; approvedDate?: string }): string {
+  const st = approvalState(s);
+  const by = who?.approverName ? ` by ${who.approverName}` : '';
+  const on = who?.approvedDate ? ` · ${new Date(who.approvedDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-')}` : '';
+  if (st === 'PENDING')  return `Sent for approval${who?.approverName ? ` — waiting for ${who.approverName}` : ''}`;
+  if (st === 'APPROVED') return `Approved${by}${on}`;
+  if (st === 'REJECTED') return `Rejected${by}${on}`;
+  if (st === 'CANCELLED') return 'Approval request cancelled — send again';
+  return 'Send for approval';
+}
+
+// ─── Live updates between the notification bell and the screens ─────────────
+
+export const APPROVALS_CHANGED_EVENT = 'rr:approvals-changed';
+export interface ApprovalsChangedDetail {
+  /** sent: a request was created (the bell refreshes) · decided: approved / rejected in the app */
+  reason: 'sent' | 'decided';
+  module?: string;
+  transactionId?: number;
+  transactionRef?: string;
+  status?: 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'RECALLED';
+  actorName?: string;
+}
+export const emitApprovalsChanged = (detail: ApprovalsChangedDetail) => {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(APPROVALS_CHANGED_EVENT, { detail }));
+};
+export const onApprovalsChanged = (fn: (d: ApprovalsChangedDetail) => void) => {
+  const h = (e: Event) => fn((e as CustomEvent<ApprovalsChangedDetail>).detail || { reason: 'sent' });
+  window.addEventListener(APPROVALS_CHANGED_EVENT, h);
+  return () => window.removeEventListener(APPROVALS_CHANGED_EVENT, h);
+};
+/** The value AP invoices / cash transactions hold after an in-app decision (see PUT approvals/requests/:id/status). */
+export const storedDecision = (status?: string) => (status === 'APPROVED' ? 'Manually approved' : status === 'REJECTED' ? 'Rejected' : status || 'PENDING');
+
+// ─── Approval trail of one transaction (every request and every action) ─────
+
+export interface ApprovalTrailEvent {
+  requestId: number;
+  action: string;            // SUBMITTED, APPROVED, REJECTED, CANCELLED, RECALLED, NOTIFIED, FORWARDED
+  actorName?: string;
+  comments?: string;
+  actionDate?: string;
+  requestStatus?: string;
+  approverName?: string;
+  approverEmail?: string;
+}
+export interface ApprovalTrail { events: ApprovalTrailEvent[]; requests: number; source: 'query' | 'rest' }
+
+const sqlLit = (v: unknown) => `'${String(v ?? '').replace(/'/g, "''")}'`;
+
+/**
+ * All requests and actions for one transaction, oldest first. Reads RR_APPROVAL_REQUESTS / _HISTORY through the
+ * read gateway (one call); falls back to the approvals REST endpoints when the gateway is not available.
+ */
+export async function getApprovalTrail(params: { module: string; transactionId?: number; transactionRef?: string }): Promise<ApprovalTrail> {
+  const { module, transactionId, transactionRef } = params;
+  const idOk = transactionId != null && Number.isFinite(Number(transactionId));
+  const match = idOk
+    ? `(r.TRANSACTION_ID = ${Number(transactionId)}${transactionRef ? ` OR (r.TRANSACTION_ID IS NULL AND r.TRANSACTION_REF = ${sqlLit(transactionRef)})` : ''})`
+    : `r.TRANSACTION_REF = ${sqlLit(transactionRef)}`;
+  const sql = `SELECT r.REQUEST_ID, r.STATUS AS REQUEST_STATUS, u.FULL_NAME AS APPROVER_NAME, u.EMAIL AS APPROVER_EMAIL,
+      h.HISTORY_ID, h.ACTION, h.ACTOR_NAME, h.COMMENTS, TO_CHAR(h.ACTION_DATE, 'YYYY-MM-DD"T"HH24:MI:SS') AS ACTION_DATE
+    FROM RR_APPROVAL_REQUESTS r
+    LEFT JOIN RR_APPROVAL_USERS u ON u.USER_ID = r.CURRENT_APPROVER_ID
+    LEFT JOIN RR_APPROVAL_HISTORY h ON h.REQUEST_ID = r.REQUEST_ID
+    WHERE r.MODULE = ${sqlLit(module)} AND ${match}
+    ORDER BY r.REQUEST_ID, h.ACTION_DATE, h.HISTORY_ID`;
+  try {
+    const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/ai/executequery`, {
+      method: 'POST', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ sql: sql.replace(/\s+/g, ' ').trim(), maxRows: 1000, appUser: 'APPROVALS' }),
+    });
+    const data = await res.json();
+    if (!res.ok || data?.success === false) throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
+    const cols: string[] = (data.columns || []).map((c: any) => String(typeof c === 'string' ? c : c?.name ?? c).toUpperCase());
+    const rows: Record<string, any>[] = (data.rows || []).map((r: any[]) => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
+    const events: ApprovalTrailEvent[] = rows.filter(r => r.ACTION).map(r => ({
+      requestId: Number(r.REQUEST_ID), action: String(r.ACTION), actorName: r.ACTOR_NAME ?? undefined, comments: r.COMMENTS ?? undefined,
+      actionDate: r.ACTION_DATE ?? undefined, requestStatus: r.REQUEST_STATUS ?? undefined,
+      approverName: r.APPROVER_NAME ?? undefined, approverEmail: r.APPROVER_EMAIL ?? undefined,
+    }));
+    return { events, requests: new Set(rows.map(r => Number(r.REQUEST_ID))).size, source: 'query' };
+  } catch {
+    // fallback: the module's requests, then each request's history
+    const reqs = (await getApprovalRequests({ module })).filter(r =>
+      idOk && r.transactionId != null ? Number(r.transactionId) === Number(transactionId) : r.transactionRef === transactionRef);
+    const events: ApprovalTrailEvent[] = [];
+    for (const r of reqs.sort((a, b) => a.requestId - b.requestId)) {
+      const hist = await getApprovalHistory(r.requestId).catch(() => [] as ApprovalHistoryEntry[]);
+      hist.forEach((h: any) => events.push({
+        requestId: r.requestId, action: h.action, actorName: h.actorName, comments: h.comments, actionDate: h.actionDate,
+        requestStatus: r.status, approverName: r.currentApproverName, approverEmail: (r as any).currentApproverEmail,
+      }));
+    }
+    return { events, requests: reqs.length, source: 'rest' };
+  }
+}
+
 export interface ApprovalDebugStep {
   step: string;
   url: string;
@@ -667,11 +793,6 @@ async function createApprovalRequest(
   }
 }
 
-/** Best-effort log (AP flow): never blocks the caller. */
-async function logApprovalRequest(params: ApprovalRequestInput, debug: ApprovalDebugStep[]): Promise<void> {
-  await createApprovalRequest(params, debug, '4 — Log Approval Request');
-}
-
 /** Cancel a request (best-effort), recording the call in the debug log. */
 async function cancelApprovalRequest(requestId: number, actorName: string, comments: string, debug: ApprovalDebugStep[], step: string): Promise<boolean> {
   const url = `${BASE}/requests/${requestId}/status`;
@@ -684,6 +805,21 @@ async function cancelApprovalRequest(requestId: number, actorName: string, comme
   } catch (err) {
     debug.push({ step, url, method: 'PUT', payload, status: 'ERROR', response: String(err) });
     return false;
+  }
+}
+
+/** Cancel the transaction's other PENDING requests (a resend replaces them). Best-effort. */
+async function replaceEarlierRequests(
+  module: string, match: (r: ApprovalRequest) => boolean, keepId: number | undefined, actor: string, debug: ApprovalDebugStep[], step: string,
+): Promise<void> {
+  try {
+    const pending = await getApprovalRequests({ module, status: 'PENDING' });
+    const older = pending.filter(r => r.status === 'PENDING' && Number(r.requestId) !== keepId && match(r));
+    for (const r of older) {
+      await cancelApprovalRequest(Number(r.requestId), actor, `Replaced by request #${keepId ?? ''}`.trim(), debug, `${step} #${r.requestId}`);
+    }
+  } catch (err) {
+    debug.push({ step, url: `${BASE}/requests`, method: 'GET', status: 'ERROR', response: String(err) });
   }
 }
 
@@ -719,15 +855,7 @@ export async function sendExternalTxnApproval(params: {
   const requestId = created.requestId;
 
   // Step 2 — Replace earlier pending requests for this transaction (best-effort)
-  try {
-    const pending = await getApprovalRequests({ module: 'CASH', status: 'PENDING' });
-    const older = pending.filter(r => r.transactionRef === approvalRef && r.status === 'PENDING' && Number(r.requestId) !== requestId);
-    for (const r of older) {
-      await cancelApprovalRequest(Number(r.requestId), sentBy, `Replaced by request #${requestId ?? ''}`.trim(), debug, `2 — Cancel Earlier Request #${r.requestId}`);
-    }
-  } catch (err) {
-    debug.push({ step: '2 — Cancel Earlier Requests', url: `${BASE}/requests`, method: 'GET', status: 'ERROR', response: String(err) });
-  }
+  await replaceEarlierRequests('CASH', r => r.transactionRef === approvalRef, requestId, sentBy, debug, '2 — Cancel Earlier Request');
 
   // Step 3 — Mark the transaction PENDING (required; undo the request when it fails)
   const putUrl = `${APEX_DB_CONFIG.baseUrl}/cash/externaltransactions/${txnId}/approval`;
@@ -751,6 +879,7 @@ export async function sendExternalTxnApproval(params: {
     return { success: false, message: putError, debug };
   }
 
+  emitApprovalsChanged({ reason: 'sent', module: 'CASH', transactionId: txnId, transactionRef: approvalRef });
   const sentMsg = `Sent to ${approverName} for approval — it is waiting in their notifications${requestId ? ` (request #${requestId})` : ''}.`;
   if (!sendEmail) return { success: true, message: sentMsg, debug, requestId };
 
@@ -864,6 +993,11 @@ function buildInvoiceApprovalEmailHtml(params: {
 </body></html>`;
 }
 
+/**
+ * Send an AP invoice for approval — in-app first, like cash: the request goes to the approver's notifications,
+ * an earlier pending request for the invoice is replaced, the invoice is marked PENDING.
+ * The email (single-use links + invoice PDF) is optional — off unless `sendEmail` is set.
+ */
 export async function sendInvoiceApproval(params: {
   invoiceId: number;
   invoiceNumber: string;
@@ -880,50 +1014,66 @@ export async function sendInvoiceApproval(params: {
   createdBy?: string;
   attachmentContent?: string;
   attachmentName?: string;
-}): Promise<{ success: boolean; message: string; debug: ApprovalDebugStep[] }> {
-  const { invoiceId, invoiceNumber, invoiceType, amount, currency, supplier, approverEmail, approverName, sentBy, businessUnit, invoiceDate, description, createdBy, attachmentContent, attachmentName } = params;
+  sendEmail?: boolean;
+}): Promise<{ success: boolean; message: string; debug: ApprovalDebugStep[]; requestId?: number; warning?: string }> {
+  const { invoiceId, invoiceNumber, invoiceType, amount, currency, supplier, approverEmail, approverName, sentBy, businessUnit, invoiceDate, description, createdBy, attachmentContent, attachmentName, sendEmail = false } = params;
   const debug: ApprovalDebugStep[] = [];
 
   const approvalRef = invoiceNumber;   // human-readable ref — visible in approval engine & email replies
   const today = new Date().toLocaleDateString('en-AE', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  // Step 1 — Generate approval tokens
-  const tokensUrl = `${BASE}/generate-links`;
-  const tokensPayload = { requestRef: approvalRef, requestId: invoiceId, toEmail: approverEmail, toName: approverName, transactionType: 'INVOICE' };
-  let approveToken = '', rejectToken = '';
-  try {
-    const tokRes = await fetch(tokensUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tokensPayload) });
-    const tokData = await tokRes.json().catch(() => ({}));
-    debug.push({ step: '1 — Generate Tokens', url: tokensUrl, method: 'POST', payload: tokensPayload, status: tokRes.status, response: tokData });
-    if (!tokRes.ok) throw new Error(`Generate tokens failed (${tokRes.status}): ${JSON.stringify(tokData)}`);
-    approveToken = tokData.approveToken ?? '';
-    rejectToken  = tokData.rejectToken  ?? '';
-  } catch (err) {
-    if (debug.length === 0) debug.push({ step: '1 — Generate Tokens', url: tokensUrl, method: 'POST', payload: tokensPayload, status: 'ERROR', response: String(err) });
-    return { success: false, message: err instanceof Error ? err.message : String(err), debug };
-  }
+  // Step 1 — Create the in-app approval request (required)
+  const created = await createApprovalRequest({
+    module: 'AP', transactionType: 'INVOICE',
+    transactionId: invoiceId, transactionRef: approvalRef,
+    amount, currency,
+    description: description || `Invoice ${invoiceNumber} — ${supplier}`,
+    requestedByName: sentBy, approverEmail,
+  }, debug, '1 — Create In-App Approval Request');
+  if (!created.ok) return { success: false, message: created.error || 'Could not create the approval request', debug };
+  const requestId = created.requestId;
 
-  const approveUrl = `https://erp-approval.reerperp.workers.dev?token=${approveToken}`;
-  const rejectUrl  = `https://erp-approval.reerperp.workers.dev?token=${rejectToken}`;
+  // Step 2 — Replace earlier pending requests for this invoice (best-effort)
+  await replaceEarlierRequests('AP',
+    r => (r.transactionId != null ? Number(r.transactionId) === invoiceId : r.transactionRef === approvalRef),
+    requestId, sentBy, debug, '2 — Cancel Earlier Request');
 
-  // Step 2 — Mark invoice as PENDING in DB
+  // Step 3 — Mark the invoice PENDING (required; undo the request when it fails)
   const putUrl = `${APEX_DB_CONFIG.baseUrl}/ap/invoices/${invoiceId}/approval`;
   const putPayload = { approvalStatus: 'PENDING', approvalSentBy: sentBy, approverName, approverEmail, approvalRef };
+  let putError = '';
   try {
     const putRes = await fetch(putUrl, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(putPayload) });
     const putData = await putRes.json().catch(() => putRes.statusText);
-    debug.push({ step: '2 — Update Invoice Approval Status', url: putUrl, method: 'PUT', payload: putPayload, status: putRes.status, response: putData });
-    if (!putRes.ok) throw new Error(`Failed to update invoice status (${putRes.status}): ${JSON.stringify(putData)}`);
+    debug.push({ step: '3 — Update Invoice Approval Status', url: putUrl, method: 'PUT', payload: putPayload, status: putRes.status, response: putData });
+    if (!putRes.ok) putError = `Failed to update the invoice's approval status (${putRes.status}): ${typeof putData === 'string' ? putData : putData?.message || JSON.stringify(putData)}`;
   } catch (err) {
-    if (debug.filter(d => d.step.startsWith('2')).length === 0) debug.push({ step: '2 — Update Invoice Approval Status', url: putUrl, method: 'PUT', payload: putPayload, status: 'ERROR', response: String(err) });
-    return { success: false, message: err instanceof Error ? err.message : String(err), debug };
+    debug.push({ step: '3 — Update Invoice Approval Status', url: putUrl, method: 'PUT', payload: putPayload, status: 'ERROR', response: String(err) });
+    putError = err instanceof Error ? err.message : String(err);
+  }
+  if (putError) {
+    if (requestId) await cancelApprovalRequest(requestId, sentBy, 'Invoice could not be marked pending', debug, '3b — Undo Approval Request');
+    return { success: false, message: putError, debug };
   }
 
-  // Step 3 — Send email via ORDS proxy
-  const emailUrl = `${APEX_DB_CONFIG.baseUrl}/approvals/send-email`;
-  const html = buildInvoiceApprovalEmailHtml({ recipientName: approverName, today, approveUrl, rejectUrl, invoiceNumber, invoiceType, amount, currency, supplier, submittedBy: sentBy, businessUnit, invoiceDate, description, createdBy, attachmentContent });
-  const emailPayload = { toEmail: approverEmail, toName: approverName, subject: `[Approval Required] AP Invoice — ${invoiceNumber}`, htmlContent: '(HTML omitted from debug)' };
+  emitApprovalsChanged({ reason: 'sent', module: 'AP', transactionId: invoiceId, transactionRef: approvalRef });
+  const sentMsg = `Sent to ${approverName} for approval — it is waiting in their notifications${requestId ? ` (request #${requestId})` : ''}.`;
+  if (!sendEmail) return { success: true, message: sentMsg, debug, requestId };
+
+  // Step 4 — Optional email with single-use links and the invoice PDF (failure does not undo the request)
+  let warning = '';
+  const tokensUrl = `${BASE}/generate-links`;
+  const tokensPayload = { requestRef: approvalRef, requestId: invoiceId, toEmail: approverEmail, toName: approverName, transactionType: 'INVOICE' };
   try {
+    const tokRes = await fetch(tokensUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tokensPayload) });
+    const tokData = await tokRes.json().catch(() => ({}));
+    debug.push({ step: '4 — Generate Email Tokens', url: tokensUrl, method: 'POST', payload: tokensPayload, status: tokRes.status, response: tokData });
+    if (!tokRes.ok) throw new Error(`Generate tokens failed (${tokRes.status})`);
+    const approveUrl = `https://erp-approval.reerperp.workers.dev?token=${tokData.approveToken ?? ''}`;
+    const rejectUrl  = `https://erp-approval.reerperp.workers.dev?token=${tokData.rejectToken ?? ''}`;
+    const emailUrl = `${APEX_DB_CONFIG.baseUrl}/approvals/send-email`;
+    const html = buildInvoiceApprovalEmailHtml({ recipientName: approverName, today, approveUrl, rejectUrl, invoiceNumber, invoiceType, amount, currency, supplier, submittedBy: sentBy, businessUnit, invoiceDate, description, createdBy, attachmentContent });
+    const emailPayload = { toEmail: approverEmail, toName: approverName, subject: `[Approval Required] AP Invoice — ${invoiceNumber}`, htmlContent: '(HTML omitted from debug)' };
     const bodyToSend: Record<string, unknown> = { ...emailPayload, htmlContent: html };
     if (attachmentContent) {
       bodyToSend.attachmentContent = attachmentContent;
@@ -931,23 +1081,10 @@ export async function sendInvoiceApproval(params: {
     }
     const sendRes = await fetch(emailUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyToSend) });
     const sendData = await sendRes.json().catch(() => ({ status: 'ERROR', message: sendRes.statusText }));
-    debug.push({ step: '3 — Send Email (ORDS proxy)', url: emailUrl, method: 'POST', payload: emailPayload, status: sendRes.status, response: sendData });
-    if (sendData.status !== 'SUCCESS') {
-      return { success: false, message: sendData.message ?? 'Email send failed', debug };
-    }
+    debug.push({ step: '5 — Send Email (ORDS proxy)', url: emailUrl, method: 'POST', payload: emailPayload, status: sendRes.status, response: sendData });
+    if (sendData.status !== 'SUCCESS') throw new Error(sendData.message ?? 'Email send failed');
   } catch (err) {
-    debug.push({ step: '3 — Send Email (ORDS proxy)', url: emailUrl, method: 'POST', payload: emailPayload, status: 'ERROR', response: String(err) });
-    return { success: false, message: err instanceof Error ? err.message : String(err), debug };
+    warning = `The email could not be sent (${err instanceof Error ? err.message : String(err)}); the approver can still act on it from their notifications.`;
   }
-
-  // Step 4 — Log to RR_APPROVAL_REQUESTS (best-effort, non-blocking)
-  await logApprovalRequest({
-    module: 'AP', transactionType: 'INVOICE',
-    transactionId: invoiceId, transactionRef: approvalRef,
-    amount, currency,
-    description: description || `Invoice ${invoiceNumber} — ${supplier}`,
-    requestedByName: sentBy, approverEmail,
-  }, debug);
-
-  return { success: true, message: `Approval email sent to ${approverName} (${approverEmail}). Links expire in 72 hours.`, debug };
+  return { success: true, message: warning ? sentMsg : `${sentMsg} An email with the invoice PDF was also sent to ${approverEmail}.`, debug, requestId, warning: warning || undefined };
 }

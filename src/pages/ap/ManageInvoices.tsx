@@ -89,7 +89,11 @@ import InvoiceDetail from './InvoiceDetail';
 import CreateInvoice from './CreateInvoice';
 import type { InvoiceInitialData } from './CreateInvoice';
 import { APEX_DB_CONFIG, ORACLE_FUSION_CONFIG } from '../../config/api.config';
-import { getApprovalRules, sendInvoiceApproval, type ApprovalUser, type ApprovalDebugStep } from '../../services/approvals.service';
+import {
+  getApprovalRules, sendInvoiceApproval, approvalState, approvalSummary, canSendForApproval, onApprovalsChanged, storedDecision,
+  APPROVAL_STATE_LOOK, type ApprovalUser, type ApprovalDebugStep,
+} from '../../services/approvals.service';
+import ApprovalStatusModal from '../../components/approvals/ApprovalStatusModal';
 import { getAccounting, buildApInvoiceSlaPayload, fetchLedgerByBusinessUnit, checkGLJournalExists } from '../../services/sla.service';
 import { getGlJournalLines } from '../../services/glPosting.service';
 import { validateAccountCode } from '../../components/AccountSelector';
@@ -502,6 +506,16 @@ const ManageInvoices: React.FC = () => {
   const [invDebugOpen,         setInvDebugOpen]         = useState(false);
   const [invStatusOpen,        setInvStatusOpen]        = useState(false);
   const [invStatusTarget,      setInvStatusTarget]      = useState<InvoiceRecord | null>(null);
+  const [invAlsoEmail,         setInvAlsoEmail]         = useState(false);
+
+  // Approved / rejected from the notification bell → show it on the invoice right away
+  useEffect(() => onApprovalsChanged(d => {
+    if (d.reason !== 'decided' || d.module !== 'AP' || !d.status) return;
+    const hit = (inv: InvoiceRecord) => (d.transactionId != null ? inv.invoiceId === d.transactionId : inv.invoiceNumber === d.transactionRef);
+    const patch = { approvalStatus: storedDecision(d.status), approvedDate: new Date().toISOString(), approvalApproverName: d.actorName };
+    setInvoices(prev => prev.map(inv => (hit(inv) ? { ...inv, ...patch } : inv)));
+    setInvStatusTarget(prev => (prev && hit(prev) ? { ...prev, ...patch } : prev));
+  }), []);
 
   // ── MPA Detail modal ───────────────────────────────────────────────────────
   const [mpaModalOpen,    setMpaModalOpen]    = useState(false);
@@ -619,8 +633,6 @@ const ManageInvoices: React.FC = () => {
     }
   };
 
-  const APPROVAL_ACTIONED_STATUSES = ['PENDING', 'Manually approved', 'Rejected', 'Workflow approved'];
-
   const handleInvSendApproval = async () => {
     if (!invApprovalTarget || !invSelectedApprover) return;
     const approver = invApprovalUsers.find(u => u.email === invSelectedApprover);
@@ -630,8 +642,8 @@ const ManageInvoices: React.FC = () => {
     let attachmentContent: string | undefined;
     let attachmentName: string | undefined;
 
-    // Generate PDF with invoice header + lines (non-blocking if it fails)
-    try {
+    // Invoice PDF for the optional email (non-blocking if it fails)
+    if (invAlsoEmail) try {
       const linesUrl = `${APEX_DB_CONFIG.baseUrl}/ap/createinvoiceslines?P_INVOICE_ID=${invApprovalTarget.invoiceId}`;
       const linesRes = await fetch(linesUrl, { headers: { Accept: 'application/json' } });
       const linesData = await linesRes.json().catch(() => ({}));
@@ -723,15 +735,19 @@ const ManageInvoices: React.FC = () => {
         createdBy:         invApprovalTarget.createdBy,
         attachmentContent,
         attachmentName,
+        sendEmail:         invAlsoEmail,
       });
       setInvDebugSteps(result.debug ?? []);
       if (result.success) {
-        message.success(`Approval request sent to ${approver.fullName || approver.email}`);
-        setInvoices(prev => prev.map(inv =>
-          inv.invoiceId === invApprovalTarget.invoiceId
-            ? { ...inv, approvalStatus: 'PENDING', approvalApproverEmail: approver.email, approvalApproverName: approver.fullName }
-            : inv
-        ));
+        message.success(result.message);
+        if (result.warning) message.warning(result.warning);
+        const patch = {
+          approvalStatus: 'PENDING', approvalApproverEmail: approver.email, approvalApproverName: approver.fullName || approver.email,
+          approvalSentBy: user?.name || user?.email || 'ERP User', approvalSentDate: new Date().toISOString(),
+          approvalRef: invApprovalTarget.invoiceNumber, approvedDate: undefined,
+        };
+        setInvoices(prev => prev.map(inv => (inv.invoiceId === invApprovalTarget.invoiceId ? { ...inv, ...patch } : inv)));
+        setInvStatusTarget(prev => (prev && prev.invoiceId === invApprovalTarget.invoiceId ? { ...prev, ...patch } : prev));
         setInvApprovalOpen(false);
       } else {
         setInvDebugOpen(true);
@@ -3380,33 +3396,27 @@ const ManageInvoices: React.FC = () => {
               Cancelled
             </Tag>
           )}
-          <Tooltip title={APPROVAL_ACTIONED_STATUSES.includes(record.approvalStatus) ? 'Resend for Approval' : 'Send for Approval'}>
-            <Button
-              size="small"
-              type="text"
-              icon={<AuditOutlined style={{ color: REDWOOD.info, fontSize: 14 }} />}
-              style={{ padding: '0 2px' }}
-              onClick={(e) => { e.stopPropagation(); openInvApprovalModal(record); }}
-            />
-          </Tooltip>
-          {APPROVAL_ACTIONED_STATUSES.includes(record.approvalStatus) ? (
-            <Tooltip title="View Approval History">
+          {canSendForApproval(record.approvalStatus) ? (
+            <Tooltip title={approvalState(record.approvalStatus) === 'CANCELLED' ? 'Approval cancelled — send for approval again' : 'Send for Approval'}>
               <Button
                 size="small"
                 type="text"
-                icon={<CheckCircleOutlined style={{
-                  color: record.approvalStatus === 'PENDING'
-                    ? REDWOOD.warning
-                    : record.approvalStatus === 'Rejected'
-                    ? REDWOOD.error
-                    : REDWOOD.success,
-                  fontSize: 14,
-                }} />}
+                icon={<SendOutlined style={{ color: REDWOOD.primary, fontSize: 14 }} />}
+                style={{ padding: '0 2px' }}
+                onClick={(e) => { e.stopPropagation(); openInvApprovalModal(record); }}
+              />
+            </Tooltip>
+          ) : (
+            <Tooltip title={<>{approvalSummary(record.approvalStatus, { approverName: record.approvalApproverName, approvedDate: record.approvedDate })}<div style={{ fontSize: 11, opacity: 0.75 }}>Click for approval history</div></>}>
+              <Button
+                size="small"
+                type="text"
+                icon={<AuditOutlined style={{ color: APPROVAL_STATE_LOOK[approvalState(record.approvalStatus)].color, fontSize: 14 }} />}
                 style={{ padding: '0 2px' }}
                 onClick={(e) => { e.stopPropagation(); setInvStatusTarget(record); setInvStatusOpen(true); }}
               />
             </Tooltip>
-          ) : null}
+          )}
           <a
             onClick={() => openInvoiceTab(record)}
             style={{ color: cancelled ? REDWOOD.error : REDWOOD.info, cursor: 'pointer', textDecoration: cancelled ? 'line-through' : 'none' }}
@@ -3958,11 +3968,11 @@ const ManageInvoices: React.FC = () => {
                 </Button>
                 {(() => {
                   const selRec = selectedRowKeys.length === 1 ? invoices.find(i => i.key === selectedRowKeys[0]) : null;
-                  const alreadyActioned = selRec ? APPROVAL_ACTIONED_STATUSES.includes(selRec.approvalStatus) : false;
+                  const alreadyActioned = selRec ? !canSendForApproval(selRec.approvalStatus) : false;
                   const tooltipMsg = selectedRowKeys.length !== 1
                     ? 'Select one invoice to send for approval'
                     : alreadyActioned
-                      ? `Invoice already ${selRec!.approvalStatus}`
+                      ? `${approvalSummary(selRec!.approvalStatus, { approverName: selRec!.approvalApproverName, approvedDate: selRec!.approvedDate })} — open its approval icon to see the history or send again`
                       : `Send invoice ${selRec?.invoiceNumber || ''} for approval`;
                   return (
                     <Tooltip title={tooltipMsg}>
@@ -5335,6 +5345,8 @@ const ManageInvoices: React.FC = () => {
             </div>
           )}
 
+          <Alert type="info" showIcon style={{ marginBottom: 12, fontSize: 12 }}
+            message="The approver gets the request in their notifications (bell icon) and approves or rejects it in the app." />
           <div style={{ marginBottom: 8 }}>
             <Text strong>Select Approver</Text>
             {invApprovalUsers.length === 0 && !invApprovalLoading && (
@@ -5374,6 +5386,9 @@ const ManageInvoices: React.FC = () => {
               );
             })}
           </Select>
+          <Checkbox checked={invAlsoEmail} onChange={e => setInvAlsoEmail(e.target.checked)} style={{ marginTop: 12, fontSize: 12 }}>
+            Also email the approver (approve / reject links and the invoice PDF)
+          </Checkbox>
 
           {/* Debug panel */}
           {invDebugOpen && invDebugSteps.length > 0 && (
@@ -5418,81 +5433,22 @@ const ManageInvoices: React.FC = () => {
         </Spin>
       </Modal>
 
-      {/* ── View Approval Status Modal (AP Invoice) ────────────────────── */}
-      <Modal
-        title={
-          <Space>
-            <CheckCircleOutlined style={{
-              color: invStatusTarget?.approvalStatus === 'PENDING'
-                ? REDWOOD.warning
-                : invStatusTarget?.approvalStatus === 'Rejected'
-                ? REDWOOD.error
-                : REDWOOD.success,
-            }} />
-            <span>Approval History — {invStatusTarget?.invoiceNumber}</span>
-          </Space>
-        }
+      {/* ── Approval status + history (AP Invoice) ─────────────────────── */}
+      <ApprovalStatusModal
         open={invStatusOpen}
-        onCancel={() => setInvStatusOpen(false)}
-        footer={<Button onClick={() => setInvStatusOpen(false)}>Close</Button>}
-        width={500}
-        destroyOnClose
-      >
-        {invStatusTarget && (
-          <div style={{ padding: '8px 0' }}>
-            <Row gutter={[16, 14]}>
-              <Col span={24}>
-                <Text type="secondary" style={{ fontSize: 11 }}>Current Status</Text>
-                <div style={{ marginTop: 4 }}>{getApprovalStatusTag(invStatusTarget.approvalStatus)}</div>
-              </Col>
-              {invStatusTarget.approvalSentBy && (
-                <Col span={12}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Submitted By</Text>
-                  <div><Text strong>{invStatusTarget.approvalSentBy}</Text></div>
-                </Col>
-              )}
-              {invStatusTarget.approvalSentDate && (
-                <Col span={12}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Submitted On</Text>
-                  <div><Text>{formatDate(invStatusTarget.approvalSentDate)}</Text></div>
-                </Col>
-              )}
-              {invStatusTarget.approvalApproverName && (
-                <Col span={12}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Approver</Text>
-                  <div><Text strong>{invStatusTarget.approvalApproverName}</Text></div>
-                </Col>
-              )}
-              {invStatusTarget.approvalApproverEmail && (
-                <Col span={12}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Approver Email</Text>
-                  <div><Text>{invStatusTarget.approvalApproverEmail}</Text></div>
-                </Col>
-              )}
-              {invStatusTarget.approvedDate && (
-                <Col span={12}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Decision Date</Text>
-                  <div>
-                    <Text style={{ color: invStatusTarget.approvalStatus === 'Rejected' ? REDWOOD.error : REDWOOD.success }}>
-                      {formatDate(invStatusTarget.approvedDate)}
-                    </Text>
-                  </div>
-                </Col>
-              )}
-              {invStatusTarget.approvalRef && (
-                <Col span={24}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>Approval Reference</Text>
-                  <div style={{ marginTop: 2 }}>
-                    <code style={{ fontSize: 12, background: REDWOOD.neutral100, padding: '2px 8px', borderRadius: 4 }}>
-                      {invStatusTarget.approvalRef}
-                    </code>
-                  </div>
-                </Col>
-              )}
-            </Row>
-          </div>
-        )}
-      </Modal>
+        onClose={() => setInvStatusOpen(false)}
+        module="AP"
+        transactionId={invStatusTarget?.invoiceId}
+        transactionRef={invStatusTarget?.approvalRef || invStatusTarget?.invoiceNumber}
+        title={invStatusTarget?.invoiceNumber}
+        status={invStatusTarget?.approvalStatus}
+        sentBy={invStatusTarget?.approvalSentBy}
+        sentDate={invStatusTarget?.approvalSentDate}
+        approverName={invStatusTarget?.approvalApproverName}
+        approverEmail={invStatusTarget?.approvalApproverEmail}
+        decisionDate={invStatusTarget?.approvedDate}
+        onSendAgain={invStatusTarget ? () => { setInvStatusOpen(false); openInvApprovalModal(invStatusTarget); } : undefined}
+      />
 
       {/* ── MPA Schedule Detail Modal ── */}
       <Modal
