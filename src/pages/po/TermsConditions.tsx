@@ -14,6 +14,7 @@ import {
 import { poExec, PROC, Row } from '../../services/po.service';
 import { PoBar, useBusinessUnits, usePoUser, PO_RED } from './poShared';
 import { buildPoPdf } from './poPdf';
+import { resolveReportBranding } from '../../services/reportBranding.service';
 import PdfPreviewModal from '../../components/PdfPreviewModal';
 import type jsPDF from 'jspdf';
 import {
@@ -279,7 +280,7 @@ const PoTerms: React.FC = () => {
     catch (e: any) { message.error(e.message, 8); load(); }
   };
 
-  const samplePdf = () => {
+  const samplePdf = async () => {
     const ctx = sampleContext();
     const h: Row = {
       PO_NUMBER: ctx.PO_NUMBER, REVISION_NUM: 0, CREATION_DATE: ctx.PO_DATE, BUYER_USER: user || ctx.BUYER, CURRENCY_CODE: ctx.CURRENCY,
@@ -290,7 +291,8 @@ const PoTerms: React.FC = () => {
       { LINE_NUM: 1, ITEM_DESCRIPTION: 'Sample item — office chairs', NEED_BY_DATE: ctx.PO_DATE, LINE_TYPE: 'QUANTITY', QUANTITY: 50, UOM_CODE: 'EA', UNIT_PRICE: 1500, AMOUNT: 75000 },
       { LINE_NUM: 2, ITEM_DESCRIPTION: 'Sample service — installation', NEED_BY_DATE: ctx.PO_DATE, LINE_TYPE: 'AMOUNT', AMOUNT: 50000 },
     ];
-    setSample(buildPoPdf(h, lines, { buName: buName || undefined, terms: printableClauses(onNewPo, ctx) }));
+    const brand = await resolveReportBranding(bu, 'PO');
+    setSample(buildPoPdf(h, lines, { buName: buName || undefined, terms: printableClauses(onNewPo, ctx), brand }));
   };
 
   return (

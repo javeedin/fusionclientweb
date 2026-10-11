@@ -18,6 +18,7 @@ import {
   lineAmount, siteOptions, YesNo, SupplierSelect, useSupplierSites, PO_RED,
 } from './poShared';
 import { buildPoPdf } from './poPdf';
+import { resolveReportBranding } from '../../services/reportBranding.service';
 import { loadPoTerms, orderContext, printableClauses, savePoTerms, withMandatory } from './poTerms';
 import { PoTermsButton, PoTermsPanel, usePoTerms } from './PoTermsUi';
 import PdfPreviewModal from '../../components/PdfPreviewModal';
@@ -201,11 +202,12 @@ const PurchaseOrderEditor: React.FC<{
   const pdfName = () => (hdr ? `${hdr.PO_NUMBER}${n(hdr.REVISION_NUM) ? `-R${hdr.REVISION_NUM}` : ''}.pdf` : 'purchase-order.pdf');
   const buildPdf = async (): Promise<jsPDF | null> => {
     if (!hdr) return null;
-    const saved = await loadPoTerms(id, bu);   // what is saved on the order, never unsaved edits
+    // what is saved on the order (never unsaved edits), and the business unit's logo for Purchasing documents
+    const [saved, brand] = await Promise.all([loadPoTerms(id, bu), resolveReportBranding(bu, 'PO')]);
     if (termsDirty) message.warning('The PDF uses the saved terms — save the Terms & Conditions tab to include your changes', 6);
     const loc = (lid: unknown) => lookups.locations.find(l => Number(l.LOCATION_ID) === Number(lid)) || null;
     return buildPoPdf(hdr, lineRows, { buName: buRow?.BUSINESS_UNIT_NAME, terms: printableClauses(saved.clauses, termsCtx),
-      shipTo: loc(hdr.SHIP_TO_LOCATION_ID), billTo: loc(hdr.BILL_TO_LOCATION_ID) });
+      shipTo: loc(hdr.SHIP_TO_LOCATION_ID), billTo: loc(hdr.BILL_TO_LOCATION_ID), brand });
   };
   // Print PDF: preview first; saving or printing an approved order records it as sent (by print)
   const printPdf = async (mark = false) => {

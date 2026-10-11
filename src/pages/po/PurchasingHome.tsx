@@ -4,7 +4,7 @@ import { Card, Row as GridRow, Col, Typography, Spin, Alert, List, Tag, Button, 
 import {
   ShoppingCartOutlined, FileTextOutlined, ThunderboltOutlined, InboxOutlined, CalculatorOutlined, AuditOutlined,
   BarChartOutlined, SettingOutlined, PlusOutlined, ClockCircleOutlined, WarningOutlined, DollarOutlined,
-  FileProtectOutlined,
+  FileProtectOutlined, PictureOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { poQuery, nlit, lit, money, day, Row } from '../../services/po.service';
@@ -21,6 +21,7 @@ const TILES = [
   { label: 'Approvals', path: '/po/approvals', icon: <AuditOutlined />, desc: 'Requisitions · POs · changes' },
   { label: 'Reports', path: '/po/reports', icon: <BarChartOutlined />, desc: 'Spend · backlog · overdue' },
   { label: 'Terms & Conditions', path: '/po/terms', icon: <FileProtectOutlined />, desc: 'Clauses printed on POs' },
+  { label: 'Report Branding', path: '/po/report-branding', icon: <PictureOutlined />, desc: 'Logos on printed documents' },
   { label: 'Setup', path: '/po/setup', icon: <SettingOutlined />, desc: 'Options · categories · buyers' },
 ];
 

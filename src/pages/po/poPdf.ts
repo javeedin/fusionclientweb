@@ -4,6 +4,7 @@ import autoTable from 'jspdf-autotable';
 import { getAppBranding } from '../../config/company.config';
 import { Row, money, qty, day, n } from '../../services/po.service';
 import { parseRichBlocks, type RichRun } from '../../components/RichText/richText';
+import { drawBrandHeader, hexToRgb, textOn, type ReportBrand } from '../../services/reportBranding.service';
 
 /**
  * Draw rich clause text (HTML subset or plain text) with wrapping, bold / italic / underline / strike,
@@ -82,16 +83,22 @@ export function buildPoPdf(h: Row, lines: Row[], extra: {
   /** numbered clauses, or one block of text (old single-text terms) */
   terms?: PrintClause[] | string | null;
   shipTo?: Row | null; billTo?: Row | null;
+  /** logo and company details of the business unit (Purchasing → Report Branding) */
+  brand?: ReportBrand | null;
 }) {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const W = doc.internal.pageSize.getWidth();
   const M = 40;
-  const red: [number, number, number] = [199, 70, 52];
+  const red = hexToRgb(extra.brand?.accentColor);    // brand colour (default Re-ERP red)
+  const onRed = textOn(red);
 
   doc.setFillColor(...red);
   doc.rect(0, 0, W, 6, 'F');
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
-  doc.text(extra.buName || getAppBranding().name, M, 44);
+  // left: logo, company name, address, TRN, contacts — right: title and order details
+  const brandBottom = drawBrandHeader(doc, extra.brand, {
+    x: M, y: 22, maxWidth: W - 2 * M - 250, fallbackName: extra.buName || getAppBranding().name,
+  });
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(20); doc.setTextColor(...red);
   doc.text('PURCHASE ORDER', W - M, 44, { align: 'right' });
   doc.setTextColor(0); doc.setFontSize(10); doc.setFont('helvetica', 'normal');
@@ -124,7 +131,7 @@ export function buildPoPdf(h: Row, lines: Row[], extra: {
     doc.setFont('helvetica', 'normal');
     doc.text(doc.splitTextToSize(body || '—', w - 12), x + 6, top + 30);
   };
-  const top = Math.max(y, 140) + 6;
+  const top = Math.max(y, brandBottom + 4, 140) + 6;
   const bw = (W - 2 * M - 20) / 3;
   box('Supplier', [h.SUPPLIER_NAME, h.SITE_NAME, h.SUPPLIER_ADDRESS, h.TAX_REGISTRATION_NUMBER ? `TRN ${h.TAX_REGISTRATION_NUMBER}` : '',
     h.SUPPLIER_CONTACT ? `Attn: ${h.SUPPLIER_CONTACT}` : ''].filter(Boolean).join('\n'), M, top, bw);
@@ -145,7 +152,7 @@ export function buildPoPdf(h: Row, lines: Row[], extra: {
       l.LINE_TYPE === 'QUANTITY' ? money(l.UNIT_PRICE, 2) : '',
       money(n(l.AMOUNT) - n(l.AMOUNT_CANCELLED)),
     ]),
-    headStyles: { fillColor: red, fontSize: 9 },
+    headStyles: { fillColor: red, textColor: onRed, fontSize: 9 },
     bodyStyles: { fontSize: 9, valign: 'top' },
     columnStyles: { 0: { cellWidth: 24 }, 2: { cellWidth: 62 }, 3: { halign: 'right', cellWidth: 46 }, 4: { cellWidth: 36 },
       5: { halign: 'right', cellWidth: 70 }, 6: { halign: 'right', cellWidth: 80 } },
@@ -200,7 +207,7 @@ export function buildPoPdf(h: Row, lines: Row[], extra: {
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120);
     doc.text(`${h.PO_NUMBER} · page ${i} of ${pages}`, W - M, doc.internal.pageSize.getHeight() - 20, { align: 'right' });
-    doc.text(`${getAppBranding().name} Purchasing`, M, doc.internal.pageSize.getHeight() - 20);
+    doc.text(extra.brand?.displayName || `${getAppBranding().name} Purchasing`, M, doc.internal.pageSize.getHeight() - 20);
   }
   return doc;
 }
