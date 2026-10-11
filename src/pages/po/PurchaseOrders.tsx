@@ -9,6 +9,8 @@ import * as XLSX from 'xlsx';
 import { poQuery, lit, nlit, money, day, Row, n } from '../../services/po.service';
 import { PoBar, BuNotSetUp, StatusTag, useBusinessUnits, usePoUser } from './poShared';
 import PurchaseOrderEditor from './PurchaseOrderEditor';
+import { DocApprovalButton, loadDocApprovals, type DocApproval } from './PoApprovalUi';
+import { onApprovalsChanged } from '../../services/approvals.service';
 
 const { Text } = Typography;
 
@@ -23,6 +25,7 @@ const SearchTab: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; user: 
     const [status, setStatus] = useState('OPEN');
     const [mine, setMine] = useState(false);
     const [search, setSearch] = useState('');
+    const [approvals, setApprovals] = useState<Map<number, DocApproval>>(new Map());
 
     const load = useCallback(async () => {
       setLoading(true);
@@ -39,10 +42,15 @@ const SearchTab: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; user: 
           const s = lit(`%${search.trim().toUpperCase()}%`);
           where.push(`(UPPER(PO_NUMBER) LIKE ${s} OR UPPER(SUPPLIER_NAME) LIKE ${s} OR UPPER(DESCRIPTION) LIKE ${s})`);
         }
-        setRows(await poQuery(`SELECT * FROM RR_PO_V_ORDERS WHERE ${where.join(' AND ')} ORDER BY PO_HEADER_ID DESC`, 1000));
+        const list = await poQuery(`SELECT * FROM RR_PO_V_ORDERS WHERE ${where.join(' AND ')} ORDER BY PO_HEADER_ID DESC`, 1000);
+        setRows(list);
+        // where each order's approval stands (approver, who decided) — best effort
+        loadDocApprovals(list.map(r => n(r.APPROVAL_REQUEST_ID))).then(setApprovals).catch(() => setApprovals(new Map()));
       } catch (e: any) { message.error(e.message); } finally { setLoading(false); }
     }, [buState.bu, status, mine, search, user]);
     useEffect(() => { load(); }, [load, refreshKey]);
+    // approved / rejected from the bell or the approvals page → refresh the list
+    useEffect(() => onApprovalsChanged(d => { if (d.reason === 'decided' && d.module === 'PROCUREMENT') load(); }), [load]);
 
     const exportXlsx = () => {
       const ws = XLSX.utils.json_to_sheet(rows.map(r => ({
@@ -80,8 +88,12 @@ const SearchTab: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; user: 
               ...(!buState.bu ? [{ title: 'Business unit', dataIndex: 'BUSINESS_UNIT_NAME', width: 170, ellipsis: true }] : []),
               { title: 'Supplier', dataIndex: 'SUPPLIER_NAME', width: 220, ellipsis: true },
               { title: 'Description', dataIndex: 'DESCRIPTION', ellipsis: true },
-              { title: 'Status', width: 210, render: (_, r) => <Space size={2}><StatusTag s={r.DOCUMENT_STATUS} />
-                {r.DOCUMENT_STATUS === 'APPROVED' && <StatusTag s={r.CLOSURE_STATUS} />}</Space> },
+              { title: 'Status', width: 230, render: (_, r) => <Space size={2}><StatusTag s={r.DOCUMENT_STATUS} />
+                {r.DOCUMENT_STATUS === 'APPROVED' && <StatusTag s={r.CLOSURE_STATUS} />}
+                {r.DOCUMENT_STATUS !== 'INCOMPLETE' && approvals.get(n(r.APPROVAL_REQUEST_ID)) && (
+                  <DocApprovalButton iconOnly docType="PURCHASE_ORDER" docId={Number(r.PO_HEADER_ID)} docNumber={String(r.PO_NUMBER)}
+                    approval={approvals.get(n(r.APPROVAL_REQUEST_ID))!} />
+                )}</Space> },
               { title: 'Ordered', width: 150, align: 'right', render: (_, r) => `${money(r.TOTAL_AMOUNT)} ${r.CURRENCY_CODE}` },
               { title: 'Received', width: 130, render: (_, r) => {
                 const o = n(r.TOTAL_AMOUNT) - n(r.AMOUNT_CANCELLED);

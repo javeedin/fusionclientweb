@@ -13,6 +13,7 @@ import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useNotifications, type AppNotification, type NotificationModule } from '../context/NotificationContext';
 import { APEX_DB_CONFIG } from '../config/api.config';
+import { poQuery, nlit } from '../services/po.service';
 
 const { Text } = Typography;
 
@@ -215,13 +216,48 @@ const TransactionDetailModal: React.FC<{
   acting: boolean;
   /** open the full invoice (attachments, accounting …) */
   onOpenInvoice?: (invoiceId: number, invoiceNumber: string) => void;
-}> = ({ notif, open, onClose, onApprove, onReject, acting, onOpenInvoice }) => {
+  /** open a page (purchase order / requisition) */
+  onOpenPath?: (path: string) => void;
+}> = ({ notif, open, onClose, onApprove, onReject, acting, onOpenInvoice, onOpenPath }) => {
   const [invoiceLines, setInvoiceLines] = useState<any[]>([]);
   const [linesLoading, setLinesLoading] = useState(false);
   const [apHeader, setApHeader] = useState<any>(null);
   const [apHeaderLoading, setApHeaderLoading] = useState(false);
   const [cashTxn, setCashTxn] = useState<any>(null);
   const [cashTxnLoading, setCashTxnLoading] = useState(false);
+  // purchasing: the purchase order / requisition (and change order) being approved
+  const [poDoc, setPoDoc] = useState<{ kind: string; head: any; lines: any[]; co?: any } | null>(null);
+  const [poDocLoading, setPoDocLoading] = useState(false);
+  React.useEffect(() => {
+    if (!open || !notif?.transactionId || notif.approvalModule !== 'PROCUREMENT') { setPoDoc(null); return; }
+    let cancelled = false;
+    const id = notif.transactionId;
+    const kind = String(notif.approvalTransactionType || 'PURCHASE_ORDER').toUpperCase();
+    setPoDocLoading(true);
+    (async () => {
+      if (kind === 'REQUISITION') {
+        const [head] = await poQuery(`SELECT * FROM RR_PO_V_REQUISITIONS WHERE REQ_HEADER_ID = ${nlit(id)}`);
+        const lines = await poQuery(`SELECT LINE_NUM, ITEM_DESCRIPTION, CATEGORY_NAME, QUANTITY, UOM_CODE, UNIT_PRICE, AMOUNT, CURRENCY_CODE,
+          NEED_BY_DATE, SUGGESTED_SUPPLIER, SUGGESTED_SUPPLIER_NAME, CHARGE_ACCOUNT FROM RR_PO_V_REQ_LINES WHERE REQ_HEADER_ID = ${nlit(id)} ORDER BY LINE_NUM`);
+        return { kind, head, lines };
+      }
+      let co: any;
+      let poId = id;
+      if (kind === 'PO_CHANGE_ORDER') {
+        [co] = await poQuery(`SELECT CHANGE_ORDER_ID, PO_HEADER_ID, CO_NUMBER, REASON, CHANGE_SUMMARY, AMOUNT_DELTA_FUNC, CURRENCY_CODE
+          FROM RR_PO_V_CHANGE_ORDERS WHERE CHANGE_ORDER_ID = ${nlit(id)}`);
+        poId = co ? Number(co.PO_HEADER_ID) : id;
+      }
+      const [head] = await poQuery(`SELECT * FROM RR_PO_V_ORDERS WHERE PO_HEADER_ID = ${nlit(poId)}`);
+      const lines = await poQuery(`SELECT LINE_NUM, ITEM_DESCRIPTION, CATEGORY_NAME, LINE_TYPE, QUANTITY, UOM_CODE, UNIT_PRICE, AMOUNT,
+        NEED_BY_DATE, CHARGE_ACCOUNT, LINE_STATUS FROM RR_PO_V_ORDER_LINES WHERE PO_HEADER_ID = ${nlit(poId)} ORDER BY LINE_NUM`);
+      return { kind, head, lines, co };
+    })()
+      .then(d => { if (!cancelled) setPoDoc(d.head ? d : null); })
+      .catch(() => { if (!cancelled) setPoDoc(null); })
+      .finally(() => { if (!cancelled) setPoDocLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, notif?.transactionId, notif?.approvalModule, notif?.approvalTransactionType]);
   const [rejectComments, setRejectComments] = useState('');
   const [showRejectInput, setShowRejectInput] = useState(false);
 
@@ -415,6 +451,71 @@ const TransactionDetailModal: React.FC<{
         </>
       )}
 
+      {notif.approvalModule === 'PROCUREMENT' && notif.transactionId && (() => {
+        const isReq = poDoc?.kind === 'REQUISITION';
+        const h = poDoc?.head;
+        const path = isReq ? `/po/requisitions?id=${h?.REQ_HEADER_ID}` : `/po/orders?id=${h?.PO_HEADER_ID}`;
+        const lineCols: ColumnsType<any> = [
+          { title: '#', dataIndex: 'LINE_NUM', width: 40 },
+          { title: 'Description', dataIndex: 'ITEM_DESCRIPTION', ellipsis: true,
+            render: (v: string, r: any) => <Tooltip title={[v, r.CATEGORY_NAME, r.CHARGE_ACCOUNT].filter(Boolean).join(' · ')}>
+              <span>{v}{r.LINE_STATUS === 'CANCELLED' && <Tag style={{ marginLeft: 4, fontSize: 10 }}>cancelled</Tag>}</span></Tooltip> },
+          ...(isReq ? [{ title: 'Supplier', key: 'sup', width: 150, ellipsis: true, render: (_: unknown, r: any) => r.SUGGESTED_SUPPLIER || r.SUGGESTED_SUPPLIER_NAME || '—' }] : []),
+          { title: 'Qty', key: 'q', width: 90, align: 'right' as const, render: (_: unknown, r: any) => r.QUANTITY != null && r.LINE_TYPE !== 'AMOUNT' ? `${Number(r.QUANTITY).toLocaleString()} ${r.UOM_CODE || ''}` : '—' },
+          { title: 'Amount', dataIndex: 'AMOUNT', width: 120, align: 'right' as const, render: (v: number) => <Text style={{ fontFamily: 'monospace' }}>{fmtMoney(v)}</Text> },
+          { title: 'Need by', dataIndex: 'NEED_BY_DATE', width: 95, render: (v: string) => fmtDay(v) },
+        ];
+        return (
+          <>
+            <Divider style={{ margin: '8px 0', fontSize: 12 }}>
+              <Space size={8}>
+                <span>{isReq ? 'Requisition' : 'Purchase order'}</span>
+                {onOpenPath && h && <Button size="small" type="link" icon={<EyeOutlined />} style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                  onClick={() => onOpenPath(path)}>Open {isReq ? 'requisition' : 'purchase order'}</Button>}
+              </Space>
+            </Divider>
+            {poDocLoading ? <div style={{ textAlign: 'center', padding: 8 }}><Spin size="small" /></div>
+              : !h ? <Alert type="warning" showIcon style={{ fontSize: 12 }} message={`${notif.trxNo} could not be loaded`} />
+              : <>
+                {poDoc?.co && (
+                  <Alert type="info" showIcon style={{ marginBottom: 8 }}
+                    message={`Change order ${poDoc.co.CO_NUMBER} — ${poDoc.co.AMOUNT_DELTA_FUNC >= 0 ? '+' : ''}${fmtMoney(poDoc.co.AMOUNT_DELTA_FUNC)} ${poDoc.co.CURRENCY_CODE || ''}`}
+                    description={<>{poDoc.co.CHANGE_SUMMARY}{poDoc.co.REASON ? <div style={{ fontStyle: 'italic' }}>Reason: {poDoc.co.REASON}</div> : null}</>} />
+                )}
+                <Descriptions bordered size="small" column={2} style={{ marginBottom: 8 }}>
+                  {isReq ? <>
+                    <Descriptions.Item label="Requisition">{h.REQ_NUMBER}{h.URGENT_FLAG === 'Y' && <Tag color="red" style={{ marginLeft: 6 }}>Urgent</Tag>}</Descriptions.Item>
+                    <Descriptions.Item label="Preparer">{h.PREPARER_USER || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Business Unit">{h.BUSINESS_UNIT_NAME || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Amount"><Text strong style={{ fontFamily: 'monospace' }}>{h.FUNCTIONAL_CURRENCY} {fmtMoney(h.TOTAL_AMOUNT_FUNC)}</Text></Descriptions.Item>
+                    {h.JUSTIFICATION && <Descriptions.Item label="Justification" span={2}>{h.JUSTIFICATION}</Descriptions.Item>}
+                  </> : <>
+                    <Descriptions.Item label="PO number">{h.PO_NUMBER}{Number(h.REVISION_NUM) > 0 && <Tag style={{ marginLeft: 6 }}>Rev {h.REVISION_NUM}</Tag>}</Descriptions.Item>
+                    <Descriptions.Item label="Buyer">{h.BUYER_USER || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Supplier">{h.SUPPLIER_NAME || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Site">{h.SITE_NAME || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Business Unit">{h.BUSINESS_UNIT_NAME || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Amount"><Text strong style={{ fontFamily: 'monospace' }}>{h.CURRENCY_CODE} {fmtMoney(h.TOTAL_AMOUNT)}</Text></Descriptions.Item>
+                    <Descriptions.Item label="Payment Terms">{h.PAYMENT_TERMS || '—'}</Descriptions.Item>
+                    <Descriptions.Item label="Status"><Tag style={{ margin: 0 }}>{String(h.DOCUMENT_STATUS || '').replace(/_/g, ' ')}</Tag></Descriptions.Item>
+                    {h.DESCRIPTION && <Descriptions.Item label="Description" span={2}>{h.DESCRIPTION}</Descriptions.Item>}
+                  </>}
+                </Descriptions>
+                <Table dataSource={poDoc!.lines} columns={lineCols} rowKey="LINE_NUM" size="small" pagination={false}
+                  scroll={poDoc!.lines.length > 8 ? { y: 240 } : undefined}
+                  summary={() => (
+                    <Table.Summary.Row>
+                      <Table.Summary.Cell index={0} colSpan={isReq ? 4 : 3}><Text strong>Total</Text></Table.Summary.Cell>
+                      <Table.Summary.Cell index={1} align="right"><Text strong style={{ fontFamily: 'monospace' }}>
+                        {fmtMoney(poDoc!.lines.filter(l => l.LINE_STATUS !== 'CANCELLED').reduce((t, l) => t + (Number(l.AMOUNT) || 0), 0))}</Text></Table.Summary.Cell>
+                      <Table.Summary.Cell index={2} />
+                    </Table.Summary.Row>
+                  )} />
+              </>}
+          </>
+        );
+      })()}
+
       {notif.approvalModule === 'CASH' && notif.transactionId && (
         <>
           <Divider style={{ margin: '8px 0', fontSize: 12 }}>Transaction Details</Divider>
@@ -482,6 +583,7 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
       message.success(`Approved: ${notif.trxNo}`);
       setDetailNotif(null);
     } catch (e: any) {
+      message.error(e?.message || 'Approve failed', 8);
       setApprovalApiModalOpen(true);
     } finally {
       setActingId(null);
@@ -496,6 +598,7 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
       message.success(`Rejected: ${notif.trxNo}`);
       setDetailNotif(null);
     } catch (e: any) {
+      message.error(e?.message || 'Reject failed', 8);
       setApprovalApiModalOpen(true);
     } finally {
       setActingId(null);
@@ -830,6 +933,7 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
           onClose();
           navigate('/ap/manage-invoices', { state: { openInvoiceId, openInvoiceNumber } });
         }}
+        onOpenPath={path => { setDetailNotif(null); onClose(); navigate(path); }}
       />
 
       {/* PDC API Inspector Modal */}

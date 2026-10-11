@@ -19,6 +19,8 @@ import {
 } from './poShared';
 import { buildPoPdf } from './poPdf';
 import { resolveReportBranding } from '../../services/reportBranding.service';
+import { emitApprovalsChanged, onApprovalsChanged } from '../../services/approvals.service';
+import { APPROVAL_SCRIPT, DocApprovalButton, SubmitForApprovalModal, useDocApproval } from './PoApprovalUi';
 import { loadPoTerms, orderContext, printableClauses, savePoTerms, withMandatory } from './poTerms';
 import { PoTermsButton, PoTermsPanel, usePoTerms } from './PoTermsUi';
 import PdfPreviewModal from '../../components/PdfPreviewModal';
@@ -87,6 +89,9 @@ const PurchaseOrderEditor: React.FC<{
   const terms = usePoTerms(id, bu);
   const [termsDirty, setTermsDirty] = useState(false);
   const [pdfPreview, setPdfPreview] = useState<{ doc: jsPDF; mark: boolean } | null>(null);
+  // single-level approval (309): submit to a chosen approver; where the approval stands
+  const [submitOpen, setSubmitOpen] = useState(false);
+  const appr = useDocApproval(hdr ? n(hdr.APPROVAL_REQUEST_ID) || null : null, id);
   const [tab, setTab] = useState('lines');
   const tabsRef = useRef<HTMLDivElement>(null);
   const termsCtx = useMemo(() => {
@@ -147,6 +152,10 @@ const PurchaseOrderEditor: React.FC<{
     } catch (e: any) { message.error(e.message); } finally { setLoading(false); }
   }, [id, form, onBack]);
   useEffect(() => { load(); }, [load]);
+  // approved / rejected from the notification bell or the approvals page → show it now
+  useEffect(() => onApprovalsChanged(d => {
+    if (d.reason === 'decided' && d.module === 'PROCUREMENT' && id && Number(d.transactionId) === id) load();
+  }), [id, load]);
 
   useEffect(() => {
     if (id) return;
@@ -194,9 +203,25 @@ const PurchaseOrderEditor: React.FC<{
     return r?.id ?? null;
   };
 
+  // Submit: save, then choose the approver (the PO stays pending until that approver approves it)
   const submit = async () => {
     const savedId = await save();
-    if (savedId) await exec(PROC.submitPo, { p_po_header_id: savedId }, () => { load(); });
+    if (savedId) setSubmitOpen(true);
+  };
+  const sendForApproval = async (approver: string | null) => {
+    if (!id) return;
+    setBusy(true);
+    try {
+      const r = approver
+        ? await poExec(PROC.submitPoTo, { p_po_header_id: id, p_approver: approver }, user)
+        : await poExec(PROC.submitPo, { p_po_header_id: id }, user);
+      (r.status === 'W' ? message.warning : message.success)(r.message || 'Submitted', 8);
+      setSubmitOpen(false);
+      emitApprovalsChanged({ reason: 'sent', module: 'PROCUREMENT', transactionId: id, transactionRef: hdr?.PO_NUMBER });
+      await load();
+    } catch (e: any) {
+      message.error(/not registered/i.test(e.message) ? `${e.message} — run ${APPROVAL_SCRIPT}` : e.message, 10);
+    } finally { setBusy(false); }
   };
 
   const pdfName = () => (hdr ? `${hdr.PO_NUMBER}${n(hdr.REVISION_NUM) ? `-R${hdr.REVISION_NUM}` : ''}.pdf` : 'purchase-order.pdf');
@@ -369,6 +394,10 @@ const PurchaseOrderEditor: React.FC<{
     <Space wrap size={6}>
       {editable && <Button icon={<SaveOutlined />} loading={busy} onClick={save}>Save</Button>}
       {editable && <Button type="primary" icon={<SendOutlined />} loading={busy} onClick={submit}>Submit</Button>}
+      {hdr && appr.row && st !== 'INCOMPLETE' && (
+        <DocApprovalButton docType="PURCHASE_ORDER" docId={Number(hdr.PO_HEADER_ID)} docNumber={String(hdr.PO_NUMBER)} approval={appr.row}
+          onSendAgain={editable ? submit : undefined} />
+      )}
       {st === 'PENDING_APPROVAL' && <Popconfirm title="Withdraw from approval?" onConfirm={() => exec(PROC.withdrawPo, { p_po_header_id: id })}>
         <Button icon={<RollbackOutlined />} loading={busy}>Withdraw</Button></Popconfirm>}
       {st === 'APPROVED' && hdr?.CLOSURE_STATUS !== 'FINALLY_CLOSED' && <>
@@ -435,7 +464,13 @@ const PurchaseOrderEditor: React.FC<{
         {actions}
       </div>
 
-      {st === 'REJECTED' && <Alert type="error" showIcon style={{ marginBottom: 12 }} message="Rejected — see History for the approver's comments, then edit and submit again." />}
+      {st === 'REJECTED' && <Alert type="error" showIcon style={{ marginBottom: 12 }}
+        message={appr.row?.DECIDED_BY || appr.row?.APPROVER_NAME ? `Rejected by ${appr.row.DECIDED_BY || appr.row.APPROVER_NAME}` : 'Rejected'}
+        description={<span>{appr.row?.DECISION_COMMENTS ? <>“{appr.row.DECISION_COMMENTS}” — </> : null}edit the purchase order and submit it again.</span>} />}
+      {st === 'PENDING_APPROVAL' && appr.row && (
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }} message={`Waiting for approval — ${appr.row.APPROVER_NAME || 'the approver'}`}
+          description="It cannot be received, invoiced, changed or sent to the supplier until it is approved. Withdraw it to edit." />
+      )}
       {pendingCo && <Alert type="warning" showIcon style={{ marginBottom: 12 }}
         message={`Change order ${pendingCo.CO_NUMBER} is pending approval`} description={pendingCo.CHANGE_SUMMARY}
         action={<Popconfirm title="Cancel this change order?" onConfirm={() => exec(PROC.cancelChange, { p_change_order_id: pendingCo.CHANGE_ORDER_ID })}>
@@ -593,6 +628,10 @@ const PurchaseOrderEditor: React.FC<{
           children: id ? <PoAttachments entityType="PO" entityId={id} user={user} readOnly={st === 'CANCELLED' || hdr?.CLOSURE_STATUS === 'FINALLY_CLOSED'} /> : null },
       ]} />
 
+      <SubmitForApprovalModal open={submitOpen} docType="PURCHASE_ORDER" docNumber={String(hdr?.PO_NUMBER || 'New purchase order')}
+        amount={n(hdr?.TOTAL_AMOUNT_FUNC) || total * (n(hdr?.RATE) || 1)} currency={fc} user={user}
+        approvalRequired={buRow?.PO_APPROVAL_REQUIRED !== 'N'} busy={busy}
+        onCancel={() => setSubmitOpen(false)} onSubmit={sendForApproval} />
       <PdfPreviewModal open={!!pdfPreview} doc={pdfPreview?.doc ?? null} fileName={pdfName()}
         title={<span>Purchase order {hdr?.PO_NUMBER}{n(hdr?.REVISION_NUM) ? ` · Rev ${hdr?.REVISION_NUM}` : ''}</span>}
         onClose={() => setPdfPreview(null)} onSaved={markPrinted} onPrinted={markPrinted}

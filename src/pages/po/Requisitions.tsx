@@ -16,6 +16,8 @@ import {
   HistoryButton, askReason, lineAmount,
 } from './poShared';
 import PoAttachments from './PoAttachments';
+import { emitApprovalsChanged, onApprovalsChanged } from '../../services/approvals.service';
+import { APPROVAL_SCRIPT, DocApprovalButton, SubmitForApprovalModal, useDocApproval } from './PoApprovalUi';
 
 const { Text } = Typography;
 const EDITABLE = ['INCOMPLETE', 'REJECTED'];
@@ -163,6 +165,9 @@ export const RequisitionEditor: React.FC<{
   const lookups = useLookups(bu);
   const currency = hdr?.FUNCTIONAL_CURRENCY || buState.bus.find(b => Number(b.BUSINESS_UNIT_ID) === bu)?.FUNCTIONAL_CURRENCY || '';
   const editable = !hdr || EDITABLE.includes(hdr.STATUS);
+  // single-level approval (309): submit to a chosen approver; where the approval stands
+  const [submitOpen, setSubmitOpen] = useState(false);
+  const appr = useDocApproval(hdr ? Number(hdr.APPROVAL_REQUEST_ID) || null : null, id);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -234,8 +239,27 @@ export const RequisitionEditor: React.FC<{
 
   const submit = async () => {
     const savedId = editable ? await save() : id;
-    if (savedId) await act(PROC.submitReq, { p_req_header_id: savedId });
+    if (savedId) setSubmitOpen(true);
   };
+  const sendForApproval = async (approver: string | null) => {
+    if (!id) return;
+    setBusy(true);
+    try {
+      const r = approver
+        ? await poExec(PROC.submitReqTo, { p_req_header_id: id, p_approver: approver }, user)
+        : await poExec(PROC.submitReq, { p_req_header_id: id }, user);
+      (r.status === 'W' ? message.warning : message.success)(r.message || 'Submitted', 8);
+      setSubmitOpen(false);
+      emitApprovalsChanged({ reason: 'sent', module: 'PROCUREMENT', transactionId: id, transactionRef: hdr?.REQ_NUMBER });
+      await load();
+    } catch (e: any) {
+      message.error(/not registered/i.test(e.message) ? `${e.message} — run ${APPROVAL_SCRIPT}` : e.message, 10);
+    } finally { setBusy(false); }
+  };
+  // approved / rejected from the notification bell or the approvals page → show it now
+  useEffect(() => onApprovalsChanged(d => {
+    if (d.reason === 'decided' && d.module === 'PROCUREMENT' && id && Number(d.transactionId) === id) load();
+  }), [id, load]);
 
   const total = useMemo(() => lines.reduce((s, l) => s + lineAmount(l), 0), [lines]);
 
@@ -245,6 +269,10 @@ export const RequisitionEditor: React.FC<{
     <Space wrap size={6}>
       {editable && <Button icon={<SaveOutlined />} loading={busy} onClick={save}>Save</Button>}
       {editable && <Button type="primary" icon={<SendOutlined />} loading={busy} onClick={submit}>Submit for approval</Button>}
+      {hdr && appr.row && st !== 'INCOMPLETE' && (
+        <DocApprovalButton docType="REQUISITION" docId={Number(hdr.REQ_HEADER_ID)} docNumber={String(hdr.REQ_NUMBER)} approval={appr.row}
+          onSendAgain={editable ? submit : undefined} />
+      )}
       {st === 'PENDING_APPROVAL' && (
         <Popconfirm title="Withdraw from approval?" onConfirm={() => act(PROC.withdrawReq, { p_req_header_id: id })}>
           <Button icon={<RollbackOutlined />} loading={busy}>Withdraw</Button>
@@ -285,7 +313,9 @@ export const RequisitionEditor: React.FC<{
         </Space>
         {actions}
       </div>
-      {st === 'REJECTED' && <Alert type="error" showIcon style={{ marginBottom: 12 }} message="Rejected — see History for the approver's comments, edit and submit again." />}
+      {st === 'REJECTED' && <Alert type="error" showIcon style={{ marginBottom: 12 }}
+        message={appr.row?.DECIDED_BY || appr.row?.APPROVER_NAME ? `Rejected by ${appr.row.DECIDED_BY || appr.row.APPROVER_NAME}` : 'Rejected'}
+        description={<span>{appr.row?.DECISION_COMMENTS ? <>“{appr.row.DECISION_COMMENTS}” — </> : null}edit the requisition and submit it again.</span>} />}
       {!id && defaults === null && (
         <Alert type="info" showIcon style={{ marginBottom: 12 }}
           message="No requester defaults for you in this business unit"
@@ -331,6 +361,10 @@ export const RequisitionEditor: React.FC<{
         { key: 'attachments', label: <span><PaperClipOutlined /> Attachments</span>, disabled: !id,
           children: id ? <PoAttachments entityType="REQ" entityId={id} user={user} readOnly={st === 'CANCELLED'} /> : null },
       ]} />
+      <SubmitForApprovalModal open={submitOpen} docType="REQUISITION" docNumber={String(hdr?.REQ_NUMBER || 'New requisition')}
+        amount={n(hdr?.TOTAL_AMOUNT_FUNC) || total} currency={currency} user={user}
+        approvalRequired={buState.bus.find(b => Number(b.BUSINESS_UNIT_ID) === bu)?.REQ_APPROVAL_REQUIRED !== 'N'} busy={busy}
+        onCancel={() => setSubmitOpen(false)} onSubmit={sendForApproval} />
     </div>
   );
 };

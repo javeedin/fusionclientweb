@@ -33,6 +33,8 @@ export const ApprovalStatusModal: React.FC<{
   transactionId?: number;
   /** approval reference (invoice number, CASH-EXT-…) */
   transactionRef?: string;
+  /** only these transaction types (e.g. PURCHASE_ORDER) */
+  transactionTypes?: string[];
   title: React.ReactNode;
   /** stored approval status of the transaction */
   status?: string;
@@ -43,7 +45,8 @@ export const ApprovalStatusModal: React.FC<{
   decisionDate?: string;
   /** offered while the transaction is not approved */
   onSendAgain?: () => void;
-}> = ({ open, onClose, module, transactionId, transactionRef, title, status, sentBy, sentDate, approverName, approverEmail, decisionDate, onSendAgain }) => {
+}> = ({ open, onClose, module, transactionId, transactionRef, transactionTypes, title, status, sentBy, sentDate, approverName, approverEmail, decisionDate, onSendAgain }) => {
+  const typesKey = (transactionTypes || []).join(',');
   const [trail, setTrail] = useState<ApprovalTrail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,10 +54,10 @@ export const ApprovalStatusModal: React.FC<{
   const load = useCallback(async () => {
     if (!transactionId && !transactionRef) return;
     setLoading(true); setError(null);
-    try { setTrail(await getApprovalTrail({ module, transactionId, transactionRef })); }
+    try { setTrail(await getApprovalTrail({ module, transactionId, transactionRef, transactionTypes: typesKey ? typesKey.split(',') : undefined })); }
     catch (e: any) { setError(e?.message || String(e)); }
     finally { setLoading(false); }
-  }, [module, transactionId, transactionRef]);
+  }, [module, transactionId, transactionRef, typesKey]);
 
   useEffect(() => { if (open) load(); else { setTrail(null); setError(null); } }, [open, load]);
   // decided from the bell while this is open → show it

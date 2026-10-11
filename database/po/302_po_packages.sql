@@ -6,13 +6,13 @@
 --   RR_PO_DOC_PKG       purchase orders, autocreate, cancel/close, change orders
 --   RR_PO_RCV_PKG       receiving, returns, corrections
 --   RR_PO_ACCT_PKG      receipt accounting stamps, period-end accrual, write-off
---   RR_PO_APPROVAL_PKG  existing approval engine (RR_APPROVAL_*) + decision trigger
+--   (RR_PO_APPROVAL_PKG — approval engine + decision trigger — is in 309_po_approval_inapp.sql)
 --
 -- Every callable procedure: IN p_xxx ..., IN p_user, OUT p_id, OUT p_number,
 -- OUT p_status ('S' ok / 'W' ok with warning / 'E' error), OUT p_message.
 -- Procedures never COMMIT; the po/execute dispatcher (303) commits on S/W and
 -- rolls back on E, so every call is one atomic transaction.
--- Run after 300 and 301.
+-- Run after 300 and 301; then 309 (approval package — this script's packages compile once it exists).
 -- =============================================================================
 
 -- Approval rules: optional BU / category filters (existing rules keep working: NULL = any)
@@ -138,17 +138,7 @@ CREATE OR REPLACE PACKAGE RR_PO_ACCT_PKG AS
 END RR_PO_ACCT_PKG;
 /
 
-CREATE OR REPLACE PACKAGE RR_PO_APPROVAL_PKG AS
-    PROCEDURE DECIDE (p_request_id IN VARCHAR2, p_decision IN VARCHAR2, p_comments IN VARCHAR2, p_user IN VARCHAR2,
-                      p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
-    -- internal
-    FUNCTION  request (p_type IN VARCHAR2, p_doc_id IN NUMBER, p_po_header_id IN NUMBER, p_ref IN VARCHAR2,
-                       p_amount IN NUMBER, p_currency IN VARCHAR2, p_bu IN NUMBER, p_desc IN VARCHAR2,
-                       p_user IN VARCHAR2) RETURN NUMBER;
-    PROCEDURE recall (p_request_id IN NUMBER, p_user IN VARCHAR2);
-    PROCEDURE on_decision (p_request_id IN NUMBER, p_type IN VARCHAR2, p_txn_id IN NUMBER, p_status IN VARCHAR2);
-END RR_PO_APPROVAL_PKG;
-/
+-- RR_PO_APPROVAL_PKG (spec and body) and its decision trigger are created by 309_po_approval_inapp.sql
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- RR_PO_UTIL_PKG
@@ -2441,123 +2431,10 @@ END RR_PO_ACCT_PKG;
 /
 
 -- ═════════════════════════════════════════════════════════════════════════════
--- RR_PO_APPROVAL_PKG — existing approval engine
+-- RR_PO_APPROVAL_PKG — approval engine for purchasing documents (rules, submit to a chosen
+-- approver, DECIDE, decisions flowing back to the document) lives in 309_po_approval_inapp.sql,
+-- so re-running this script never replaces it. RR_PO_REQ_PKG / RR_PO_DOC_PKG compile once it exists.
 -- ═════════════════════════════════════════════════════════════════════════════
-CREATE OR REPLACE PACKAGE BODY RR_PO_APPROVAL_PKG AS
-
-    -- picks the rule (module PROCUREMENT, type, amount band, BU, category), creates the request
-    FUNCTION request (p_type IN VARCHAR2, p_doc_id IN NUMBER, p_po_header_id IN NUMBER, p_ref IN VARCHAR2,
-                      p_amount IN NUMBER, p_currency IN VARCHAR2, p_bu IN NUMBER, p_desc IN VARCHAR2,
-                      p_user IN VARCHAR2) RETURN NUMBER IS
-        v_rule NUMBER;
-        v_appr NUMBER;
-        v_req  NUMBER;
-    BEGIN
-        SELECT MAX(r.RULE_ID) KEEP (DENSE_RANK FIRST ORDER BY r.PRIORITY,
-                   CASE WHEN r.BUSINESS_UNIT_ID IS NOT NULL THEN 0 ELSE 1 END,
-                   CASE WHEN r.CATEGORY_CODE IS NOT NULL THEN 0 ELSE 1 END)
-        INTO   v_rule
-        FROM   RR_APPROVAL_RULES r
-        WHERE  r.MODULE = 'PROCUREMENT' AND r.TRANSACTION_TYPE = p_type AND NVL(r.ACTIVE, 'Y') = 'Y'
-        AND    p_amount >= NVL(r.MIN_AMOUNT, 0) AND (r.MAX_AMOUNT IS NULL OR p_amount <= r.MAX_AMOUNT)
-        AND    (r.BUSINESS_UNIT_ID IS NULL OR r.BUSINESS_UNIT_ID = p_bu)
-        AND    (r.CATEGORY_CODE IS NULL OR EXISTS (
-                    SELECT 1 FROM RR_PO_REQ_LINES l JOIN RR_PO_V_CATEGORIES c ON c.CATEGORY_ID = l.CATEGORY_ID
-                    WHERE p_type = 'REQUISITION' AND l.REQ_HEADER_ID = p_doc_id
-                    AND (c.CATEGORY_CODE = r.CATEGORY_CODE OR c.PARENT_CODE = r.CATEGORY_CODE)
-                    UNION ALL
-                    SELECT 1 FROM RR_PO_LINES l JOIN RR_PO_V_CATEGORIES c ON c.CATEGORY_ID = l.CATEGORY_ID
-                    WHERE p_type <> 'REQUISITION' AND l.PO_HEADER_ID = p_po_header_id
-                    AND (c.CATEGORY_CODE = r.CATEGORY_CODE OR c.PARENT_CODE = r.CATEGORY_CODE)));
-        IF v_rule IS NULL THEN RETURN NULL; END IF;
-        SELECT MAX(ra.USER_ID) KEEP (DENSE_RANK FIRST ORDER BY ra.SEQUENCE) INTO v_appr
-        FROM   RR_APPROVAL_RULE_APPROVERS ra WHERE ra.RULE_ID = v_rule;
-        INSERT INTO RR_APPROVAL_REQUESTS (MODULE, TRANSACTION_TYPE, TRANSACTION_ID, TRANSACTION_REF, AMOUNT, CURRENCY,
-                                          DESCRIPTION, REQUESTED_BY_NAME, STATUS, RULE_ID, CURRENT_APPROVER_ID)
-        VALUES ('PROCUREMENT', p_type, p_doc_id, p_ref, p_amount, p_currency, SUBSTR(p_desc, 1, 1000), p_user, 'PENDING',
-                v_rule, v_appr)
-        RETURNING REQUEST_ID INTO v_req;
-        INSERT INTO RR_APPROVAL_HISTORY (REQUEST_ID, ACTION, ACTOR_NAME, COMMENTS)
-        VALUES (v_req, 'SUBMITTED', p_user, SUBSTR(p_type || ' ' || p_ref, 1, 2000));
-        RETURN v_req;
-    END;
-
-    PROCEDURE recall (p_request_id IN NUMBER, p_user IN VARCHAR2) IS
-    BEGIN
-        IF p_request_id IS NULL THEN RETURN; END IF;
-        UPDATE RR_APPROVAL_REQUESTS SET STATUS = 'RECALLED' WHERE REQUEST_ID = p_request_id AND STATUS = 'PENDING';
-        IF SQL%ROWCOUNT > 0 THEN
-            INSERT INTO RR_APPROVAL_HISTORY (REQUEST_ID, ACTION, ACTOR_NAME, COMMENTS) VALUES (p_request_id, 'RECALLED', p_user, 'Withdrawn');
-        END IF;
-    END;
-
-    -- called by the trigger on RR_APPROVAL_REQUESTS whenever a PROCUREMENT request changes status
-    -- (approval page, notification panel, email links or DECIDE below) — must not read RR_APPROVAL_REQUESTS
-    PROCEDURE on_decision (p_request_id IN NUMBER, p_type IN VARCHAR2, p_txn_id IN NUMBER, p_status IN VARCHAR2) IS
-        v_cur VARCHAR2(30);
-        v_rq  NUMBER;
-    BEGIN
-        IF p_type = 'REQUISITION' THEN
-            SELECT MAX(STATUS), MAX(APPROVAL_REQUEST_ID) INTO v_cur, v_rq FROM RR_PO_REQ_HEADERS WHERE REQ_HEADER_ID = p_txn_id;
-            IF v_cur <> 'PENDING_APPROVAL' OR NVL(v_rq, -1) <> p_request_id THEN RETURN; END IF;
-            IF p_status = 'APPROVED' THEN RR_PO_REQ_PKG.approve_internal(p_txn_id, 'APPROVER');
-            ELSIF p_status = 'REJECTED' THEN
-                UPDATE RR_PO_REQ_HEADERS SET STATUS = 'REJECTED', LAST_UPDATE_DATE = SYSTIMESTAMP WHERE REQ_HEADER_ID = p_txn_id;
-                RR_PO_UTIL_PKG.history('REQ', p_txn_id, 'REJECT', 'PENDING_APPROVAL', 'REJECTED', 'APPROVER');
-            ELSIF p_status IN ('RECALLED', 'CANCELLED') THEN
-                UPDATE RR_PO_REQ_HEADERS SET STATUS = 'INCOMPLETE', LAST_UPDATE_DATE = SYSTIMESTAMP WHERE REQ_HEADER_ID = p_txn_id;
-            END IF;
-        ELSIF p_type = 'PURCHASE_ORDER' THEN
-            SELECT MAX(DOCUMENT_STATUS), MAX(APPROVAL_REQUEST_ID) INTO v_cur, v_rq FROM RR_PO_HEADERS WHERE PO_HEADER_ID = p_txn_id;
-            IF v_cur <> 'PENDING_APPROVAL' OR NVL(v_rq, -1) <> p_request_id THEN RETURN; END IF;
-            IF p_status = 'APPROVED' THEN RR_PO_DOC_PKG.approve_internal(p_txn_id, 'APPROVER');
-            ELSIF p_status = 'REJECTED' THEN
-                UPDATE RR_PO_HEADERS SET DOCUMENT_STATUS = 'REJECTED', LAST_UPDATE_DATE = SYSTIMESTAMP WHERE PO_HEADER_ID = p_txn_id;
-                RR_PO_UTIL_PKG.history('PO', p_txn_id, 'REJECT', 'PENDING_APPROVAL', 'REJECTED', 'APPROVER');
-            ELSIF p_status IN ('RECALLED', 'CANCELLED') THEN
-                UPDATE RR_PO_HEADERS SET DOCUMENT_STATUS = 'INCOMPLETE', LAST_UPDATE_DATE = SYSTIMESTAMP WHERE PO_HEADER_ID = p_txn_id;
-            END IF;
-        ELSIF p_type = 'PO_CHANGE_ORDER' THEN
-            SELECT MAX(STATUS), MAX(APPROVAL_REQUEST_ID) INTO v_cur, v_rq FROM RR_PO_CHANGE_ORDERS WHERE CHANGE_ORDER_ID = p_txn_id;
-            IF v_cur <> 'PENDING_APPROVAL' OR NVL(v_rq, -1) <> p_request_id THEN RETURN; END IF;
-            IF p_status = 'APPROVED' THEN RR_PO_DOC_PKG.apply_change(p_txn_id, 'APPROVER');
-            ELSE
-                UPDATE RR_PO_CHANGE_ORDERS SET STATUS = CASE WHEN p_status = 'REJECTED' THEN 'REJECTED' ELSE 'CANCELLED' END,
-                       LAST_UPDATE_DATE = SYSTIMESTAMP WHERE CHANGE_ORDER_ID = p_txn_id;
-            END IF;
-        END IF;
-    END;
-
-    PROCEDURE DECIDE (p_request_id IN VARCHAR2, p_decision IN VARCHAR2, p_comments IN VARCHAR2, p_user IN VARCHAR2,
-                      p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
-        v_id  NUMBER := RR_PO_UTIL_PKG.to_num(p_request_id);
-        v_mod VARCHAR2(50); v_st VARCHAR2(30); v_by VARCHAR2(200); v_ref VARCHAR2(300);
-    BEGIN
-        IF UPPER(p_decision) NOT IN ('APPROVED', 'REJECTED') THEN RR_PO_UTIL_PKG.err('Decision must be APPROVED or REJECTED'); END IF;
-        SELECT MODULE, STATUS, REQUESTED_BY_NAME, TRANSACTION_REF INTO v_mod, v_st, v_by, v_ref
-        FROM RR_APPROVAL_REQUESTS WHERE REQUEST_ID = v_id FOR UPDATE;
-        IF v_mod <> 'PROCUREMENT' THEN RR_PO_UTIL_PKG.err('Not a purchasing approval'); END IF;
-        IF v_st <> 'PENDING' THEN RR_PO_UTIL_PKG.err('This request is already ' || v_st); END IF;
-        IF UPPER(v_by) = UPPER(p_user) THEN RR_PO_UTIL_PKG.err('You cannot approve your own document'); END IF;
-        UPDATE RR_APPROVAL_REQUESTS SET STATUS = UPPER(p_decision) WHERE REQUEST_ID = v_id;   -- fires the trigger
-        INSERT INTO RR_APPROVAL_HISTORY (REQUEST_ID, ACTION, ACTOR_NAME, COMMENTS) VALUES (v_id, UPPER(p_decision), p_user, p_comments);
-        p_id := v_id; p_number := v_ref; p_status := 'S';
-        p_message := v_ref || CASE WHEN UPPER(p_decision) = 'APPROVED' THEN ' approved' ELSE ' rejected' END;
-    EXCEPTION WHEN NO_DATA_FOUND THEN p_status := 'E'; p_message := 'Approval request not found';
-              WHEN OTHERS THEN p_status := 'E'; p_message := RR_PO_UTIL_PKG.err_text(SQLERRM);
-    END;
-END RR_PO_APPROVAL_PKG;
-/
-
--- Decisions made anywhere in the approval engine flow back to Purchasing documents
-CREATE OR REPLACE TRIGGER RR_PO_APPROVAL_DECISION_TRG
-AFTER UPDATE OF STATUS ON RR_APPROVAL_REQUESTS
-FOR EACH ROW
-WHEN (NEW.MODULE = 'PROCUREMENT' AND NEW.STATUS <> OLD.STATUS)
-BEGIN
-    RR_PO_APPROVAL_PKG.on_decision(:NEW.REQUEST_ID, :NEW.TRANSACTION_TYPE, :NEW.TRANSACTION_ID, :NEW.STATUS);
-END;
-/
 
 -- Compile check
 SELECT object_name, object_type, status FROM user_objects

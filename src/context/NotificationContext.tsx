@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useRef } from 
 import { buildApexUrl } from '../config/api.helper';
 import { useAuth } from './AuthContext';
 import { getApprovalRequests, emitApprovalsChanged, onApprovalsChanged } from '../services/approvals.service';
+import { poExec, PROC } from '../services/po.service';
 import type { ApprovalRequest } from '../services/approvals.service';
 import dayjs from 'dayjs';
 
@@ -55,12 +56,15 @@ interface NotificationContextValue {
   approvalChecking: boolean;
   checkPendingApprovals: () => Promise<void>;
   refreshApprovalNotifications: () => Promise<void>;
-  approveNotification: (requestId: number, notifId: string) => Promise<void>;
-  rejectNotification: (requestId: number, notifId: string, comments?: string) => Promise<void>;
+  approveNotification: (requestId: number, notifId: string, meta?: DecisionMeta) => Promise<void>;
+  rejectNotification: (requestId: number, notifId: string, comments?: string, meta?: DecisionMeta) => Promise<void>;
   newApprovalRequests: ApprovalRequest[];
   clearNewApprovalRequests: () => void;
   lastApprovalApiCall: ApprovalApiCall | null;
 }
+
+/** What is being decided, when the caller knows it (the pop-up toast can act before the bell list has the entry). */
+export interface DecisionMeta { module?: string; transactionId?: number; transactionRef?: string }
 
 const NotificationContext = createContext<NotificationContextValue | null>(null);
 
@@ -234,41 +238,65 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     notifId: string,
     status: 'APPROVED' | 'REJECTED',
     comments?: string,
+    meta?: DecisionMeta,
   ) => {
-    const url = buildApexUrl(`approvals/requests/${requestId}/status`);
-    const body: Record<string, any> = { status, actorName, actorEmail, comments };
-    setLastApprovalApiCall({ url, method: 'PUT', body, status: 'Pending…', response: '', ts: Date.now() });
-    let rawText = '';
-    let httpStatus: number | string = 0;
-    try {
-      const res = await fetch(url, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      httpStatus = res.status;
-      rawText = await res.text().catch(() => res.statusText);
-      setLastApprovalApiCall({ url, method: 'PUT', body, status: httpStatus, response: rawText, ts: Date.now() });
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${rawText}`);
-    } catch (err) {
-      if (httpStatus === 0) {
-        setLastApprovalApiCall({ url, method: 'PUT', body, status: 'Network Error', response: String(err), ts: Date.now() });
-      }
-      throw err;
-    }
-    setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, status: 'Actioned' } : n));
-    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== notifId)), 1500);
-    // let open screens (invoices, external transactions) show the decision right away
-    const n = notificationsRef.current.find(x => x.id === notifId);
-    emitApprovalsChanged({ reason: 'decided', module: n?.approvalModule, transactionId: n?.transactionId, transactionRef: n?.trxNo, status, actorName });
-  }, [actorName, actorEmail]);
+    const n = notificationsRef.current.find(x => x.id === notifId || x.approvalRequestId === requestId);
+    const module = meta?.module ?? n?.approvalModule;
+    const txnId = meta?.transactionId ?? n?.transactionId;
+    const ref = meta?.transactionRef ?? n?.trxNo;
+    let decidedBy = actorName;
 
-  const approveNotification = useCallback(async (requestId: number, notifId: string) => {
-    await _doApprovalPut(requestId, notifId, 'APPROVED');
+    if (module === 'PROCUREMENT') {
+      // Purchasing: through RR_PO_APPROVAL_PKG.DECIDE (po/execute) — refuses your own document and records
+      // who decided; the purchase order / requisition follows through the database trigger.
+      const poUser = user?.username || user?.email || actorName;
+      decidedBy = poUser;
+      const url = buildApexUrl('po/execute');
+      const params = { p_request_id: requestId, p_decision: status, p_comments: comments || null };
+      const body: Record<string, any> = { proc: PROC.decide, params, user: poUser };
+      setLastApprovalApiCall({ url, method: 'POST', body, status: 'Pending…', response: '', ts: Date.now() });
+      try {
+        const r = await poExec(PROC.decide, params, poUser);
+        setLastApprovalApiCall({ url, method: 'POST', body, status: 200, response: JSON.stringify(r), ts: Date.now() });
+      } catch (err) {
+        setLastApprovalApiCall({ url, method: 'POST', body, status: 'Refused', response: String((err as Error)?.message || err), ts: Date.now() });
+        throw err;
+      }
+    } else {
+      const url = buildApexUrl(`approvals/requests/${requestId}/status`);
+      const body: Record<string, any> = { status, actorName, actorEmail, comments };
+      setLastApprovalApiCall({ url, method: 'PUT', body, status: 'Pending…', response: '', ts: Date.now() });
+      let rawText = '';
+      let httpStatus: number | string = 0;
+      try {
+        const res = await fetch(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        httpStatus = res.status;
+        rawText = await res.text().catch(() => res.statusText);
+        setLastApprovalApiCall({ url, method: 'PUT', body, status: httpStatus, response: rawText, ts: Date.now() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${rawText}`);
+      } catch (err) {
+        if (httpStatus === 0) {
+          setLastApprovalApiCall({ url, method: 'PUT', body, status: 'Network Error', response: String(err), ts: Date.now() });
+        }
+        throw err;
+      }
+    }
+    setNotifications(prev => prev.map(x => (x.id === notifId || x.approvalRequestId === requestId) ? { ...x, status: 'Actioned' } : x));
+    setTimeout(() => setNotifications(prev => prev.filter(x => !(x.id === notifId || x.approvalRequestId === requestId))), 1500);
+    // let open screens (invoices, external transactions, purchase orders) show the decision right away
+    emitApprovalsChanged({ reason: 'decided', module, transactionId: txnId, transactionRef: ref, status, actorName: decidedBy });
+  }, [actorName, actorEmail, user]);
+
+  const approveNotification = useCallback(async (requestId: number, notifId: string, meta?: DecisionMeta) => {
+    await _doApprovalPut(requestId, notifId, 'APPROVED', undefined, meta);
   }, [_doApprovalPut]);
 
-  const rejectNotification = useCallback(async (requestId: number, notifId: string, comments?: string) => {
-    await _doApprovalPut(requestId, notifId, 'REJECTED', comments);
+  const rejectNotification = useCallback(async (requestId: number, notifId: string, comments?: string, meta?: DecisionMeta) => {
+    await _doApprovalPut(requestId, notifId, 'REJECTED', comments, meta);
   }, [_doApprovalPut]);
 
   // Run on mount: PDC + approvals

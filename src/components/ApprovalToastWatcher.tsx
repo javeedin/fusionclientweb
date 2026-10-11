@@ -47,7 +47,8 @@ const ApprovalToastWatcher: React.FC<Props> = ({ onOpenPanel }) => {
       const handleApprove = async () => {
         const notif = getNotifForRequest(req.requestId);
         try {
-          await approveNotification(req.requestId, notif?.id ?? `approval-${req.requestId}`);
+          await approveNotification(req.requestId, notif?.id ?? `approval-${req.requestId}`,
+            { module: req.module, transactionId: req.transactionId, transactionRef: req.transactionRef });
           notification.destroy(toastKey);
           notification.success({ message: `Approved: ${req.transactionRef}`, duration: 3 });
         } catch (err: any) {
@@ -58,7 +59,8 @@ const ApprovalToastWatcher: React.FC<Props> = ({ onOpenPanel }) => {
       const handleReject = async () => {
         const notif = getNotifForRequest(req.requestId);
         try {
-          await rejectNotification(req.requestId, notif?.id ?? `approval-${req.requestId}`);
+          await rejectNotification(req.requestId, notif?.id ?? `approval-${req.requestId}`, undefined,
+            { module: req.module, transactionId: req.transactionId, transactionRef: req.transactionRef });
           notification.destroy(toastKey);
           notification.warning({ message: `Rejected: ${req.transactionRef}`, duration: 3 });
         } catch (err: any) {

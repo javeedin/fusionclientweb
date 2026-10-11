@@ -117,7 +117,7 @@ export const TRANSACTION_TYPES: Record<string, string[]> = {
   CASH:        ['EXTERNAL_TXN', 'BANK_TRANSFER'],
   GL:          ['JOURNAL'],
   FA:          ['ASSET_ADDITION', 'DISPOSAL'],
-  PROCUREMENT: ['PURCHASE_ORDER'],
+  PROCUREMENT: ['PURCHASE_ORDER', 'REQUISITION', 'PO_CHANGE_ORDER'],
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -700,8 +700,13 @@ const sqlLit = (v: unknown) => `'${String(v ?? '').replace(/'/g, "''")}'`;
  * All requests and actions for one transaction, oldest first. Reads RR_APPROVAL_REQUESTS / _HISTORY through the
  * read gateway (one call); falls back to the approvals REST endpoints when the gateway is not available.
  */
-export async function getApprovalTrail(params: { module: string; transactionId?: number; transactionRef?: string }): Promise<ApprovalTrail> {
-  const { module, transactionId, transactionRef } = params;
+export async function getApprovalTrail(params: {
+  module: string; transactionId?: number; transactionRef?: string;
+  /** only these transaction types (purchasing has POs, requisitions and change orders under one module) */
+  transactionTypes?: string[];
+}): Promise<ApprovalTrail> {
+  const { module, transactionId, transactionRef, transactionTypes } = params;
+  const types = (transactionTypes || []).filter(Boolean);
   const idOk = transactionId != null && Number.isFinite(Number(transactionId));
   const match = idOk
     ? `(r.TRANSACTION_ID = ${Number(transactionId)}${transactionRef ? ` OR (r.TRANSACTION_ID IS NULL AND r.TRANSACTION_REF = ${sqlLit(transactionRef)})` : ''})`
@@ -711,7 +716,7 @@ export async function getApprovalTrail(params: { module: string; transactionId?:
     FROM RR_APPROVAL_REQUESTS r
     LEFT JOIN RR_APPROVAL_USERS u ON u.USER_ID = r.CURRENT_APPROVER_ID
     LEFT JOIN RR_APPROVAL_HISTORY h ON h.REQUEST_ID = r.REQUEST_ID
-    WHERE r.MODULE = ${sqlLit(module)} AND ${match}
+    WHERE r.MODULE = ${sqlLit(module)} AND ${match}${types.length ? ` AND r.TRANSACTION_TYPE IN (${types.map(sqlLit).join(', ')})` : ''}
     ORDER BY r.REQUEST_ID, h.ACTION_DATE, h.HISTORY_ID`;
   try {
     const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/ai/executequery`, {
@@ -732,7 +737,8 @@ export async function getApprovalTrail(params: { module: string; transactionId?:
   } catch {
     // fallback: the module's requests, then each request's history
     const reqs = (await getApprovalRequests({ module })).filter(r =>
-      idOk && r.transactionId != null ? Number(r.transactionId) === Number(transactionId) : r.transactionRef === transactionRef);
+      (!types.length || types.includes(r.transactionType))
+      && (idOk && r.transactionId != null ? Number(r.transactionId) === Number(transactionId) : r.transactionRef === transactionRef));
     const events: ApprovalTrailEvent[] = [];
     for (const r of reqs.sort((a, b) => a.requestId - b.requestId)) {
       const hist = await getApprovalHistory(r.requestId).catch(() => [] as ApprovalHistoryEntry[]);

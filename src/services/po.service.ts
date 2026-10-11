@@ -121,6 +121,8 @@ export const PROC = {
   autocreate: 'RR_PO_DOC_PKG.AUTOCREATE',
   copyPo: 'RR_PO_DOC_PKG.COPY_PO',
   submitPo: 'RR_PO_DOC_PKG.SUBMIT_PO',
+  submitPoTo: 'RR_PO_APPROVAL_PKG.SUBMIT_PO_TO',     // 309: to a chosen approver
+  submitReqTo: 'RR_PO_APPROVAL_PKG.SUBMIT_REQ_TO',
   withdrawPo: 'RR_PO_DOC_PKG.WITHDRAW_PO',
   deletePo: 'RR_PO_DOC_PKG.DELETE_PO',
   cancelPo: 'RR_PO_DOC_PKG.CANCEL_PO',
@@ -150,6 +152,7 @@ export const PROC = {
 export interface BusinessUnit {
   BUSINESS_UNIT_ID: number; BUSINESS_UNIT_NAME: string; COMPANY: string | null; PRIMARY_LEDGER_ID: number | null;
   FUNCTIONAL_CURRENCY: string | null; OPTIONS_SET: 'Y' | 'N'; REQUIRE_REQUISITION: string | null;
+  PO_APPROVAL_REQUIRED?: string | null; REQ_APPROVAL_REQUIRED?: string | null;
   ACCRUE_AT_RECEIPT_FLAG: string | null; RECEIPT_ACCRUAL_ACCOUNT: string | null;
 }
 
