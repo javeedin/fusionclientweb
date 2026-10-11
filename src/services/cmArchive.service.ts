@@ -3,9 +3,31 @@
 //   Writes → POST cash/execute (registry-whitelisted RR_CM_ARCHIVE_PKG procedures); every call returns
 //            { status: S|W|E, id, number, message }
 // Database: database/cash/170_cm_archive_bank_statements.sql
-import { APEX_DB_CONFIG } from '../config/api.config';
+import { buildApexUrl } from '../config/api.helper';
 
-const BASE = APEX_DB_CONFIG.baseUrl.replace(/\/+$/, '');
+/** APEX REST base, worked out per call so it follows the selected company. */
+export const apexBase = () => buildApexUrl('').replace(/\/+$/, '');
+
+// ── API call log (shown by the API button on the archive screens) ─────────────────
+export interface ArchiveApiCall {
+  id: number; at: string; method: string; url: string; body: unknown;
+  status: number | null; ok: boolean; ms: number; response: unknown; label: string;
+}
+const apiLog: ArchiveApiCall[] = [];
+const apiListeners = new Set<() => void>();
+let apiSeq = 0;
+export const getArchiveApiLog = () => apiLog;
+export const clearArchiveApiLog = () => { apiLog.length = 0; apiListeners.forEach(f => f()); };
+export const onArchiveApiLog = (f: () => void) => { apiListeners.add(f); return () => { apiListeners.delete(f); }; };
+const logCall = (c: Omit<ArchiveApiCall, 'id' | 'at'>) => {
+  apiLog.unshift({ ...c, id: ++apiSeq, at: new Date().toISOString() });
+  if (apiLog.length > 100) apiLog.length = 100;
+  apiListeners.forEach(f => f());
+};
+const parseMaybe = (t: string) => { try { return JSON.parse(t); } catch { return t.slice(0, 4000); } };
+/** file contents are long base64 strings — keep the log readable */
+const forLog = (v: unknown): unknown => JSON.parse(JSON.stringify(v ?? null, (k, x) =>
+  (k === 'fileContent' && typeof x === 'string' && x.length > 120 ? `${x.slice(0, 60)}… (${x.length} base64 characters)` : x)));
 
 export type Row = Record<string, any>;
 
@@ -41,14 +63,22 @@ const errText = (text: string, data: any, status: number) => {
 
 /** One SELECT through the gateway (at most 1000 rows); rows keyed by UPPER column name. */
 export async function cmQuery(sql: string, maxRows = 1000): Promise<Row[]> {
-  const res = await fetch(`${BASE}/ai/executequery`, {
-    method: 'POST', cache: 'no-store',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ sql: sql.trim().replace(/;\s*$/, ''), maxRows, appUser: 'CASH' }),
-  });
+  const url = `${apexBase()}/ai/executequery`;
+  const body = { sql: sql.trim().replace(/;\s*$/, ''), maxRows, appUser: 'CASH' };
+  const t0 = performance.now();
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) });
+  } catch (e: any) {
+    logCall({ method: 'POST', url, body, status: null, ok: false, ms: Math.round(performance.now() - t0), response: String(e?.message || e), label: 'Query' });
+    throw new Error(`Could not reach ${url} — ${e?.message || e}`);
+  }
   const text = await res.text();
   let data: any = null;
   try { data = JSON.parse(text); } catch { /* HTML error page */ }
+  logCall({ method: 'POST', url, body, status: res.status, ms: Math.round(performance.now() - t0), label: 'Query',
+    ok: res.ok && data?.success !== false,
+    response: data && typeof data === 'object' ? { ...data, rows: `(${data.rows?.length ?? 0} rows)` } : parseMaybe(text) });
   if (!res.ok || !data || data.success === false) throw new Error(errText(text, data, res.status));
   const cols: string[] = (data.columns || []).map((c: any) => String(typeof c === 'string' ? c : c?.name ?? c).toUpperCase());
   return (data.rows || []).map((r: any[]) => { const o: Row = {}; cols.forEach((c, i) => { o[c] = r[i]; }); return o; });
@@ -67,17 +97,98 @@ export async function cmQueryAll(sql: string, orderBy: string, limit = 50000): P
 
 /** Call a registered procedure. Resolves for S and W; throws with the procedure's message on E. */
 export async function cmExec(proc: string, params: Record<string, unknown>, user: string): Promise<ExecResult> {
-  const res = await fetch(`${BASE}/cash/execute`, {
-    method: 'POST', cache: 'no-store',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ proc, params, user: user || 'UNKNOWN' }),
-  });
+  const url = `${apexBase()}/cash/execute`;
+  const body = { proc, params, user: user || 'UNKNOWN' };
+  const label = proc.replace(/^RR_CM_ARCHIVE_PKG\./, '');
+  const t0 = performance.now();
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) });
+  } catch (e: any) {
+    logCall({ method: 'POST', url, body: forLog(body), status: null, ok: false, ms: Math.round(performance.now() - t0), response: String(e?.message || e), label });
+    throw new Error(`Could not reach ${url} — ${e?.message || e}`);
+  }
   const text = await res.text();
   let data: any = null;
   try { data = JSON.parse(text); } catch { /* HTML error page */ }
-  if (!data) throw new Error(res.status === 404 ? `cash/execute is not deployed — run ${INSTALL_SCRIPT}` : errText(text, data, res.status));
+  logCall({ method: 'POST', url, body: forLog(body), status: res.status, ms: Math.round(performance.now() - t0), label,
+    ok: res.ok && ['S', 'W'].includes(data?.status), response: data ?? parseMaybe(text) });
+  // ORDS answers 404 ("Not Found") when the cash/execute handler does not exist in the database
+  if (res.status === 404) throw new Error(`${NOT_DEPLOYED} (HTTP 404 from ${url})`);
+  if (!data) throw new Error(errText(text, data, res.status));
   if (data.status !== 'S' && data.status !== 'W') throw new Error(data.message || errText(text, data, res.status));
   return data as ExecResult;
+}
+
+export const EXECUTE_SCRIPT = 'database/cash/169_cm_execute.sql';
+export const NOT_DEPLOYED = `The cash/execute web service is not installed — run ${EXECUTE_SCRIPT}, then ${'database/cash/170_cm_archive_bank_statements.sql'}`;
+
+/** One check of the web services the archive needs. */
+export interface ServiceCheck { key: string; name: string; url: string; ok: boolean | null; detail: string; fix?: string }
+
+/** Probe every service the archive screens use, without changing any data. */
+export async function checkArchiveServices(): Promise<ServiceCheck[]> {
+  const base = apexBase();
+  const out: ServiceCheck[] = [];
+  const timed = async (url: string, init?: RequestInit) => {
+    const t0 = performance.now();
+    try {
+      const res = await fetch(url, { cache: 'no-store', ...init });
+      const text = await res.text();
+      logCall({ method: init?.method || 'GET', url, body: init?.body ? parseMaybe(String(init.body)) : null, status: res.status,
+        ok: res.ok || res.status === 405, ms: Math.round(performance.now() - t0), response: parseMaybe(text), label: 'Check' });
+      return { res, text };
+    } catch (e: any) {
+      logCall({ method: init?.method || 'GET', url, body: null, status: null, ok: false, ms: Math.round(performance.now() - t0), response: String(e?.message || e), label: 'Check' });
+      return { res: null as Response | null, text: String(e?.message || e) };
+    }
+  };
+  // 1. cash/execute — only a POST handler exists, so a GET answers 405 when it is installed and 404 when it is not
+  {
+    const url = `${base}/cash/execute`;
+    const { res, text } = await timed(url, { method: 'GET', headers: { Accept: 'application/json' } });
+    const st = res?.status ?? null;
+    out.push({ key: 'execute', name: 'cash/execute (saves: archive, update, attachments)', url,
+      ok: st !== null && [200, 400, 403, 405].includes(st),
+      detail: st === 405 ? 'Installed (answers POST only — 405 on GET is expected)'
+        : st === 404 ? 'Not found (HTTP 404) — the web service does not exist in the database'
+          : st === null ? `Could not reach the server: ${text}` : `HTTP ${st}: ${text.slice(0, 200)}`,
+      fix: st === 404 ? `Run ${EXECUTE_SCRIPT} as the schema owner (SQL Developer: Run Script F5, or APEX: SQL Workshop → SQL Scripts)` : undefined });
+  }
+  // 2. archive tables / views through the read gateway
+  {
+    const url = `${base}/ai/executequery`;
+    try {
+      const [r] = await cmQuery('SELECT COUNT(*) AS N FROM RR_CM_V_ARCHIVES');
+      out.push({ key: 'views', name: 'Archive tables and views (RR_CM_V_ARCHIVES …)', url, ok: true, detail: `Installed — ${r?.N ?? 0} archive(s)` });
+    } catch (e: any) {
+      out.push({ key: 'views', name: 'Archive tables and views (RR_CM_V_ARCHIVES …)', url, ok: false, detail: e.message,
+        fix: archiveNotInstalled(e) ? `Run ${INSTALL_SCRIPT}` : undefined });
+    }
+  }
+  // 3. archive procedures registered for cash/execute
+  {
+    const url = `${base}/ai/executequery`;
+    try {
+      const rows = await cmQuery(`SELECT PROC_NAME, ENABLED_FLAG FROM RR_CM_PROC_REGISTRY WHERE PROC_NAME LIKE 'RR_CM_ARCHIVE_PKG.%' ORDER BY PROC_NAME`);
+      const enabled = rows.filter(r => r.ENABLED_FLAG === 'Y').length;
+      out.push({ key: 'registry', name: 'Archive procedures registered for cash/execute', url, ok: enabled >= 6,
+        detail: rows.length ? `${enabled} of 6 enabled: ${rows.map(r => String(r.PROC_NAME).replace('RR_CM_ARCHIVE_PKG.', '')).join(', ')}` : 'None registered',
+        fix: enabled >= 6 ? undefined : `Run ${INSTALL_SCRIPT}` });
+    } catch (e: any) {
+      out.push({ key: 'registry', name: 'Archive procedures registered for cash/execute', url, ok: false, detail: e.message,
+        fix: archiveNotInstalled(e) ? `Run ${EXECUTE_SCRIPT}, then ${INSTALL_SCRIPT}` : undefined });
+    }
+  }
+  // 4. GL account analysis (used for the preview before archiving)
+  {
+    const today = new Date().toISOString().slice(0, 10);
+    const url = `${base}/gl/accountanalysis?from_date=${today}&to_date=${today}&page_size=1`;
+    const { res, text } = await timed(url, { headers: { Accept: 'application/json' } });
+    out.push({ key: 'analysis', name: 'gl/accountanalysis (account analysis preview)', url, ok: !!res?.ok,
+      detail: res?.ok ? 'Reachable' : res ? `HTTP ${res.status}: ${text.slice(0, 200)}` : `Could not reach the server: ${text}` });
+  }
+  return out;
 }
 
 /** The read failed because the archive script is not installed. */
@@ -226,8 +337,12 @@ export async function previewAccountAnalysis(cashAccount: string, from: string, 
   const segs = cashAccount.split('-').map(s => s.trim());
   const p = new URLSearchParams({ from_date: from, to_date: to, page_size: '99999' });
   SEGMENTS.forEach((k, i) => { if (segs[i]) p.set(k, segs[i]); });
-  const res = await fetch(`${BASE}/gl/accountanalysis?${p}`, { headers: { Accept: 'application/json' } });
+  const url = `${apexBase()}/gl/accountanalysis?${p}`;
+  const t0 = performance.now();
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
   const data = await res.json().catch(() => null);
+  logCall({ method: 'GET', url, body: null, status: res.status, ok: res.ok && !!data, ms: Math.round(performance.now() - t0),
+    response: data && typeof data === 'object' ? { ...data, items: `(${data.items?.length ?? 0} lines)` } : data, label: 'Account analysis' });
   if (!res.ok || !data) throw new Error(data?.error || `Account analysis failed (HTTP ${res.status})`);
   const seen = new Set<string>();
   const want = segs.join('-');

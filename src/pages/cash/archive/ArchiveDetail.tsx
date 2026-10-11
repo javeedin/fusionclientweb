@@ -10,7 +10,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  CheckCircleFilled, CloudDownloadOutlined, DeleteOutlined, FileExcelOutlined, InboxOutlined,
+  ApiOutlined, CheckCircleFilled, CloudDownloadOutlined, DeleteOutlined, FileExcelOutlined, InboxOutlined,
   PaperClipOutlined, ReloadOutlined, SaveOutlined, SnippetsOutlined, StopOutlined, SyncOutlined, ClearOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
@@ -20,6 +20,7 @@ import {
   downloadAttachment, fileToBase64, loadArchive, loadArchiveAttachments, loadArchiveGlLines, loadArchiveManualText,
   parseManual, previewAccountAnalysis,
 } from '../../../services/cmArchive.service';
+import ArchiveApiButton from './ArchiveApiButton';
 
 const { Text } = Typography;
 const RED = '#C74634';
@@ -86,6 +87,9 @@ export const ArchiveDetail: React.FC<{
   const [queued, setQueued] = useState<File[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [tab, setTab] = useState('analysis');
+  const [actionError, setActionError] = useState<string | null>(null);   // last failed Archive / Save, kept on screen
+  const [apiSignal, setApiSignal] = useState(0);
+  const failed = (e: any) => { setActionError(e.message); message.error(e.message, 10); };
   const saved = useRef({ dateFrom: '', dateTo: '', reconciledDate: '', comments: '' });
   const onLoadedRef = useRef(onLoaded);
   onLoadedRef.current = onLoaded;
@@ -178,7 +182,8 @@ export const ArchiveDetail: React.FC<{
       if (r.id && queued.length) await uploadFiles(r.id, queued);
       setQueued([]);
       if (r.id) { setArchiveId(r.id); onSaved?.(r.id, r.number); }
-    } catch (e: any) { message.error(e.message, 10); } finally { setBusy(null); }
+      setActionError(null);
+    } catch (e: any) { failed(e); } finally { setBusy(null); }
   };
 
   const save = async () => {
@@ -192,7 +197,8 @@ export const ArchiveDetail: React.FC<{
       message.success(r.message || 'Saved', 6);
       await loadAll(archiveId);
       onSaved?.(archiveId, r.number);
-    } catch (e: any) { message.error(e.message, 10); } finally { setBusy(null); }
+      setActionError(null);
+    } catch (e: any) { failed(e); } finally { setBusy(null); }
   };
 
   const refresh = async () => {
@@ -202,7 +208,8 @@ export const ArchiveDetail: React.FC<{
       const r = await cmExec(ARCHIVE_PROC.refresh, { p_archive_id: archiveId }, user);
       message.success(r.message || 'Refreshed');
       await loadAll(archiveId);
-    } catch (e: any) { message.error(e.message, 10); } finally { setBusy(null); }
+      setActionError(null);
+    } catch (e: any) { failed(e); } finally { setBusy(null); }
   };
 
   const cancelArchive = () => {
@@ -268,9 +275,10 @@ export const ArchiveDetail: React.FC<{
   if (loading) return <div style={{ padding: 60, textAlign: 'center' }}><Spin /></div>;
   if (!installed) {
     return <Alert type="warning" showIcon message="Bank reconciliation archive is not installed in the database"
-      description={<span>Run <code>{INSTALL_SCRIPT}</code>. It creates the archive tables and the <code>cash/execute</code> service.</span>} />;
+      description={<span>Run <code>database/cash/169_cm_execute.sql</code> (the <code>cash/execute</code> web service) and then <code>{INSTALL_SCRIPT}</code> (the archive tables).</span>}
+      action={<ArchiveApiButton size="small" />} />;
   }
-  if (error) return <Alert type="error" showIcon message={error} />;
+  if (error) return <Alert type="error" showIcon message={error} action={<ArchiveApiButton size="small" />} />;
 
   const bu = hdr?.BUSINESS_UNIT_NAME ?? seed?.businessUnitName;
   const stmtOpen = hdr?.STMT_OPENING_BALANCE ?? seed?.openingBalance ?? null;
@@ -322,6 +330,9 @@ export const ArchiveDetail: React.FC<{
 
   return (
     <Spin spinning={!!busy} tip={busy || undefined}>
+      {actionError && <Alert type="error" showIcon closable onClose={() => setActionError(null)} style={{ marginBottom: 10 }}
+        message={isNew ? 'The statement was not archived' : 'Not saved'} description={actionError}
+        action={<Button size="small" icon={<ApiOutlined />} onClick={() => setApiSignal(x => x + 1)}>Open API</Button>} />}
       {cancelled && <Alert type="error" showIcon style={{ marginBottom: 10 }} message={`Cancelled${hdr?.CANCEL_REASON ? `: ${hdr.CANCEL_REASON}` : ''}`}
         description="Kept for audit. The statement can be archived again." />}
       {isNew && !seed?.cashAccount && <Alert type="warning" showIcon style={{ marginBottom: 10 }}
@@ -337,7 +348,8 @@ export const ArchiveDetail: React.FC<{
           {hdr && <Tag color={cancelled ? 'red' : 'green'}>{hdr.STATUS}</Tag>}
           <Text type="secondary" style={{ fontSize: 12 }}>Statement {hdr?.STATEMENT_NUMBER ?? seed?.statementNumber} · {fmtDate(hdr?.STATEMENT_DATE ?? seed?.statementDate)}</Text>
           {hdr && <Text type="secondary" style={{ fontSize: 12 }}>· archived {fmtDate(hdr.CREATION_DATE)} by {hdr.CREATED_BY}</Text>}
-        </Space>}>
+        </Space>}
+        extra={<ArchiveApiButton size="small" openSignal={apiSignal} />}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px 16px' }}>
           <Field label="Business unit">{bu || '—'}</Field>
           <Field label="Bank account" span={2}><Tooltip title={hdr?.BANK_ACCOUNT_NAME ?? seed?.bankAccountName}>{hdr?.BANK_ACCOUNT_NAME ?? seed?.bankAccountName}</Tooltip></Field>

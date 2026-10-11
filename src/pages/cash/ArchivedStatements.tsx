@@ -17,6 +17,7 @@ import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import { useAuth } from '../../context/AuthContext';
 import ArchiveDetail from './archive/ArchiveDetail';
+import ArchiveApiButton from './archive/ArchiveApiButton';
 import { ArchiveHeader, INSTALL_SCRIPT, archiveNotInstalled, cmQuery, loadArchives } from '../../services/cmArchive.service';
 
 const { Content } = Layout;
@@ -146,7 +147,8 @@ const ArchivedStatements: React.FC = () => {
   const searchTab = (
     <div>
       {!installed && <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="Bank reconciliation archive is not installed in the database"
-        description={<span>Run <code>{INSTALL_SCRIPT}</code>. Then archive a statement from Bank Reconciliation with the <ContainerOutlined /> Archive button.</span>} />}
+        description={<span>Run <code>database/cash/169_cm_execute.sql</code> (the <code>cash/execute</code> web service) and then <code>{INSTALL_SCRIPT}</code>.
+          Use the <b>API</b> button to check each web service. Then archive a statement from Bank Reconciliation with the <ContainerOutlined /> Archive button.</span>} />}
       {error && <Alert type="error" showIcon style={{ marginBottom: 12 }} message={error} />}
       <Card size="small" style={{ marginBottom: 12, borderRadius: 10 }} title={<Space><SearchOutlined />Search</Space>}>
         <Row gutter={[12, 12]} align="bottom">
@@ -214,7 +216,8 @@ const ArchivedStatements: React.FC = () => {
           { title: <Link to="/cash"><BankOutlined /> Cash Management</Link> },
           { title: 'Archived Statements' },
         ]} />
-        <Space align="center" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+        <Space align="center">
           <div style={{ width: 44, height: 44, borderRadius: 10, background: RED, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>
             <ContainerOutlined />
           </div>
@@ -223,6 +226,8 @@ const ArchivedStatements: React.FC = () => {
             <Text type="secondary" style={{ fontSize: 12 }}>Archived bank reconciliations — account analysis, manual reconciled data and attachments</Text>
           </div>
         </Space>
+        <ArchiveApiButton />
+        </div>
         <Card style={{ borderRadius: 10 }} styles={{ body: { padding: '4px 16px 16px' } }}>
           <Tabs type="editable-card" hideAdd activeKey={active} onChange={setActive}
             onEdit={(key, action) => { if (action === 'remove') closeTab(String(key)); }}
