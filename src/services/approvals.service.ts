@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { buildApexUrl } from '../config/api.helper';
+import { APEX_DB_CONFIG } from '../config/api.config';
 
 const BASE = buildApexUrl('approvals');
 
@@ -627,22 +628,26 @@ export interface ApprovalDebugStep {
   response: unknown;
 }
 
-// ─── Internal: log to RR_APPROVAL_REQUESTS (best-effort) ─────────────────────
+// ─── Internal: in-app approval request (RR_APPROVAL_REQUESTS) ────────────────
+// The request is what the approver sees in the notification bell and acts on in the app.
 
-async function logApprovalRequest(
-  params: {
-    module: string;
-    transactionType: string;
-    transactionId: number;
-    transactionRef: string;
-    amount: number;
-    currency: string;
-    description: string;
-    requestedByName: string;
-    approverEmail: string;
-  },
+interface ApprovalRequestInput {
+  module: string;
+  transactionType: string;
+  transactionId: number;
+  transactionRef: string;
+  amount: number;
+  currency: string;
+  description: string;
+  requestedByName: string;
+  approverEmail: string;
+}
+
+async function createApprovalRequest(
+  params: ApprovalRequestInput,
   debug: ApprovalDebugStep[],
-): Promise<void> {
+  step: string,
+): Promise<{ ok: boolean; requestId?: number; error?: string }> {
   const url = `${BASE}/requests`;
   try {
     const res = await fetch(url, {
@@ -651,13 +656,43 @@ async function logApprovalRequest(
       body: JSON.stringify(params),
     });
     const data = await res.json().catch(() => ({}));
-    debug.push({ step: '4 — Log Approval Request', url, method: 'POST', payload: params, status: res.status, response: data });
+    debug.push({ step, url, method: 'POST', payload: params, status: res.status, response: data });
+    if (!res.ok || data?.status !== 'SUCCESS') {
+      return { ok: false, error: data?.message || `Could not create the approval request (HTTP ${res.status}${res.status === 404 ? ' — approvals/requests is not deployed' : ''})` };
+    }
+    return { ok: true, requestId: Number(data.requestId) || undefined };
   } catch (err) {
-    debug.push({ step: '4 — Log Approval Request', url, method: 'POST', payload: params, status: 'ERROR', response: String(err) });
-    // non-blocking — do not rethrow
+    debug.push({ step, url, method: 'POST', payload: params, status: 'ERROR', response: String(err) });
+    return { ok: false, error: `Could not reach the approvals service: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
+/** Best-effort log (AP flow): never blocks the caller. */
+async function logApprovalRequest(params: ApprovalRequestInput, debug: ApprovalDebugStep[]): Promise<void> {
+  await createApprovalRequest(params, debug, '4 — Log Approval Request');
+}
+
+/** Cancel a request (best-effort), recording the call in the debug log. */
+async function cancelApprovalRequest(requestId: number, actorName: string, comments: string, debug: ApprovalDebugStep[], step: string): Promise<boolean> {
+  const url = `${BASE}/requests/${requestId}/status`;
+  const payload = { status: 'CANCELLED', actorName, comments };
+  try {
+    const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => ({}));
+    debug.push({ step, url, method: 'PUT', payload, status: res.status, response: data });
+    return res.ok;
+  } catch (err) {
+    debug.push({ step, url, method: 'PUT', payload, status: 'ERROR', response: String(err) });
+    return false;
+  }
+}
+
+/**
+ * Send a cash external transaction for approval.
+ * In-app first: the request goes to the approver's notifications, where they approve or reject it;
+ * the transaction is marked PENDING. A resend replaces the transaction's earlier pending request.
+ * The approval email (single-use links) is optional — off unless `sendEmail` is set.
+ */
 export async function sendExternalTxnApproval(params: {
   txnId: number;
   txnRef: string;
@@ -668,39 +703,36 @@ export async function sendExternalTxnApproval(params: {
   approverEmail: string;
   approverName: string;
   sentBy: string;
-}): Promise<{ success: boolean; message: string; debug: ApprovalDebugStep[] }> {
-  const { txnId, txnRef, txnType, amount, currency, description, approverEmail, approverName, sentBy } = params;
+  sendEmail?: boolean;
+}): Promise<{ success: boolean; message: string; debug: ApprovalDebugStep[]; requestId?: number; warning?: string }> {
+  const { txnId, txnRef, txnType, amount, currency, description, approverEmail, approverName, sentBy, sendEmail = false } = params;
   const debug: ApprovalDebugStep[] = [];
-
   const approvalRef = `CASH-EXT-${txnId}`;
-  const today = new Date().toLocaleDateString('en-AE', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  // Step 1 — Generate approval tokens
-  const tokensUrl = `${BASE}/generate-links`;
-  const tokensPayload = { requestRef: approvalRef, requestId: txnId, toEmail: approverEmail, toName: approverName, transactionType: txnType };
-  let approveToken = '', rejectToken = '';
+  // Step 1 — Create the in-app approval request (required)
+  const created = await createApprovalRequest({
+    module: 'CASH', transactionType: txnType || 'EXTERNAL_TXN',
+    transactionId: txnId, transactionRef: approvalRef,
+    amount, currency, description: description || txnRef, requestedByName: sentBy, approverEmail,
+  }, debug, '1 — Create In-App Approval Request');
+  if (!created.ok) return { success: false, message: created.error || 'Could not create the approval request', debug };
+  const requestId = created.requestId;
+
+  // Step 2 — Replace earlier pending requests for this transaction (best-effort)
   try {
-    const tokRes = await fetch(tokensUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(tokensPayload),
-    });
-    const tokData = await tokRes.json().catch(() => ({}));
-    debug.push({ step: '1 — Generate Tokens', url: tokensUrl, method: 'POST', payload: tokensPayload, status: tokRes.status, response: tokData });
-    if (!tokRes.ok) throw new Error(`Generate tokens failed (${tokRes.status}): ${JSON.stringify(tokData)}`);
-    approveToken = tokData.approveToken ?? '';
-    rejectToken  = tokData.rejectToken  ?? '';
+    const pending = await getApprovalRequests({ module: 'CASH', status: 'PENDING' });
+    const older = pending.filter(r => r.transactionRef === approvalRef && r.status === 'PENDING' && Number(r.requestId) !== requestId);
+    for (const r of older) {
+      await cancelApprovalRequest(Number(r.requestId), sentBy, `Replaced by request #${requestId ?? ''}`.trim(), debug, `2 — Cancel Earlier Request #${r.requestId}`);
+    }
   } catch (err) {
-    if (debug.length === 0) debug.push({ step: '1 — Generate Tokens', url: tokensUrl, method: 'POST', payload: tokensPayload, status: 'ERROR', response: String(err) });
-    return { success: false, message: err instanceof Error ? err.message : String(err), debug };
+    debug.push({ step: '2 — Cancel Earlier Requests', url: `${BASE}/requests`, method: 'GET', status: 'ERROR', response: String(err) });
   }
 
-  const approveUrl = `https://erp-approval.reerperp.workers.dev?token=${approveToken}`;
-  const rejectUrl  = `https://erp-approval.reerperp.workers.dev?token=${rejectToken}`;
-
-  // Step 2 — Mark transaction as PENDING in DB
+  // Step 3 — Mark the transaction PENDING (required; undo the request when it fails)
   const putUrl = `${APEX_DB_CONFIG.baseUrl}/cash/externaltransactions/${txnId}/approval`;
   const putPayload = { approvalStatus: 'PENDING', approvalSentBy: sentBy, approverName, approverEmail, approvalRef };
+  let putError = '';
   try {
     const putRes = await fetch(putUrl, {
       method: 'PUT',
@@ -708,41 +740,43 @@ export async function sendExternalTxnApproval(params: {
       body: JSON.stringify(putPayload),
     });
     const putData = await putRes.json().catch(() => putRes.statusText);
-    debug.push({ step: '2 — Update Txn Approval Status', url: putUrl, method: 'PUT', payload: putPayload, status: putRes.status, response: putData });
-    if (!putRes.ok) throw new Error(`Failed to update approval status (${putRes.status}): ${JSON.stringify(putData)}`);
+    debug.push({ step: '3 — Update Txn Approval Status', url: putUrl, method: 'PUT', payload: putPayload, status: putRes.status, response: putData });
+    if (!putRes.ok) putError = `Failed to update the transaction's approval status (${putRes.status}): ${typeof putData === 'string' ? putData : putData?.message || JSON.stringify(putData)}`;
   } catch (err) {
-    if (debug.filter(d => d.step.startsWith('2')).length === 0) debug.push({ step: '2 — Update Txn Approval Status', url: putUrl, method: 'PUT', payload: putPayload, status: 'ERROR', response: String(err) });
-    return { success: false, message: err instanceof Error ? err.message : String(err), debug };
+    debug.push({ step: '3 — Update Txn Approval Status', url: putUrl, method: 'PUT', payload: putPayload, status: 'ERROR', response: String(err) });
+    putError = err instanceof Error ? err.message : String(err);
+  }
+  if (putError) {
+    if (requestId) await cancelApprovalRequest(requestId, sentBy, 'Transaction could not be marked pending', debug, '3b — Undo Approval Request');
+    return { success: false, message: putError, debug };
   }
 
-  // Step 3 — Send email via ORDS proxy
-  const emailUrl = `${APEX_DB_CONFIG.baseUrl}/approvals/send-email`;
-  const html = buildTxnApprovalEmailHtml({ recipientName: approverName, today, approveUrl, rejectUrl, txnRef, txnType, amount, currency, description, submittedBy: sentBy });
-  const emailPayload = { toEmail: approverEmail, toName: approverName, subject: `[Approval Required] ${txnType || 'External Transaction'} — ${txnRef}`, htmlContent: '(HTML omitted from debug — see full email)' };
+  const sentMsg = `Sent to ${approverName} for approval — it is waiting in their notifications${requestId ? ` (request #${requestId})` : ''}.`;
+  if (!sendEmail) return { success: true, message: sentMsg, debug, requestId };
+
+  // Step 4 — Optional approval email with single-use links (failure does not undo the request)
+  const today = new Date().toLocaleDateString('en-AE', { year: 'numeric', month: 'long', day: 'numeric' });
+  let warning = '';
+  const tokensUrl = `${BASE}/generate-links`;
+  const tokensPayload = { requestRef: approvalRef, requestId: requestId ?? txnId, toEmail: approverEmail, toName: approverName, transactionType: txnType };
   try {
-    const sendRes = await fetch(emailUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...emailPayload, htmlContent: html }),
-    });
+    const tokRes = await fetch(tokensUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tokensPayload) });
+    const tokData = await tokRes.json().catch(() => ({}));
+    debug.push({ step: '4 — Generate Email Tokens', url: tokensUrl, method: 'POST', payload: tokensPayload, status: tokRes.status, response: tokData });
+    if (!tokRes.ok) throw new Error(`Generate tokens failed (${tokRes.status})`);
+    const approveUrl = `https://erp-approval.reerperp.workers.dev?token=${tokData.approveToken ?? ''}`;
+    const rejectUrl  = `https://erp-approval.reerperp.workers.dev?token=${tokData.rejectToken ?? ''}`;
+    const emailUrl = `${APEX_DB_CONFIG.baseUrl}/approvals/send-email`;
+    const html = buildTxnApprovalEmailHtml({ recipientName: approverName, today, approveUrl, rejectUrl, txnRef, txnType, amount, currency, description, submittedBy: sentBy });
+    const emailPayload = { toEmail: approverEmail, toName: approverName, subject: `[Approval Required] ${txnType || 'External Transaction'} — ${txnRef}`, htmlContent: '(HTML omitted from debug — see full email)' };
+    const sendRes = await fetch(emailUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...emailPayload, htmlContent: html }) });
     const sendData = await sendRes.json().catch(() => ({ status: 'ERROR', message: sendRes.statusText }));
-    debug.push({ step: '3 — Send Email (ORDS proxy)', url: emailUrl, method: 'POST', payload: emailPayload, status: sendRes.status, response: sendData });
-    if (sendData.status !== 'SUCCESS') {
-      return { success: false, message: sendData.message ?? 'Email send failed', debug };
-    }
+    debug.push({ step: '5 — Send Email (ORDS proxy)', url: emailUrl, method: 'POST', payload: emailPayload, status: sendRes.status, response: sendData });
+    if (sendData.status !== 'SUCCESS') throw new Error(sendData.message ?? 'Email send failed');
   } catch (err) {
-    debug.push({ step: '3 — Send Email (ORDS proxy)', url: emailUrl, method: 'POST', payload: emailPayload, status: 'ERROR', response: String(err) });
-    return { success: false, message: err instanceof Error ? err.message : String(err), debug };
+    warning = `The email could not be sent (${err instanceof Error ? err.message : String(err)}); the approver can still act on it from their notifications.`;
   }
-
-  // Step 4 — Log to RR_APPROVAL_REQUESTS (best-effort, non-blocking)
-  await logApprovalRequest({
-    module: 'CASH', transactionType: txnType || 'EXTERNAL_TXN',
-    transactionId: txnId, transactionRef: approvalRef,
-    amount, currency, description, requestedByName: sentBy, approverEmail,
-  }, debug);
-
-  return { success: true, message: `Approval email sent to ${approverName} (${approverEmail}). Single-use links expire in 72 hours.`, debug };
+  return { success: true, message: warning ? sentMsg : `${sentMsg} An email with approve / reject links was also sent to ${approverEmail}.`, debug, requestId, warning: warning || undefined };
 }
 
 // ─── AP Invoice Approval ──────────────────────────────────────────────────────

@@ -259,6 +259,27 @@ const statusLabel = (s: string) => {
   return m[s] ?? s;
 };
 
+// Approval status as stored — PENDING, 'Manually approved' (in-app) / APPROVED, 'Rejected' / REJECTED,
+// CANCELLED / RECALLED — reduced to one state for colours, labels and what the user can do next.
+type ApprovalState = 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+const approvalState = (s?: string | null): ApprovalState => {
+  const v = String(s ?? '').trim().toUpperCase();
+  if (!v || v === 'NONE') return 'NONE';
+  if (v.includes('APPROVED')) return 'APPROVED';
+  if (v.startsWith('REJECT')) return 'REJECTED';
+  if (v === 'CANCELLED' || v === 'CANCELED' || v === 'RECALLED') return 'CANCELLED';
+  return 'PENDING';
+};
+const APPROVAL_LOOK: Record<ApprovalState, { label: string; tag: string; color: string }> = {
+  NONE:      { label: 'Not sent',         tag: 'default', color: REDWOOD.neutral600 },
+  PENDING:   { label: 'Pending Approval', tag: 'orange',  color: REDWOOD.warning },
+  APPROVED:  { label: 'Approved',         tag: 'green',   color: REDWOOD.success },
+  REJECTED:  { label: 'Rejected',         tag: 'red',     color: REDWOOD.error },
+  CANCELLED: { label: 'Cancelled',        tag: 'default', color: REDWOOD.neutral600 },
+};
+/** Nothing active — the transaction can be sent (again). */
+const canSendForApproval = (s?: string | null) => ['NONE', 'CANCELLED'].includes(approvalState(s));
+
 interface BankAcctProgressRow {
   extTxnId:      number;
   txnDate:       string;
@@ -306,7 +327,9 @@ const ViewAcctModal: React.FC<{
   lines: any[];
   loading: boolean;
   onClose: () => void;
-}> = ({ open, txn, hdr, lines, loading, onClose }) => {
+  /** the API refresh re-read the journal — show it */
+  onRefreshed?: (hdr: any, lines: any[]) => void;
+}> = ({ open, txn, hdr, lines, loading, onClose, onRefreshed }) => {
   const [apiOpen, setApiOpen] = useState(false);
   const [apiRefreshing, setApiRefreshing] = useState(false);
   const [apiUrls, setApiUrls] = useState({ headers: '', lines: '' });
@@ -364,8 +387,7 @@ const ViewAcctModal: React.FC<{
           accountedCr: line.accounted_cr,
           currency: line.currency_code,
         }));
-        setViewAcctHeader(hdr);
-        setViewAcctLines(formattedLines);
+        onRefreshed?.(hdr, formattedLines);
       }
       setApiResponse({ headers: lRes, lines: lRes });
       message.success('API refreshed successfully');
@@ -374,7 +396,7 @@ const ViewAcctModal: React.FC<{
     } finally {
       setApiRefreshing(false);
     }
-  }, [txn]);
+  }, [txn, onRefreshed]);
 
   if (!txn) return null;
 
@@ -1595,6 +1617,7 @@ const ExternalTxnForm: React.FC<{
       setFDebugSteps(result.debug ?? []);
       if (result.success) {
         message.success(result.message);
+        if (result.warning) message.warning(result.warning);
         const ref = `CASH-EXT-${txnId}`;
         setFApprovalStatus('PENDING');
         setFApprovalSentBy(loggedUser);
@@ -2528,24 +2551,15 @@ const ExternalTxnForm: React.FC<{
           })()}
           {(saved || isEdit) && (() => {
             const txnId = savedExtId ?? savedTxnId ?? initialValues?.externalTransactionId;
-            const hasPending = fApprovalStatus && fApprovalStatus !== 'NONE';
-            return hasPending ? (
+            const fState = approvalState(fApprovalStatus);
+            return !canSendForApproval(fApprovalStatus) ? (
               <Button
                 size="large"
                 icon={<AuditOutlined />}
-                style={{
-                  color: fApprovalStatus === 'APPROVED' ? REDWOOD.success
-                       : fApprovalStatus === 'REJECTED' ? REDWOOD.error
-                       : REDWOOD.warning,
-                  borderColor: fApprovalStatus === 'APPROVED' ? REDWOOD.success
-                             : fApprovalStatus === 'REJECTED' ? REDWOOD.error
-                             : REDWOOD.warning,
-                }}
+                style={{ color: APPROVAL_LOOK[fState].color, borderColor: APPROVAL_LOOK[fState].color }}
                 onClick={() => setFApprovalStatusOpen(true)}
               >
-                {fApprovalStatus === 'APPROVED' ? 'Approved'
-               : fApprovalStatus === 'REJECTED' ? 'Rejected'
-               : 'Approval Pending'}
+                {fState === 'PENDING' ? 'Approval Pending' : APPROVAL_LOOK[fState].label}
               </Button>
             ) : (
               <Button
@@ -2883,6 +2897,8 @@ const ExternalTxnForm: React.FC<{
             </div>
           ))}
         </div>
+        <Alert type="info" showIcon style={{ marginBottom: 12, fontSize: 12 }}
+          message="The approver gets the request in their notifications (bell icon) and approves or rejects it in the app." />
         <div style={{ marginBottom: 8 }}><Text strong style={{ fontSize: 13 }}>Select Approver</Text></div>
         <Select
           showSearch placeholder={fApprovalLoadingUsers ? 'Loading approvers...' : 'Select an approver'}
@@ -2933,14 +2949,19 @@ const ExternalTxnForm: React.FC<{
         title={<Space><AuditOutlined style={{ color: REDWOOD.info }} /><span>Approval Status</span></Space>}
         open={fApprovalStatusOpen}
         onCancel={() => setFApprovalStatusOpen(false)}
-        footer={<Button onClick={() => setFApprovalStatusOpen(false)}>Close</Button>}
+        footer={<Space>
+          {approvalState(fApprovalStatus) !== 'APPROVED' && (
+            <Tooltip title={approvalState(fApprovalStatus) === 'PENDING' ? 'Send to another approver — replaces the pending request' : 'Send for approval again'}>
+              <Button icon={<SendOutlined />} onClick={() => { setFApprovalStatusOpen(false); openFApprovalModal(); }}>Send again</Button>
+            </Tooltip>
+          )}
+          <Button onClick={() => setFApprovalStatusOpen(false)}>Close</Button>
+        </Space>}
         width={460}
       >
         <div>
           <div style={{ textAlign: 'center', marginBottom: 20 }}>
-            {fApprovalStatus === 'APPROVED' && <Tag color="green"  style={{ fontSize: 14, padding: '4px 16px' }}>Approved</Tag>}
-            {fApprovalStatus === 'REJECTED' && <Tag color="red"    style={{ fontSize: 14, padding: '4px 16px' }}>Rejected</Tag>}
-            {fApprovalStatus === 'PENDING'  && <Tag color="orange" style={{ fontSize: 14, padding: '4px 16px' }}>Pending Approval</Tag>}
+            <Tag color={APPROVAL_LOOK[approvalState(fApprovalStatus)].tag} style={{ fontSize: 14, padding: '4px 16px' }}>{APPROVAL_LOOK[approvalState(fApprovalStatus)].label}</Tag>
           </div>
           <div style={{ background: REDWOOD.neutral100, borderRadius: 8, padding: '12px 16px', fontSize: 13 }}>
             {[
@@ -4655,6 +4676,7 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
       setApprovalDebugSteps(result.debug ?? []);
       if (result.success) {
         message.success(result.message);
+        if (result.warning) message.warning(result.warning);
         setTransactions(prev => prev.map(t =>
           t.externalTransactionId === approvalTargetTxn.externalTransactionId
             ? {
@@ -4765,17 +4787,17 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                 }} />
             </Tooltip>
           )}
-          {(!r.approvalStatus || r.approvalStatus === 'NONE') && (
+          {canSendForApproval(r.approvalStatus) && (
             <Tooltip title="Send for Approval">
               <Button type="text" size="small" icon={<SendOutlined />}
                 style={{ color: REDWOOD.primary }}
                 onClick={() => openApprovalModal(r)} />
             </Tooltip>
           )}
-          {r.approvalStatus && r.approvalStatus !== 'NONE' && (
-            <Tooltip title="View Approval Status">
+          {!canSendForApproval(r.approvalStatus) && (
+            <Tooltip title={`Approval: ${APPROVAL_LOOK[approvalState(r.approvalStatus)].label}`}>
               <Button type="text" size="small" icon={<AuditOutlined />}
-                style={{ color: r.approvalStatus === 'APPROVED' ? REDWOOD.success : r.approvalStatus === 'REJECTED' ? REDWOOD.error : REDWOOD.warning }}
+                style={{ color: APPROVAL_LOOK[approvalState(r.approvalStatus)].color }}
                 onClick={() => { setApprovalStatusTxn(r); setApprovalStatusOpen(true); }} />
             </Tooltip>
           )}
@@ -4879,11 +4901,9 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
     {
       title: 'Approval', dataIndex: 'approvalStatus', width: 105,
       render: (v) => {
-        if (!v || v === 'NONE') return <Text style={{ fontSize: 11, color: '#bbb' }}>—</Text>;
-        if (v === 'PENDING')  return <Tag color="orange"  style={{ fontSize: 11, margin: 0 }}>Pending</Tag>;
-        if (v === 'APPROVED') return <Tag color="green"   style={{ fontSize: 11, margin: 0 }}>Approved</Tag>;
-        if (v === 'REJECTED') return <Tag color="red"     style={{ fontSize: 11, margin: 0 }}>Rejected</Tag>;
-        return <Tag style={{ fontSize: 11, margin: 0 }}>{v}</Tag>;
+        const st = approvalState(v);
+        if (st === 'NONE') return <Text style={{ fontSize: 11, color: '#bbb' }}>—</Text>;
+        return <Tag color={APPROVAL_LOOK[st].tag} style={{ fontSize: 11, margin: 0 }}>{st === 'PENDING' ? 'Pending' : APPROVAL_LOOK[st].label}</Tag>;
       },
     },
     { title: 'Created By', dataIndex: 'createdBy', ellipsis: true, width: 160,
@@ -5417,6 +5437,7 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
           lines={viewAcctLines}
           loading={viewAcctLoading}
           onClose={() => setViewAcctOpen(false)}
+          onRefreshed={(h, l) => { setViewAcctHeader(h); setViewAcctLines(l); }}
         />
 
         {/* API Info Modal */}
@@ -5520,6 +5541,8 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
                   <Text>{approvalTargetTxn.transactionType || '—'}</Text>
                 </div>
               </div>
+              <Alert type="info" showIcon style={{ marginBottom: 12, fontSize: 12 }}
+                message="The approver gets the request in their notifications (bell icon) and approves or rejects it in the app." />
               <div style={{ marginBottom: 8 }}>
                 <Text strong style={{ fontSize: 13 }}>Select Approver</Text>
               </div>
@@ -5584,17 +5607,22 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
           title={<Space><AuditOutlined style={{ color: REDWOOD.info }} /><span>Approval Status</span></Space>}
           open={approvalStatusOpen}
           onCancel={() => setApprovalStatusOpen(false)}
-          footer={<Button onClick={() => setApprovalStatusOpen(false)}>Close</Button>}
+          footer={<Space>
+            {approvalStatusTxn && approvalState(approvalStatusTxn.approvalStatus) !== 'APPROVED' && (
+              <Tooltip title={approvalState(approvalStatusTxn.approvalStatus) === 'PENDING' ? 'Send to another approver — replaces the pending request' : 'Send for approval again'}>
+                <Button icon={<SendOutlined />} onClick={() => { setApprovalStatusOpen(false); openApprovalModal(approvalStatusTxn); }}>Send again</Button>
+              </Tooltip>
+            )}
+            <Button onClick={() => setApprovalStatusOpen(false)}>Close</Button>
+          </Space>}
           width={480}
         >
           {approvalStatusTxn && (() => {
-            const st = approvalStatusTxn.approvalStatus;
+            const st = approvalState(approvalStatusTxn.approvalStatus);
             return (
               <div>
                 <div style={{ textAlign: 'center', marginBottom: 20 }}>
-                  {st === 'APPROVED' && <Tag color="green"  style={{ fontSize: 14, padding: '4px 16px' }}>Approved</Tag>}
-                  {st === 'REJECTED' && <Tag color="red"    style={{ fontSize: 14, padding: '4px 16px' }}>Rejected</Tag>}
-                  {st === 'PENDING'  && <Tag color="orange" style={{ fontSize: 14, padding: '4px 16px' }}>Pending Approval</Tag>}
+                  <Tag color={APPROVAL_LOOK[st].tag} style={{ fontSize: 14, padding: '4px 16px' }}>{APPROVAL_LOOK[st].label}</Tag>
                 </div>
                 <div style={{ background: REDWOOD.neutral100, borderRadius: 8, padding: '12px 16px', fontSize: 13 }}>
                   {[
