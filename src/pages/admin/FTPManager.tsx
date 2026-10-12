@@ -16,7 +16,7 @@ import {
   DoubleLeftOutlined, DoubleRightOutlined, LinkOutlined, DisconnectOutlined,
   LaptopOutlined, SaveOutlined, CheckCircleOutlined, CloseCircleOutlined,
   LoadingOutlined, RocketOutlined, PoweroffOutlined, PlayCircleOutlined,
-  SyncOutlined, DashboardOutlined, BuildOutlined, GlobalOutlined,
+  SyncOutlined, DashboardOutlined, BuildOutlined, GlobalOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { PROXY_CONFIG } from '../../config/api.config';
@@ -56,8 +56,15 @@ interface SavedConn {
   bastion?: BastionCfg;
 }
 
+// The OCI Console's command has placeholders: -i <privateKey> and -L <localPort>:host:port.
+// They are always filled with our key file and local port.
+const DEFAULT_BASTION_KEY = 'C:\\Bastion keys\\reerp-bastion.key';
+const DEFAULT_BASTION_LOCAL_PORT = '2222';
+const isPlaceholder = (v: string) => !v || /^<.*>$/.test(v);
+
 // Parse the SSH command the OCI Console gives for a Bastion port-forwarding session:
 //   ssh -i "C:\keys\x.key" -N -L 2222:10.0.1.125:22 -p 22 ocid1.bastionsession…@host.bastion.<region>.oci.oraclecloud.com
+//   ssh -i <privateKey> -N -L <localPort>:10.0.1.125:22 -p 22 ocid1.bastionsession…   (placeholders → our defaults)
 const parseBastionSsh = (cmd: string) => {
   const c = cmd.replace(/\s+/g, ' ').trim();
   const key = /-i\s+("([^"]+)"|'([^']+)'|(\S+))/.exec(c);
@@ -65,17 +72,27 @@ const parseBastionSsh = (cmd: string) => {
   const fwdParts = (/-L\s+(\S+)/.exec(c)?.[1] || '').split(':');
   const targetPort = /^\d+$/.test(fwdParts[fwdParts.length - 1] || '') ? fwdParts[fwdParts.length - 1] : '';
   const targetHost = targetPort && fwdParts.length >= 2 && !/[<>]/.test(fwdParts[fwdParts.length - 2]) ? fwdParts[fwdParts.length - 2] : '';
-  const localPort = fwdParts.length === 3 && /^\d+$/.test(fwdParts[0]) ? fwdParts[0] : '';
+  const givenPort = fwdParts.length === 3 ? fwdParts[0] : '';
+  const localPort = /^\d+$/.test(givenPort) ? givenPort : DEFAULT_BASTION_LOCAL_PORT;
   const dest = /(ocid1\.bastionsession\.[\w.-]+)@([\w.-]+)/i.exec(c);
   if (!dest) return null;
-  const keyPath = key ? (key[2] || key[3] || key[4]) : '';
+  const givenKey = key ? (key[2] || key[3] || key[4]) : '';
+  const keyPath = isPlaceholder(givenKey) ? DEFAULT_BASTION_KEY : givenKey;
+  const defaulted = [
+    ...(isPlaceholder(givenKey) ? [`key file ${DEFAULT_BASTION_KEY}`] : []),
+    ...(!/^\d+$/.test(givenPort) ? [`local port ${DEFAULT_BASTION_LOCAL_PORT}`] : []),
+  ];
   return {
-    keyPath: /^<.*>$/.test(keyPath) ? '' : keyPath,   // OCI's template shows <privateKey>
+    keyPath,
     targetHost,
     targetPort,
     localPort,
     sessionOcid: dest[1],
     bastionHost: dest[2],
+    /** what came from our defaults instead of the command */
+    defaulted,
+    /** the command ready to run (placeholders filled in) */
+    command: `ssh -i "${keyPath}" -N -L ${localPort}:${targetHost || '<host>'}:${targetPort || 22} -p 22 ${dest[1]}@${dest[2]}`,
   };
 };
 
@@ -247,13 +264,15 @@ const FTPManager: React.FC = () => {
     connForm.setFieldsValue({
       protocol: 'sftp', useBastion: true,
       bastionOcid: r.sessionOcid, bastionKeyPath: r.keyPath, bastionHost: r.bastionHost,
-      ...(r.localPort ? { bastionLocalPort: r.localPort } : {}),
+      bastionLocalPort: r.localPort,
       ...(r.targetHost ? { host: r.targetHost } : {}),
       ...(r.targetPort ? { port: r.targetPort } : {}),
     });
     setSshPasteOpen(false); setSshPasteText('');
-    message.success(`Filled from the SSH command: ${r.targetHost}:${r.targetPort} via ${r.bastionHost}`);
+    message.success(`Filled from the SSH command: ${r.targetHost}:${r.targetPort} via ${r.bastionHost}`
+      + (r.defaulted.length ? ` — ${r.defaulted.join(' and ')} filled in` : ''), 6);
   };
+  const sshPreview = sshPasteText.trim() ? parseBastionSsh(sshPasteText) : null;
 
   // "New Bastion session": create a port-forwarding session through the OCI API
   // (API key in ~/.oci/config) and fill in its OCID
@@ -876,7 +895,28 @@ const FTPManager: React.FC = () => {
               </Text>
               <Input.TextArea rows={4} style={{ marginTop: 8, fontFamily: 'monospace', fontSize: 12 }} value={sshPasteText}
                 onChange={e => setSshPasteText(e.target.value)}
-                placeholder='ssh -i "C:\Bastion keys\reerp-bastion.key" -N -L 2222:10.0.1.125:22 -p 22 ocid1.bastionsession.oc1…@host.bastion.me-dubai-1.oci.oraclecloud.com' />
+                placeholder='ssh -i <privateKey> -N -L <localPort>:10.0.1.125:22 -p 22 ocid1.bastionsession.oc1…@host.bastion.me-dubai-1.oci.oraclecloud.com' />
+              <div style={{ marginTop: 6, fontSize: 11, color: '#8c8c8c' }}>
+                <Text code style={{ fontSize: 11 }}>{'<privateKey>'}</Text> → <Text code style={{ fontSize: 11 }}>{DEFAULT_BASTION_KEY}</Text>
+                {'   '}<Text code style={{ fontSize: 11 }}>{'<localPort>'}</Text> → <Text code style={{ fontSize: 11 }}>{DEFAULT_BASTION_LOCAL_PORT}</Text>
+              </div>
+              {sshPasteText.trim() && (sshPreview ? (
+                <div style={{ marginTop: 10, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '8px 10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <Text strong style={{ fontSize: 12 }}>Command with your key and port</Text>
+                    <Button size="small" type="text" icon={<CopyOutlined />}
+                      onClick={() => navigator.clipboard?.writeText(sshPreview.command).then(() => message.success('Copied'), () => message.error('Copy failed'))}>Copy</Button>
+                  </div>
+                  <div style={{ fontFamily: 'monospace', fontSize: 11.5, wordBreak: 'break-all' }}>{sshPreview.command}</div>
+                  <div style={{ fontSize: 11, color: '#595959', marginTop: 6 }}>
+                    Server {sshPreview.targetHost || '?'}:{sshPreview.targetPort || '?'} · local port {sshPreview.localPort} · via {sshPreview.bastionHost}
+                    {sshPreview.defaulted.length > 0 && <> · <Text type="success" style={{ fontSize: 11 }}>{sshPreview.defaulted.join(' and ')} filled in</Text></>}
+                  </div>
+                </div>
+              ) : (
+                <Alert type="warning" showIcon style={{ marginTop: 10, fontSize: 12 }}
+                  message="Not a Bastion SSH command yet — it must contain ocid1.bastionsession…@host.bastion…" />
+              ))}
             </Modal>
           </Card>
         </div>
