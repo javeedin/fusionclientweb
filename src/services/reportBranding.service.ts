@@ -158,6 +158,51 @@ export function conflicts(list: Branding[], draft: { brandingId: number | null; 
   return out;
 }
 
+// ── use one branding for all modules ────────────────────────────────────────
+
+/** What "use for all modules" does to one branding: the modules it gains, and those that keep another branding. */
+export interface AllModulesPlan {
+  source: Branding;
+  /** module codes the branding already prints on */
+  has: string[];
+  /** module codes it will be added to */
+  add: string[];
+  /** modules that keep another active branding of the same business unit */
+  kept: { code: string; by: Branding }[];
+  /** another active "All documents" branding of the business unit (blocks the "All documents" option) */
+  otherAll: Branding | null;
+}
+
+export function planAllModules(list: Branding[], source: Branding): AllModulesPlan {
+  const others = list.filter(b => b.businessUnitId === source.businessUnitId && b.status === 'ACTIVE' && b.brandingId !== source.brandingId);
+  const srcAll = source.appliesTo.includes('ALL');
+  const plan: AllModulesPlan = { source, has: [], add: [], kept: [], otherAll: others.find(b => b.appliesTo.includes('ALL')) || null };
+  BRANDING_DOCS.forEach(({ code }) => {
+    const owner = others.find(b => b.appliesTo.includes(code));
+    if (!srcAll && source.appliesTo.includes(code)) plan.has.push(code);
+    else if (owner) plan.kept.push({ code, by: owner });
+    else if (srcAll) plan.has.push(code);   // an "All documents" branding already prints here
+    else plan.add.push(code);
+  });
+  return plan;
+}
+
+/** The branding of a business unit to spread over all modules: the active one with the most modules of its own. */
+export function primaryBranding(list: Branding[], businessUnitId: number): Branding | null {
+  const active = list.filter(b => b.businessUnitId === businessUnitId && b.status === 'ACTIVE');
+  return [...active].sort((a, b) => (b.appliesTo.includes('ALL') ? 0 : b.appliesTo.length) - (a.appliesTo.includes('ALL') ? 0 : a.appliesTo.length))[0] || null;
+}
+
+/** Save a branding with a new "printed on" list; everything else, the logo included, stays as stored. */
+export function saveAppliesTo(b: Branding, appliesTo: string[], user: string) {
+  return saveBranding({
+    brandingId: b.brandingId, businessUnitId: b.businessUnitId, appliesTo, displayName: b.displayName, headerStyle: b.headerStyle,
+    address: b.address, taxRegistration: b.taxRegistration, phone: b.phone, email: b.email, website: b.website,
+    accentColor: b.accentColor, status: b.status, logoMime: b.logoMime, logoFileName: b.logoFileName,
+    logoWidth: b.logoWidth, logoHeight: b.logoHeight, logoBytes: b.logoBytes, logoAction: 'KEEP',
+  }, user);
+}
+
 export interface BrandingSave extends Omit<Branding, 'businessUnitName' | 'logoChunks' | 'lastUpdatedBy' | 'lastUpdateDate'> {
   /** KEEP the stored logo, REPLACE it with logoBase64, or REMOVE it */
   logoAction: 'KEEP' | 'REPLACE' | 'REMOVE';

@@ -7,17 +7,19 @@ import {
   Space, Spin, Switch, Table, Tag, Tooltip, Typography, Upload, message,
 } from 'antd';
 import {
-  CopyOutlined, DeleteOutlined, EditOutlined, FilePdfOutlined, InboxOutlined, PictureOutlined, PlusOutlined, ReloadOutlined,
+  AppstoreAddOutlined, CheckCircleFilled, CopyOutlined, DeleteOutlined, EditOutlined, FilePdfOutlined, InboxOutlined, PictureOutlined,
+  PlusOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type jsPDF from 'jspdf';
 import PdfPreviewModal from '../../components/PdfPreviewModal';
 import { PoBar, PO_RED, useBusinessUnits, usePoUser } from './poShared';
 import { buildPoPdf } from './poPdf';
+import BrandingAllModules, { type AllModulesTarget } from './BrandingAllModules';
 import type { Row } from '../../services/po.service';
 import {
   BRANDING_DOCS, BRANDING_SCRIPT, DEFAULT_ACCENT, brandingNotInstalled, conflicts, coverage, deleteBranding, docLabel, listBrandings,
-  loadLogo, prepareLogo, saveBranding, type Branding, type HeaderStyle, type PreparedLogo, type ReportBrand,
+  loadLogo, planAllModules, prepareLogo, primaryBranding, saveBranding, type Branding, type HeaderStyle, type PreparedLogo, type ReportBrand,
 } from '../../services/reportBranding.service';
 
 const { Text, Title } = Typography;
@@ -216,7 +218,17 @@ const BrandingEditor: React.FC<{
             }}
             options={bus.map(b => ({ value: Number(b.BUSINESS_UNIT_ID), label: b.BUSINESS_UNIT_NAME }))} />
 
-          <Text strong>Printed on</Text>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+            <Text strong>Printed on</Text>
+            <Tooltip title="Tick every module that has no other branding in this business unit">
+              <Button type="link" size="small" icon={<AppstoreAddOutlined />} style={{ padding: 0 }}
+                onClick={() => {
+                  const taken = list.filter(b => b.businessUnitId === d.businessUnitId && b.status === 'ACTIVE' && b.brandingId !== d.brandingId)
+                    .flatMap(b => b.appliesTo);
+                  set({ appliesTo: BRANDING_DOCS.map(x => x.code).filter(c => !taken.includes(c)) });
+                }}>All modules</Button>
+            </Tooltip>
+          </div>
           <div style={{ margin: '4px 0 6px', padding: '10px 12px', border: '1px solid #f0f0f0', borderRadius: 8 }}>
             <Checkbox checked={allDocs} onChange={e => set({ appliesTo: e.target.checked ? ['ALL'] : [] })}>
               <b>All documents</b> <Text type="secondary" style={{ fontSize: 12 }}>— the default for every module that has no branding of its own</Text>
@@ -348,6 +360,7 @@ const ReportBranding: React.FC = () => {
   const [editing, setEditing] = useState<Draft | null>(null);
   const [search, setSearch] = useState('');
   const [pdf, setPdf] = useState<{ doc: jsPDF; name: string } | null>(null);
+  const [allModules, setAllModules] = useState<AllModulesTarget[] | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -385,6 +398,13 @@ const ReportBranding: React.FC = () => {
   };
 
   const covered = bus.filter(b => Object.values(coverage(list, Number(b.BUSINESS_UNIT_ID))).some(Boolean)).length;
+  /** the branding of each business unit that "use for all modules" would spread, when some module still prints the name only */
+  const gaps = useMemo(() => bus.flatMap(bu => {
+    const src = primaryBranding(list, Number(bu.BUSINESS_UNIT_ID));
+    return src && planAllModules(list, src).add.length
+      ? [{ businessUnitId: Number(bu.BUSINESS_UNIT_ID), businessUnitName: bu.BUSINESS_UNIT_NAME, sourceId: src.brandingId! }] : [];
+  }), [bus, list]);
+  const spreadToAll = (b: Branding) => setAllModules([{ businessUnitId: b.businessUnitId!, businessUnitName: b.businessUnitName, sourceId: b.brandingId! }]);
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
     return list.filter(b => !q || `${b.displayName} ${b.businessUnitName} ${b.appliesTo.map(docLabel).join(' ')}`.toLowerCase().includes(q));
@@ -424,6 +444,24 @@ const ReportBranding: React.FC = () => {
         );
       },
     })),
+    {
+      title: <Tooltip title="Use the business unit's branding for every module">All modules</Tooltip>, key: 'all', width: 150, fixed: 'right',
+      render: (_: unknown, bu: { BUSINESS_UNIT_ID: number; BUSINESS_UNIT_NAME: string }) => {
+        const gap = gaps.find(g => g.businessUnitId === Number(bu.BUSINESS_UNIT_ID));
+        if (gap) {
+          const src = list.find(b => b.brandingId === gap.sourceId)!;
+          return (
+            <Tooltip title={`Print "${src.displayName}" on every module of ${bu.BUSINESS_UNIT_NAME}`}>
+              <Button size="small" icon={<AppstoreAddOutlined />} style={{ fontSize: 11, color: PO_RED, borderColor: `${PO_RED}66` }}
+                onClick={() => setAllModules([gap])}>All modules</Button>
+            </Tooltip>
+          );
+        }
+        return primaryBranding(list, Number(bu.BUSINESS_UNIT_ID))
+          ? <Text type="secondary" style={{ fontSize: 11 }}><CheckCircleFilled style={{ color: '#52c41a' }} /> Every module</Text>
+          : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+      },
+    },
   ];
 
   return (
@@ -440,14 +478,21 @@ const ReportBranding: React.FC = () => {
             description={<span>Run <Text code>{BRANDING_SCRIPT}</Text> in APEX SQL Workshop (after 306). Until then documents print the business unit name.</span>} />)}
 
       <Card size="small" style={{ marginBottom: 16 }}
-        title={<Space><span>What each document prints</span><Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
-          {covered} of {bus.length} business unit{bus.length === 1 ? '' : 's'} branded</Text></Space>}
+        title={<Space wrap><span>What each document prints</span><Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
+          {covered} of {bus.length} business unit{bus.length === 1 ? '' : 's'} branded</Text>
+          <Tooltip title={gaps.length ? `Print each business unit's branding on all its modules (${gaps.map(g => g.businessUnitName).join(', ')})`
+            : 'Every branded business unit already prints its branding on all modules'}>
+            <Button size="small" icon={<AppstoreAddOutlined />} disabled={!gaps.length} onClick={() => setAllModules(gaps)}
+              style={gaps.length ? { color: PO_RED, borderColor: `${PO_RED}66` } : undefined}>
+              Use for all modules{gaps.length ? ` (${gaps.length})` : ''}…
+            </Button>
+          </Tooltip></Space>}
         extra={<Space size={12} style={{ fontSize: 11 }}>
           <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 3, background: `${PO_RED}22`, border: `1px solid ${PO_RED}66`, marginRight: 4 }} />own branding</span>
           <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 3, background: '#fafafa', border: '1px dashed #bbb', marginRight: 4 }} />from "All documents"</span>
         </Space>}>
         <Table size="small" rowKey="BUSINESS_UNIT_ID" columns={coverColumns} dataSource={bus} pagination={false}
-          loading={loading || buState.loading} scroll={{ x: 230 + 170 * BRANDING_DOCS.length }} />
+          loading={loading || buState.loading} scroll={{ x: 230 + 170 * BRANDING_DOCS.length + 150 }} />
       </Card>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 0 10px', gap: 12, flexWrap: 'wrap' }}>
@@ -468,6 +513,10 @@ const ReportBranding: React.FC = () => {
                     actions={[
                       <Tooltip key="e" title="Edit"><EditOutlined onClick={() => openEdit(b)} /></Tooltip>,
                       <Tooltip key="p" title="Preview on a sample purchase order"><FilePdfOutlined onClick={() => preview(b)} /></Tooltip>,
+                      <Tooltip key="a" title={b.status !== 'ACTIVE' ? 'Activate the branding first' : `Use for all modules of ${b.businessUnitName}`}>
+                        <AppstoreAddOutlined onClick={() => b.status === 'ACTIVE' && spreadToAll(b)}
+                          style={b.status !== 'ACTIVE' ? { color: '#d9d9d9', cursor: 'not-allowed' } : undefined} />
+                      </Tooltip>,
                       <Tooltip key="c" title="Copy to another business unit"><CopyOutlined onClick={() => copyTo(b)} /></Tooltip>,
                       <Popconfirm key="d" title={`Delete "${b.displayName}"?`} description="Documents fall back to the next branding, or the business unit name."
                         okText="Delete" okButtonProps={{ danger: true }} onConfirm={() => remove(b)}>
@@ -506,6 +555,8 @@ const ReportBranding: React.FC = () => {
       )}
       <PdfPreviewModal open={!!pdf} doc={pdf?.doc || null} fileName={pdf?.name || 'branding.pdf'} title="Branding preview" onClose={() => setPdf(null)}
         note="Sample purchase order with this branding" />
+      <BrandingAllModules open={!!allModules} targets={allModules || []} list={list} logos={logos} user={user}
+        onClose={() => setAllModules(null)} onDone={() => { setAllModules(null); load(); }} />
     </div>
   );
 };
