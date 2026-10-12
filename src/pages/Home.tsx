@@ -13,7 +13,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { APEX_DB_CONFIG } from '../config/api.config';
-import { getCurrentCompany } from '../config/company.config';
+import { getCurrentCompany, getAppBranding } from '../config/company.config';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -199,7 +199,7 @@ const Home: React.FC = () => {
           {periodName !== '—' && <Tag icon={<CalendarOutlined />} style={{ padding: '4px 10px', borderRadius: 6 }}>Period: <strong>{periodName}</strong></Tag>}
           {periodStatus !== '—' && <Tag color={isOpen ? 'success' : 'error'} style={{ padding: '4px 10px', borderRadius: 6 }}>GL: {periodStatus}</Tag>}
           <Tag icon={<CheckCircleOutlined />} color="success" style={{ padding: '4px 10px', borderRadius: 6 }}>System Online</Tag>
-          <Tag color="processing" style={{ padding: '4px 10px', borderRadius: 6 }}>v2.1.0 · Jul 21st</Tag>
+          <Tag color="processing" style={{ padding: '4px 10px', borderRadius: 6 }}>v{getAppBranding().version}</Tag>
         </div>
       </div>
 
