@@ -247,7 +247,7 @@ const BrandingEditor: React.FC<{
             </Upload.Dragger>
           </div>
           {logoInfo && (
-            <Space size={12} wrap style={{ marginBottom: 14 }}>
+            <Space size={12} wrap style={{ display: 'flex', marginBottom: 14 }}>
               {facts && <Text type="secondary" style={{ fontSize: 12 }}>{facts}</Text>}
               {d.logo.file && (
                 <Checkbox checked={d.trim} onChange={e => takeFile(d.logo.file!, e.target.checked)} disabled={processing}>
