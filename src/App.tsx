@@ -156,6 +156,8 @@ const SupportModule           = lazy(() => import('./pages/support/SupportModule
 const ManageTickets           = lazy(() => import('./pages/support/ManageTickets'));
 const MyTickets               = lazy(() => import('./pages/support/MyTickets'));
 const TrainingModule          = lazy(() => import('./pages/training/TrainingModule'));
+const TrainingHome            = lazy(() => import('./pages/training/TrainingHome'));
+const ManualReader            = lazy(() => import('./pages/training/ManualReader'));
 const OracleFusion            = lazy(() => import('./pages/oracle/OracleFusion'));
 const ManageRevaluation       = lazy(() => import('./pages/gl/ManageRevaluation'));
 const GLFinancialIntelligence = lazy(() => import('./pages/gl/GLFinancialIntelligence'));
@@ -461,8 +463,10 @@ function App() {
               <Route path="support"            element={<SupportModule />} />
               <Route path="support/tickets"   element={<ManageTickets />} />
               <Route path="support/my-tickets" element={<MyTickets />} />
-              {/* Training Library */}
-              <Route path="training" element={<TrainingModule />} />
+              {/* Training: user manuals, learning paths, video library */}
+              <Route path="training" element={<TrainingHome />} />
+              <Route path="training/manuals/:chapterId" element={<ManualReader />} />
+              <Route path="training/videos" element={<TrainingModule />} />
               {/* Oracle Fusion WebView */}
               <Route path="oracle-fusion" element={<OracleFusion />} />
             </Route>

@@ -171,9 +171,23 @@ export const ALL_MENU_ITEMS: MenuSearchItem[] = [
   { key: 'support-tickets',       label: 'Manage Tickets',              module: 'SUPP',  moduleLabel: 'Support',                path: '/support/tickets',                description: 'View and manage support tickets', keywords: 'ticket issue helpdesk' },
   { key: 'support-my-tickets',    label: 'My Tickets',                  module: 'SUPP',  moduleLabel: 'Support',                path: '/support/my-tickets',             description: 'View my support tickets' },
 
-  // ── Oracle Fusion / Training ─────────────────────────────────────────────────
+  // ── Oracle Fusion ────────────────────────────────────────────────────────────
   { key: 'oracle-fusion',         label: 'Oracle Fusion',               module: 'EXT',   moduleLabel: 'External',               path: '/oracle-fusion',                  description: 'Oracle Fusion integration panel', keywords: 'fusion oracle erp' },
-  { key: 'training',              label: 'Training Library',            module: 'EXT',   moduleLabel: 'External',               path: '/training',                       description: 'Training videos and documentation', keywords: 'training help docs tutorial' },
+
+  // ── Training ─────────────────────────────────────────────────────────────────
+  { key: 'training',              label: 'Training',                      module: 'TRN',   moduleLabel: 'Training',               path: '/training',                         description: 'User manuals, learning paths and videos', keywords: 'training help manual guide how to docs tutorial learn' },
+  { key: 'training-videos',       label: 'Video Library',                 module: 'TRN',   moduleLabel: 'Training',               path: '/training/videos',                  description: 'Screen recordings: walkthroughs, UAT scripts, demos', keywords: 'video recording training library' },
+  { key: 'training-gs',           label: 'Getting Started Manual',        module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/getting-started', description: 'Sign in, password, home, top bar, notifications', keywords: 'manual help login password otp' },
+  { key: 'training-gl',           label: 'General Ledger Manual',         module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/general-ledger',  description: 'Journals, trial balance, statement templates, periods', keywords: 'manual help gl journal' },
+  { key: 'training-ap',           label: 'Accounts Payable Manual',       module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/accounts-payable', description: 'Invoices, approval, payments, suppliers, accounting', keywords: 'manual help ap invoice payment' },
+  { key: 'training-ar',           label: 'Accounts Receivable Manual',    module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/accounts-receivable', description: 'Invoices, customers, receipts', keywords: 'manual help ar receipt customer' },
+  { key: 'training-cash',         label: 'Cash Management Manual',        module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/cash-management', description: 'External transactions, statements, reconciliation, archives', keywords: 'manual help cash bank reconciliation' },
+  { key: 'training-fa',           label: 'Fixed Assets Manual',           module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/fixed-assets',    description: 'Assets, depreciation, retirements', keywords: 'manual help fa asset depreciation' },
+  { key: 'training-po',           label: 'Purchasing Manual',             module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/purchasing',      description: 'Requisitions, purchase orders, approval, receiving, branding', keywords: 'manual help po purchase order requisition' },
+  { key: 'training-other',        label: 'Petty Cash, Rental & Portfolio Manual', module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/other-modules',   description: 'Petty cash, rental agreements, investment holdings', keywords: 'manual help petty cash rent portfolio' },
+  { key: 'training-appr',         label: 'Approvals Manual',              module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/approvals',       description: 'Send, approve, reject, approval history', keywords: 'manual help approval approve reject bell' },
+  { key: 'training-admin',        label: 'Administration Manual',         module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/administration',  description: 'Users, Approval Engine, FTP Manager', keywords: 'manual help admin users approval engine' },
+  { key: 'training-appx',         label: 'Troubleshooting & Glossary',    module: 'TRN',   moduleLabel: 'Training',               path: '/training/manuals/appendix',        description: 'Database scripts, common errors, glossary', keywords: 'manual help error troubleshooting glossary ora' },
 ];
 
 // Get filtered menu items based on current company

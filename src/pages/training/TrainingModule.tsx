@@ -116,7 +116,8 @@ const TrainingModule: React.FC = () => {
         <div style={{ padding: '16px 24px', background: REDWOOD.surface, borderBottom: `1px solid ${REDWOOD.neutral200}` }}>
           <Breadcrumb items={[
             { title: <Link to="/home"><HomeOutlined /> Home</Link> },
-            { title: 'Training Library' },
+            { title: <Link to="/training">Training</Link> },
+            { title: 'Video Library' },
           ]} />
         </div>
 
@@ -133,7 +134,7 @@ const TrainingModule: React.FC = () => {
                 <VideoCameraOutlined style={{ fontSize: 26, color: '#fff' }} />
               </div>
               <div>
-                <Title level={3} style={{ margin: 0 }}>Training Library</Title>
+                <Title level={3} style={{ margin: 0 }}>Video Library</Title>
                 <Text type="secondary">Screen recordings for user manuals and UAT scripts</Text>
               </div>
             </Space>

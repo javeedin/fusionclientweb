@@ -112,7 +112,7 @@ const ScreenRecorder: React.FC = () => {
         setSaveModal(false);
         pendingBuf.current = null;
         message.success(
-          <span>Recording saved! <a style={{ textDecoration: 'underline' }} onClick={() => navigate('/training')}>Open Training Library</a></span>,
+          <span>Recording saved! <a style={{ textDecoration: 'underline' }} onClick={() => navigate('/training/videos')}>Open Video Library</a></span>,
           6
         );
       } else if (!result.cancelled) {

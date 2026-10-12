@@ -23,7 +23,7 @@ import {
   RobotOutlined,
   BulbOutlined,
 } from '@ant-design/icons';
-import { Outlet, useNavigate, Link } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { ShowAndTellPanel } from '../features/showAndTell';
 import { useAuth } from '../context/AuthContext';
 import { useGlValidation } from '../context/GlValidationContext';
@@ -70,6 +70,7 @@ const MainLayout: React.FC = () => {
   useFusionInitialization();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { sessionErrors, openDrawer: openValidationDrawer } = useGlValidation();
   const failedCount = sessionErrors.filter(e => e.result === 'FAILED').length;
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -313,12 +314,13 @@ const MainLayout: React.FC = () => {
             />
           </Tooltip>
           <ScreenRecorder />
-          <Tooltip title="Training Library" placement="bottom">
+          <Tooltip title="Training — manuals and help for this screen" placement="bottom">
             <Button
               type="text"
               icon={<PlaySquareOutlined style={{ fontSize: 18, color: '#fff' }} />}
               style={{ color: '#fff' }}
-              onClick={() => navigate('/training')}
+              onClick={() => navigate(location.pathname.startsWith('/training') ? '/training'
+                : `/training?from=${encodeURIComponent(location.pathname)}`)}
             />
           </Tooltip>
           <Tooltip title="Show &amp; Tell" placement="bottom">

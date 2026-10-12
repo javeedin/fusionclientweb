@@ -971,7 +971,7 @@ const OracleFusion: React.FC = () => {
         { title: `Oracle Fusion ${stamp}`, description: 'Recorded from Oracle Fusion WebView', category: 'Oracle Fusion', defaultName: `OracleFusion_${stamp}.webm`, duration: elapsedRef.current }
       );
       if (result?.success) {
-        message.success(<span>Saved! <a onClick={() => navigate('/training')} style={{ textDecoration: 'underline', cursor: 'pointer' }}>View in Training Library</a></span>, 6);
+        message.success(<span>Saved! <a onClick={() => navigate('/training/videos')} style={{ textDecoration: 'underline', cursor: 'pointer' }}>View in Video Library</a></span>, 6);
       }
     };
   };
@@ -1207,7 +1207,7 @@ const OracleFusion: React.FC = () => {
         </Tooltip>
 
         <Tooltip title="Open Training Library">
-          <Button size="small" onClick={() => navigate('/training')}
+          <Button size="small" onClick={() => navigate('/training/videos')}
             style={{ background: '#1D7B4D', border: 'none', color: '#fff', fontSize: 11 }}>
             Training
           </Button>

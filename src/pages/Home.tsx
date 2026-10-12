@@ -8,7 +8,7 @@ import {
   ThunderboltOutlined, WalletOutlined, AuditOutlined, FundOutlined,
   ShopOutlined, HomeOutlined, SettingOutlined, ArrowUpOutlined, ArrowDownOutlined,
   EditOutlined, SwapOutlined, CalculatorOutlined, BarChartOutlined, TeamOutlined,
-  CreditCardOutlined, ReconciliationOutlined, RobotOutlined, DashboardOutlined,
+  CreditCardOutlined, ReconciliationOutlined, RobotOutlined, DashboardOutlined, ReadOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -47,6 +47,7 @@ const MODULES = [
   { id: 'rpt',  label: 'Report Designer',     icon: <FileTextOutlined />,    path: '/reports/designer', color: REDWOOD.info,   desc: 'Design · Save · Run Reports' },
   { id: 'po',   label: 'Purchasing-RR',       icon: <ShopOutlined />,        path: '/po',            color: REDWOOD.primary,   desc: 'Requisitions · POs · Receipts' },
   { id: 'pc',   label: 'Petty Cash',          icon: <AuditOutlined />,       path: '/pc/registers',  color: REDWOOD.orange,    desc: 'Registers · Expenses' },
+  { id: 'training', label: 'Training',        icon: <ReadOutlined />,        path: '/training',      color: REDWOOD.teal,      desc: 'User manuals · Learning paths · Videos' },
   { id: 'supp', label: 'Support',             icon: <SafetyCertificateOutlined />, path: '/support', color: REDWOOD.neutral600, desc: 'Tickets · Issues' },
   { id: 'admin',label: 'Administration',      icon: <SettingOutlined />,     path: '/admin',         color: REDWOOD.neutral800, desc: 'Users · Settings · AI' },
   { id: 'sync', label: 'Oracle Sync',         icon: <SyncOutlined />,        path: '/sync',          color: REDWOOD.primary,   desc: 'Sync GL · AP · AR · Assets' },
