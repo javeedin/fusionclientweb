@@ -16,6 +16,8 @@
 --   Billable = received − billed (3-way match) or ordered − cancelled − billed (2-way).
 --   A line can be invoiced in parts; a fully billed line cannot be invoiced again.
 -- Run after 300–304. Safe to re-run.
+-- Fix (re-run on existing installs): the match tables were keyed by PLS_INTEGER, but Purchasing ids start at
+-- 6,000,000,001 (RR_PO_SEQ) — every match failed with ORA-01426: numeric overflow. They are keyed by VARCHAR2 now.
 -- =============================================================================
 
 BEGIN EXECUTE IMMEDIATE q'[
@@ -79,7 +81,8 @@ END RR_PO_MATCH_PKG;
 
 CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
 
-    TYPE t_num IS TABLE OF NUMBER INDEX BY PLS_INTEGER;
+    -- keyed by Purchasing ids, which start at 6,000,000,001 (RR_PO_SEQ): beyond PLS_INTEGER, so VARCHAR2 keys
+    TYPE t_num IS TABLE OF NUMBER INDEX BY VARCHAR2(40);
     g_susp_txn  VARCHAR2(200);   -- transaction in which the AP line trigger is suspended
     g_hint_dist t_num;           -- invoice line number → distribution it billed before (resync)
     g_hint_line t_num;           -- invoice line number → PO line it billed before (resync)
@@ -396,7 +399,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
         v_o NUMBER; v_n NUMBER;
         v_po     RR_PO_HEADERS%ROWTYPE;
         v_pos    VARCHAR2(4000);
-        k        PLS_INTEGER;
+        k        VARCHAR2(40);
         v_user   VARCHAR2(150) := SUBSTR(NVL(p_user, USER), 1, 150);
     BEGIN
         p_matched := 0;
@@ -424,7 +427,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
             v_sched(m.SCHEDULE_ID) := 1;
         END LOOP;
         k := v_sched.FIRST;
-        WHILE k IS NOT NULL LOOP RR_PO_DOC_PKG.rollup_schedule(k); k := v_sched.NEXT(k); END LOOP;
+        WHILE k IS NOT NULL LOOP RR_PO_DOC_PKG.rollup_schedule(TO_NUMBER(k)); k := v_sched.NEXT(k); END LOOP;
         -- match the lines as they are now
         IF v_cancel <> 'Y' THEN
             match_ap_lines(p_invoice_id, p_json, v_user, p_matched);
@@ -438,10 +441,10 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
         k := g_new_tot.FIRST;
         WHILE k IS NOT NULL LOOP
             v_o := CASE WHEN v_old.EXISTS(k) THEN v_old(k) ELSE 0 END; v_n := g_new_tot(k);
-            RR_PO_DOC_PKG.rollup_header(k);
-            SELECT * INTO v_po FROM RR_PO_HEADERS WHERE PO_HEADER_ID = k;
+            RR_PO_DOC_PKG.rollup_header(TO_NUMBER(k));
+            SELECT * INTO v_po FROM RR_PO_HEADERS WHERE PO_HEADER_ID = TO_NUMBER(k);
             IF ABS(v_n - v_o) > 0.001 THEN
-                RR_PO_UTIL_PKG.history('PO', k,
+                RR_PO_UTIL_PKG.history('PO', TO_NUMBER(k),
                     CASE WHEN v_o = 0 THEN 'INVOICE_MATCHED' WHEN v_n = 0 THEN 'INVOICE_UNMATCHED' ELSE 'INVOICE_REMATCHED' END, NULL, NULL, v_user,
                     'AP invoice ' || NVL(v_num, TO_CHAR(p_invoice_id)) || ' (ID ' || p_invoice_id || '): '
                     || CASE WHEN v_o = 0 THEN 'matched ' || TO_CHAR(v_n, 'FM999,999,999,990.00')
@@ -470,7 +473,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
 
     PROCEDURE reverse_invoice (p_invoice_id IN NUMBER, p_user IN VARCHAR2) IS
         v_rel NUMBER;
-        TYPE t_ids IS TABLE OF NUMBER INDEX BY PLS_INTEGER;
+        TYPE t_ids IS TABLE OF NUMBER INDEX BY VARCHAR2(40);   -- Purchasing ids exceed PLS_INTEGER
         v_sched t_ids; v_hdr t_ids;
         v_num VARCHAR2(100);
     BEGIN
@@ -481,13 +484,13 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_MATCH_PKG AS
             WHERE MATCH_ID = m.MATCH_ID;
             v_sched(m.SCHEDULE_ID) := m.SCHEDULE_ID; v_hdr(m.PO_HEADER_ID) := m.PO_HEADER_ID; v_num := m.INVOICE_NUM;
         END LOOP;
-        DECLARE k NUMBER := v_sched.FIRST; BEGIN
-            WHILE k IS NOT NULL LOOP RR_PO_DOC_PKG.rollup_schedule(k); k := v_sched.NEXT(k); END LOOP;
+        DECLARE k VARCHAR2(40) := v_sched.FIRST; BEGIN
+            WHILE k IS NOT NULL LOOP RR_PO_DOC_PKG.rollup_schedule(TO_NUMBER(k)); k := v_sched.NEXT(k); END LOOP;
         END;
-        DECLARE k NUMBER := v_hdr.FIRST; BEGIN
+        DECLARE k VARCHAR2(40) := v_hdr.FIRST; BEGIN
             WHILE k IS NOT NULL LOOP
-                RR_PO_DOC_PKG.rollup_header(k);
-                RR_PO_UTIL_PKG.history('PO', k, 'INVOICE_CANCELLED', NULL, NULL, p_user, 'Invoice ' || NVL(v_num, p_invoice_id) || ' cancelled — lines reopened for invoicing');
+                RR_PO_DOC_PKG.rollup_header(TO_NUMBER(k));
+                RR_PO_UTIL_PKG.history('PO', TO_NUMBER(k), 'INVOICE_CANCELLED', NULL, NULL, p_user, 'Invoice ' || NVL(v_num, p_invoice_id) || ' cancelled — lines reopened for invoicing');
                 k := v_hdr.NEXT(k);
             END LOOP;
         END;
@@ -588,30 +591,8 @@ SELECT d.DISTRIBUTION_ID, d.PO_LINE_ID, d.PO_HEADER_ID, d.DIST_NUM, d.PERCENT,
        d.CHARGE_ACCOUNT, d.ACCRUAL_ACCOUNT, s.ACCRUE_AT_RECEIPT_FLAG
 FROM   RR_PO_DISTRIBUTIONS d JOIN RR_PO_SCHEDULES s ON s.SCHEDULE_ID = d.SCHEDULE_ID;
 
--- AP liability account for an invoice created from a PO, in order of preference:
---   1. the supplier site's assignment to the PO's business unit (RR_SUPPLIER_SITE_ASSIGNMENTS.LIABILITY_DISTRIBUTION)
---   2. Purchasing options of the BU (RR_PO_BU_OPTIONS.AP_LIABILITY_ACCOUNT)
---   3. the liability account of the supplier's latest AP invoice in that BU
-CREATE OR REPLACE VIEW RR_PO_V_PO_LIABILITY AS
-SELECT h.PO_HEADER_ID, h.BUSINESS_UNIT_ID, h.SUPPLIER_ID, h.SUPPLIER_SITE_ID,
-       (SELECT MAX(a.LIABILITY_DISTRIBUTION) KEEP (DENSE_RANK FIRST ORDER BY
-                   CASE WHEN a.CLIENT_BU_ID = h.BUSINESS_UNIT_ID OR a.CLIENT_BU = bu.BUSINESS_UNIT_NAME THEN 0
-                        WHEN a.BILL_TO_BU_ID = h.BUSINESS_UNIT_ID OR a.BILL_TO_BU = bu.BUSINESS_UNIT_NAME THEN 1 ELSE 2 END)
-        FROM   RR_SUPPLIER_SITE_ASSIGNMENTS a
-        WHERE  a.SUPPLIER_SITE_ID = h.SUPPLIER_SITE_ID
-        AND    a.LIABILITY_DISTRIBUTION IS NOT NULL
-        AND    NVL(a.INACTIVE_DATE, SYSDATE + 1) > SYSDATE
-        AND    (a.CLIENT_BU_ID = h.BUSINESS_UNIT_ID OR a.CLIENT_BU = bu.BUSINESS_UNIT_NAME
-             OR a.BILL_TO_BU_ID = h.BUSINESS_UNIT_ID OR a.BILL_TO_BU = bu.BUSINESS_UNIT_NAME)) AS SITE_LIABILITY_ACCOUNT,
-       o.AP_LIABILITY_ACCOUNT AS BU_LIABILITY_ACCOUNT,
-       (SELECT MAX(i.LIABILITY_DISTRIBUTION) KEEP (DENSE_RANK LAST ORDER BY i.CREATION_DATE)
-        FROM   RR_AP_INVOICES_ALL i
-        WHERE  i.SUPPLIER_NUMBER = sm.SUPPLIER_NUMBER AND i.BUSINESS_UNIT = bu.BUSINESS_UNIT_NAME
-        AND    i.LIABILITY_DISTRIBUTION IS NOT NULL AND NVL(i.CANCELED_FLAG, 'N') <> 'Y') AS LAST_AP_LIABILITY_ACCOUNT
-FROM   RR_PO_HEADERS h
-LEFT   JOIN RR_GL_BUSINESS_UNITS bu ON bu.BUSINESS_UNIT_ID = h.BUSINESS_UNIT_ID
-LEFT   JOIN RR_SUPPLIER_MASTER sm   ON sm.SUPPLIER_ID = h.SUPPLIER_ID
-LEFT   JOIN RR_PO_BU_OPTIONS o      ON o.BUSINESS_UNIT_ID = h.BUSINESS_UNIT_ID;
+-- RR_PO_V_PO_LIABILITY (default AP liability account on Create AP invoice from a PO) is created by
+-- 310_po_liability_default.sql — kept out of here so re-running 305 does not replace it with an older version.
 
 -- ── registry for po/execute ─────────────────────────────────────────────────
 MERGE INTO RR_PO_PROC_REGISTRY t
@@ -662,7 +643,7 @@ BEGIN
 CREATE OR REPLACE TRIGGER RR_PO_AP_LINES_SYNC_TRG
 FOR INSERT OR UPDATE OR DELETE ON RR_AP_INVOICE_LINES_ALL
 COMPOUND TRIGGER
-    TYPE t_ids IS TABLE OF NUMBER INDEX BY PLS_INTEGER;
+    TYPE t_ids IS TABLE OF NUMBER INDEX BY VARCHAR2(40);   -- AP invoice ids may exceed PLS_INTEGER
     g_ids  t_ids;
     g_user VARCHAR2(240);
 
@@ -676,13 +657,13 @@ COMPOUND TRIGGER
     END AFTER EACH ROW;
 
     AFTER STATEMENT IS
-        k     PLS_INTEGER := g_ids.FIRST;
+        k     VARCHAR2(40) := g_ids.FIRST;
         v_m   NUMBER;
         v_s   VARCHAR2(10);
         v_msg VARCHAR2(4000);
     BEGIN
         WHILE k IS NOT NULL LOOP
-            RR_PO_MATCH_PKG.RESYNC_AP_INVOICE(k, NULL, NVL(g_user, USER), v_m, v_s, v_msg);
+            RR_PO_MATCH_PKG.RESYNC_AP_INVOICE(TO_NUMBER(k), NULL, NVL(g_user, USER), v_m, v_s, v_msg);
             IF v_s = 'E' THEN
                 g_ids.DELETE;
                 RAISE_APPLICATION_ERROR(-20951, 'PO matching: ' || v_msg);
