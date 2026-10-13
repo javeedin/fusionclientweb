@@ -25,8 +25,12 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { createAccounting, checkAccountingExists, type SlaCreatePayload } from '../../services/sla.service';
-import { postSlaToGL } from '../../services/glPosting.service';
-import SourceJournalsModal, { type ExpectedLine } from '../../components/SourceJournalsModal';
+import {
+  planRevaluationJournals, postRevaluationToGl, checkRevaluationInGl, describeRevalPosting, periodLastDay,
+  revaluationJournalOptions, readRevaluationGlCounts, type RevalPostOutcome,
+} from '../../services/revaluationPosting.service';
+import { buildGlJournalPayload, makeBatchName } from '../../services/glPosting.service';
+import SourceJournalsModal from '../../components/SourceJournalsModal';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -90,6 +94,7 @@ interface RevalLine {
   commentText: string;
   drAmount:    number;
   crAmount:    number;
+  currencyCode?: string | null;   // RR_REVALUE_LINES.CURRENCY_CODE (164) — older rows: resolved when posting
 }
 
 interface RevalDetail extends RevalHeader {
@@ -102,19 +107,54 @@ interface RevalDetail extends RevalHeader {
 const fmt2 = (n: number | null | undefined) =>
   (n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-/** The revaluation's own Dr/Cr lines (RR_REVALUE_LINES) — what View Accounting checks the GL against. */
-async function fetchRevalLines(id: number): Promise<ExpectedLine[]> {
+/** GET gl/revaluation/:id → header, currency rows and lines (each line carries its currency once 164 is installed). */
+async function fetchRevalDetail(id: number): Promise<RevalDetail> {
   const res  = await fetch(`${ORDS_BASE}/${APEX_DB_CONFIG.endpoints.revaluation}/${id}`);
   const text = await res.text();
-  if (!res.ok || !text.trim()) throw new Error(`HTTP ${res.status}`);
+  if (!text.trim()) throw new Error('Empty response from API');
   const r = JSON.parse(text);
-  return (r.lines || []).map((l: any) => ({
-    lineNum:     l.lineNum ?? l.line_num,
-    combo:       l.combo ?? '',
-    description: l.description ?? '',
-    dr:          Number(l.drAmount ?? l.dr_amount ?? 0),
-    cr:          Number(l.crAmount ?? l.cr_amount ?? 0),
-  })).filter((l: ExpectedLine) => l.dr || l.cr);
+  if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`);
+  return {
+    revalueId:     r.revalueId     ?? r.revalue_id,
+    ledgerId:      r.ledgerId      ?? r.ledger_id ?? null,
+    ledgerName:    r.ledgerName    ?? r.ledger_name ?? '',
+    periodName:    r.periodName    ?? r.period_name ?? '',
+    account:       r.account       ?? '',
+    accountDesc:   r.accountDesc   ?? r.account_desc ?? '',
+    functionalCcy: r.baseCurrency  ?? r.base_currency  ?? r.functionalCcy ?? r.functional_ccy ?? '',
+    gainAccount:   r.gainAccount   ?? r.gain_account ?? '',
+    lossAccount:   r.lossAccount   ?? r.loss_account ?? '',
+    totalGain:     Number(r.totalGain  ?? r.total_gain  ?? 0),
+    totalLoss:     Number(r.totalLoss  ?? r.total_loss  ?? 0),
+    status:        r.status        ?? 'DRAFT',
+    glBatchId:     r.glBatchId     ?? r.gl_batch_id ?? null,
+    glBatchName:   r.glBatchName   ?? r.gl_batch_name ?? null,
+    notes:         r.notes         ?? null,
+    createdDate:   r.createdDate   ?? r.created_date ?? '',
+    createdBy:     r.createdBy     ?? r.created_by ?? '',
+    lineCount:     Number(r.lineCount ?? r.line_count ?? 0),
+    ccyRows: (r.ccyRows || r.ccy_rows || []).map((c: any) => ({
+      ccyId:        c.ccyId        ?? c.ccy_id,
+      currencyCode: c.currencyCode ?? c.currency_code ?? '',
+      entClosing:   Number(c.entClosing  ?? c.ent_closing  ?? 0),
+      acctClosing:  Number(c.acctClosing ?? c.acct_closing ?? 0),
+      bookRate:     Number(c.bookRate    ?? c.book_rate    ?? 0),
+      newRate:      Number(c.newRate     ?? c.new_rate     ?? 0),
+      newAcctValue: Number(c.newAcctValue ?? c.new_acct_value ?? 0),
+      revalAmt:     Number(c.revalAmt    ?? c.reval_amt    ?? 0),
+      isGain:       Number(c.isGain      ?? c.is_gain      ?? 0),
+    })),
+    lines: (r.lines || []).map((l: any) => ({
+      lineId:       l.lineId      ?? l.line_id,
+      lineNum:      l.lineNum     ?? l.line_num,
+      combo:        l.combo       ?? '',
+      description:  l.description ?? '',
+      commentText:  l.commentText ?? l.comment_text ?? '',
+      drAmount:     Number(l.drAmount ?? l.dr_amount ?? 0),
+      crAmount:     Number(l.crAmount ?? l.cr_amount ?? 0),
+      currencyCode: l.currencyCode ?? l.currency_code ?? null,
+    })),
+  };
 }
 
 function generateRevalPdf(detail: RevalDetail): string {
@@ -239,6 +279,9 @@ const ManageRevaluation: React.FC = () => {
   const { user } = useAuth();
   const [loading,        setLoading]        = useState(false);
   const [data,           setData]           = useState<RevalHeader[]>([]);
+  // GL lines per revaluation (REFERENCE2) — flags ACCOUNTED revaluations whose lines did not all reach the GL
+  const [glCounts,       setGlCounts]       = useState<Record<string, number> | null>(null);
+  const [onlyGlGaps,     setOnlyGlGaps]     = useState(false);
   const [statusFilter,   setStatusFilter]   = useState<string>('ALL');
   const [searchText,     setSearchText]     = useState('');
   const [detailLoading,  setDetailLoading]  = useState(false);
@@ -329,6 +372,7 @@ const ManageRevaluation: React.FC = () => {
         createdBy:     r.createdBy     ?? r.created_by     ?? '',
         lineCount:     Number(r.lineCount ?? r.line_count ?? 0),
       })));
+      readRevaluationGlCounts().then(setGlCounts).catch(() => setGlCounts(null));   // gateway down: no flags
     } catch (e) {
       message.error('Failed to load revaluations: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
@@ -343,50 +387,7 @@ const ManageRevaluation: React.FC = () => {
     setDetailVisible(true);
     setDetail(null);
     try {
-      const res  = await fetch(`${ORDS_BASE}/${APEX_DB_CONFIG.endpoints.revaluation}/${id}`);
-      const text = await res.text();
-      if (!text.trim()) throw new Error('Empty response');
-      const r = JSON.parse(text);
-      const mapped: RevalDetail = {
-        revalueId:     r.revalueId     ?? r.revalue_id,
-        ledgerId:      r.ledgerId      ?? r.ledger_id ?? null,
-        ledgerName:    r.ledgerName    ?? r.ledger_name ?? '',
-        periodName:    r.periodName    ?? r.period_name ?? '',
-        account:       r.account       ?? '',
-        accountDesc:   r.accountDesc   ?? r.account_desc ?? '',
-        functionalCcy: r.baseCurrency  ?? r.base_currency  ?? r.functionalCcy ?? r.functional_ccy ?? '',
-        gainAccount:   r.gainAccount   ?? r.gain_account ?? '',
-        lossAccount:   r.lossAccount   ?? r.loss_account ?? '',
-        totalGain:     Number(r.totalGain  ?? r.total_gain  ?? 0),
-        totalLoss:     Number(r.totalLoss  ?? r.total_loss  ?? 0),
-        status:        r.status        ?? 'DRAFT',
-        glBatchId:     r.glBatchId     ?? r.gl_batch_id ?? null,
-        glBatchName:   r.glBatchName   ?? r.gl_batch_name ?? null,
-        notes:         r.notes         ?? null,
-        createdDate:   r.createdDate   ?? r.created_date ?? '',
-        createdBy:     r.createdBy     ?? r.created_by ?? '',
-        lineCount:     Number(r.lineCount ?? r.line_count ?? 0),
-        ccyRows: (r.ccyRows || r.ccy_rows || []).map((c: any) => ({
-          ccyId:        c.ccyId        ?? c.ccy_id,
-          currencyCode: c.currencyCode ?? c.currency_code ?? '',
-          entClosing:   Number(c.entClosing  ?? c.ent_closing  ?? 0),
-          acctClosing:  Number(c.acctClosing ?? c.acct_closing ?? 0),
-          bookRate:     Number(c.bookRate    ?? c.book_rate    ?? 0),
-          newRate:      Number(c.newRate     ?? c.new_rate     ?? 0),
-          newAcctValue: Number(c.newAcctValue ?? c.new_acct_value ?? 0),
-          revalAmt:     Number(c.revalAmt    ?? c.reval_amt    ?? 0),
-          isGain:       Number(c.isGain      ?? c.is_gain      ?? 0),
-        })),
-        lines: (r.lines || []).map((l: any) => ({
-          lineId:      l.lineId      ?? l.line_id,
-          lineNum:     l.lineNum     ?? l.line_num,
-          combo:       l.combo       ?? '',
-          description: l.description ?? '',
-          commentText: l.commentText ?? l.comment_text ?? '',
-          drAmount:    Number(l.drAmount ?? l.dr_amount ?? 0),
-          crAmount:    Number(l.crAmount ?? l.cr_amount ?? 0),
-        })),
-      };
+      const mapped = await fetchRevalDetail(id);
       setDetail(mapped);
     } catch (e) {
       message.error('Failed to load detail: ' + (e instanceof Error ? e.message : String(e)));
@@ -402,49 +403,7 @@ const ManageRevaluation: React.FC = () => {
     if (!d || d.revalueId !== id) {
       setDetailLoading(true);
       try {
-        const res  = await fetch(`${ORDS_BASE}/${APEX_DB_CONFIG.endpoints.revaluation}/${id}`);
-        const text = await res.text();
-        const r = JSON.parse(text);
-        d = {
-          revalueId:     r.revalueId     ?? r.revalue_id,
-          ledgerId:      r.ledgerId      ?? r.ledger_id ?? null,
-          ledgerName:    r.ledgerName    ?? r.ledger_name ?? '',
-          periodName:    r.periodName    ?? r.period_name ?? '',
-          account:       r.account       ?? '',
-          accountDesc:   r.accountDesc   ?? r.account_desc ?? '',
-          functionalCcy: r.baseCurrency  ?? r.base_currency  ?? r.functionalCcy ?? r.functional_ccy ?? '',
-          gainAccount:   r.gainAccount   ?? r.gain_account ?? '',
-          lossAccount:   r.lossAccount   ?? r.loss_account ?? '',
-          totalGain:     Number(r.totalGain  ?? r.total_gain  ?? 0),
-          totalLoss:     Number(r.totalLoss  ?? r.total_loss  ?? 0),
-          status:        r.status ?? 'DRAFT',
-          glBatchId:     r.glBatchId ?? r.gl_batch_id ?? null,
-          glBatchName:   r.glBatchName ?? r.gl_batch_name ?? null,
-          notes:         r.notes ?? null,
-          createdDate:   r.createdDate ?? r.created_date ?? '',
-          createdBy:     r.createdBy ?? r.created_by ?? '',
-          lineCount:     0,
-          ccyRows: (r.ccyRows || r.ccy_rows || []).map((c: any) => ({
-            ccyId: c.ccyId ?? c.ccy_id,
-            currencyCode: c.currencyCode ?? c.currency_code ?? '',
-            entClosing:   Number(c.entClosing  ?? c.ent_closing  ?? 0),
-            acctClosing:  Number(c.acctClosing ?? c.acct_closing ?? 0),
-            bookRate:     Number(c.bookRate    ?? c.book_rate    ?? 0),
-            newRate:      Number(c.newRate     ?? c.new_rate     ?? 0),
-            newAcctValue: Number(c.newAcctValue ?? c.new_acct_value ?? 0),
-            revalAmt:     Number(c.revalAmt    ?? c.reval_amt    ?? 0),
-            isGain:       Number(c.isGain      ?? c.is_gain      ?? 0),
-          })),
-          lines: (r.lines || []).map((l: any) => ({
-            lineId:      l.lineId ?? l.line_id,
-            lineNum:     l.lineNum ?? l.line_num,
-            combo:       l.combo ?? '',
-            description: l.description ?? '',
-            commentText: l.commentText ?? l.comment_text ?? '',
-            drAmount:    Number(l.drAmount ?? l.dr_amount ?? 0),
-            crAmount:    Number(l.crAmount ?? l.cr_amount ?? 0),
-          })),
-        };
+        d = await fetchRevalDetail(id);
       } catch (e) {
         message.error('Failed to load PDF data');
         return;
@@ -492,67 +451,30 @@ const ManageRevaluation: React.FC = () => {
       updateStep(0, 'process');
       let d: RevalDetail | null = detail?.revalueId === id ? detail : null;
       if (!d) {
-        const res  = await fetch(`${ORDS_BASE}/${APEX_DB_CONFIG.endpoints.revaluation}/${id}`);
-        const text = await res.text();
-        if (!text.trim()) throw new Error('Empty response from API');
-        const r = JSON.parse(text);
-        d = {
-          revalueId:     r.revalueId     ?? r.revalue_id,
-          ledgerId:      r.ledgerId      ?? r.ledger_id ?? null,
-          ledgerName:    r.ledgerName    ?? r.ledger_name ?? '',
-          periodName:    r.periodName    ?? r.period_name ?? '',
-          account:       r.account       ?? '',
-          accountDesc:   r.accountDesc   ?? r.account_desc ?? '',
-          functionalCcy: r.baseCurrency  ?? r.base_currency  ?? r.functionalCcy ?? r.functional_ccy ?? '',
-          gainAccount:   r.gainAccount   ?? r.gain_account ?? '',
-          lossAccount:   r.lossAccount   ?? r.loss_account ?? '',
-          totalGain:     Number(r.totalGain  ?? r.total_gain  ?? 0),
-          totalLoss:     Number(r.totalLoss  ?? r.total_loss  ?? 0),
-          status:        r.status        ?? 'DRAFT',
-          glBatchId:     r.glBatchId     ?? r.gl_batch_id ?? null,
-          glBatchName:   r.glBatchName   ?? r.gl_batch_name ?? null,
-          notes:         r.notes         ?? null,
-          createdDate:   r.createdDate   ?? r.created_date ?? '',
-          createdBy:     r.createdBy     ?? r.created_by ?? '',
-          lineCount:     Number(r.lineCount ?? r.line_count ?? 0),
-          ccyRows: (r.ccyRows || r.ccy_rows || []).map((c: any) => ({
-            ccyId:        c.ccyId        ?? c.ccy_id,
-            currencyCode: c.currencyCode ?? c.currency_code ?? '',
-            entClosing:   Number(c.entClosing  ?? c.ent_closing  ?? 0),
-            acctClosing:  Number(c.acctClosing ?? c.acct_closing ?? 0),
-            bookRate:     Number(c.bookRate    ?? c.book_rate    ?? 0),
-            newRate:      Number(c.newRate     ?? c.new_rate     ?? 0),
-            newAcctValue: Number(c.newAcctValue ?? c.new_acct_value ?? 0),
-            revalAmt:     Number(c.revalAmt    ?? c.reval_amt    ?? 0),
-            isGain:       Number(c.isGain      ?? c.is_gain      ?? 0),
-          })),
-          lines: (r.lines || []).map((l: any) => ({
-            lineId:      l.lineId      ?? l.line_id,
-            lineNum:     l.lineNum     ?? l.line_num,
-            combo:       l.combo       ?? '',
-            description: l.description ?? '',
-            commentText: l.commentText ?? l.comment_text ?? '',
-            drAmount:    Number(l.drAmount ?? l.dr_amount ?? 0),
-            crAmount:    Number(l.crAmount ?? l.cr_amount ?? 0),
-          })),
-        };
+        d = await fetchRevalDetail(id);
       }
 
       if (!d.lines || d.lines.length === 0)
         throw new Error('No journal lines found on this revaluation');
 
-      updateStep(0, 'finish', `${d.lines.length} lines loaded`);
+      // Every line goes to its currency's journal — nothing is left behind (see revaluationPosting.service)
+      const plan = planRevaluationJournals(d.lines, d.ccyRows);
+      if (plan.problems.length) {
+        updateStep(0, 'error', plan.problems.join(' '));
+        throw new Error(plan.problems.join(' '));
+      }
+      updateStep(0, 'finish', `${plan.lineCount} lines · ${plan.journals.map(j => `${j.ccy}: ${j.lines.length} lines`).join(' · ')}`);
 
       // Step 1 — Check if SLA accounting already exists
       updateStep(1, 'process');
       const existsRes = await checkAccountingExists('RR_REVALUE_HEADER', id, 'GL_REVALUATION');
-      if (existsRes.exists && existsRes.accountingStatus === 'POSTED') {
-        updateStep(1, 'error', `Already posted (SLA header ${existsRes.headerId})`);
-        throw new Error('SLA accounting already posted for this revaluation');
-      }
-      updateStep(1, 'finish', existsRes.exists
-        ? `Existing DRAFT found (header ${existsRes.headerId}) — will replace`
-        : 'No existing SLA entry — creating new');
+      // Already POSTED (an earlier run reached the GL): keep it and post only what the GL is missing
+      const slaPosted = existsRes.exists && existsRes.accountingStatus === 'POSTED' && !!existsRes.headerId;
+      updateStep(1, 'finish', slaPosted
+        ? `SLA already posted (header ${existsRes.headerId}) — will post only what the GL is missing`
+        : existsRes.exists
+          ? `Existing DRAFT found (header ${existsRes.headerId}) — will replace`
+          : 'No existing SLA entry — creating new');
 
       // Step 2 — Write to SLA
       updateStep(2, 'process');
@@ -562,156 +484,94 @@ const ManageRevaluation: React.FC = () => {
       const foreignCcys = new Set(d.ccyRows.map((c: any) => c.currencyCode).filter(Boolean));
       const currency   = (d.functionalCcy && !foreignCcys.has(d.functionalCcy)) ? d.functionalCcy : 'AED';
       const createdBy  = user?.username || 'SYSTEM';
+      const lastDay    = periodLastDay(periodName);   // e.g. "Sep-26" → 2026-09-30 (local time)
 
-      // Derive last day of the period (e.g. "Apr-26" → 2026-04-30)
-      const periodLastDay = (() => {
-        const MONTHS: Record<string, number> = {
-          Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5,
-          Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11,
+      let slaHeaderId: number;
+      if (slaPosted) {
+        slaHeaderId = existsRes.headerId!;
+        updateStep(2, 'finish', `Kept SLA header ${slaHeaderId}`);
+      } else {
+        const slaPayload: SlaCreatePayload = {
+          header: {
+            moduleName:       'GL',
+            sourceTable:      'RR_REVALUE_HEADER',
+            sourceId:         id,
+            sourceNumber:     `REVAL-${id}`,
+            sourceType:       'Revaluation',
+            eventTypeCode:    'GL_REVALUATION',
+            eventDate:        lastDay,
+            accountingDate:   lastDay,
+            periodName,
+            ledgerId:         d.ledgerId   || 0,
+            ledgerName:       d.ledgerName || '',
+            currencyCode:     currency,
+            ledgerCurrency:   currency,
+            exchangeRate:     1,
+            exchangeRateType: 'User',
+            description:      `FX Revaluation – ${d.accountDesc || d.account} – ${periodName}`,
+            createdBy,
+          },
+          lines: d.lines.map((l, idx) => ({
+            lineNumber:         l.lineNum || idx + 1,
+            lineType:           l.drAmount > 0 ? 'DR' : 'CR',
+            accountingClass:    'Revaluation',
+            accountCombination: l.combo,
+            enteredDr:          l.drAmount || 0,
+            enteredCr:          l.crAmount || 0,
+            accountedDr:        l.drAmount || 0,
+            accountedCr:        l.crAmount || 0,
+            currencyCode:       currency,
+            exchangeRate:       1,
+            description:        l.description || `Revaluation – ${d!.account}`,
+            sourceLineId:       l.lineId || idx + 1,
+            sourceLineNumber:   l.lineNum || idx + 1,
+          })),
         };
-        const [mon, yr] = periodName.split('-');
-        if (mon && yr && MONTHS[mon] !== undefined) {
-          const year = 2000 + parseInt(yr, 10);
-          const last = new Date(year, MONTHS[mon] + 1, 0); // day 0 of next month = last day of this month
-          return last.toISOString().split('T')[0];
-        }
-        return new Date().toISOString().split('T')[0]; // fallback to today
-      })();
+        const slaResult = await createAccounting(slaPayload);
+        slaHeaderId = slaResult.headerId;
+        updateStep(2, 'finish',
+          `SLA header ${slaResult.headerId} created — ${slaResult.lineCount} lines (${slaResult.status})`);
+      }
 
-      const slaPayload: SlaCreatePayload = {
-        header: {
-          moduleName:       'GL',
-          sourceTable:      'RR_REVALUE_HEADER',
-          sourceId:         id,
-          sourceNumber:     `REVAL-${id}`,
-          sourceType:       'Revaluation',
-          eventTypeCode:    'GL_REVALUATION',
-          eventDate:        periodLastDay,
-          accountingDate:   periodLastDay,
-          periodName,
-          ledgerId:         d.ledgerId   || 0,
-          ledgerName:       d.ledgerName || '',
-          currencyCode:     currency,
-          ledgerCurrency:   currency,
-          exchangeRate:     1,
-          exchangeRateType: 'User',
-          description:      `FX Revaluation – ${d.accountDesc || d.account} – ${periodName}`,
-          createdBy,
-        },
-        lines: d.lines.map((l, idx) => ({
-          lineNumber:         l.lineNum || idx + 1,
-          lineType:           l.drAmount > 0 ? 'DR' : 'CR',
-          accountingClass:    'Revaluation',
-          accountCombination: l.combo,
-          enteredDr:          l.drAmount || 0,
-          enteredCr:          l.crAmount || 0,
-          accountedDr:        l.drAmount || 0,
-          accountedCr:        l.crAmount || 0,
-          currencyCode:       currency,
-          exchangeRate:       1,
-          description:        l.description || `Revaluation – ${d!.account}`,
-          sourceLineId:       l.lineId || idx + 1,
-          sourceLineNumber:   l.lineNum || idx + 1,
-        })),
-      };
-
-      const slaResult = await createAccounting(slaPayload);
-      updateStep(2, 'finish',
-        `SLA header ${slaResult.headerId} created — ${slaResult.lineCount} lines (${slaResult.status})`);
-
-      // Step 3 — Post to GL via glPosting service
-      // Oracle Fusion revaluation: one journal per foreign currency.
+      // Step 3 — Post to GL: one journal per foreign currency carrying ALL of that currency's lines.
       // Journal currency = foreign ccy (e.g. INR), entered = 0, accounted = AED amounts.
       updateStep(3, 'process');
-
-      const journalDesc   = `FX Revaluation – ${d.accountDesc || d.account} – ${periodName}`;
-      const activeCcyRows = d.ccyRows.filter(c => c.revalAmt !== 0 && c.newRate !== 0);
-      const acctLabel     = d.accountDesc || d.account;
-
-      const glResults: { success: boolean; skipped: boolean; batchName: string; batchId: number | null; headerId: number | null; error?: string }[] = [];
-
-      for (let idx = 0; idx < activeCcyRows.length; idx++) {
-        const ccyRow  = activeCcyRows[idx];
-        const l1      = d.lines[idx * 2];
-        const l2      = d.lines[idx * 2 + 1];
-        if (!l1 || !l2) continue;
-
-        const fCcy    = ccyRow.currencyCode || currency;
-        const newRate = ccyRow.newRate || 1;
-        const l1Desc  = ccyRow.isGain
-          ? `FX Revaluation Gain – ${fCcy} – ${acctLabel} – ${periodName}`
-          : `FX Revaluation Loss – ${fCcy} – ${d.lossAccount || 'Loss A/C'} – ${periodName}`;
-        const l2Desc  = ccyRow.isGain
-          ? `FX Revaluation Gain – ${fCcy} – ${d.gainAccount || 'Gain A/C'} – ${periodName}`
-          : `FX Revaluation Loss – ${fCcy} – ${acctLabel} – ${periodName}`;
-
-        const r = await postSlaToGL({
-          slaHeaderId:        slaResult.headerId,
-          sourceNumber:       `REVAL-${id}-${fCcy}`,
-          sourceId:           id,
-          eventTypeCode:      'GL_REVALUATION',
+      const acctLabel = d.accountDesc || d.account;
+      let outcome: RevalPostOutcome;
+      try {
+        outcome = await postRevaluationToGl({
+          revalueId:          id,
+          account:            d.account,
           periodName,
+          accountingDate:     lastDay,
           ledgerName:         d.ledgerName || '',
           ledgerId:           d.ledgerId   || 0,
-          currency:           fCcy,        // foreign currency (e.g. INR) — Oracle standard
-          conversionRate:     newRate,      // new revaluation rate
-          accountingDate:     periodLastDay,
-          legalEntity:        '',
-          businessUnit:       '',
-          jeCategory:         'Revaluation',
-          jeSource:           'General Ledger',
-          batchSource:        'General Ledger',
-          batchDescription:   journalDesc,
-          journalDescription: journalDesc,
-          journalName:        `FX REVAL – ${d.account} – ${fCcy} – ${periodName}`,
+          slaHeaderId,
           createdBy,
-          forceCreate:        true,
-          lines: [
-            {
-              lineType:           l1.drAmount > 0 ? 'DR' as const : 'CR' as const,
-              enteredDr:          0,
-              enteredCr:          0,
-              accountedDr:        l1.drAmount > 0 ? l1.drAmount : null,
-              accountedCr:        l1.crAmount > 0 ? l1.crAmount : null,
-              description:        l1.description || l1Desc,
-              currencyCode:       fCcy,
-              accountingDate:     periodLastDay,
-              accountCombination: l1.combo,
-              accountingClass:    'Revaluation',
-              legalEntity:        null,
-            },
-            {
-              lineType:           l2.drAmount > 0 ? 'DR' as const : 'CR' as const,
-              enteredDr:          0,
-              enteredCr:          0,
-              accountedDr:        l2.drAmount > 0 ? l2.drAmount : null,
-              accountedCr:        l2.crAmount > 0 ? l2.crAmount : null,
-              description:        l2.description || l2Desc,
-              currencyCode:       fCcy,
-              accountingDate:     periodLastDay,
-              accountCombination: l2.combo,
-              accountingClass:    'Revaluation',
-              legalEntity:        null,
-            },
-          ],
-        });
-        glResults.push(r);
-        if (!r.success) {
-          updateStep(3, 'error', `${fCcy}: ${r.error || 'GL posting failed'}`);
-          throw new Error(`${fCcy}: ${r.error || 'GL posting failed'}`);
-        }
+          journalDescription: `FX Revaluation – ${acctLabel} – ${periodName}`,
+          lineDescription:    (l, ccy) => l.description || `FX Revaluation – ${ccy} – ${acctLabel} – ${periodName}`,
+        }, plan);
+      } catch (e) {
+        updateStep(3, 'error', e instanceof Error ? e.message : String(e));
+        throw e;
       }
+      const lastPosted = outcome.posted[outcome.posted.length - 1]?.result;
+      updateStep(3, 'finish', describeRevalPosting(outcome));
 
-      if (glResults.length === 0) {
-        updateStep(3, 'error', 'No active CCY rows to post');
-        throw new Error('No active CCY rows to post');
-      }
-      const lastGlResult = glResults[glResults.length - 1];
-      updateStep(3, 'finish',
-        `Posted ${glResults.length} GL batch(es): ${glResults.map(r => r.batchName).join(', ')}`);
-
-      // Step 4 — Mark revaluation ACCOUNTED via dedicated status endpoint
+      // Step 4 — read the GL back: mark ACCOUNTED only when every line is there
       updateStep(4, 'process');
+      const glCheck = await checkRevaluationInGl(id, plan);
+      if (!glCheck.ok) {
+        updateStep(4, 'error', `GL check failed — ${glCheck.message}. Not marked ACCOUNTED.`);
+        throw new Error(`GL check failed — ${glCheck.message}`);
+      }
+      const lastGlResult = {
+        batchId:   lastPosted?.batchId   ?? d.glBatchId   ?? null,
+        batchName: lastPosted?.batchName ?? d.glBatchName ?? '',
+        headerId:  lastPosted?.headerId  ?? null,
+      };
+
+      // Mark revaluation ACCOUNTED via dedicated status endpoint
       const statusUrl     = `${ORDS_BASE}/${APEX_DB_CONFIG.endpoints.revaluation}/${id}/accounting`;
       const statusPayload = {
         status:        'ACCOUNTED',
@@ -737,10 +597,10 @@ const ManageRevaluation: React.FC = () => {
         updateStep(4, 'error', `HTTP ${putRes.status}${putData.error ? ` — ${putData.error}` : ''}`);
         throw new Error(putData.error || `Status update failed (HTTP ${putRes.status})`);
       }
-      updateStep(4, 'finish', 'Status set to ACCOUNTED');
+      updateStep(4, 'finish', `${glCheck.message} — status set to ACCOUNTED`);
       setAcctFlowDone(true);
 
-      message.success(`Revaluation #${id} accounted — GL Batch: ${lastGlResult.batchName}`);
+      message.success(`Revaluation #${id} accounted — ${glCheck.message}`);
       setAccountingId(id);
       load();
       if (detail?.revalueId === id) {
@@ -763,63 +623,14 @@ const ManageRevaluation: React.FC = () => {
       // Load detail
       let d: RevalDetail | null = detail?.revalueId === id ? detail : null;
       if (!d) {
-        const res  = await fetch(`${ORDS_BASE}/${APEX_DB_CONFIG.endpoints.revaluation}/${id}`);
-        const text = await res.text();
-        const r    = JSON.parse(text);
-        d = {
-          revalueId:     r.revalueId     ?? r.revalue_id,
-          ledgerId:      r.ledgerId      ?? r.ledger_id ?? null,
-          ledgerName:    r.ledgerName    ?? r.ledger_name ?? '',
-          periodName:    r.periodName    ?? r.period_name ?? '',
-          account:       r.account       ?? '',
-          accountDesc:   r.accountDesc   ?? r.account_desc ?? '',
-          functionalCcy: r.baseCurrency  ?? r.base_currency ?? r.functionalCcy ?? r.functional_ccy ?? '',
-          gainAccount:   r.gainAccount   ?? r.gain_account ?? '',
-          lossAccount:   r.lossAccount   ?? r.loss_account ?? '',
-          totalGain:     Number(r.totalGain  ?? r.total_gain  ?? 0),
-          totalLoss:     Number(r.totalLoss  ?? r.total_loss  ?? 0),
-          status:        r.status        ?? 'DRAFT',
-          glBatchId:     r.glBatchId     ?? r.gl_batch_id ?? null,
-          glBatchName:   r.glBatchName   ?? r.gl_batch_name ?? null,
-          notes:         r.notes         ?? null,
-          createdDate:   r.createdDate   ?? r.created_date ?? '',
-          createdBy:     r.createdBy     ?? r.created_by ?? '',
-          lineCount:     Number(r.lineCount ?? r.line_count ?? 0),
-          ccyRows: (r.ccyRows || r.ccy_rows || []).map((c: any) => ({
-            ccyId: c.ccyId ?? c.ccy_id, currencyCode: c.currencyCode ?? c.currency_code ?? '',
-            entClosing: Number(c.entClosing ?? c.ent_closing ?? 0),
-            acctClosing: Number(c.acctClosing ?? c.acct_closing ?? 0),
-            bookRate: Number(c.bookRate ?? c.book_rate ?? 0),
-            newRate: Number(c.newRate ?? c.new_rate ?? 0),
-            newAcctValue: Number(c.newAcctValue ?? c.new_acct_value ?? 0),
-            revalAmt: Number(c.revalAmt ?? c.reval_amt ?? 0),
-            isGain: Number(c.isGain ?? c.is_gain ?? 0),
-          })),
-          lines: (r.lines || []).map((l: any) => ({
-            lineId: l.lineId ?? l.line_id, lineNum: l.lineNum ?? l.line_num,
-            combo: l.combo ?? '', description: l.description ?? '',
-            commentText: l.commentText ?? l.comment_text ?? '',
-            drAmount: Number(l.drAmount ?? l.dr_amount ?? 0),
-            crAmount: Number(l.crAmount ?? l.cr_amount ?? 0),
-          })),
-        };
+        d = await fetchRevalDetail(id);
       }
 
       const periodName   = d.periodName.replace(/^(?:ReERP|Dynamic|YTD):\s*/, '');
       const foreignCcys  = new Set(d.ccyRows.map((c: any) => c.currencyCode).filter(Boolean));
       const currency     = (d.functionalCcy && !foreignCcys.has(d.functionalCcy)) ? d.functionalCcy : 'AED';
       const createdBy    = user?.username || 'SYSTEM';
-      const MONTHS: Record<string, number> = {
-        Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11,
-      };
-      const [mon, yr] = periodName.split('-');
-      // format in LOCAL time — toISOString() converts to UTC, which in a
-      // UTC+ timezone turns 31-Jul 00:00 into 30-Jul and shifts the date back a day
-      const fmtLocal = (dt: Date) =>
-        `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-      const periodLastDay = (mon && yr && MONTHS[mon] !== undefined)
-        ? fmtLocal(new Date(2000 + parseInt(yr, 10), MONTHS[mon] + 1, 0))
-        : fmtLocal(new Date());
+      const lastDay      = periodLastDay(periodName);
 
       const payloads: { step: string; method: string; url: string; payload: any }[] = [];
 
@@ -829,8 +640,8 @@ const ManageRevaluation: React.FC = () => {
         header: {
           moduleName: 'GL', sourceTable: 'RR_REVALUE_HEADER', sourceId: id,
           sourceNumber: `REVAL-${id}`, sourceType: 'Revaluation',
-          eventTypeCode: 'GL_REVALUATION', eventDate: periodLastDay,
-          accountingDate: periodLastDay, periodName,
+          eventTypeCode: 'GL_REVALUATION', eventDate: lastDay,
+          accountingDate: lastDay, periodName,
           ledgerId: d.ledgerId || 0, ledgerName: d.ledgerName || '',
           currencyCode: currency, ledgerCurrency: currency,
           exchangeRate: 1, exchangeRateType: 'User',
@@ -851,94 +662,29 @@ const ManageRevaluation: React.FC = () => {
       };
       payloads.push({ step: 'Step 1 — POST SLA Accounting', method: 'POST', url: slaUrl, payload: slaPayload });
 
-      // ── Step 2: GL journal create — one per active CCY ────────────────────────
-      const activeCcyRows = d.ccyRows.filter(c => c.revalAmt !== 0 && c.newRate !== 0);
-      const acctLabel     = d.accountDesc || d.account;
-      const journalDesc   = `FX Revaluation – ${acctLabel} – ${periodName}`;
-
-      activeCcyRows.forEach((ccyRow, idx) => {
-        const l1      = d!.lines[idx * 2];
-        const l2      = d!.lines[idx * 2 + 1];
-        if (!l1 || !l2) return;
-
-        const fCcy    = ccyRow.currencyCode || currency;
-        const newRate = ccyRow.newRate || 1;
-        const ref5    = 'GL-REVALUATION';
-        const batchName = `${ref5}-REVAL-${id}-${fCcy}-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-XXXXXX`;
-
-        const l1Desc = ccyRow.isGain
-          ? `FX Revaluation Gain – ${fCcy} – ${acctLabel} – ${periodName}`
-          : `FX Revaluation Loss – ${fCcy} – ${d!.lossAccount || 'Loss A/C'} – ${periodName}`;
-        const l2Desc = ccyRow.isGain
-          ? `FX Revaluation Gain – ${fCcy} – ${d!.gainAccount || 'Gain A/C'} – ${periodName}`
-          : `FX Revaluation Loss – ${fCcy} – ${acctLabel} – ${periodName}`;
-
-        // Mirror the glPosting service payload logic exactly
-        const buildLine = (l: typeof l1, desc: string) => {
-          const lineType = l.drAmount > 0 ? 'DR' : 'CR';
-          const eDr = lineType === 'DR' ? 0 : null;
-          const eCr = lineType === 'CR' ? 0 : null;
-          const aDr = lineType === 'DR' ? (l.drAmount > 0 ? l.drAmount : null) : null;
-          const aCr = lineType === 'CR' ? (l.crAmount > 0 ? l.crAmount : null) : null;
-          return {
-            enteredDr: eDr, enteredCr: eCr,
-            accountedDr: aDr, accountedCr: aCr,
-            statAmount: null,
-            description: l.description || desc,
-            currencyCode: fCcy,
-            currencyConversionDate: periodLastDay,
-            currencyConversionRate: newRate,
-            userCurrencyConversionType: 'User',
-            accountCombination: l.combo,
-            chartOfAccountsName: 'Chart of Accounts',
-            reference1: `REVAL-${id}-${fCcy}`,
-            reference2: String(id),
-            reference3: 'Revaluation',
-            reference4: null,
-            reference5: ref5,
-            createdBy,
-          };
-        };
-
-        const totalDr = (l1.drAmount > 0 ? l1.drAmount : 0) + (l2.drAmount > 0 ? l2.drAmount : 0);
-        const totalCr = (l1.crAmount > 0 ? l1.crAmount : 0) + (l2.crAmount > 0 ? l2.crAmount : 0);
-
-        const glPayload = {
-          batch: {
-            batchName, batchDescription: journalDesc,
-            ledgerName: d!.ledgerName || '', ledgerId: d!.ledgerId || 0,
-            status: 'NEW', accountingPeriod: periodName,
-            controlTotal: totalDr, runningTotalDr: totalDr, runningTotalCr: totalCr,
-            batchSource: 'General Ledger', createdBy,
-          },
-          header: {
-            ledgerId: d!.ledgerId || 0, ledgerName: d!.ledgerName || '',
-            jeCategory: 'Revaluation', jeSource: 'General Ledger',
-            periodName,
-            journalName: `FX REVAL – ${d!.account} – ${fCcy} – ${periodName}`,
-            description: journalDesc,
-            currencyCode: fCcy,
-            currencyConversionType: 'User',
-            currencyConversionDate: periodLastDay,
-            currencyConversionRate: newRate,
-            defaultEffectiveDate: periodLastDay,
-            status: 'NEW',
-            runningTotalDr: totalDr, runningTotalCr: totalCr,
-            createdBy,
-          },
-          lines: [buildLine(l1, l1Desc), buildLine(l2, l2Desc)],
-        };
-
+      // ── Step 2: GL journal create — one per currency, carrying all of its lines ──
+      // Same plan and payload builder as the real posting (revaluationPosting.service → buildGlJournalPayload)
+      const plan      = planRevaluationJournals(d.lines, d.ccyRows);
+      if (plan.problems.length) message.warning(plan.problems.join(' '), 8);
+      const acctLabel = d.accountDesc || d.account;
+      const ctx = {
+        revalueId: id, account: d.account, periodName, accountingDate: lastDay,
+        ledgerName: d.ledgerName || '', ledgerId: d.ledgerId || 0, slaHeaderId: 0, createdBy,
+        journalDescription: `FX Revaluation – ${acctLabel} – ${periodName}`,
+        lineDescription: (l: { description?: string }, ccy: string) => l.description || `FX Revaluation – ${ccy} – ${acctLabel} – ${periodName}`,
+      };
+      plan.journals.forEach(j => {
+        const opts = revaluationJournalOptions(ctx, j);
         payloads.push({
-          step: `Step 2 [${fCcy}] — POST journals/create`,
+          step: `Step 2 [${j.ccy}] — POST journals/create (${j.lines.length} lines)`,
           method: 'POST',
           url: `${ORDS_BASE}/journals/create`,
-          payload: glPayload,
+          payload: buildGlJournalPayload(opts, makeBatchName(opts.eventTypeCode, opts.sourceNumber)),
         });
 
         // ── Step 3: GL post (PUT) — placeholder batch ID ─────────────────────
         payloads.push({
-          step: `Step 3 [${fCcy}] — PUT gl/journals/{batchId}/post`,
+          step: `Step 3 [${j.ccy}] — PUT gl/journals/{batchId}/post`,
           method: 'PUT',
           url: `${ORDS_BASE}/gl/journals/{batchId_from_step2}/post`,
           payload: {},
@@ -1005,6 +751,14 @@ const ManageRevaluation: React.FC = () => {
     }
   };
 
+  /** An ACCOUNTED revaluation whose GL line count differs from its own line count. */
+  const glGap = (r: RevalHeader) => {
+    if (r.status !== 'ACCOUNTED' || !glCounts || !r.lineCount) return null;
+    const gl = glCounts[String(r.revalueId)] ?? 0;
+    return gl === r.lineCount ? null : { gl, lines: r.lineCount };
+  };
+  const glGapCount = data.filter(r => glGap(r)).length;
+
   const filtered = data.filter(r => {
     const matchStatus = statusFilter === 'ALL' || r.status === statusFilter;
     const q = searchText.toLowerCase();
@@ -1012,8 +766,29 @@ const ManageRevaluation: React.FC = () => {
       r.periodName.toLowerCase().includes(q) ||
       r.account.toLowerCase().includes(q) ||
       r.accountDesc.toLowerCase().includes(q);
-    return matchStatus && matchSearch;
+    return matchStatus && matchSearch && (!onlyGlGaps || !!glGap(r));
   });
+
+  // Repair a revaluation the old posting loop left half-posted: post only the lines the GL is missing,
+  // with the same plan as Create Accounting (one journal per currency), then read the GL back.
+  const postMissingRevalLines = async (id: number): Promise<string> => {
+    const d    = await fetchRevalDetail(id);
+    const plan = planRevaluationJournals(d.lines, d.ccyRows);
+    const periodName = d.periodName.replace(/^(?:ReERP|Dynamic|YTD):\s*/, '');
+    const sla  = await checkAccountingExists('RR_REVALUE_HEADER', id, 'GL_REVALUATION').catch(() => null);
+    const acctLabel = d.accountDesc || d.account;
+    const outcome = await postRevaluationToGl({
+      revalueId: id, account: d.account, periodName, accountingDate: periodLastDay(periodName),
+      ledgerName: d.ledgerName || '', ledgerId: d.ledgerId || 0, slaHeaderId: sla?.headerId || 0,
+      createdBy: user?.username || 'SYSTEM',
+      journalDescription: `FX Revaluation – ${acctLabel} – ${periodName}`,
+      lineDescription: (l, ccy) => l.description || `FX Revaluation – ${ccy} – ${acctLabel} – ${periodName}`,
+    }, plan);
+    const glCheck = await checkRevaluationInGl(id, plan);
+    if (!glCheck.ok) throw new Error(`${describeRevalPosting(outcome)}. GL check: ${glCheck.message}`);
+    load();
+    return `Revaluation #${id}: ${describeRevalPosting(outcome)}. ${glCheck.message}.`;
+  };
 
   const handleViewAccounting = (revalueId: number) => {
     setViewAcctRec(data.find(r => r.revalueId === revalueId) ?? null);
@@ -1071,9 +846,21 @@ const ManageRevaluation: React.FC = () => {
       title: 'Status',
       dataIndex: 'status',
       width: 110,
-      render: (s: string) => (
-        <Tag color={s === 'ACCOUNTED' ? 'green' : 'blue'}>{s}</Tag>
-      ),
+      render: (s: string, rec: RevalHeader) => {
+        const gap = glGap(rec);
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color={s === 'ACCOUNTED' ? 'green' : 'blue'} style={{ marginInlineEnd: 0 }}>{s}</Tag>
+            {gap && (
+              <Tooltip title={`${gap.gl} of the revaluation's ${gap.lines} lines are in the GL. Open View Accounting to see which and post the missing ones.`}>
+                <Tag color="error" style={{ marginInlineEnd: 0, cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => handleViewAccounting(rec.revalueId)}>
+                  GL {gap.gl}/{gap.lines} lines
+                </Tag>
+              </Tooltip>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: 'Created Date',
@@ -1279,6 +1066,13 @@ const ManageRevaluation: React.FC = () => {
               </Col>
             </Row>
           </Card>
+
+          {glGapCount > 0 && (
+            <Alert type="error" showIcon style={{ marginBottom: 16, borderRadius: 8 }}
+              message={`${glGapCount} accounted revaluation${glGapCount === 1 ? ' is' : 's are'} missing GL lines`}
+              description="Posting used to send only the first Dr/Cr pair of each currency to the GL. Open View Accounting on each one and use Post missing lines; new revaluations post every line."
+              action={<Button size="small" onClick={() => setOnlyGlGaps(v => !v)}>{onlyGlGaps ? 'Show all' : 'Show only these'}</Button>} />
+          )}
 
           {/* Main Table */}
           <Card style={{ borderRadius: 8 }} bodyStyle={{ padding: 0 }}>
@@ -1722,8 +1516,11 @@ const ManageRevaluation: React.FC = () => {
         reference2={viewAcctRec?.revalueId ?? ''}
         reference5={['GL_REVALUATION', 'GL-REVALUATION']}
         reference1Prefix={viewAcctRec ? `REVAL-${viewAcctRec.revalueId}` : undefined}
-        loadExpected={viewAcctRec ? () => fetchRevalLines(viewAcctRec.revalueId) : undefined}
+        loadExpected={viewAcctRec ? async () => (await fetchRevalDetail(viewAcctRec.revalueId)).lines
+          .filter(l => l.drAmount || l.crAmount)
+          .map(l => ({ lineNum: l.lineNum, combo: l.combo, description: l.description, dr: l.drAmount, cr: l.crAmount })) : undefined}
         sourceLabel="revaluation"
+        repairMissing={viewAcctRec ? () => postMissingRevalLines(viewAcctRec.revalueId) : undefined}
       />
 
       {/* PDF Modal */}

@@ -4,7 +4,7 @@
 // shows each journal the way Manage Journals does (header, conversion, lines, totals). With `loadExpected`
 // it also checks the source's own lines against the GL, so lines that never reached the ledger stand out.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Empty, Modal, Segmented, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Empty, Modal, Segmented, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
 import {
   AccountBookOutlined, CheckCircleFilled, CloseCircleFilled, CodeOutlined, ExclamationCircleFilled,
   ExpandOutlined, ReloadOutlined, WarningFilled,
@@ -66,7 +66,9 @@ const SourceJournalsModal: React.FC<{
   /** the source document's own lines, to check the posting against */
   loadExpected?: () => Promise<ExpectedLine[]>;
   sourceLabel?: string;
-}> = ({ open, onClose, title, reference2, reference5, reference1Prefix, loadExpected, sourceLabel = 'source' }) => {
+  /** offered when source lines are missing from the GL: posts them, resolves to a summary */
+  repairMissing?: () => Promise<string>;
+}> = ({ open, onClose, title, reference2, reference5, reference1Prefix, loadExpected, sourceLabel = 'source', repairMissing }) => {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [journals, setJournals] = useState<Journal[]>([]);
@@ -77,6 +79,7 @@ const SourceJournalsModal: React.FC<{
   const [view, setView] = useState<'J' | 'C'>('J');
   const [full, setFull] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
+  const [repairing, setRepairing] = useState(false);
 
   const where = useMemo(() => {
     const alt: string[] = [];
@@ -291,7 +294,20 @@ const SourceJournalsModal: React.FC<{
                 <Alert type="error" showIcon style={{ marginBottom: 12 }}
                   message={`${missing.length} ${sourceLabel} line${missing.length === 1 ? ' was' : 's were'} never posted to the GL (${money(missDr)} Dr / ${money(missCr)} Cr)`}
                   description={<>The {sourceLabel} has {expected!.length} lines; the GL has {allLines.length}.{' '}
-                    <a onClick={() => setView('C')}>See which lines</a>.</>} />
+                    <a onClick={() => setView('C')}>See which lines</a>.</>}
+                  action={repairMissing && !differs.length && !extra.length ? (
+                    <Button danger loading={repairing} onClick={() => Modal.confirm({
+                      title: `Post the ${missing.length} missing line${missing.length === 1 ? '' : 's'} to the GL?`,
+                      content: `Creates and posts a journal per currency with only the lines the GL does not have yet (${money(missDr)} Dr / ${money(missCr)} Cr). Lines already in the GL are not touched.`,
+                      okText: 'Post missing lines',
+                      onOk: async () => {
+                        setRepairing(true);
+                        try { message.success(await repairMissing(), 6); setTick(t => t + 1); }
+                        catch (e: any) { Modal.error({ title: 'Could not post the missing lines', content: e?.message || String(e) }); }
+                        finally { setRepairing(false); }
+                      },
+                    })}>Post missing lines</Button>
+                  ) : undefined} />
               )}
 
               {loadExpected && (
