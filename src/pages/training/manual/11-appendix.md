@@ -9,10 +9,11 @@ Some features need a database script to have been run once. The app keeps workin
 | `po/307_report_branding.sql` | Report Branding (logos and company details on printed documents) | Report Branding screen fails to load; the PO PDF prints only the business unit name |
 | `po/308_po_upgrade_columns.sql` | Columns added after the first install (AP liability account, category charge account, approval rule per business unit and category) | *ORA-00904: "AP\_LIABILITY\_ACCOUNT": invalid identifier* on Purchasing → Setup |
 | `po/309_po_approval_inapp.sql` | In-app approval of requisitions, purchase orders and change orders, with the chosen approver and decision history | Submit fails, or approving in the bell does not release the purchase order |
+| `po/310_po_liability_default.sql` | The AP liability account on *Create AP invoice* comes from the supplier (site assignment, the site's own account, or another site), then Purchasing options | *No liability account on the supplier site or in Purchasing options* although the supplier has one |
 | `approvals/22_ai_gateway_access.sql` | Fast approval history for AP invoices and external transactions | The approval history dialog is slow or shows only the latest request |
 | `cash/169_cm_execute.sql`, then `cash/170_cm_archive_bank_statements.sql` | Cash Management write service and bank reconciliation archives | Archive actions fail with a missing service or table |
 
-Run order for a new Purchasing install: `300 → 301 → 302 → 303 → 304 → 305 → 306 → 307 → 308 → 309`. See `database/po/README.md` for details and the checks to run afterwards.
+Run order for a new Purchasing install: `300 → 301 → 302 → 303 → 304 → 305 → 306 → 307 → 308 → 309 → 310`. See `database/po/README.md` for details and the checks to run afterwards.
 
 ### B. Troubleshooting
 

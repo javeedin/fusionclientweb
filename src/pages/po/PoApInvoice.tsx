@@ -7,7 +7,8 @@
 //   3. PUT  ap/invoices/:id/validation-status  'Validated' when the checks pass (mirrored on the PO match)
 // Accounts: receipt-accrued lines debit the receipt accrual (GRNI) account, others the charge account.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Form, Input, Table, InputNumber, Checkbox, Typography, Alert, Space, Tag, Select, message, Steps } from 'antd';
+import { Modal, Form, Input, Table, InputNumber, Checkbox, Typography, Alert, Space, Tag, Select, Tooltip, message, Steps } from 'antd';
+import { Link } from 'react-router-dom';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { poQuery, poExec, PROC, nlit, money, qty, day, today, Row, n, r2, logApi } from '../../services/po.service';
 import { AccountInput } from './poShared';
@@ -47,6 +48,8 @@ const PoApInvoice: React.FC<{
   const [stepErr, setStepErr] = useState<string | null>(null);
   const [validate, setValidate] = useState(true);
   const [liabSrc, setLiabSrc] = useState<string | null>(null);   // where the liability account came from
+  const [liabInfo, setLiabInfo] = useState<Row | null>(null);   // what RR_PO_V_PO_LIABILITY found, for the hint
+  const [liabErr, setLiabErr] = useState<string | null>(null);
   const rateOf = (code?: string | null) => n(taxCodes.find(t => t.TAX_CODE === code)?.TAX_RATE) / 100;
 
   useEffect(() => {
@@ -57,16 +60,24 @@ const PoApInvoice: React.FC<{
     form.setFieldsValue({ invoiceNumber: '', invoiceDate: today(), accountingDate: today(), description: `PO ${hdr.PO_NUMBER}${hdr.DESCRIPTION ? ` — ${hdr.DESCRIPTION}` : ''}`,
       paymentTerms: hdr.PAYMENT_TERMS, liability: liab, rate: n(hdr.RATE) || 1 });
     setLiabSrc(liab ? 'last used here' : null);
-    // liability: supplier site (BU assignment) → Purchasing options → supplier's latest AP invoice → last used here
+    setLiabInfo(null); setLiabErr(null);
+    // liability: the supplier first (site assignment → site's own account → another site of the supplier),
+    // then Purchasing options, then the supplier's latest AP invoice, then the account last used here
     poQuery(`SELECT * FROM RR_PO_V_PO_LIABILITY WHERE PO_HEADER_ID = ${nlit(hdr.PO_HEADER_ID)}`)
       .then(([r]) => {
         if (!r) return;
-        const pick: [unknown, string][] = [[r.SITE_LIABILITY_ACCOUNT, 'supplier site'], [r.BU_LIABILITY_ACCOUNT, 'Purchasing options'],
-          [r.LAST_AP_LIABILITY_ACCOUNT, "supplier's last AP invoice"]];
+        setLiabInfo(r);
+        const site = r.SITE_NAME ? `supplier site ${r.SITE_NAME}` : 'the supplier site';
+        const pick: [unknown, string][] = [
+          [r.SITE_LIABILITY_ACCOUNT, site],
+          [r.SITE_ACCOUNT, `${site} (its liability account)`],
+          [r.SUPPLIER_LIABILITY_ACCOUNT, 'another site of the supplier'],
+          [r.BU_LIABILITY_ACCOUNT, 'Purchasing options'],
+          [r.LAST_AP_LIABILITY_ACCOUNT, "the supplier's last AP invoice"]];
         const hit = pick.find(([a]) => a);
         if (hit) { form.setFieldValue('liability', String(hit[0])); setLiabSrc(hit[1]); }
       })
-      .catch(() => { /* view not installed yet: keep the remembered account */ });
+      .catch(e => setLiabErr(e.message || String(e)));
     setLoading(true);
     Promise.all([
       poQuery(`SELECT * FROM RR_PO_V_INVOICEABLE_LINES WHERE PO_HEADER_ID = ${nlit(hdr.PO_HEADER_ID)} ORDER BY LINE_NUM`),
@@ -209,7 +220,17 @@ const PoApInvoice: React.FC<{
           <Form.Item name="invoiceDate" label="Invoice date" rules={[{ required: true }]} style={{ marginBottom: 8 }}><Input type="date" /></Form.Item>
           <Form.Item name="accountingDate" label="GL date" rules={[{ required: true }]} style={{ marginBottom: 8 }}><Input type="date" /></Form.Item>
           <Form.Item name="liability" label="Liability acct" rules={[{ required: true, message: 'AP liability account is required' }]} style={{ marginBottom: 8, gridColumn: 'span 2' }}
-            extra={liabSrc === 'entered' ? undefined : liabSrc ? <Text type="secondary" style={{ fontSize: 11 }}>Default from {liabSrc}</Text> : <Text type="warning" style={{ fontSize: 11 }}>No liability account on the supplier site or in Purchasing options — choose one</Text>}>
+            extra={liabSrc === 'entered' ? undefined : liabSrc ? <Text type="secondary" style={{ fontSize: 11 }}>Default from {liabSrc}</Text> : liabErr ? (
+              <Tooltip title={liabErr}><Text type="warning" style={{ fontSize: 11 }}>
+                Could not read the default liability account — run database/po/310_po_liability_default.sql. Choose one for now.</Text></Tooltip>
+            ) : (
+              <Text type="warning" style={{ fontSize: 11 }}>
+                No liability account for {liabInfo?.BU_NAME || buName} on {liabInfo?.SITE_NAME ? `supplier site ${liabInfo.SITE_NAME}` : 'the supplier site'}
+                {liabInfo?.SITE_LIABILITY_ACCOUNT_ID ? ` (its account id ${liabInfo.SITE_LIABILITY_ACCOUNT_ID} is not in the chart of accounts or is another company's)` : ''}
+                {' '}or in <Link to="/po/setup" onClick={onClose}>Purchasing options</Link> — choose one.
+                {liabInfo?.SITE_ASSIGNMENTS ? <Tooltip title={<span>Site assignments: {String(liabInfo.SITE_ASSIGNMENTS)}</span>}><Text type="secondary" style={{ fontSize: 11, marginLeft: 4, textDecoration: 'underline dotted' }}>What the site has</Text></Tooltip> : null}
+              </Text>
+            )}>
             <AccountInput company={company} onChange={() => setLiabSrc('entered')} />
           </Form.Item>
           <Form.Item name="paymentTerms" label="Payment terms" style={{ marginBottom: 8 }}><Input /></Form.Item>
