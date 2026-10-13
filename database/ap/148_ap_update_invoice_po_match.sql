@@ -309,7 +309,8 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_UPDATE_INVOICE_PKG AS
                     distribution_combination VARCHAR2(500)   PATH '$.DistributionCombination',
                     distribution_set         VARCHAR2(240)   PATH '$.DistributionSet',
                     tax_classification       VARCHAR2(240)   PATH '$.TaxClassification',
-                    tax_control_amount       NUMBER          PATH '$.TaxAmount',
+                    tax_control_amount       NUMBER          PATH '$.TaxControlAmount',   -- AP screen
+                    tax_amount               NUMBER          PATH '$.TaxAmount',          -- older callers
                     quantity                 NUMBER          PATH '$.Quantity',
                     unit_price               NUMBER          PATH '$.UnitPrice',
                     uom                      VARCHAR2(25)    PATH '$.UOM',
@@ -375,7 +376,7 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_UPDATE_INVOICE_PKG AS
                     rec.distribution_combination,
                     rec.distribution_set,
                     rec.tax_classification,
-                    rec.tax_control_amount,
+                    NVL(rec.tax_control_amount, rec.tax_amount),
                     rec.quantity,
                     rec.unit_price,
                     rec.uom,
