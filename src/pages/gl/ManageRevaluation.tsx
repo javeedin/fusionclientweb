@@ -24,8 +24,9 @@ import {
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { APEX_DB_CONFIG } from '../../config/api.config';
-import { createAccounting, checkAccountingExists, getAccounting, type SlaCreatePayload, type SlaGetResult } from '../../services/sla.service';
+import { createAccounting, checkAccountingExists, type SlaCreatePayload } from '../../services/sla.service';
 import { postSlaToGL } from '../../services/glPosting.service';
+import SourceJournalsModal, { type ExpectedLine } from '../../components/SourceJournalsModal';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -100,6 +101,21 @@ interface RevalDetail extends RevalHeader {
 
 const fmt2 = (n: number | null | undefined) =>
   (n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** The revaluation's own Dr/Cr lines (RR_REVALUE_LINES) — what View Accounting checks the GL against. */
+async function fetchRevalLines(id: number): Promise<ExpectedLine[]> {
+  const res  = await fetch(`${ORDS_BASE}/${APEX_DB_CONFIG.endpoints.revaluation}/${id}`);
+  const text = await res.text();
+  if (!res.ok || !text.trim()) throw new Error(`HTTP ${res.status}`);
+  const r = JSON.parse(text);
+  return (r.lines || []).map((l: any) => ({
+    lineNum:     l.lineNum ?? l.line_num,
+    combo:       l.combo ?? '',
+    description: l.description ?? '',
+    dr:          Number(l.drAmount ?? l.dr_amount ?? 0),
+    cr:          Number(l.crAmount ?? l.cr_amount ?? 0),
+  })).filter((l: ExpectedLine) => l.dr || l.cr);
+}
 
 function generateRevalPdf(detail: RevalDetail): string {
   const doc = new jsPDF('portrait', 'mm', 'a4');
@@ -232,9 +248,8 @@ const ManageRevaluation: React.FC = () => {
   const [pdfVisible,     setPdfVisible]     = useState(false);
   const [accountingId,   setAccountingId]   = useState<number | null>(null);
   const [accountingLoading, setAccountingLoading] = useState<number | null>(null);
-  const [viewAcctOpen,    setViewAcctOpen]    = useState(false);
-  const [viewAcctLoading, setViewAcctLoading] = useState(false);
-  const [viewAcctData,    setViewAcctData]    = useState<SlaGetResult | null>(null);
+  // View Accounting → the GL journals posted for the revaluation (GL lines with REFERENCE2 = revalue id)
+  const [viewAcctRec, setViewAcctRec] = useState<RevalHeader | null>(null);
   // SLA accounting flow status modal
   const [acctFlowVisible, setAcctFlowVisible] = useState(false);
   const [acctFlowSteps,   setAcctFlowSteps]   = useState<{ title: string; status: 'wait'|'process'|'finish'|'error'; desc?: string }[]>([]);
@@ -1000,18 +1015,8 @@ const ManageRevaluation: React.FC = () => {
     return matchStatus && matchSearch;
   });
 
-  const handleViewAccounting = async (revalueId: number) => {
-    setViewAcctOpen(true);
-    setViewAcctLoading(true);
-    setViewAcctData(null);
-    try {
-      const result = await getAccounting('RR_REVALUE_HEADER', revalueId);
-      setViewAcctData(result);
-    } catch {
-      message.error('Failed to load accounting entries');
-    } finally {
-      setViewAcctLoading(false);
-    }
+  const handleViewAccounting = (revalueId: number) => {
+    setViewAcctRec(data.find(r => r.revalueId === revalueId) ?? null);
   };
 
   const columns = [
@@ -1709,77 +1714,17 @@ const ManageRevaluation: React.FC = () => {
         </Spin>
       </Modal>
 
-      {/* View Accounting Modal */}
-      <Modal
-        open={viewAcctOpen}
-        onCancel={() => setViewAcctOpen(false)}
-        title={<Space><AccountBookOutlined style={{ color: REDWOOD.info }} /><span>Accounting Entries</span></Space>}
-        width={1000}
-        footer={<Button onClick={() => setViewAcctOpen(false)}>Close</Button>}
-        destroyOnClose
-      >
-        <Spin spinning={viewAcctLoading}>
-          {viewAcctData && !viewAcctData.found && (
-            <Alert type="warning" message="No accounting entries found for this revaluation." />
-          )}
-          {viewAcctData?.found && (
-            <>
-              <Descriptions size="small" bordered column={3} style={{ marginBottom: 12 }}>
-                <Descriptions.Item label="Header ID">{viewAcctData.headerId}</Descriptions.Item>
-                <Descriptions.Item label="Status">
-                  <Tag color={viewAcctData.accountingStatus === 'POSTED' ? 'green' : 'orange'}>
-                    {viewAcctData.accountingStatus}
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="Posting Status">
-                  <Tag color={viewAcctData.postingStatus === 'Posted' ? 'green' : 'default'}>
-                    {viewAcctData.postingStatus || '—'}
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="Accounting Date">{viewAcctData.accountingDate || '—'}</Descriptions.Item>
-                <Descriptions.Item label="Period">{viewAcctData.periodName || '—'}</Descriptions.Item>
-                <Descriptions.Item label="GL Batch">{viewAcctData.glBatchName || '—'}</Descriptions.Item>
-                <Descriptions.Item label="Description" span={3}>{viewAcctData.description || '—'}</Descriptions.Item>
-              </Descriptions>
-              <Table
-                dataSource={(viewAcctData.lines || []).map((l, i) => ({ ...l, key: i }))}
-                pagination={false}
-                size="small"
-                bordered
-                columns={[
-                  { title: 'Line #',    dataIndex: 'lineNumber',        width: 60 },
-                  { title: 'Class',     dataIndex: 'accountingClass',   width: 130 },
-                  { title: 'Account',   dataIndex: 'accountCombination', width: 200,
-                    render: (v: string) => <Typography.Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Typography.Text> },
-                  { title: 'CCY',       dataIndex: 'currencyCode',      width: 60 },
-                  { title: 'Entered Dr', dataIndex: 'enteredDr', width: 110, align: 'right' as const,
-                    render: (v: number) => v > 0 ? <Typography.Text style={{ color: '#389e0d', fontWeight: 600 }}>{v.toLocaleString('en-US', { minimumFractionDigits: 2 })}</Typography.Text> : null },
-                  { title: 'Entered Cr', dataIndex: 'enteredCr', width: 110, align: 'right' as const,
-                    render: (v: number) => v > 0 ? <Typography.Text style={{ color: REDWOOD.primary, fontWeight: 600 }}>{v.toLocaleString('en-US', { minimumFractionDigits: 2 })}</Typography.Text> : null },
-                  { title: 'Accounted Dr', dataIndex: 'accountedDr', width: 120, align: 'right' as const,
-                    render: (v: number) => v > 0 ? <Typography.Text style={{ color: '#389e0d', fontWeight: 600 }}>{v.toLocaleString('en-US', { minimumFractionDigits: 2 })}</Typography.Text> : null },
-                  { title: 'Accounted Cr', dataIndex: 'accountedCr', width: 120, align: 'right' as const,
-                    render: (v: number) => v > 0 ? <Typography.Text style={{ color: REDWOOD.primary, fontWeight: 600 }}>{v.toLocaleString('en-US', { minimumFractionDigits: 2 })}</Typography.Text> : null },
-                  { title: 'Status', dataIndex: 'postingStatus', width: 90,
-                    render: (v: string) => <Tag color={v === 'Posted' ? 'green' : v === 'Error' ? 'red' : 'orange'} style={{ fontSize: 10 }}>{v || 'Draft'}</Tag> },
-                ]}
-                summary={(rows) => {
-                  const totDr = rows.reduce((s, r: any) => s + (r.accountedDr || 0), 0);
-                  const totCr = rows.reduce((s, r: any) => s + (r.accountedCr || 0), 0);
-                  return (
-                    <Table.Summary.Row style={{ background: '#f0f5ff' }}>
-                      <Table.Summary.Cell index={0} colSpan={6}><strong>Total (Accounted)</strong></Table.Summary.Cell>
-                      <Table.Summary.Cell index={6} align="right"><strong style={{ color: '#389e0d' }}>{totDr.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></Table.Summary.Cell>
-                      <Table.Summary.Cell index={7} align="right"><strong style={{ color: REDWOOD.primary }}>{totCr.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></Table.Summary.Cell>
-                      <Table.Summary.Cell index={8} />
-                    </Table.Summary.Row>
-                  );
-                }}
-              />
-            </>
-          )}
-        </Spin>
-      </Modal>
+      {/* View Accounting — the posted GL journals, found by REFERENCE2 = revalue id */}
+      <SourceJournalsModal
+        open={!!viewAcctRec}
+        onClose={() => setViewAcctRec(null)}
+        title={viewAcctRec ? `FX Revaluation #${viewAcctRec.revalueId} · ${viewAcctRec.accountDesc || viewAcctRec.account} · ${viewAcctRec.periodName}` : ''}
+        reference2={viewAcctRec?.revalueId ?? ''}
+        reference5={['GL_REVALUATION', 'GL-REVALUATION']}
+        reference1Prefix={viewAcctRec ? `REVAL-${viewAcctRec.revalueId}` : undefined}
+        loadExpected={viewAcctRec ? () => fetchRevalLines(viewAcctRec.revalueId) : undefined}
+        sourceLabel="revaluation"
+      />
 
       {/* PDF Modal */}
       <Modal
