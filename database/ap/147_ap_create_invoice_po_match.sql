@@ -80,6 +80,7 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
         l_line_count                NUMBER := 0;
         l_line_success              NUMBER := 0;
         l_line_error                NUMBER := 0;
+        l_line_err_text             VARCHAR2(1000);   -- why the first failing line was refused
         l_line_acct_date            DATE;
         -- Audit (patch 98)
         l_created_by                VARCHAR2(240);
@@ -395,6 +396,10 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
             EXCEPTION
                 WHEN OTHERS THEN
                     l_line_error := l_line_error + 1;
+                    IF l_line_err_text IS NULL THEN
+                        l_line_err_text := 'line ' || NVL(TO_CHAR(rec.line_number), TO_CHAR(l_line_count)) || ': '
+                                           || REPLACE(REPLACE(SQLERRM, CHR(10), ' '), CHR(13), ' ');
+                    END IF;
             END;
         END LOOP;
 
@@ -454,7 +459,8 @@ CREATE OR REPLACE PACKAGE BODY RR_AP_CREATE_INVOICE_PKG AS
             ROLLBACK;
             p_invoice_id := NULL;
             p_status := 'ERROR';
-            p_message := 'Invoice creation rolled back. ' || l_line_error || ' of ' || l_line_count || ' lines failed'
+            p_message := 'Invoice creation rolled back. ' || l_line_error || ' of ' || l_line_count || ' lines failed — '
+                      || l_line_err_text
                       || ' [json=' || NVL(DBMS_LOB.GETLENGTH(p_json), 0) || ' bytes]';
         END IF;
 
