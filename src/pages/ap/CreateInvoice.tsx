@@ -5641,6 +5641,51 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
     onChange: (keys: React.Key[]) => setSelectedLineKeys(keys),
   };
 
+  // Lines total row (shared by the line tabs): the amount sits under that tab's Amount column, found from the
+  // columns themselves (+1 for the row-selection checkbox), so optional columns such as PO Match never shift it.
+  const linesTotalSummary = (cols: ColumnsType<InvoiceLine>) => () => {
+    const at = cols.findIndex(c => c.key === 'amount') + 1;
+    const poAt = cols.findIndex(c => c.key === 'poMatch') + 1;
+    const total = cols.length + 1;
+    const nowrap: React.CSSProperties = { whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' };
+    const matchedLines = new Set(poMatch.matched.map(r => Number(r.INVOICE_LINE_NUMBER)));
+    const nMatched = lines.filter(l => matchedLines.has(Number(l.lineNumber))).length;
+    // the line count only where the label spans 3+ cells (the checkbox + Line pair is ~80px)
+    const label = (span: number) => (
+      <Text strong style={{ fontSize: 12, paddingLeft: 8, ...nowrap }}>
+        Total
+        {span >= 3 && lines.length > 1 && <Text type="secondary" style={{ fontSize: 11, fontWeight: 400, marginLeft: 6 }}>{lines.length} lines</Text>}
+      </Text>
+    );
+    const cells: React.ReactNode[] = [];
+    if (poAt > 0 && poAt < at) {
+      // PO tab: "Total" over the checkbox + Line columns, matched count under PO Match
+      cells.push(<Table.Summary.Cell key="l" index={0} colSpan={poAt}>{label(poAt)}</Table.Summary.Cell>);
+      cells.push(
+        <Table.Summary.Cell key="m" index={poAt} colSpan={at - poAt}>
+          {lines.length > 0 && (
+            <Text style={{ fontSize: 11, color: nMatched === lines.length ? REDWOOD.success : REDWOOD.neutral600, ...nowrap }}>
+              {nMatched}/{lines.length} matched
+            </Text>
+          )}
+        </Table.Summary.Cell>,
+      );
+    } else {
+      cells.push(<Table.Summary.Cell key="l" index={0} colSpan={at}>{label(at)}</Table.Summary.Cell>);
+    }
+    cells.push(
+      <Table.Summary.Cell key="a" index={at} align="right">
+        <Text strong style={{ fontSize: 13, color: REDWOOD.primary, ...nowrap }}>{formatAmount(linesTotal)}</Text>
+      </Table.Summary.Cell>,
+    );
+    if (total - at - 1 > 0) cells.push(<Table.Summary.Cell key="r" index={at + 1} colSpan={total - at - 1} />);
+    return (
+      <Table.Summary fixed>
+        <Table.Summary.Row style={{ background: REDWOOD.neutral100 }}>{cells}</Table.Summary.Row>
+      </Table.Summary>
+    );
+  };
+
   return (
     <div style={{ background: REDWOOD.neutral100, minHeight: 'calc(100vh - 200px)' }}>
       {/* Action Bar - matching Fusion Payables layout */}
@@ -6801,21 +6846,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
                     pagination={false}
                     scroll={{ x: 1600 }}
                     rowSelection={rowSelection}
-                    summary={() => (
-                      <Table.Summary fixed>
-                        <Table.Summary.Row>
-                          <Table.Summary.Cell index={0} colSpan={3}>
-                            <Text strong style={{ fontSize: 12, paddingLeft: 8 }}>Total</Text>
-                          </Table.Summary.Cell>
-                          <Table.Summary.Cell index={3} align="right">
-                            <Text strong style={{ fontSize: 13, color: REDWOOD.primary }}>
-                              {formatAmount(linesTotal)}
-                            </Text>
-                          </Table.Summary.Cell>
-                          <Table.Summary.Cell index={4} colSpan={7} />
-                        </Table.Summary.Row>
-                      </Table.Summary>
-                    )}
+                    summary={linesTotalSummary(distributionColumns)}
                   />
                 ),
               },
@@ -6899,21 +6930,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
                         pagination={false}
                         scroll={{ x: 1100 }}
                         rowSelection={rowSelection}
-                        summary={() => (
-                          <Table.Summary fixed>
-                            <Table.Summary.Row>
-                              <Table.Summary.Cell index={0} colSpan={2}>
-                                <Text strong style={{ fontSize: 12, paddingLeft: 8 }}>Total</Text>
-                              </Table.Summary.Cell>
-                              <Table.Summary.Cell index={2} align="right">
-                                <Text strong style={{ fontSize: 13, color: REDWOOD.primary }}>
-                                  {formatAmount(linesTotal)}
-                                </Text>
-                              </Table.Summary.Cell>
-                              <Table.Summary.Cell index={3} colSpan={5} />
-                            </Table.Summary.Row>
-                          </Table.Summary>
-                        )}
+                        summary={linesTotalSummary(multiperiodColumns)}
                       />
 
                       {/* Schedule toolbar */}
@@ -7024,21 +7041,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({ onClose, onSave, initialD
                     pagination={false}
                     scroll={{ x: 1500 }}
                     rowSelection={rowSelection}
-                    summary={() => (
-                      <Table.Summary fixed>
-                        <Table.Summary.Row>
-                          <Table.Summary.Cell index={0}>
-                            <Text strong style={{ fontSize: 12, paddingLeft: 8 }}>Total</Text>
-                          </Table.Summary.Cell>
-                          <Table.Summary.Cell index={1} align="right">
-                            <Text strong style={{ fontSize: 13, color: REDWOOD.primary }}>
-                              {formatAmount(linesTotal)}
-                            </Text>
-                          </Table.Summary.Cell>
-                          <Table.Summary.Cell index={2} colSpan={10} />
-                        </Table.Summary.Row>
-                      </Table.Summary>
-                    )}
+                    summary={linesTotalSummary(poColumns)}
                   />
                   </>
                 ),
