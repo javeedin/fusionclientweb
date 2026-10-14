@@ -24,6 +24,8 @@
 --
 -- HOW TO RUN: APEX SQL Workshop -> SQL Commands -> run the whole file.
 -- Requires rr_supplier_create.sql (same tables). Re-runnable.
+-- (Y/N flags are inline CASE expressions: a package-private function cannot be
+--  called from SQL — PLS-00231.)
 -- =============================================================================
 
 CREATE OR REPLACE PACKAGE RR_SUPPLIER_SITES_ADD_PKG AS
@@ -32,11 +34,6 @@ END RR_SUPPLIER_SITES_ADD_PKG;
 /
 
 CREATE OR REPLACE PACKAGE BODY RR_SUPPLIER_SITES_ADD_PKG AS
-
-  FUNCTION yn(p VARCHAR2) RETURN VARCHAR2 IS
-  BEGIN
-    RETURN CASE WHEN LOWER(NVL(p, 'false')) IN ('y', 'true', '1', 'yes') THEN 'Y' ELSE 'N' END;
-  END yn;
 
   PROCEDURE ADD_SITES(p_json IN CLOB, p_status OUT NUMBER, p_result OUT CLOB) IS
     v_sid       NUMBER;
@@ -102,7 +99,8 @@ CREATE OR REPLACE PACKAGE BODY RR_SUPPLIER_SITES_ADD_PKG AS
           JSON_VALUE(p_json, '$.address.city'), JSON_VALUE(p_json, '$.address.state'),
           JSON_VALUE(p_json, '$.address.postalCode'), JSON_VALUE(p_json, '$.address.phoneNumber'),
           JSON_VALUE(p_json, '$.address.email'),
-          yn(JSON_VALUE(p_json, '$.address.purposeOrdering')), yn(JSON_VALUE(p_json, '$.address.purposeRemitTo')),
+          CASE WHEN LOWER(NVL(JSON_VALUE(p_json, '$.address.purposeOrdering'), 'false')) IN ('y', 'true', '1', 'yes') THEN 'Y' ELSE 'N' END,
+          CASE WHEN LOWER(NVL(JSON_VALUE(p_json, '$.address.purposeRemitTo'), 'false')) IN ('y', 'true', '1', 'yes') THEN 'Y' ELSE 'N' END,
           'Active', SYSTIMESTAMP, v_by, SYSTIMESTAMP, v_by
         );
       END IF;
@@ -135,7 +133,9 @@ CREATE OR REPLACE PACKAGE BODY RR_SUPPLIER_SITES_ADD_PKG AS
       ) VALUES (
         v_site_id, v_sid, s.proc_bu, NVL(s.site_name, TRIM(s.site_code)), TRIM(s.site_code),
         NVL(s.addr_name, v_addr_name),
-        yn(s.purch_flag), yn(s.pay_flag), yn(s.pay_flag),
+        CASE WHEN LOWER(NVL(s.purch_flag, 'false')) IN ('y', 'true', '1', 'yes') THEN 'Y' ELSE 'N' END,
+        CASE WHEN LOWER(NVL(s.pay_flag, 'false')) IN ('y', 'true', '1', 'yes') THEN 'Y' ELSE 'N' END,
+        CASE WHEN LOWER(NVL(s.pay_flag, 'false')) IN ('y', 'true', '1', 'yes') THEN 'Y' ELSE 'N' END,
         s.pay_terms, s.inv_ccy, NVL(s.st, 'Active'), SYSTIMESTAMP, v_by, SYSTIMESTAMP, v_by
       );
 
