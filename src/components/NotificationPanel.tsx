@@ -15,6 +15,7 @@ import { useNotifications, type AppNotification, type NotificationModule } from 
 import { APEX_DB_CONFIG } from '../config/api.config';
 import { poQuery, nlit } from '../services/po.service';
 import AccountingLinesView, { type AccountingLine } from './AccountingLinesView';
+import { loadExternalTransaction } from '../services/externalTxnLookup';
 
 const { Text } = Typography;
 
@@ -336,19 +337,8 @@ const TransactionDetailModal: React.FC<{
     }
     setCashTxnLoading(true);
     const base = APEX_DB_CONFIG.baseUrl;
-    const id = Number(notif.transactionId);
-    // the transaction straight from its table (read gateway); the REST search only when the gateway refuses
-    const camel = (row: Record<string, any>) => Object.fromEntries(Object.entries(row).map(([k, v]) =>
-      [k.toLowerCase().replace(/_([a-z0-9])/g, (_m, c: string) => c.toUpperCase()), v]));
-    const viaRest = () => fetch(`${base}/cash/externaltransactions?external_transaction_id=${id}`, { headers: { Accept: 'application/json' } })
-      .then(r => r.json())
-      .then(d => (d.items || []).find((t: any) => Number(t.externalTransactionId) === id) ?? null)   // never another transaction
-      .catch(() => null);
     Promise.all([
-      poQuery(`SELECT * FROM RR_EXTERNAL_CASH_TRANSACTIONS WHERE EXTERNAL_TRANSACTION_ID = ${nlit(id)}`, 1, 'APPROVALS')
-        .then(rows => (rows[0] ? camel(rows[0]) : null))
-        .catch(() => null)
-        .then(t => t ?? viaRest()),
+      loadExternalTransaction({ extId: Number(notif.transactionId) }),
       getJson(`${base}/gl/journals/lines?reference2=${encodeURIComponent(String(notif.transactionId))}&reference5=BANK_EXTERNAL_TRANSACTIONS`)
         .then(itemsOf).catch(() => []),
     ])

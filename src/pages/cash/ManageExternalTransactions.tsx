@@ -32,6 +32,7 @@ import {
 } from '../../services/sla.service';
 import { getGlJournalLines } from '../../services/glPosting.service';
 import { APEX_DB_CONFIG } from '../../config/api.config';
+import { loadExternalTransaction } from '../../services/externalTxnLookup';
 import { searchCombinations, type DistCombination } from '../../services/distCombinations.service';
 import { validateGlPayload, persistValidationLog, type GlJournalPayload } from '../../services/glValidation.service';
 import { useGlValidation } from '../../context/GlValidationContext';
@@ -1354,17 +1355,19 @@ const ExternalTxnForm: React.FC<{
             const txnId =
               data.transactionId ?? data.transaction_id ??
               data.TRANSACTION_ID ?? data.TransactionId ?? null;
-            savedId = extId ?? txnId ?? null;
+            // The transaction number is not the external transaction id: when only the number comes back,
+            // look the row up by it (using the number as the id sent approvals and attachments to another row)
+            const resolvedExt = extId ?? (txnId ? (await loadExternalTransaction({ txnId: Number(txnId) }))?.externalTransactionId : null);
+            savedId = resolvedExt ?? null;
             if (txnId) setSavedTxnId(Number(txnId));
-            if (extId) setSavedExtId(Number(extId));
+            if (resolvedExt) setSavedExtId(Number(resolvedExt));
           }
           const extIdForAtt =
             data.externalTransactionId ?? data.external_transaction_id ??
-            data.EXTERNAL_TRANSACTION_ID ?? data.id ?? null;
+            data.EXTERNAL_TRANSACTION_ID ?? data.id ?? (i === 0 ? savedId : null);
           if (extIdForAtt) allSavedIds.push(extIdForAtt);
-          else if (i === 0 && savedId) allSavedIds.push(savedId);
           // Upload attachments on first line
-          const attExtId = extIdForAtt ?? savedId;
+          const attExtId = extIdForAtt;
           if (i === 0 && attExtId && attachments.length > 0) {
             for (const att of attachments.filter(a => !a.id)) {
               try {
@@ -1389,8 +1392,7 @@ const ExternalTxnForm: React.FC<{
     setSaving(false);
     message.success(`${successCount} transaction(s) created.`);
     setSaved(true);
-    // savedExtId is already set inline per-line above; set fallback here if still null
-    if (savedId && !savedExtId) setSavedExtId(Number(savedId));
+    // savedExtId is set inline for the first line above (from the response, or looked up by the transaction number)
     setSavedExtIds(allSavedIds);
   };
 
@@ -1591,19 +1593,25 @@ const ExternalTxnForm: React.FC<{
   const handleFSendApproval = async () => {
     const approver = fApprovalUsers.find(u => u.email === fSelectedApprover);
     if (!approver) return;
-    const txnId = savedExtId ?? savedTxnId ?? initialValues?.externalTransactionId;
-    if (!txnId) { message.error('Transaction ID not available — please save first'); return; }
     const values = form.getFieldsValue();
     setFApprovalSending(true);
     setFDebugSteps([]);
     try {
+      // Send the saved transaction itself — as the list page does — not the form fields: the form keeps the
+      // amount on its lines, and right after a save it may only know the transaction number.
+      const knownExtId = savedExtId ?? initialValues?.externalTransactionId ?? null;
+      const rec = await loadExternalTransaction(knownExtId ? { extId: knownExtId } : { txnId: savedTxnId ?? initialValues?.transactionId });
+      const txnId = Number(rec?.externalTransactionId ?? knownExtId) || 0;
+      if (!txnId) { message.error('The transaction was not found — save it first'); return; }
+      if (rec?.externalTransactionId && Number(rec.externalTransactionId) !== savedExtId) setSavedExtId(Number(rec.externalTransactionId));
+      const linesTotal = extTxnLines.reduce((t, l) => t + (Number(l.amount) || 0), 0);
       const result = await sendExternalTxnApproval({
         txnId,
-        txnRef:        values.referenceText || String(savedTxnId ?? initialValues?.transactionId ?? txnId),
-        txnType:       values.transactionType || '',
-        amount:        Math.abs(values.amount ?? initialValues?.amount ?? 0),
-        currency:      values.currencyCode || initialValues?.currencyCode || 'AED',
-        description:   values.description || initialValues?.description || '',
+        txnRef:        rec?.referenceText || values.referenceText || String(rec?.transactionId ?? savedTxnId ?? initialValues?.transactionId ?? txnId),
+        txnType:       rec?.transactionType || values.transactionType || initialValues?.transactionType || '',
+        amount:        Math.abs(Number(rec?.amount ?? initialValues?.amount ?? linesTotal) || 0),
+        currency:      rec?.currencyCode || values.currencyCode || initialValues?.currencyCode || 'AED',
+        description:   rec?.description || values.description || initialValues?.description || '',
         approverEmail: approver.email,
         approverName:  approver.fullName,
         sentBy:        loggedUser,
@@ -2884,7 +2892,7 @@ const ExternalTxnForm: React.FC<{
         <div style={{ background: REDWOOD.neutral100, borderRadius: 8, padding: '12px 16px', marginBottom: 16, fontSize: 13 }}>
           {[
             { label: 'Reference', value: form.getFieldValue('referenceText') || initialValues?.referenceText || '—' },
-            { label: 'Amount',    value: (() => { const v = form.getFieldValue('amount') ?? initialValues?.amount; const c = form.getFieldValue('currencyCode') ?? initialValues?.currencyCode ?? ''; return v != null ? `${c} ${Math.abs(v).toLocaleString('en-AE', { minimumFractionDigits: 2 })}` : '—'; })() },
+            { label: 'Amount',    value: (() => { const v = form.getFieldValue('amount') ?? initialValues?.amount ?? (extTxnLines.some(l => l.amount != null) ? extTxnLines.reduce((t, l) => t + (Number(l.amount) || 0), 0) : undefined); const c = form.getFieldValue('currencyCode') ?? initialValues?.currencyCode ?? ''; return v != null ? `${c} ${Math.abs(v).toLocaleString('en-AE', { minimumFractionDigits: 2 })}` : '—'; })() },
             { label: 'Type',      value: form.getFieldValue('transactionType') || initialValues?.transactionType || '—' },
           ].map(row => (
             <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
