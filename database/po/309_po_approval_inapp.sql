@@ -145,6 +145,7 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_APPROVAL_PKG AS
         v_rule NUMBER;
         v_appr NUMBER;
         v_req  NUMBER;
+        v_note VARCHAR2(2000);
     BEGIN
         SELECT MAX(r.RULE_ID) KEEP (DENSE_RANK FIRST ORDER BY r.PRIORITY,
                    CASE WHEN r.BUSINESS_UNIT_ID IS NOT NULL THEN 0 ELSE 1 END,
@@ -182,9 +183,10 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_APPROVAL_PKG AS
         VALUES ('PROCUREMENT', p_type, p_doc_id, p_ref, p_amount, p_currency, SUBSTR(p_desc, 1, 1000), p_user, 'PENDING',
                 v_rule, v_appr)
         RETURNING REQUEST_ID INTO v_req;
+        -- approver_name is private to the package: call it in PL/SQL, not inside the INSERT (PLS-00231)
+        v_note := SUBSTR(p_type || ' ' || p_ref || CASE WHEN v_appr IS NOT NULL THEN ' → ' || approver_name(v_appr) END, 1, 2000);
         INSERT INTO RR_APPROVAL_HISTORY (REQUEST_ID, ACTION, ACTOR_NAME, COMMENTS)
-        VALUES (v_req, 'SUBMITTED', p_user,
-                SUBSTR(p_type || ' ' || p_ref || CASE WHEN v_appr IS NOT NULL THEN ' → ' || approver_name(v_appr) END, 1, 2000));
+        VALUES (v_req, 'SUBMITTED', p_user, v_note);
         RETURN v_req;
     END;
 
