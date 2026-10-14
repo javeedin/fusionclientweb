@@ -68,26 +68,29 @@ export const SubmitForApprovalModal: React.FC<{
     return m;
   }, [rules, docType, amount]);
 
+  // the submitter stays in the list, greyed out, so a missing name is never a mystery (the database refuses it too)
   const options = useMemo(() => {
     const ruleOrder = [...ruleOf.keys()];
     return users
-      .filter(u => u.active !== 'N' && u.email && !isMe(u, user))
-      .sort((a, b) => {
-        const ia = ruleOrder.indexOf(a.email.toLowerCase()), ib = ruleOrder.indexOf(b.email.toLowerCase());
-        if (ia !== ib) return (ia < 0 ? 1e6 : ia) - (ib < 0 ? 1e6 : ib);
-        return (a.fullName || a.email).localeCompare(b.fullName || b.email);
-      })
+      .filter(u => u.active !== 'N' && u.email)
       .map(u => {
         const limit = u.maxApprovalAmount != null && Number(u.maxApprovalAmount) > 0 ? Number(u.maxApprovalAmount) : null;
-        const over = limit != null && amount > limit;
-        return { u, rule: ruleOf.get(u.email.toLowerCase()), limit, over };
+        return { u, rule: ruleOf.get(u.email.toLowerCase()), limit, over: limit != null && amount > limit, self: isMe(u, user) };
+      })
+      .sort((a, b) => {
+        if (a.self !== b.self) return a.self ? 1 : -1;
+        const ia = ruleOrder.indexOf(a.u.email.toLowerCase()), ib = ruleOrder.indexOf(b.u.email.toLowerCase());
+        if (ia !== ib) return (ia < 0 ? 1e6 : ia) - (ib < 0 ? 1e6 : ib);
+        return (a.u.fullName || a.u.email).localeCompare(b.u.fullName || b.u.email);
       });
   }, [users, user, ruleOf, amount]);
+  const me = options.find(o => o.self);
+  const choosable = options.filter(o => !o.self);
 
   // suggest the first approver of the matching rule
   useEffect(() => {
     if (approver || !options.length) return;
-    const first = options.find(o => o.rule && !o.over);
+    const first = options.find(o => o.rule && !o.over && !o.self);
     if (first) setApprover(first.u.email);
   }, [options, approver]);
 
@@ -121,9 +124,10 @@ export const SubmitForApprovalModal: React.FC<{
         <Select style={{ width: '100%' }} showSearch optionFilterProp="label" loading={loading} placeholder={loading ? 'Loading approvers…' : 'Choose the approver'}
           value={approver} onChange={setApprover}
           options={options.map(o => ({
-            value: o.u.email, disabled: o.over,
+            value: o.u.email, disabled: o.over || o.self,
             label: `${o.u.fullName || o.u.email} ${o.u.email} ${o.u.department || ''}`,
-            title: o.over ? `Above ${o.u.fullName}'s approval limit` : undefined,
+            title: o.self ? `You are signed in as ${user} — you cannot approve your own ${doc}`
+              : o.over ? `Above ${o.u.fullName}'s approval limit` : undefined,
           }))}
           optionRender={opt => {
             const o = options.find(x => x.u.email === opt.value);
@@ -135,6 +139,7 @@ export const SubmitForApprovalModal: React.FC<{
                   <div style={{ fontSize: 11, color: '#8c8c8c' }}>{o.u.email}{o.u.department ? ` · ${o.u.department}` : ''}</div>
                 </div>
                 <Space size={4} style={{ flexShrink: 0 }}>
+                  {o.self && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>you — can't approve your own</Tag>}
                   {o.rule && <Tag color="green" style={{ margin: 0, fontSize: 10 }}>rule: {o.rule}</Tag>}
                   {o.limit != null && <Tag color={o.over ? 'red' : 'default'} style={{ margin: 0, fontSize: 10 }}>limit {money(o.limit)}</Tag>}
                 </Space>
@@ -145,10 +150,19 @@ export const SubmitForApprovalModal: React.FC<{
             const o = options.find(x => x.u.email === l.value);
             return o ? <span>{o.u.fullName || o.u.email} <Text type="secondary" style={{ fontSize: 12 }}>— {o.u.email}</Text></span> : l.label;
           }} />
+        {me && choosable.length > 0 && (
+          <div style={{ marginTop: 6, fontSize: 12, color: '#8c8c8c' }}>
+            You are signed in as <b>{user}</b>{user.toLowerCase() !== me.u.email.toLowerCase() ? ` (${me.u.email})` : ''}{me.rule ? <>, one of the approvers on <b>{me.rule}</b></> : ''} — the
+            person who submits a {doc} cannot approve it, so it goes to another approver.
+          </div>
+        )}
         {error && <Alert type="error" showIcon style={{ marginTop: 10 }} message="Could not load the approvers" description={error} />}
-        {!loading && !error && !options.length && (
+        {!loading && !error && !choosable.length && (
           <Alert type="warning" showIcon style={{ marginTop: 10 }} message="No approvers available"
-            description="Add approval users in Administration → Approval Management → Users (you cannot approve your own documents)." />
+            description={me
+              ? <span>You (<b>{me.u.email}</b>) are the only approval user, and you cannot approve your own {doc}. Add another approver in
+                  Administration → Approval Management → Users, or have someone else submit it.</span>
+              : 'Add approval users in Administration → Approval Management → Users (you cannot approve your own documents).'} />
         )}
       </>}
     </Modal>

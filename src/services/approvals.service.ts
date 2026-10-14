@@ -132,12 +132,31 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+/** The SQL patch that streams the list handlers past 32 KB (ORA-06502 before it). */
+export const APPROVAL_LIST_FIX_SCRIPT = 'database/approvals/23_fix_large_list_output.sql';
+
+/** GET a list endpoint: `{items}` or a bare array. The handlers answer a failure as HTTP 500 or as
+ *  HTTP 200 `{items: [], error}` — both are thrown (an empty list there is not "no data"). */
+async function getList<T>(url: string): Promise<T[]> {
+  try {
+    const data = await handleResponse<{ items?: T[]; error?: string } | T[]>(await fetch(url));
+    if (Array.isArray(data)) return data;
+    if (data?.error && !data.items?.length) throw new Error(data.error);
+    return data?.items ?? [];
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // the handler printed a JSON larger than 32,767 characters with HTP.P
+    if (/ORA-06502/.test(msg) && !msg.includes(APPROVAL_LIST_FIX_SCRIPT)) {
+      throw new Error(`${msg} — the list has outgrown 32 KB; run ${APPROVAL_LIST_FIX_SCRIPT} in APEX SQL Workshop`);
+    }
+    throw e;
+  }
+}
+
 // ─── Approver Users CRUD ──────────────────────────────────────────────────────
 
 export async function getApprovalUsers(): Promise<ApprovalUser[]> {
-  const res = await fetch(`${BASE}/users`);
-  const data = await handleResponse<{ items?: any[] } | any[]>(res);
-  const raw: any[] = Array.isArray(data) ? data : (data as { items?: any[] }).items ?? [];
+  const raw = await getList<any>(`${BASE}/users`);
   return raw.map(u => ({
     ...u,
     modules: typeof u.modules === 'string'
@@ -178,10 +197,7 @@ export async function deleteApprovalUser(userId: number): Promise<void> {
 
 export async function getApprovalRules(module?: string): Promise<ApprovalRule[]> {
   const url = module ? `${BASE}/rules?module=${encodeURIComponent(module)}` : `${BASE}/rules`;
-  const res = await fetch(url);
-  const data = await handleResponse<{ items?: ApprovalRule[] } | ApprovalRule[]>(res);
-  if (Array.isArray(data)) return data;
-  return (data as { items?: ApprovalRule[] }).items ?? [];
+  return getList<ApprovalRule>(url);
 }
 
 export async function createApprovalRule(
@@ -226,10 +242,7 @@ export async function getApprovalRequests(params?: {
   if (params?.from)   qs.set('from', params.from);
   if (params?.to)     qs.set('to', params.to);
   const url = `${BASE}/requests${qs.toString() ? '?' + qs.toString() : ''}`;
-  const res = await fetch(url);
-  const data = await handleResponse<{ items?: ApprovalRequest[] } | ApprovalRequest[]>(res);
-  if (Array.isArray(data)) return data;
-  return (data as { items?: ApprovalRequest[] }).items ?? [];
+  return getList<ApprovalRequest>(url);
 }
 
 export async function getApprovalHistory(requestId: number): Promise<ApprovalHistoryEntry[]> {
@@ -470,9 +483,7 @@ export async function sendTestNotification(
 // ─── Email Replies ────────────────────────────────────────────────────────────
 
 export async function getEmailReplies(): Promise<EmailReply[]> {
-  const res  = await fetch(`${BASE}/email-replies`);
-  const data = await handleResponse<{ items?: EmailReply[] }>(res);
-  return data.items ?? [];
+  return getList<EmailReply>(`${BASE}/email-replies`);
 }
 
 export async function processEmailReply(
@@ -505,9 +516,7 @@ export async function simulateEmailReply(
 }
 
 export async function getApprovalTokens(): Promise<ApprovalToken[]> {
-  const res  = await fetch(`${BASE}/tokens`);
-  const data = await handleResponse<{ items?: ApprovalToken[] }>(res);
-  return data.items ?? [];
+  return getList<ApprovalToken>(`${BASE}/tokens`);
 }
 
 // ─── External Transaction Approval ───────────────────────────────────────────
