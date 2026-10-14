@@ -79,7 +79,9 @@ import {
   CalendarOutlined,
   AccountBookOutlined,
   WarningOutlined,
+  UserAddOutlined,
 } from '@ant-design/icons';
+import RegisterSupplierModal, { type CreatedSupplier } from './RegisterSupplierModal';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useShowAndTell } from '../../features/showAndTell';
@@ -371,6 +373,9 @@ const mapApiToInvoiceRecord = (item: any, index: number): InvoiceRecord => ({
 
 const ManageInvoices: React.FC = () => {
   const [form] = Form.useForm();
+  const searchBu = Form.useWatch('businessUnit', form) as string | undefined;
+  // Register a supplier without leaving Manage Invoices (same dialog as Manage Suppliers)
+  const [regSupplierOpen, setRegSupplierOpen] = useState(false);
   const location = useLocation();
   const { user } = useAuth();
   const quickCreateHandled = useRef<string | null>(null);
@@ -1733,6 +1738,24 @@ const ManageInvoices: React.FC = () => {
   };
 
   // Open create invoice tab (optionally with pre-filled data)
+  const onSupplierCreated = (sup: CreatedSupplier) => {
+    Modal.confirm({
+      title: `Supplier ${sup.supplier} created`,
+      content: `Supplier number ${sup.supplierNumber || '—'} · ${sup.sites} site${sup.sites === 1 ? '' : 's'}${sup.businessUnit ? ` · ${sup.businessUnit}` : ''}. Create an invoice for this supplier now?`,
+      okText: 'Create invoice',
+      cancelText: 'Not now',
+      okButtonProps: { style: { background: REDWOOD.primary, borderColor: REDWOOD.primary } },
+      onOk: () => openCreateInvoiceTab({
+        supplier: sup.supplier,
+        supplierNumber: sup.supplierNumber,
+        supplierId: sup.supplierId,
+        businessUnit: sup.businessUnit || searchBu,
+        paymentTerms: sup.paymentTerms,
+        invoiceCurrency: sup.currency,
+      }),
+    });
+  };
+
   const openCreateInvoiceTab = (data?: InvoiceInitialData) => {
     const tabKey = `create-invoice-${Date.now()}`;
     // Build tab label: InvoiceNo + first 4 letters of supplier
@@ -4223,6 +4246,15 @@ const ManageInvoices: React.FC = () => {
             ]}
           />
           <Space>
+            <Tooltip title="Register a new supplier without leaving Manage Invoices">
+              <Button
+                icon={<UserAddOutlined />}
+                onClick={() => setRegSupplierOpen(true)}
+                style={{ color: REDWOOD.primary, borderColor: REDWOOD.primary, borderRadius: 6, fontWeight: 500 }}
+              >
+                + Create Supplier
+              </Button>
+            </Tooltip>
             <Tooltip title="Create Invoice">
               <Button
                 type="primary"
@@ -4544,6 +4576,9 @@ const ManageInvoices: React.FC = () => {
             })}
           </Card>
         </Modal>
+
+        <RegisterSupplierModal open={regSupplierOpen} onClose={() => setRegSupplierOpen(false)}
+          defaultBusinessUnit={searchBu} onCreated={onSupplierCreated} />
 
         {/* Quick Create Invoice Dialog (triggered by Autopilot) */}
         <Modal

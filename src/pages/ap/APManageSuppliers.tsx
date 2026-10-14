@@ -56,7 +56,6 @@ import {
   FilePdfOutlined,
   BarChartOutlined,
   EditOutlined,
-  MinusCircleOutlined,
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
@@ -69,6 +68,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import FloatingMenu from '../../components/FloatingMenu';
 import InvoiceDetail from './InvoiceDetail';
+import RegisterSupplierModal from './RegisterSupplierModal';
 import type { ColumnsType } from 'antd/es/table';
 
 const { Content } = Layout;
@@ -577,99 +577,8 @@ const ManageSuppliers: React.FC = () => {
   const [gridFilter, setGridFilter] = useState('');
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
-  // ── Register (create) supplier ─────────────────────────────────────────────
+  // ── Register (create) supplier — shared dialog (RegisterSupplierModal) ──────
   const [createOpen,   setCreateOpen]   = useState(false);
-  const [createSaving, setCreateSaving] = useState(false);
-  const [createForm]   = Form.useForm();
-
-  const CREATE_SUPPLIER_URL = `${APEX_DB_CONFIG.baseUrl}/suppliers/create`;
-
-  const buildSupplierPayload = (vals: any): any => {
-    const addr = vals.address || {};
-    return {
-      supplier:              vals.supplier,
-      supplierNumber:        vals.supplierNumber || undefined,
-      alternateName:         vals.alternateName,
-      supplierType:          vals.supplierType,
-      taxOrganizationType:   vals.taxOrganizationType,
-      businessRelationship:  vals.businessRelationship,
-      taxRegistrationNumber: vals.taxRegistrationNumber,
-      taxpayerId:            vals.taxpayerId,
-      dunsNumber:            vals.dunsNumber,
-      status:                vals.status || 'Active',
-      createdBy:             'REACTERP',
-      address: addr.addressName ? {
-        addressName:   addr.addressName,
-        country:       addr.country,
-        addressLine1:  addr.addressLine1,
-        addressLine2:  addr.addressLine2,
-        city:          addr.city,
-        state:         addr.state,
-        postalCode:    addr.postalCode,
-        phoneNumber:   addr.phoneNumber,
-        email:         addr.email,
-        purposeOrdering: !!addr.purposeOrdering,
-        purposeRemitTo:  !!addr.purposeRemitTo,
-      } : undefined,
-      sites: (vals.sites || []).filter((s: any) => s && s.siteCode).map((s: any) => ({
-        siteCode:       s.siteCode,
-        siteName:       s.siteName,
-        procurementBu:  s.procurementBu,
-        addressName:    s.addressName || addr.addressName,
-        payFlag:        !!s.payFlag,
-        purchasingFlag: !!s.purchasingFlag,
-        paymentTerms:   s.paymentTerms,
-        invoiceCurrency: s.invoiceCurrency,
-        status:         'Active',
-      })),
-    };
-  };
-
-  const showCreateSupplierApi = () => {
-    const payload = buildSupplierPayload(createForm.getFieldsValue());
-    Modal.info({
-      title: 'Create Supplier — API Request',
-      width: 660,
-      content: (
-        <div>
-          <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Method / URL</div>
-          <Typography.Text copyable code style={{ fontSize: 12, wordBreak: 'break-all' }}>{`POST ${CREATE_SUPPLIER_URL}`}</Typography.Text>
-          <div style={{ fontSize: 12, color: '#888', margin: '10px 0 4px' }}>JSON Body</div>
-          <pre style={{ fontSize: 11, background: '#0d0d0d', color: '#a8ff78', borderRadius: 4, padding: 10, maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-            {JSON.stringify(payload, null, 2)}
-          </pre>
-        </div>
-      ),
-    });
-  };
-
-  const handleCreateSupplier = async () => {
-    let vals: any;
-    try { vals = await createForm.validateFields(); }
-    catch { return; }   // validation errors are shown inline
-    setCreateSaving(true);
-    try {
-      const payload = buildSupplierPayload(vals);
-      const res = await fetch(CREATE_SUPPLIER_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success !== false) {
-        message.success(`Supplier ${data.supplierNumber || ''} created${data.sites ? ` with ${data.sites} site(s)` : ''}`);
-        setCreateOpen(false);
-        createForm.resetFields();
-        handleSearch();
-      } else {
-        message.error(data.error || `Create failed (HTTP ${res.status})`);
-      }
-    } catch (e: any) {
-      message.error(e?.message || 'Create failed');
-    } finally {
-      setCreateSaving(false);
-    }
-  };
 
   // Compute filtered suppliers at component level so changes always propagate
   const filteredSuppliers = React.useMemo(() => {
@@ -1668,7 +1577,7 @@ const ManageSuppliers: React.FC = () => {
               Export
             </Button>
             <Button size="small" icon={<PlusOutlined />} type="primary"
-              onClick={() => { createForm.resetFields(); createForm.setFieldsValue({ status: 'Active', address: { country: 'United Arab Emirates' }, sites: [{ invoiceCurrency: 'AED', payFlag: true, purchasingFlag: true }] }); setCreateOpen(true); }}>
+              onClick={() => setCreateOpen(true)}>
               Register Supplier
             </Button>
           </Space>
@@ -1696,87 +1605,8 @@ const ManageSuppliers: React.FC = () => {
       </Card>
 
       {/* ── Register Supplier dialog ── */}
-      <Modal
-        open={createOpen}
-        title={<Space><PlusOutlined style={{ color: REDWOOD.primary }} /><span>Register New Supplier</span>
-          <Tooltip title="Show the API URL & JSON payload"><Button size="small" icon={<ApiOutlined />} style={{ color: REDWOOD.info, borderColor: REDWOOD.info }} onClick={showCreateSupplierApi} /></Tooltip>
-        </Space>}
-        onCancel={() => { if (!createSaving) setCreateOpen(false); }}
-        maskClosable={!createSaving}
-        width={880}
-        okText="Create Supplier"
-        confirmLoading={createSaving}
-        onOk={handleCreateSupplier}
-        okButtonProps={{ style: { background: REDWOOD.primary, borderColor: REDWOOD.primary } }}
-        destroyOnClose
-      >
-        <Form form={createForm} layout="vertical" size="small">
-          <Divider orientation="left" style={{ margin: '4px 0 12px', fontSize: 13 }}>Supplier</Divider>
-          <Row gutter={12}>
-            <Col span={10}><Form.Item name="supplier" label="Supplier Name" rules={[{ required: true, message: 'Required' }]}><Input placeholder="e.g. ACME TRADING LLC" /></Form.Item></Col>
-            <Col span={7}><Form.Item name="supplierNumber" label="Supplier Number" tooltip="Leave blank to auto-generate"><Input placeholder="auto" /></Form.Item></Col>
-            <Col span={7}><Form.Item name="alternateName" label="Alternate Name"><Input /></Form.Item></Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={6}><Form.Item name="supplierType" label="Supplier Type"><Select allowClear options={[{ value: 'Supplier' }, { value: 'Individual' }, { value: 'Contractor' }]} /></Form.Item></Col>
-            <Col span={6}><Form.Item name="taxOrganizationType" label="Tax Org Type"><Select allowClear options={[{ value: 'Corporation' }, { value: 'Individual' }, { value: 'Partnership' }]} /></Form.Item></Col>
-            <Col span={6}><Form.Item name="businessRelationship" label="Business Relationship"><Select allowClear options={[{ value: 'Spend Authorized' }, { value: 'Prospective' }]} /></Form.Item></Col>
-            <Col span={6}><Form.Item name="status" label="Status"><Select options={[{ value: 'Active' }, { value: 'Inactive' }]} /></Form.Item></Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={8}><Form.Item name="taxRegistrationNumber" label="Tax Registration No."><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="taxpayerId" label="Taxpayer ID"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="dunsNumber" label="D-U-N-S Number"><Input /></Form.Item></Col>
-          </Row>
-
-          <Divider orientation="left" style={{ margin: '4px 0 12px', fontSize: 13 }}>Primary Address</Divider>
-          <Row gutter={12}>
-            <Col span={8}><Form.Item name={['address', 'addressName']} label="Address Name"><Input placeholder="e.g. MAIN" /></Form.Item></Col>
-            <Col span={8}><Form.Item name={['address', 'country']} label="Country"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name={['address', 'city']} label="City"><Input /></Form.Item></Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={12}><Form.Item name={['address', 'addressLine1']} label="Address Line 1"><Input /></Form.Item></Col>
-            <Col span={12}><Form.Item name={['address', 'addressLine2']} label="Address Line 2"><Input /></Form.Item></Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={6}><Form.Item name={['address', 'state']} label="State/Province"><Input /></Form.Item></Col>
-            <Col span={6}><Form.Item name={['address', 'postalCode']} label="Postal Code"><Input /></Form.Item></Col>
-            <Col span={6}><Form.Item name={['address', 'phoneNumber']} label="Phone"><Input /></Form.Item></Col>
-            <Col span={6}><Form.Item name={['address', 'email']} label="Email"><Input /></Form.Item></Col>
-          </Row>
-          <Space size="large">
-            <Form.Item name={['address', 'purposeOrdering']} valuePropName="checked" noStyle><Checkbox>Ordering address</Checkbox></Form.Item>
-            <Form.Item name={['address', 'purposeRemitTo']} valuePropName="checked" noStyle><Checkbox>Remit-to address</Checkbox></Form.Item>
-          </Space>
-
-          <Divider orientation="left" style={{ margin: '14px 0 12px', fontSize: 13 }}>Sites</Divider>
-          <Form.List name="sites">
-            {(fields, { add, remove }) => (
-              <>
-                {fields.map(({ key, name, ...rest }) => (
-                  <Row gutter={8} key={key} align="middle" style={{ marginBottom: 4 }}>
-                    <Col span={4}><Form.Item {...rest} name={[name, 'siteCode']} rules={[{ required: true, message: 'Code' }]} style={{ marginBottom: 8 }}><Input placeholder="Site Code *" /></Form.Item></Col>
-                    <Col span={4}><Form.Item {...rest} name={[name, 'siteName']} style={{ marginBottom: 8 }}><Input placeholder="Site Name" /></Form.Item></Col>
-                    <Col span={4}><Form.Item {...rest} name={[name, 'procurementBu']} style={{ marginBottom: 8 }}>
-                      <Select showSearch allowClear placeholder="Procurement BU" optionFilterProp="children"
-                        options={businessUnits.map(bu => ({ value: bu, label: bu }))} />
-                    </Form.Item></Col>
-                    <Col span={4}><Form.Item {...rest} name={[name, 'paymentTerms']} style={{ marginBottom: 8 }}><Input placeholder="Payment Terms" /></Form.Item></Col>
-                    <Col span={3}><Form.Item {...rest} name={[name, 'invoiceCurrency']} style={{ marginBottom: 8 }}><Input placeholder="Ccy" /></Form.Item></Col>
-                    <Col span={2}><Form.Item {...rest} name={[name, 'payFlag']} valuePropName="checked" style={{ marginBottom: 8 }}><Checkbox>Pay</Checkbox></Form.Item></Col>
-                    <Col span={2}><Form.Item {...rest} name={[name, 'purchasingFlag']} valuePropName="checked" style={{ marginBottom: 8 }}><Checkbox>Purch</Checkbox></Form.Item></Col>
-                    <Col span={1}><MinusCircleOutlined style={{ color: REDWOOD.error, cursor: 'pointer' }} onClick={() => remove(name)} /></Col>
-                  </Row>
-                ))}
-                <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ invoiceCurrency: 'AED', payFlag: true, purchasingFlag: true })} style={{ marginTop: 4 }}>
-                  Add Site
-                </Button>
-              </>
-            )}
-          </Form.List>
-        </Form>
-      </Modal>
+      <RegisterSupplierModal open={createOpen} onClose={() => setCreateOpen(false)}
+        defaultBusinessUnit={selectedBU} onCreated={() => handleSearch()} />
     </div>
   );
 
