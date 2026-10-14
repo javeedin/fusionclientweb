@@ -21,6 +21,12 @@
 --   Submitting without choosing an approver (RR_PO_DOC_PKG.SUBMIT_PO) still works with approval rules.
 --   "PO approval required" = N in Purchasing Options still approves on submit.
 --
+--   Self-approval (RR_PO_BU_OPTIONS.SELF_APPROVAL_ALLOWED, default N; Purchasing Options › Approvals):
+--     N  the submitter can neither choose themselves as approver nor decide their own document;
+--     Y  choosing yourself approves the document on submit, recorded in the approval history as
+--        "Self-approved"; you may also approve your own pending documents (Approvals page, bell).
+--     SET_SELF_APPROVAL (p_business_unit_id, p_allowed) switches it (po/execute).
+--
 -- Run after 302 (and 308). Safe to re-run.
 -- =============================================================================
 
@@ -29,6 +35,10 @@ BEGIN EXECUTE IMMEDIATE 'ALTER TABLE RR_APPROVAL_REQUESTS ADD (DECIDED_BY VARCHA
 EXCEPTION WHEN OTHERS THEN IF SQLCODE <> -1430 THEN RAISE; END IF; END;
 /
 BEGIN EXECUTE IMMEDIATE 'ALTER TABLE RR_APPROVAL_REQUESTS ADD (DECIDED_DATE DATE)';
+EXCEPTION WHEN OTHERS THEN IF SQLCODE <> -1430 THEN RAISE; END IF; END;
+/
+-- may the person who submits a purchasing document approve it (per business unit)
+BEGIN EXECUTE IMMEDIATE q'[ALTER TABLE RR_PO_BU_OPTIONS ADD (SELF_APPROVAL_ALLOWED VARCHAR2(1) DEFAULT 'N' NOT NULL)]';
 EXCEPTION WHEN OTHERS THEN IF SQLCODE <> -1430 THEN RAISE; END IF; END;
 /
 
@@ -42,7 +52,10 @@ CREATE OR REPLACE PACKAGE RR_PO_APPROVAL_PKG AS
                              p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
     PROCEDURE DECIDE (p_request_id IN VARCHAR2, p_decision IN VARCHAR2, p_comments IN VARCHAR2, p_user IN VARCHAR2,
                       p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
+    PROCEDURE SET_SELF_APPROVAL (p_business_unit_id IN VARCHAR2, p_allowed IN VARCHAR2, p_user IN VARCHAR2,
+                                 p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2);
     -- internal
+    FUNCTION  self_approval_allowed (p_bu IN NUMBER) RETURN VARCHAR2;
     FUNCTION  request (p_type IN VARCHAR2, p_doc_id IN NUMBER, p_po_header_id IN NUMBER, p_ref IN VARCHAR2,
                        p_amount IN NUMBER, p_currency IN VARCHAR2, p_bu IN NUMBER, p_desc IN VARCHAR2,
                        p_user IN VARCHAR2) RETURN NUMBER;
@@ -56,13 +69,37 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_APPROVAL_PKG AS
 
     -- approver chosen by SUBMIT_PO_TO / SUBMIT_REQ_TO, used by request() during that call only
     g_approver NUMBER;
+    -- the chosen approver is the person submitting (self-approval)
+    g_self     BOOLEAN := FALSE;
 
-    -- an active approval user (by e-mail or id) — never the person submitting
-    FUNCTION chosen_approver (p_approver IN VARCHAR2, p_user IN VARCHAR2) RETURN NUMBER IS
+    FUNCTION self_approval_allowed (p_bu IN NUMBER) RETURN VARCHAR2 IS
+        v VARCHAR2(1);
+    BEGIN
+        SELECT MAX(SELF_APPROVAL_ALLOWED) INTO v FROM RR_PO_BU_OPTIONS WHERE BUSINESS_UNIT_ID = p_bu;
+        RETURN NVL(v, 'N');
+    END;
+
+    -- the business unit of the document behind an approval request
+    FUNCTION request_bu (p_request_id IN NUMBER) RETURN NUMBER IS
+        v NUMBER;
+    BEGIN
+        SELECT MAX(COALESCE(ph.BUSINESS_UNIT_ID, rh.BUSINESS_UNIT_ID, ch.BUSINESS_UNIT_ID)) INTO v
+        FROM   RR_APPROVAL_REQUESTS r
+        LEFT   JOIN RR_PO_HEADERS ph       ON r.TRANSACTION_TYPE = 'PURCHASE_ORDER' AND ph.PO_HEADER_ID = r.TRANSACTION_ID
+        LEFT   JOIN RR_PO_REQ_HEADERS rh   ON r.TRANSACTION_TYPE = 'REQUISITION' AND rh.REQ_HEADER_ID = r.TRANSACTION_ID
+        LEFT   JOIN RR_PO_CHANGE_ORDERS co ON r.TRANSACTION_TYPE = 'PO_CHANGE_ORDER' AND co.CHANGE_ORDER_ID = r.TRANSACTION_ID
+        LEFT   JOIN RR_PO_HEADERS ch       ON ch.PO_HEADER_ID = co.PO_HEADER_ID
+        WHERE  r.REQUEST_ID = p_request_id;
+        RETURN v;
+    END;
+
+    -- an active approval user (by e-mail or id); the person submitting only when the business unit allows self-approval
+    FUNCTION chosen_approver (p_approver IN VARCHAR2, p_user IN VARCHAR2, p_bu IN NUMBER) RETURN NUMBER IS
         v_id    NUMBER;
         v_email VARCHAR2(300);
         v_name  VARCHAR2(200);
     BEGIN
+        g_self := FALSE;
         IF TRIM(p_approver) IS NULL THEN RR_PO_UTIL_PKG.err('Choose the approver'); END IF;
         SELECT MAX(USER_ID), MAX(EMAIL), MAX(FULL_NAME) INTO v_id, v_email, v_name
         FROM   RR_APPROVAL_USERS
@@ -72,9 +109,24 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_APPROVAL_PKG AS
             RR_PO_UTIL_PKG.err(p_approver || ' is not an active approver (Administration › Approval Management › Users)');
         END IF;
         IF UPPER(TRIM(p_user)) IN (UPPER(v_email), UPPER(v_name), UPPER(REGEXP_SUBSTR(v_email, '^[^@]+'))) THEN
-            RR_PO_UTIL_PKG.err('You cannot send your own document to yourself for approval — choose another approver');
+            IF self_approval_allowed(p_bu) <> 'Y' THEN
+                RR_PO_UTIL_PKG.err('You cannot send your own document to yourself for approval — choose another approver, '
+                    || 'or allow self-approval for this business unit (Purchasing › Setup › Purchasing Options › Approvals)');
+            END IF;
+            g_self := TRUE;
         END IF;
         RETURN v_id;
+    END;
+
+    -- the submitter approves their own document straight away (self-approval allowed); the trigger moves the document on
+    PROCEDURE self_approve (p_request_id IN NUMBER, p_user IN VARCHAR2) IS
+    BEGIN
+        UPDATE RR_APPROVAL_REQUESTS SET STATUS = 'APPROVED', DECIDED_BY = p_user, DECIDED_DATE = SYSDATE
+        WHERE  REQUEST_ID = p_request_id AND STATUS = 'PENDING';
+        IF SQL%ROWCOUNT > 0 THEN
+            INSERT INTO RR_APPROVAL_HISTORY (REQUEST_ID, ACTION, ACTOR_NAME, COMMENTS)
+            VALUES (p_request_id, 'APPROVED', p_user, 'Self-approved (allowed for this business unit)');
+        END IF;
     END;
 
     FUNCTION approver_name (p_id IN NUMBER) RETURN VARCHAR2 IS
@@ -139,32 +191,60 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_APPROVAL_PKG AS
     PROCEDURE SUBMIT_PO_TO (p_po_header_id IN VARCHAR2, p_approver IN VARCHAR2, p_user IN VARCHAR2,
                             p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
         v_name VARCHAR2(200);
+        v_bu   NUMBER;
+        v_self BOOLEAN;
+        v_req  NUMBER;
+        v_st   VARCHAR2(30);
+        v_doc  NUMBER;
     BEGIN
-        g_approver := chosen_approver(p_approver, p_user);
+        v_doc  := RR_PO_UTIL_PKG.to_num(p_po_header_id);
+        SELECT MAX(BUSINESS_UNIT_ID) INTO v_bu FROM RR_PO_HEADERS WHERE PO_HEADER_ID = v_doc;
+        g_approver := chosen_approver(p_approver, p_user, v_bu);
+        v_self := g_self;
         v_name := approver_name(g_approver);
         RR_PO_DOC_PKG.SUBMIT_PO(p_po_header_id, p_user, p_id, p_number, p_status, p_message);
-        g_approver := NULL;
+        g_approver := NULL; g_self := FALSE;
         IF p_status = 'S' AND p_message LIKE '%submitted for approval' THEN
-            p_message := p_message || ' — sent to ' || v_name || ' (in their notifications)';
+            IF v_self THEN
+                SELECT MAX(APPROVAL_REQUEST_ID), MAX(DOCUMENT_STATUS) INTO v_req, v_st FROM RR_PO_HEADERS WHERE PO_HEADER_ID = p_id;
+                IF v_st = 'PENDING_APPROVAL' THEN self_approve(v_req, p_user); END IF;
+                p_message := 'Purchase order ' || p_number || ' approved — self-approved by ' || v_name;
+            ELSE
+                p_message := p_message || ' — sent to ' || v_name || ' (in their notifications)';
+            END IF;
         END IF;
     EXCEPTION WHEN OTHERS THEN
-        g_approver := NULL;
+        g_approver := NULL; g_self := FALSE;
         p_status := 'E'; p_message := RR_PO_UTIL_PKG.err_text(SQLERRM);
     END;
 
     PROCEDURE SUBMIT_REQ_TO (p_req_header_id IN VARCHAR2, p_approver IN VARCHAR2, p_user IN VARCHAR2,
                              p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
         v_name VARCHAR2(200);
+        v_bu   NUMBER;
+        v_self BOOLEAN;
+        v_req  NUMBER;
+        v_st   VARCHAR2(30);
+        v_doc  NUMBER;
     BEGIN
-        g_approver := chosen_approver(p_approver, p_user);
+        v_doc  := RR_PO_UTIL_PKG.to_num(p_req_header_id);
+        SELECT MAX(BUSINESS_UNIT_ID) INTO v_bu FROM RR_PO_REQ_HEADERS WHERE REQ_HEADER_ID = v_doc;
+        g_approver := chosen_approver(p_approver, p_user, v_bu);
+        v_self := g_self;
         v_name := approver_name(g_approver);
         RR_PO_REQ_PKG.SUBMIT(p_req_header_id, p_user, p_id, p_number, p_status, p_message);
-        g_approver := NULL;
+        g_approver := NULL; g_self := FALSE;
         IF p_status = 'S' AND p_message LIKE '%submitted for approval' THEN
-            p_message := p_message || ' — sent to ' || v_name || ' (in their notifications)';
+            IF v_self THEN
+                SELECT MAX(APPROVAL_REQUEST_ID), MAX(STATUS) INTO v_req, v_st FROM RR_PO_REQ_HEADERS WHERE REQ_HEADER_ID = p_id;
+                IF v_st = 'PENDING_APPROVAL' THEN self_approve(v_req, p_user); END IF;
+                p_message := 'Requisition ' || p_number || ' approved — self-approved by ' || v_name;
+            ELSE
+                p_message := p_message || ' — sent to ' || v_name || ' (in their notifications)';
+            END IF;
         END IF;
     EXCEPTION WHEN OTHERS THEN
-        g_approver := NULL;
+        g_approver := NULL; g_self := FALSE;
         p_status := 'E'; p_message := RR_PO_UTIL_PKG.err_text(SQLERRM);
     END;
 
@@ -226,7 +306,10 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_APPROVAL_PKG AS
         FROM RR_APPROVAL_REQUESTS WHERE REQUEST_ID = v_id FOR UPDATE;
         IF v_mod <> 'PROCUREMENT' THEN RR_PO_UTIL_PKG.err('Not a purchasing approval'); END IF;
         IF v_st <> 'PENDING' THEN RR_PO_UTIL_PKG.err('This request is already ' || v_st); END IF;
-        IF UPPER(v_by) = UPPER(p_user) THEN RR_PO_UTIL_PKG.err('You cannot approve your own document'); END IF;
+        IF UPPER(v_by) = UPPER(p_user) AND self_approval_allowed(request_bu(v_id)) <> 'Y' THEN
+            RR_PO_UTIL_PKG.err('You cannot approve your own document — self-approval is not allowed for this business unit '
+                || '(Purchasing › Setup › Purchasing Options › Approvals)');
+        END IF;
         -- fires RR_PO_APPROVAL_DECISION_TRG → the document follows
         UPDATE RR_APPROVAL_REQUESTS SET STATUS = UPPER(p_decision), DECIDED_BY = p_user, DECIDED_DATE = SYSDATE WHERE REQUEST_ID = v_id;
         INSERT INTO RR_APPROVAL_HISTORY (REQUEST_ID, ACTION, ACTOR_NAME, COMMENTS) VALUES (v_id, UPPER(p_decision), p_user, p_comments);
@@ -234,6 +317,19 @@ CREATE OR REPLACE PACKAGE BODY RR_PO_APPROVAL_PKG AS
         p_message := v_ref || CASE WHEN UPPER(p_decision) = 'APPROVED' THEN ' approved' ELSE ' rejected' END;
     EXCEPTION WHEN NO_DATA_FOUND THEN p_status := 'E'; p_message := 'Approval request not found';
               WHEN OTHERS THEN p_status := 'E'; p_message := RR_PO_UTIL_PKG.err_text(SQLERRM);
+    END;
+
+    PROCEDURE SET_SELF_APPROVAL (p_business_unit_id IN VARCHAR2, p_allowed IN VARCHAR2, p_user IN VARCHAR2,
+                                 p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
+        v_bu   NUMBER := RR_PO_UTIL_PKG.to_num(p_business_unit_id);
+        v_flag VARCHAR2(1) := CASE WHEN UPPER(TRIM(p_allowed)) IN ('Y', 'YES', 'TRUE') THEN 'Y' ELSE 'N' END;
+    BEGIN
+        UPDATE RR_PO_BU_OPTIONS SET SELF_APPROVAL_ALLOWED = v_flag, LAST_UPDATED_BY = p_user, LAST_UPDATE_DATE = SYSTIMESTAMP
+        WHERE  BUSINESS_UNIT_ID = v_bu;
+        IF SQL%ROWCOUNT = 0 THEN RR_PO_UTIL_PKG.err('Save the Purchasing Options of this business unit first'); END IF;
+        p_id := v_bu; p_status := 'S';
+        p_message := CASE v_flag WHEN 'Y' THEN 'Self-approval allowed' ELSE 'Self-approval not allowed' END;
+    EXCEPTION WHEN OTHERS THEN p_status := 'E'; p_message := RR_PO_UTIL_PKG.err_text(SQLERRM);
     END;
 END RR_PO_APPROVAL_PKG;
 /
@@ -295,7 +391,8 @@ MERGE INTO RR_PO_PROC_REGISTRY t
 USING (
     SELECT 'RR_PO_APPROVAL_PKG.SUBMIT_PO_TO' n, 'p_po_header_id,p_approver' p, NULL c, 'Submit a PO to the chosen approver' d FROM dual UNION ALL
     SELECT 'RR_PO_APPROVAL_PKG.SUBMIT_REQ_TO', 'p_req_header_id,p_approver', NULL, 'Submit a requisition to the chosen approver' FROM dual UNION ALL
-    SELECT 'RR_PO_APPROVAL_PKG.DECIDE', 'p_request_id,p_decision,p_comments', NULL, 'Approve / reject a procurement request' FROM dual
+    SELECT 'RR_PO_APPROVAL_PKG.DECIDE', 'p_request_id,p_decision,p_comments', NULL, 'Approve / reject a procurement request' FROM dual UNION ALL
+    SELECT 'RR_PO_APPROVAL_PKG.SET_SELF_APPROVAL', 'p_business_unit_id,p_allowed', NULL, 'Allow / stop self-approval of purchasing documents for a business unit' FROM dual
 ) s ON (t.PROC_NAME = s.n)
 WHEN MATCHED THEN UPDATE SET t.PARAMS_CSV = s.p, t.CLOB_PARAMS = s.c, t.DESCRIPTION = s.d, t.ENABLED_FLAG = 'Y'
 WHEN NOT MATCHED THEN INSERT (PROC_NAME, PARAMS_CSV, CLOB_PARAMS, ENABLED_FLAG, DESCRIPTION, CREATED_BY)
@@ -326,3 +423,7 @@ SELECT object_name, object_type, status FROM user_objects
 SELECT name, type, line, position, text FROM user_errors WHERE name IN ('RR_PO_APPROVAL_PKG', 'RR_PO_DOC_PKG', 'RR_PO_REQ_PKG')
  ORDER BY name, type, sequence;
 SELECT PROC_NAME, PARAMS_CSV, ENABLED_FLAG FROM RR_PO_PROC_REGISTRY WHERE PROC_NAME LIKE 'RR\_PO\_APPROVAL\_PKG.%' ESCAPE '\';
+-- self-approval per business unit (switch it in Purchasing › Setup › Purchasing Options › Approvals)
+SELECT o.BUSINESS_UNIT_ID, b.BUSINESS_UNIT_NAME, o.SELF_APPROVAL_ALLOWED
+FROM   RR_PO_BU_OPTIONS o LEFT JOIN RR_GL_BUSINESS_UNITS b ON b.BUSINESS_UNIT_ID = o.BUSINESS_UNIT_ID
+ORDER  BY b.BUSINESS_UNIT_NAME;

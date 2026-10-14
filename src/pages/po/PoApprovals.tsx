@@ -2,7 +2,7 @@
 // Decisions also made from the central Approvals page flow back through the
 // RR_PO_APPROVAL_DECISION_TRG trigger.
 import React, { useCallback, useEffect, useState } from 'react';
-import { Card, Table, Button, Space, Segmented, Typography, Tag, message, Input, Modal } from 'antd';
+import { Card, Table, Button, Space, Segmented, Typography, Tag, Tooltip, message, Input, Modal } from 'antd';
 import { CheckOutlined, CloseOutlined, ReloadOutlined, AuditOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { poQuery, poExec, PROC, lit, money, day, Row } from '../../services/po.service';
@@ -18,6 +18,8 @@ const PoApprovals: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('PENDING');
   const [type, setType] = useState('ALL');
+  // your own pending requests whose business unit allows self-approval (Purchasing Options, 309)
+  const [selfOk, setSelfOk] = useState<Set<number>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -29,8 +31,17 @@ const PoApprovals: React.FC = () => {
                              FROM RR_PO_V_APPROVALS a
                              LEFT JOIN RR_PO_V_CHANGE_ORDERS co ON a.TRANSACTION_TYPE = 'PO_CHANGE_ORDER' AND co.CHANGE_ORDER_ID = a.TRANSACTION_ID
                              WHERE ${where.join(' AND ')} ORDER BY a.REQUEST_ID DESC`, 500));
+      const own = await poQuery(`SELECT a.REQUEST_ID FROM RR_PO_V_APPROVALS a
+          LEFT JOIN RR_PO_V_CHANGE_ORDERS co ON a.TRANSACTION_TYPE = 'PO_CHANGE_ORDER' AND co.CHANGE_ORDER_ID = a.TRANSACTION_ID
+          LEFT JOIN RR_PO_V_ORDERS o ON o.PO_HEADER_ID = CASE a.TRANSACTION_TYPE WHEN 'PURCHASE_ORDER' THEN a.TRANSACTION_ID
+                                                        WHEN 'PO_CHANGE_ORDER' THEN co.PO_HEADER_ID END
+          LEFT JOIN RR_PO_V_REQUISITIONS rq ON a.TRANSACTION_TYPE = 'REQUISITION' AND rq.REQ_HEADER_ID = a.TRANSACTION_ID
+          JOIN RR_PO_BU_OPTIONS bo ON bo.BUSINESS_UNIT_ID = NVL(o.BUSINESS_UNIT_ID, rq.BUSINESS_UNIT_ID)
+          WHERE a.STATUS = 'PENDING' AND bo.SELF_APPROVAL_ALLOWED = 'Y' AND UPPER(a.REQUESTED_BY_NAME) = UPPER(${lit(user)})`)
+        .catch(() => [] as Row[]);   // no column before 309: nobody approves their own
+      setSelfOk(new Set(own.map(r => Number(r.REQUEST_ID))));
     } catch (e: any) { message.error(e.message); } finally { setLoading(false); }
-  }, [status, type]);
+  }, [status, type, user]);
   useEffect(() => { load(); }, [load]);
 
   const open = (r: Row) => {
@@ -77,12 +88,20 @@ const PoApprovals: React.FC = () => {
             { title: 'Requested', dataIndex: 'REQUESTED_DATE', width: 100, render: day },
             { title: 'Approver', dataIndex: 'CURRENT_APPROVER', width: 150, render: (v, r) => v || <Text type="secondary">{r.RULE_NAME}</Text> },
             { title: 'Status', dataIndex: 'STATUS', width: 110, render: v => <StatusTag s={v} /> },
-            { title: '', width: 190, render: (_, r) => r.STATUS === 'PENDING' ? (
-              <Space size={4}>
-                <Button size="small" type="primary" icon={<CheckOutlined />} disabled={String(r.REQUESTED_BY_NAME).toUpperCase() === user.toUpperCase()}
-                  onClick={() => decide(r, 'APPROVED')}>Approve</Button>
-                <Button size="small" danger icon={<CloseOutlined />} onClick={() => decide(r, 'REJECTED')}>Reject</Button>
-              </Space>) : null },
+            { title: '', width: 210, render: (_, r) => {
+              if (r.STATUS !== 'PENDING') return null;
+              const own = String(r.REQUESTED_BY_NAME).toUpperCase() === user.toUpperCase();
+              const blocked = own && !selfOk.has(Number(r.REQUEST_ID));
+              return (
+                <Space size={4}>
+                  <Tooltip title={blocked ? 'Your own document — self-approval is not allowed for its business unit (Purchasing Options › Approvals)'
+                    : own ? 'Your own document — self-approval is allowed for its business unit' : undefined}>
+                    <Button size="small" type="primary" icon={<CheckOutlined />} disabled={blocked}
+                      onClick={() => decide(r, 'APPROVED')}>{own && !blocked ? 'Self-approve' : 'Approve'}</Button>
+                  </Tooltip>
+                  <Button size="small" danger icon={<CloseOutlined />} onClick={() => decide(r, 'REJECTED')}>Reject</Button>
+                </Space>);
+            } },
           ]} />
       </Card>
     </div>

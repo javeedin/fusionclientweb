@@ -10,13 +10,16 @@ import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, SettingOutl
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { poQuery, poExec, PROC, nlit, Row } from '../../services/po.service';
 import { PoBar, StatusTag, useBusinessUnits, usePoUser, YesNo, PO_RED, AccountInput, SupplierSelect, SiteSearchSelect } from './poShared';
+import { APPROVAL_SCRIPT } from './PoApprovalUi';
 
 const { Text } = Typography;
 
 type FieldType = 'account' | 'text' | 'number' | 'yn' | 'status' | 'select' | 'bu' | 'location' | 'category' | 'item' | 'uom' | 'supplier' | 'site' | 'textarea';
 interface Field { name: string; label: string; type?: FieldType; required?: boolean;
   /** required only when another field has a value, e.g. GRNI account when accruing at receipt */
-  requiredWhen?: { field: string; equals: string }; options?: string[]; help?: string; span?: number }
+  requiredWhen?: { field: string; equals: string }; options?: string[]; help?: string; span?: number;
+  /** the database script that adds the column (default: the upgrade script) */
+  script?: string }
 interface Entity {
   key: string; title: string; sql: string; rowKey: string; fields: Field[]; columns: string[];
   deletable?: boolean; help?: string;
@@ -173,6 +176,8 @@ const BU_OPTION_FIELDS: { section: string; fields: Field[] }[] = [
   { section: 'Approvals', fields: [
     { name: 'REQ_APPROVAL_REQUIRED', label: 'Requisition approval required', type: 'yn', required: true },
     { name: 'PO_APPROVAL_REQUIRED', label: 'PO approval required', type: 'yn', required: true },
+    { name: 'SELF_APPROVAL_ALLOWED', label: 'Allow self-approval', type: 'yn', required: true, script: APPROVAL_SCRIPT,
+      help: 'Y = whoever submits a PO, requisition or change order may approve it themselves (recorded as self-approved)' },
     { name: 'CO_REAPPROVAL_THRESHOLD_PCT', label: 'Change-order re-approval above %', type: 'number', required: true },
     { name: 'SOD_BUYER_RECEIVE', label: 'Buyer may not receive own PO', type: 'yn', required: true },
     { name: 'BUDGET_CONTROL_LEVEL', label: 'Budget control', type: 'select', options: ['NONE', 'ADVISORY'], required: true },
@@ -384,7 +389,7 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
       ? `CAST(SUBSTR(${f.name}, 1, 3900) AS VARCHAR2(3900)) AS ${f.name}` : f.name);
     const applyDefaults = () => form.setFieldsValue({
             FUNCTIONAL_CURRENCY: buState.current?.FUNCTIONAL_CURRENCY || 'AED', DEFAULT_RATE_TYPE: 'Corporate', REQUIRE_REQUISITION: 'N',
-            ALLOW_AFTER_FACT_PO: 'N', AUTOCREATE_MODE: 'MANUAL', STATUS: 'ACTIVE', REQ_APPROVAL_REQUIRED: 'Y', PO_APPROVAL_REQUIRED: 'Y',
+            ALLOW_AFTER_FACT_PO: 'N', AUTOCREATE_MODE: 'MANUAL', STATUS: 'ACTIVE', REQ_APPROVAL_REQUIRED: 'Y', PO_APPROVAL_REQUIRED: 'Y', SELF_APPROVAL_ALLOWED: 'N',
             CO_REAPPROVAL_THRESHOLD_PCT: 0, SOD_BUYER_RECEIVE: 'Y', BUDGET_CONTROL_LEVEL: 'NONE', MATCH_LEVEL_QUANTITY: 'THREE_WAY',
             MATCH_LEVEL_AMOUNT: 'TWO_WAY', OVER_RECEIPT_TOLERANCE_PCT: 0, OVER_RECEIPT_ACTION: 'REJECT', RECEIPT_CLOSE_TOLERANCE_PCT: 0,
             INVOICE_CLOSE_TOLERANCE_PCT: 0, INVOICE_QTY_TOLERANCE_PCT: 0, INVOICE_PRICE_TOLERANCE_PCT: 5, ACCRUE_AT_RECEIPT_FLAG: 'Y',
@@ -424,8 +429,13 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
     try {
       const json = toJson(all.filter(f => !missing.includes(f.name)), v, !exists);
       json.business_unit_id = buState.bu;
+      delete json.self_approval_allowed;   // saved by its own procedure (309), after the row exists
       const { r, skipped } = await saveSetupRow('BU_OPTIONS', json, user);
       message.success(r.message || 'Saved');
+      if (!missing.includes('SELF_APPROVAL_ALLOWED') && v.SELF_APPROVAL_ALLOWED) {
+        await poExec(PROC.setSelfApproval, { p_business_unit_id: buState.bu, p_allowed: v.SELF_APPROVAL_ALLOWED }, user)
+          .catch(e => message.warning(`Saved, except Allow self-approval: ${e.message}${/not registered/i.test(e.message) ? ` — run ${APPROVAL_SCRIPT}` : ''}`, 10));
+      }
       skippedWarning(skipped, all);
       if (skipped.length) setMissing(m => [...new Set([...m, ...skipped])]);
       setExists(true);
@@ -446,7 +456,8 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
         <Alert type="warning" showIcon style={{ marginBottom: 12 }}
           message={`The database is missing ${missing.length === 1 ? 'a column' : `${missing.length} columns`} from a later upgrade`}
           description={<span>{missing.map(c => all.find(f => f.name === c)?.label || c).join(', ')} cannot be saved yet — everything else saves normally.
-            Run <Text code>{UPGRADE_SCRIPT}</Text> in APEX SQL Workshop, then reopen this page.</span>} />
+            Run {[...new Set(missing.map(c => all.find(f => f.name === c)?.script || UPGRADE_SCRIPT))]
+              .map((sc, i) => <React.Fragment key={sc}>{i > 0 && ' and '}<Text code>{sc}</Text></React.Fragment>)} in APEX SQL Workshop, then reopen this page.</span>} />
       )}
       <Form form={form} layout="vertical">
         {BU_OPTION_FIELDS.map(s => (
@@ -459,7 +470,7 @@ const BuOptions: React.FC<{ buState: ReturnType<typeof useBusinessUnits>; lk: Se
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', columnGap: 16 }}>
               {s.fields.map(f => missing.includes(f.name) ? (
-                <Form.Item key={f.name} label={f.label} extra={`Needs the database update (${UPGRADE_SCRIPT})`}
+                <Form.Item key={f.name} label={f.label} extra={`Needs the database update (${f.script || UPGRADE_SCRIPT})`}
                   style={f.span ? { gridColumn: `span ${f.span}` } : undefined}>
                   <Input disabled placeholder="Not available yet" />
                 </Form.Item>

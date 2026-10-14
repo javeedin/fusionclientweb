@@ -139,6 +139,7 @@ export const PROC = {
   cancelAccrual: 'RR_PO_ACCT_PKG.CANCEL_ACCRUAL_RUN',
   writeOff: 'RR_PO_ACCT_PKG.WRITE_OFF',
   decide: 'RR_PO_APPROVAL_PKG.DECIDE',
+  setSelfApproval: 'RR_PO_APPROVAL_PKG.SET_SELF_APPROVAL',   // 309: Purchasing Options › Allow self-approval
   recordInvoice: 'RR_PO_MATCH_PKG.RECORD_INVOICE',
   cancelInvoiceMatch: 'RR_PO_MATCH_PKG.CANCEL_INVOICE',
   setInvoiceStatus: 'RR_PO_MATCH_PKG.SET_INVOICE_STATUS',

@@ -3,7 +3,7 @@
 // approval stands (with whom, who decided, the full history). The document stays pending until approved.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Modal, Select, Space, Tag, Tooltip, Typography } from 'antd';
-import { AuditOutlined, SendOutlined } from '@ant-design/icons';
+import { AuditOutlined, CheckOutlined, SendOutlined } from '@ant-design/icons';
 import {
   APPROVAL_STATE_LOOK, approvalState, getApprovalRules, getApprovalUsers, onApprovalsChanged, type ApprovalRule, type ApprovalUser,
 } from '../../services/approvals.service';
@@ -34,13 +34,16 @@ export const SubmitForApprovalModal: React.FC<{
   user: string;
   /** Purchasing Options: PO / requisition approval required */
   approvalRequired: boolean;
+  /** the document's business unit — its Purchasing Options say whether self-approval is allowed */
+  businessUnitId?: number | null;
   busy?: boolean;
   onCancel: () => void;
   /** approver e-mail, or null when approval is not required */
   onSubmit: (approverEmail: string | null) => void;
-}> = ({ open, docType, docNumber, amount, currency, user, approvalRequired, busy, onCancel, onSubmit }) => {
+}> = ({ open, docType, docNumber, amount, currency, user, approvalRequired, businessUnitId, busy, onCancel, onSubmit }) => {
   const [users, setUsers] = useState<ApprovalUser[]>([]);
   const [rules, setRules] = useState<ApprovalRule[]>([]);
+  const [selfAllowed, setSelfAllowed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [approver, setApprover] = useState<string | undefined>();
@@ -50,11 +53,19 @@ export const SubmitForApprovalModal: React.FC<{
     setApprover(undefined);
     if (!approvalRequired) return;
     setLoading(true); setError(null);
-    Promise.all([getApprovalUsers(), getApprovalRules('PROCUREMENT').catch(() => [] as ApprovalRule[])])
-      .then(([u, r]) => { setUsers(u); setRules(r); })
+    Promise.all([
+      getApprovalUsers(),
+      getApprovalRules('PROCUREMENT').catch(() => [] as ApprovalRule[]),
+      // Purchasing Options › Approvals › Allow self-approval (309); no column yet → not allowed
+      businessUnitId
+        ? poQuery(`SELECT SELF_APPROVAL_ALLOWED FROM RR_PO_BU_OPTIONS WHERE BUSINESS_UNIT_ID = ${nlit(businessUnitId)}`)
+            .then(rows => rows[0]?.SELF_APPROVAL_ALLOWED === 'Y').catch(() => false)
+        : Promise.resolve(false),
+    ])
+      .then(([u, r, self]) => { setUsers(u); setRules(r); setSelfAllowed(self); })
       .catch(e => setError(e.message || String(e)))
       .finally(() => setLoading(false));
-  }, [open, approvalRequired]);
+  }, [open, approvalRequired, businessUnitId]);
 
   // approvers named by the approval rules for this document type and amount (rule priority, then sequence)
   const ruleOf = useMemo(() => {
@@ -68,7 +79,7 @@ export const SubmitForApprovalModal: React.FC<{
     return m;
   }, [rules, docType, amount]);
 
-  // the submitter stays in the list, greyed out, so a missing name is never a mystery (the database refuses it too)
+  // the submitter is in the list: choosable when the business unit allows self-approval, else greyed out with the reason
   const options = useMemo(() => {
     const ruleOrder = [...ruleOf.keys()];
     return users
@@ -78,21 +89,22 @@ export const SubmitForApprovalModal: React.FC<{
         return { u, rule: ruleOf.get(u.email.toLowerCase()), limit, over: limit != null && amount > limit, self: isMe(u, user) };
       })
       .sort((a, b) => {
-        if (a.self !== b.self) return a.self ? 1 : -1;
+        if (!selfAllowed && a.self !== b.self) return a.self ? 1 : -1;
         const ia = ruleOrder.indexOf(a.u.email.toLowerCase()), ib = ruleOrder.indexOf(b.u.email.toLowerCase());
         if (ia !== ib) return (ia < 0 ? 1e6 : ia) - (ib < 0 ? 1e6 : ib);
         return (a.u.fullName || a.u.email).localeCompare(b.u.fullName || b.u.email);
       });
-  }, [users, user, ruleOf, amount]);
+  }, [users, user, ruleOf, amount, selfAllowed]);
   const me = options.find(o => o.self);
-  const choosable = options.filter(o => !o.self);
+  const choosable = options.filter(o => !o.self || selfAllowed);
+  const selfChosen = !!me && approver === me.u.email;
 
-  // suggest the first approver of the matching rule
+  // suggest the first approver of the matching rule (someone else first; yourself when you are the only one)
   useEffect(() => {
     if (approver || !options.length) return;
-    const first = options.find(o => o.rule && !o.over && !o.self);
+    const first = options.find(o => o.rule && !o.over && !o.self) || (selfAllowed ? options.find(o => o.self && !o.over) : undefined);
     if (first) setApprover(first.u.email);
-  }, [options, approver]);
+  }, [options, approver, selfAllowed]);
 
   const doc = DOC_LABEL[docType];
   return (
@@ -100,10 +112,10 @@ export const SubmitForApprovalModal: React.FC<{
       title={<Space><SendOutlined style={{ color: '#C74634' }} />{approvalRequired ? 'Submit for approval' : 'Submit'} — {docNumber}</Space>}
       footer={<Space>
         <Button onClick={onCancel}>Cancel</Button>
-        <Button type="primary" icon={<SendOutlined />} loading={busy} disabled={approvalRequired && !approver}
-          style={{ background: !approvalRequired || approver ? '#C74634' : undefined }}
+        <Button type="primary" icon={selfChosen ? <CheckOutlined /> : <SendOutlined />} loading={busy} disabled={approvalRequired && !approver}
+          style={{ background: !approvalRequired || approver ? (selfChosen ? '#389e0d' : '#C74634') : undefined }}
           onClick={() => onSubmit(approvalRequired ? approver! : null)}>
-          {approvalRequired ? 'Send for approval' : `Submit and approve`}
+          {!approvalRequired ? 'Submit and approve' : selfChosen ? 'Approve now (self-approval)' : 'Send for approval'}
         </Button>
       </Space>}>
       <div style={{ background: '#fafafa', borderRadius: 8, padding: '10px 14px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
@@ -117,17 +129,23 @@ export const SubmitForApprovalModal: React.FC<{
           description={<span>Purchasing Options has <b>{docType === 'PURCHASE_ORDER' ? 'PO' : 'Requisition'} approval required = No</b>, so submitting
             approves the {doc} straight away. To have it approved first, set it to <b>Yes</b> in Purchasing → Setup → Purchasing Options.</span>} />
       ) : <>
-        <Alert type="info" showIcon style={{ marginBottom: 14, fontSize: 12 }}
-          message={<span>The approver gets the request in their notifications (bell icon) and on Purchasing → Approvals. The {doc} stays
-            <b> Pending approval</b>{docType === 'PURCHASE_ORDER' ? ' — it cannot be received, invoiced, changed or sent to the supplier' : ''} until it is approved.</span>} />
+        {selfChosen ? (
+          <Alert type="success" showIcon style={{ marginBottom: 14, fontSize: 12 }}
+            message={<span>Self-approval — you approve this {doc} yourself. It is <b>approved as soon as you click</b>, and the approval
+              history records it as <b>self-approved by {me!.u.fullName || me!.u.email}</b>.</span>} />
+        ) : (
+          <Alert type="info" showIcon style={{ marginBottom: 14, fontSize: 12 }}
+            message={<span>The approver gets the request in their notifications (bell icon) and on Purchasing → Approvals. The {doc} stays
+              <b> Pending approval</b>{docType === 'PURCHASE_ORDER' ? ' — it cannot be received, invoiced, changed or sent to the supplier' : ''} until it is approved.</span>} />
+        )}
         <div style={{ marginBottom: 6 }}><Text strong>Approver</Text></div>
         <Select style={{ width: '100%' }} showSearch optionFilterProp="label" loading={loading} placeholder={loading ? 'Loading approvers…' : 'Choose the approver'}
           value={approver} onChange={setApprover}
           options={options.map(o => ({
-            value: o.u.email, disabled: o.over || o.self,
+            value: o.u.email, disabled: o.over || (o.self && !selfAllowed),
             label: `${o.u.fullName || o.u.email} ${o.u.email} ${o.u.department || ''}`,
-            title: o.self ? `You are signed in as ${user} — you cannot approve your own ${doc}`
-              : o.over ? `Above ${o.u.fullName}'s approval limit` : undefined,
+            title: o.over ? `Above ${o.u.fullName}'s approval limit`
+              : o.self && !selfAllowed ? `You are signed in as ${user} — self-approval is not allowed for this business unit` : undefined,
           }))}
           optionRender={opt => {
             const o = options.find(x => x.u.email === opt.value);
@@ -139,7 +157,9 @@ export const SubmitForApprovalModal: React.FC<{
                   <div style={{ fontSize: 11, color: '#8c8c8c' }}>{o.u.email}{o.u.department ? ` · ${o.u.department}` : ''}</div>
                 </div>
                 <Space size={4} style={{ flexShrink: 0 }}>
-                  {o.self && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>you — can't approve your own</Tag>}
+                  {o.self && (selfAllowed
+                    ? <Tag color="green" style={{ margin: 0, fontSize: 10 }}>you — self-approval</Tag>
+                    : <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>you — can't approve your own</Tag>)}
                   {o.rule && <Tag color="green" style={{ margin: 0, fontSize: 10 }}>rule: {o.rule}</Tag>}
                   {o.limit != null && <Tag color={o.over ? 'red' : 'default'} style={{ margin: 0, fontSize: 10 }}>limit {money(o.limit)}</Tag>}
                 </Space>
@@ -150,10 +170,16 @@ export const SubmitForApprovalModal: React.FC<{
             const o = options.find(x => x.u.email === l.value);
             return o ? <span>{o.u.fullName || o.u.email} <Text type="secondary" style={{ fontSize: 12 }}>— {o.u.email}</Text></span> : l.label;
           }} />
-        {me && choosable.length > 0 && (
+        {me && !selfAllowed && choosable.length > 0 && (
           <div style={{ marginTop: 6, fontSize: 12, color: '#8c8c8c' }}>
             You are signed in as <b>{user}</b>{user.toLowerCase() !== me.u.email.toLowerCase() ? ` (${me.u.email})` : ''}{me.rule ? <>, one of the approvers on <b>{me.rule}</b></> : ''} — the
-            person who submits a {doc} cannot approve it, so it goes to another approver.
+            person who submits a {doc} cannot approve it, so it goes to another approver. To approve your own documents, set
+            <b> Allow self-approval = Yes</b> in Purchasing → Setup → Purchasing Options → Approvals.
+          </div>
+        )}
+        {me && selfAllowed && !selfChosen && !me.over && (
+          <div style={{ marginTop: 6, fontSize: 12, color: '#8c8c8c' }}>
+            Self-approval is allowed for this business unit — choose yourself (<b>{me.u.fullName || me.u.email}</b>) to approve it straight away.
           </div>
         )}
         {error && <Alert type="error" showIcon style={{ marginTop: 10 }} message="Could not load the approvers" description={error} />}
@@ -161,7 +187,8 @@ export const SubmitForApprovalModal: React.FC<{
           <Alert type="warning" showIcon style={{ marginTop: 10 }} message="No approvers available"
             description={me
               ? <span>You (<b>{me.u.email}</b>) are the only approval user, and you cannot approve your own {doc}. Add another approver in
-                  Administration → Approval Management → Users, or have someone else submit it.</span>
+                  Administration → Approval Management → Users, have someone else submit it, or set <b>Allow self-approval = Yes</b> in
+                  Purchasing → Setup → Purchasing Options → Approvals.</span>
               : 'Add approval users in Administration → Approval Management → Users (you cannot approve your own documents).'} />
         )}
       </>}

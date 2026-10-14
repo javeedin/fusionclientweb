@@ -363,7 +363,7 @@ export const RequisitionEditor: React.FC<{
       ]} />
       <SubmitForApprovalModal open={submitOpen} docType="REQUISITION" docNumber={String(hdr?.REQ_NUMBER || 'New requisition')}
         amount={n(hdr?.TOTAL_AMOUNT_FUNC) || total} currency={currency} user={user}
-        approvalRequired={buState.bus.find(b => Number(b.BUSINESS_UNIT_ID) === bu)?.REQ_APPROVAL_REQUIRED !== 'N'} busy={busy}
+        approvalRequired={buState.bus.find(b => Number(b.BUSINESS_UNIT_ID) === bu)?.REQ_APPROVAL_REQUIRED !== 'N'} businessUnitId={bu} busy={busy}
         onCancel={() => setSubmitOpen(false)} onSubmit={sendForApproval} />
     </div>
   );

@@ -630,7 +630,7 @@ const PurchaseOrderEditor: React.FC<{
 
       <SubmitForApprovalModal open={submitOpen} docType="PURCHASE_ORDER" docNumber={String(hdr?.PO_NUMBER || 'New purchase order')}
         amount={n(hdr?.TOTAL_AMOUNT_FUNC) || total * (n(hdr?.RATE) || 1)} currency={fc} user={user}
-        approvalRequired={buRow?.PO_APPROVAL_REQUIRED !== 'N'} busy={busy}
+        approvalRequired={buRow?.PO_APPROVAL_REQUIRED !== 'N'} businessUnitId={bu} busy={busy}
         onCancel={() => setSubmitOpen(false)} onSubmit={sendForApproval} />
       <PdfPreviewModal open={!!pdfPreview} doc={pdfPreview?.doc ?? null} fileName={pdfName()}
         title={<span>Purchase order {hdr?.PO_NUMBER}{n(hdr?.REVISION_NUM) ? ` · Rev ${hdr?.REVISION_NUM}` : ''}</span>}
