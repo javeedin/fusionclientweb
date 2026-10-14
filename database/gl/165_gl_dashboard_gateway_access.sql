@@ -15,7 +15,7 @@ BEGIN
     SELECT COUNT(*) INTO v_whitelist FROM RR_AI_OBJECT_ACL WHERE ALLOWED_FLAG = 'Y';
     IF v_whitelist > 0 THEN
         FOR t IN (SELECT table_name FROM user_tables
-                  WHERE table_name IN ('RR_GL_JE_HEADERS', 'RR_GL_JOURNAL_BATCHES', 'RR_GL_JE_LINES_ALL', 'RR_GL_FISCAL_PERIODS')) LOOP
+                  WHERE table_name IN ('RR_GL_JE_HEADERS', 'RR_GL_JOURNAL_BATCHES', 'RR_GL_JE_LINES_ALL', 'RR_ACCOUNTING_PERIODS_STATUS')) LOOP
             MERGE INTO RR_AI_OBJECT_ACL a USING (SELECT t.table_name n FROM dual) s ON (a.OBJECT_NAME = s.n)
             WHEN NOT MATCHED THEN INSERT (OBJECT_NAME, ALLOWED_FLAG) VALUES (s.n, 'Y');
         END LOOP;

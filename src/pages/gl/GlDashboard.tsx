@@ -99,14 +99,17 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
           <div style={{ ...card, ...clickable(s.blocked.length > 0) }}
             onClick={() => s.blocked.length && show('Not posted — their period is not open', s.blocked)}>
             <Space size={6}>
-              {s.blocked.length ? <StopOutlined style={{ color: STATUS.critical }} /> : <CheckCircleOutlined style={{ color: STATUS.good }} />}
+              {s.openPeriods === null ? <ExclamationCircleOutlined style={{ color: INK.muted }} />
+                : s.blocked.length ? <StopOutlined style={{ color: STATUS.critical }} /> : <CheckCircleOutlined style={{ color: STATUS.good }} />}
               <Text style={{ fontSize: 13, color: INK.secondary }}>Can't post — period not open</Text>
             </Space>
-            <div style={{ fontSize: 24, fontWeight: 600, color: INK.primary, margin: '6px 0 4px' }}>{s.blocked.length.toLocaleString()}</div>
+            <div style={{ fontSize: 24, fontWeight: 600, color: INK.primary, margin: '6px 0 4px' }}>{s.openPeriods === null ? '—' : s.blocked.length.toLocaleString()}</div>
             <Text style={{ fontSize: 12, color: INK.secondary }}>
-              {s.blocked.length
-                ? <>periods {[...new Set(s.blocked.map(j => j.period))].slice(0, 4).join(', ')} — open them in Accounting Periods</>
-                : <>every {mode === 'PMS' ? 'PMS ' : ''}journal waiting is in an open period</>}
+              {s.openPeriods === null
+                ? <>period status unavailable</>
+                : s.blocked.length
+                  ? <>periods {[...new Set(s.blocked.map(j => j.period))].slice(0, 4).join(', ')} — open them in Accounting Periods</>
+                  : <>every {mode === 'PMS' ? 'PMS ' : ''}journal waiting is in an open period</>}
             </Text>
           </div>
         </Col>
@@ -128,10 +131,11 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
         <Col xs={24} sm={8} lg={5}>
           <div style={{ ...card, ...clickable(true) }} onClick={() => onNavigate('/gl/accounting-periods')}>
             <Space size={6}><CalendarOutlined style={{ color: ACCENT }} /><Text style={{ fontSize: 13, color: INK.secondary }}>Open GL periods</Text></Space>
-            <div style={{ fontSize: 24, fontWeight: 600, color: INK.primary, margin: '6px 0 4px' }}>{s.openPeriods.length}</div>
+            <div style={{ fontSize: 24, fontWeight: 600, color: INK.primary, margin: '6px 0 4px' }}>{s.openPeriods === null ? '—' : s.openPeriods.length}</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {s.openPeriods.slice(0, 6).map(p => <Tag key={p} style={{ margin: 0 }}>{p}</Tag>)}
-              {s.openPeriods.length === 0 && <Text style={{ fontSize: 12, color: INK.secondary }}>none — nothing can be posted</Text>}
+              {(s.openPeriods ?? []).slice(0, 6).map(p => <Tag key={p} style={{ margin: 0 }}>{p}</Tag>)}
+              {s.openPeriods === null && <Text style={{ fontSize: 12, color: INK.secondary }}>period status unavailable</Text>}
+              {s.openPeriods?.length === 0 && <Text style={{ fontSize: 12, color: INK.secondary }}>none — nothing can be posted</Text>}
             </div>
           </div>
         </Col>
@@ -252,6 +256,7 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
         title={<Space><CodeOutlined />SQL behind the dashboard<Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>POST ai/executequery</Text></Space>}>
         <Text type="secondary" style={{ display: 'block', marginBottom: 10, fontSize: 12 }}>
           PMS journals = category starting with “PMS” (PMS FD / Loan / Stock Journals). Posted = batch STATUS 'P' / Posted, or header Posted.
+          Open period = RR_ACCOUNTING_PERIODS_STATUS, General Ledger (101), CLOSING_STATUS 'O' — the check RR_POST_JOURNAL makes.
         </Text>
         {data.queries.map(q => (
           <div key={q.label} style={{ marginBottom: 14 }}>
