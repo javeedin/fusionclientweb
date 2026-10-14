@@ -3167,7 +3167,7 @@ const TrialBalance: React.FC = () => {
       };
 
       // read the GL back: mark ACCOUNTED only when every line is there
-      const glCheck = await checkRevaluationInGl(id, plan);
+      const glCheck = await checkRevaluationInGl(id, plan, outcome.posted.map(p => p.result.batchId));
       if (!glCheck.ok) {
         updateStep(4, 'error', `GL check failed — ${glCheck.message}. Not marked ACCOUNTED.`);
         throw new Error(`GL check failed — ${glCheck.message}`);

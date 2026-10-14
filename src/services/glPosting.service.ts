@@ -268,19 +268,25 @@ export async function postSlaToGL(opts: GlPostingOptions): Promise<GlPostingResu
     body: JSON.stringify(payload),
   });
   const createData = await createRes.json().catch(() => ({}));
-  if (!createRes.ok) {
-    return { success: false, skipped: false, batchId: null, headerId: null, batchName, error: createData?.message || `HTTP ${createRes.status}`, postPayload };
+  // A rejection can come back as HTTP 200 with {success:false} or {status:'ERROR'} — never treat it as created
+  const rejected = !createRes.ok || createData?.success === false || String(createData?.status ?? '').toUpperCase() === 'ERROR';
+  if (rejected) {
+    return { success: false, skipped: false, batchId: null, headerId: null, batchName,
+      error: createData?.message || createData?.error || `HTTP ${createRes.status}`, postPayload };
   }
 
   const glBatchId  = createData.jeBatchId  ?? createData.je_batch_id  ?? createData.batchId  ?? null;
   const glHeaderId = createData.jeHeaderId ?? createData.je_header_id ?? createData.headerId ?? null;
+  // No batch id = nothing was created: stop here instead of skipping the post and stamping the SLA as posted
+  if (!glBatchId) {
+    return { success: false, skipped: false, batchId: null, headerId: glHeaderId, batchName,
+      error: `journals/create did not return a batch id — the journal was not created. Response: ${JSON.stringify(createData).slice(0, 300)}`, postPayload };
+  }
 
   // ── 2. PUT /gl/journals/:id/post (RR_POST_JOURNAL — validates period + posts) ──
-  if (glBatchId) {
-    const putOk = await putPostJournal(glBatchId);
-    if (!putOk.success) {
-      return { success: false, skipped: false, batchId: glBatchId, headerId: glHeaderId, batchName, error: putOk.error };
-    }
+  const putOk = await putPostJournal(glBatchId);
+  if (!putOk.success) {
+    return { success: false, skipped: false, batchId: glBatchId, headerId: glHeaderId, batchName, error: putOk.error };
   }
 
   // ── 3. Stamp SLA header ───────────────────────────────────────────────────

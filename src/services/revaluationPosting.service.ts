@@ -231,16 +231,30 @@ export function describeRevalPosting(o: RevalPostOutcome): string {
 
 export interface GlCheck { ok: boolean; inGl: number; lineCount: number; missing: number; strays: number; message: string }
 
-/** Reads the GL back and confirms every revaluation line is there, and nothing else. */
-export async function checkRevaluationInGl(revalueId: number, plan: RevalPlan): Promise<GlCheck> {
+/** Reads the GL back and confirms every revaluation line is there, and nothing else.
+ *  When it is not, says what the batches just posted actually hold (lines, references). */
+export async function checkRevaluationInGl(revalueId: number, plan: RevalPlan, postedBatchIds: (number | null)[] = []): Promise<GlCheck> {
   const cmp = compareWithGl(plan, await readRevaluationGl(revalueId));
   const missing = cmp.todo.reduce((s, j) => s + j.lines.length, 0);
   const ok = missing === 0 && cmp.strays.length === 0;
-  const message = ok
+  let message = ok
     ? `All ${plan.lineCount} lines are in the GL`
     : [missing ? `${missing} of ${plan.lineCount} lines are not in the GL` : '',
        cmp.strays.length ? `${cmp.strays.length} GL line${cmp.strays.length === 1 ? '' : 's'} match no revaluation line` : '']
       .filter(Boolean).join('; ');
+  const ids = postedBatchIds.filter((x): x is number => !!x);
+  if (!ok && ids.length) {
+    try {
+      const rows = await poQuery(
+        `SELECT l.batch_id, COUNT(*) AS n, MIN(l.reference2) AS r2, MIN(l.reference5) AS r5, SUM(NVL(l.accounted_dr, 0)) AS dr `
+        + `FROM rr_gl_je_lines_all l WHERE l.batch_id IN (${ids.map(Number).join(', ')}) GROUP BY l.batch_id`, 100, 'GL_REVALUATION');
+      message += ' — ' + ids.map(id => {
+        const r = rows.find(x => n(x.BATCH_ID) === id);
+        return r ? `batch ${id} holds ${n(r.N)} lines (reference2 ${r.R2 ?? '—'}, reference5 ${r.R5 ?? '—'}, Dr ${r2(n(r.DR)).toFixed(2)})`
+          : `batch ${id} holds no lines`;
+      }).join('; ');
+    } catch { /* the check itself already failed; keep its message */ }
+  }
   return { ok, inGl: cmp.inGl, lineCount: plan.lineCount, missing, strays: cmp.strays.length, message };
 }
 

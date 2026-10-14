@@ -26,6 +26,11 @@ const pick = (r: Row | null | undefined, keys: string[]): any => {
   return null;
 };
 const isPosted = (s: unknown) => { const v = String(s ?? '').toUpperCase(); return v === 'P' || v === 'POSTED'; };
+// RR_POST_JOURNAL marks the BATCH posted (STATUS 'P', STATUS_MEANING 'Posted'); headers may keep their create-time status
+const journalPosted = (j: { header: Row | null; batch: Row | null }) =>
+  [j.batch?.STATUS, j.batch?.STATUS_MEANING, j.header?.STATUS, j.header?.POSTING_STATUS].some(isPosted);
+const journalStatus = (j: { header: Row | null; batch: Row | null }) =>
+  pick(j.batch, ['STATUS_MEANING', 'STATUS']) ?? pick(j.header, ['POSTING_STATUS', 'STATUS']);
 const normAcct = (s: unknown) => String(s ?? '').trim().toUpperCase();
 const amt = (v: unknown) => (v === null || v === undefined || v === '' ? null : n(v));
 const TOL = 0.015;
@@ -139,7 +144,7 @@ const SourceJournalsModal: React.FC<{
   const extra = check?.filter(r => r.state === 'EXTRA') ?? [];
   const totDr = allLines.reduce((s, l) => s + n(l.ACCOUNTED_DR), 0);
   const totCr = allLines.reduce((s, l) => s + n(l.ACCOUNTED_CR), 0);
-  const unposted = journals.filter(j => !isPosted(pick(j.header, ['STATUS', 'POSTING_STATUS'])));
+  const unposted = journals.filter(j => !journalPosted(j));
   const ccys = [...new Set(journals.map(j => pick(j.header, ['CURRENCY_CODE'])).filter(Boolean))];
   const missDr = missing.reduce((s, r) => s + r.exp!.dr, 0);
   const missCr = missing.reduce((s, r) => s + r.exp!.cr, 0);
@@ -169,8 +174,8 @@ const SourceJournalsModal: React.FC<{
     const ccy = pick(h, ['CURRENCY_CODE']) || pick(j.lines[0], ['CURRENCY_CODE']) || '';
     const rate = amt(pick(h, ['CURRENCY_CONVERSION_RATE'])) ?? amt(pick(j.lines[0], ['CURRENCY_CONVERSION_RATE']));
     const inv = amt(pick(h, ['INV_CURRENCY_CONVERSION_RATE'])) ?? (rate ? 1 / rate : null);
-    const status = pick(h, ['STATUS', 'POSTING_STATUS']);
-    const posted = isPosted(status);
+    const status = journalStatus(j);
+    const posted = journalPosted(j);
     const dr = j.lines.reduce((s, l) => s + n(l.ACCOUNTED_DR), 0);
     const cr = j.lines.reduce((s, l) => s + n(l.ACCOUNTED_CR), 0);
     const eDr = j.lines.reduce((s, l) => s + n(l.ENTERED_DR), 0);

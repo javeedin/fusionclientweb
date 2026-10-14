@@ -560,7 +560,7 @@ const ManageRevaluation: React.FC = () => {
 
       // Step 4 — read the GL back: mark ACCOUNTED only when every line is there
       updateStep(4, 'process');
-      const glCheck = await checkRevaluationInGl(id, plan);
+      const glCheck = await checkRevaluationInGl(id, plan, outcome.posted.map(p => p.result.batchId));
       if (!glCheck.ok) {
         updateStep(4, 'error', `GL check failed — ${glCheck.message}. Not marked ACCOUNTED.`);
         throw new Error(`GL check failed — ${glCheck.message}`);
@@ -784,7 +784,7 @@ const ManageRevaluation: React.FC = () => {
       journalDescription: `FX Revaluation – ${acctLabel} – ${periodName}`,
       lineDescription: (l, ccy) => l.description || `FX Revaluation – ${ccy} – ${acctLabel} – ${periodName}`,
     }, plan);
-    const glCheck = await checkRevaluationInGl(id, plan);
+    const glCheck = await checkRevaluationInGl(id, plan, outcome.posted.map(p => p.result.batchId));
     if (!glCheck.ok) throw new Error(`${describeRevalPosting(outcome)}. GL check: ${glCheck.message}`);
     load();
     return `Revaluation #${id}: ${describeRevalPosting(outcome)}. ${glCheck.message}.`;

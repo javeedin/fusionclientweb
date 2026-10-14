@@ -1,7 +1,8 @@
 // ── GL journal guard ─────────────────────────────────────────────────────────
 // Installed once at app startup (main.tsx). RR_INSERT_GL_JOURNALS_POST
 // (POST …/journals/create) rejects unbalanced journals and other validation
-// failures by answering HTTP 200 with {"status":"ERROR", ...}. Many screens
+// failures by answering HTTP 200 with {"status":"ERROR", ...} (older handlers:
+// {"success":false, ...}). Many screens
 // only check response.ok, so they would treat a rejected journal as created
 // (and e.g. stamp the SLA header as posted). This interceptor turns such a
 // reply into HTTP 422 with the same JSON body, so every caller sees a failure,
@@ -31,7 +32,7 @@ export function installGlJournalGuard(): void {
     try { body = await res.clone().text(); } catch { return res; }
     let data: any = null;
     try { data = JSON.parse(body); } catch { return res; }
-    if (!data || String(data.status).toUpperCase() !== 'ERROR') return res;
+    if (!data || (String(data.status).toUpperCase() !== 'ERROR' && data.success !== false)) return res;
 
     const text = data.message || data.error || 'GL journal rejected';
     message.error({
