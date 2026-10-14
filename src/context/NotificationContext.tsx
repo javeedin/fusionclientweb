@@ -73,14 +73,18 @@ const APEX_PAYMENTS_URL = buildApexUrl('ap/payments');
 const APPROVAL_POLL_INTERVAL = 60_000; // 60 seconds
 
 function approvalToNotification(req: ApprovalRequest): AppNotification {
-  const amt = `${req.currency} ${Number(req.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // a request saved without some details shows what it has ("Request #12"), never "undefined" / "AED NaN"
+  const amount = req.amount == null || (req.amount as unknown) === '' ? NaN : Number(req.amount);
+  const amt = Number.isFinite(amount)
+    ? `${req.currency || ''} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim() : '';
   return {
     id: `approval-${req.requestId}`,
     module: 'Approvals',
     date: req.requestedDate,
-    transaction: `${req.module} ${req.transactionType}`,
-    trxNo: req.transactionRef,
-    details: `${amt} — submitted by ${req.requestedByName}${req.description ? ` · ${req.description}` : ''}`,
+    transaction: [req.module, req.transactionType].filter(Boolean).join(' ') || 'Approval request',
+    trxNo: req.transactionRef || (req.requestId != null ? `Request #${req.requestId}` : ''),
+    details: [amt, `submitted by ${req.requestedByName || 'unknown'}`].filter(Boolean).join(' — ')
+      + (req.description ? ` · ${req.description}` : ''),
     status: 'Unread',
     severity: 'warning',
     createdAt: Date.now(),

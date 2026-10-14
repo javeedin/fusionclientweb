@@ -412,3 +412,18 @@ END;
 SELECT 'approvals/requests' AS endpoint, COUNT(*) AS rows_returned FROM RR_APPROVAL_REQUESTS
 UNION ALL SELECT 'approvals/tokens (latest 200)', LEAST(COUNT(*), 200) FROM RR_APPROVAL_TOKENS
 UNION ALL SELECT 'approvals/email-replies (latest 100)', LEAST(COUNT(*), 100) FROM RR_APPROVAL_EMAIL_REPLIES;
+
+-- ── Check: which kind of handler serves each approvals list ─────────────────────────────────
+-- After this script: plsql/block for requests, users, rules, tokens, email-replies.
+-- json/collection means an older definition (01_setup.sql) is live — it lowercases the keys
+-- ("requestid") and leaves out empty values, which the screens show as blanks. Re-run this script.
+SELECT t.URI_TEMPLATE, h.METHOD, h.SOURCE_TYPE
+FROM   USER_ORDS_TEMPLATES t JOIN USER_ORDS_HANDLERS h ON h.TEMPLATE_ID = t.ID
+WHERE  t.URI_TEMPLATE LIKE 'approvals/%' AND h.METHOD = 'GET'
+ORDER  BY t.URI_TEMPLATE;
+
+-- ── Check: pending requests saved without their details (shown as "Request #id" in the bell) ──
+SELECT REQUEST_ID, MODULE, TRANSACTION_TYPE, TRANSACTION_REF, AMOUNT, CURRENCY, REQUESTED_BY_NAME, REQUESTED_DATE
+FROM   RR_APPROVAL_REQUESTS
+WHERE  STATUS = 'PENDING'
+ORDER  BY REQUEST_ID;

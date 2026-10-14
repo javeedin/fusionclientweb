@@ -135,14 +135,51 @@ async function handleResponse<T>(res: Response): Promise<T> {
 /** The SQL patch that streams the list handlers past 32 KB (ORA-06502 before it). */
 export const APPROVAL_LIST_FIX_SCRIPT = 'database/approvals/23_fix_large_list_output.sql';
 
+// The keys each list's screens read. An ORDS collection-query handler (01_setup.sql) lowercases every key
+// ("requestid", "transactionref"), a view gives UPPER_SNAKE; the PL/SQL handlers write these camelCase names.
+const REQUEST_KEYS = ['requestId', 'module', 'transactionType', 'transactionId', 'transactionRef', 'amount', 'currency',
+  'description', 'requestedByName', 'requestedDate', 'status', 'ruleId', 'ruleName', 'currentApproverName',
+  'currentApproverEmail', 'lastUpdateDate'] as const;
+const HISTORY_KEYS = ['historyId', 'requestId', 'action', 'actorName', 'comments', 'actionDate', 'notificationSent'] as const;
+const USER_KEYS = ['userId', 'fullName', 'email', 'department', 'jobTitle', 'maxApprovalAmount', 'currency', 'modules', 'active',
+  'phoneNumber', 'createdBy', 'creationDate', 'lastUpdateDate'] as const;
+const RULE_KEYS = ['ruleId', 'ruleName', 'module', 'transactionType', 'description', 'minAmount', 'maxAmount', 'currency',
+  'approvalType', 'approvers', 'active', 'priority', 'createdBy', 'creationDate'] as const;
+const REPLY_KEYS = ['replyId', 'fromEmail', 'fromName', 'subject', 'bodyText', 'actionDetected', 'refNumber', 'requestId', 'status',
+  'receivedDate', 'processedDate', 'processedBy', 'notes'] as const;
+const TOKEN_KEYS = ['tokenId', 'action', 'requestRef', 'requestId', 'toEmail', 'toName', 'status', 'createdDate', 'expiresDate',
+  'usedDate'] as const;
+
+/** Give a row the camelCase keys the screens read, whatever case / underscores the handler used. */
+function withKeys<T>(row: unknown, keys: readonly string[]): T {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return row as T;
+  const out: Record<string, unknown> = { ...(row as Record<string, unknown>) };
+  const loose = new Map(Object.entries(out).map(([k, v]) => [k.replace(/_/g, '').toLowerCase(), v] as const));
+  for (const k of keys) {
+    if (out[k] === undefined && loose.has(k.toLowerCase())) out[k] = loose.get(k.toLowerCase());
+  }
+  return out as T;
+}
+
+type ListPage<T> = { items?: T[]; error?: string; hasMore?: boolean; links?: { rel: string; href: string }[] };
+
 /** GET a list endpoint: `{items}` or a bare array. The handlers answer a failure as HTTP 500 or as
- *  HTTP 200 `{items: [], error}` — both are thrown (an empty list there is not "no data"). */
-async function getList<T>(url: string): Promise<T[]> {
+ *  HTTP 200 `{items: [], error}` — both are thrown (an empty list there is not "no data"). A collection-query
+ *  handler pages its rows (25 by default): the next pages are followed. */
+async function getList<T>(url: string, keys: readonly string[] = []): Promise<T[]> {
   try {
-    const data = await handleResponse<{ items?: T[]; error?: string } | T[]>(await fetch(url));
-    if (Array.isArray(data)) return data;
+    const data = await handleResponse<ListPage<T> | T[]>(await fetch(url));
+    if (Array.isArray(data)) return data.map(r => withKeys<T>(r, keys));
     if (data?.error && !data.items?.length) throw new Error(data.error);
-    return data?.items ?? [];
+    const rows = [...(data?.items ?? [])];
+    let page = data;
+    for (let n = 0; page?.hasMore && n < 40; n++) {
+      const next = page.links?.find(l => l.rel === 'next')?.href;
+      if (!next) break;
+      page = await handleResponse<ListPage<T>>(await fetch(next));
+      rows.push(...(page?.items ?? []));
+    }
+    return rows.map(r => withKeys<T>(r, keys));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // the handler printed a JSON larger than 32,767 characters with HTP.P
@@ -156,7 +193,7 @@ async function getList<T>(url: string): Promise<T[]> {
 // ─── Approver Users CRUD ──────────────────────────────────────────────────────
 
 export async function getApprovalUsers(): Promise<ApprovalUser[]> {
-  const raw = await getList<any>(`${BASE}/users`);
+  const raw = await getList<any>(`${BASE}/users`, USER_KEYS);
   return raw.map(u => ({
     ...u,
     modules: typeof u.modules === 'string'
@@ -197,7 +234,8 @@ export async function deleteApprovalUser(userId: number): Promise<void> {
 
 export async function getApprovalRules(module?: string): Promise<ApprovalRule[]> {
   const url = module ? `${BASE}/rules?module=${encodeURIComponent(module)}` : `${BASE}/rules`;
-  return getList<ApprovalRule>(url);
+  const rules = await getList<ApprovalRule>(url, RULE_KEYS);
+  return rules.map(r => ({ ...r, approvers: (r.approvers || []).map(a => withKeys<RuleApprover>(a, ['sequence', 'userId', 'fullName', 'email', 'department'])) }));
 }
 
 export async function createApprovalRule(
@@ -242,14 +280,12 @@ export async function getApprovalRequests(params?: {
   if (params?.from)   qs.set('from', params.from);
   if (params?.to)     qs.set('to', params.to);
   const url = `${BASE}/requests${qs.toString() ? '?' + qs.toString() : ''}`;
-  return getList<ApprovalRequest>(url);
+  return getList<ApprovalRequest>(url, REQUEST_KEYS);
 }
 
 export async function getApprovalHistory(requestId: number): Promise<ApprovalHistoryEntry[]> {
-  const res = await fetch(`${BASE}/requests/${requestId}/history`);
-  const data = await handleResponse<{ items?: ApprovalHistoryEntry[] } | ApprovalHistoryEntry[]>(res);
-  if (Array.isArray(data)) return data;
-  return (data as { items?: ApprovalHistoryEntry[] }).items ?? [];
+  // a collection-query handler (01_setup.sql) — its keys arrive lowercased
+  return getList<ApprovalHistoryEntry>(`${BASE}/requests/${requestId}/history`, HISTORY_KEYS);
 }
 
 export async function submitApprovalAction(
@@ -483,7 +519,7 @@ export async function sendTestNotification(
 // ─── Email Replies ────────────────────────────────────────────────────────────
 
 export async function getEmailReplies(): Promise<EmailReply[]> {
-  return getList<EmailReply>(`${BASE}/email-replies`);
+  return getList<EmailReply>(`${BASE}/email-replies`, REPLY_KEYS);
 }
 
 export async function processEmailReply(
@@ -516,7 +552,7 @@ export async function simulateEmailReply(
 }
 
 export async function getApprovalTokens(): Promise<ApprovalToken[]> {
-  return getList<ApprovalToken>(`${BASE}/tokens`);
+  return getList<ApprovalToken>(`${BASE}/tokens`, TOKEN_KEYS);
 }
 
 // ─── External Transaction Approval ───────────────────────────────────────────
