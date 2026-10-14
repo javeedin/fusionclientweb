@@ -2,8 +2,8 @@
 -- PATCH 24: every approvals list through the read gateway (direct execute)
 --
 -- The app reads the approval lists — users, rules (with their approvers), requests, history, approval
--- links and e-mail replies — with one SELECT each through POST ai/executequery, not through the
--- approvals GET handlers. It no longer depends on which version of those handlers is deployed.
+-- links and e-mail replies — and the bell's external-transaction detail with one SELECT each through
+-- POST ai/executequery, not through the GET handlers. It no longer depends on which version of those handlers is deployed.
 --
 -- When RR_AI_OBJECT_ACL runs in whitelist mode (any 'Y' row), the gateway reads only the tables listed
 -- there; this adds the approval tables. In open mode nothing is added (adding 'Y' rows would switch it
@@ -19,7 +19,8 @@ BEGIN
     IF v_whitelist > 0 THEN
         FOR t IN (SELECT table_name FROM user_tables
                   WHERE table_name IN ('RR_APPROVAL_REQUESTS', 'RR_APPROVAL_HISTORY', 'RR_APPROVAL_USERS', 'RR_APPROVAL_RULES',
-                                       'RR_APPROVAL_RULE_APPROVERS', 'RR_APPROVAL_TOKENS', 'RR_APPROVAL_EMAIL_REPLIES')) LOOP
+                                       'RR_APPROVAL_RULE_APPROVERS', 'RR_APPROVAL_TOKENS', 'RR_APPROVAL_EMAIL_REPLIES',
+                                       'RR_EXTERNAL_CASH_TRANSACTIONS')) LOOP   -- the bell's external transaction detail
             MERGE INTO RR_AI_OBJECT_ACL a USING (SELECT t.table_name n FROM dual) s ON (a.OBJECT_NAME = s.n)
             WHEN NOT MATCHED THEN INSERT (OBJECT_NAME, ALLOWED_FLAG) VALUES (s.n, 'Y');   -- a table set to N stays N
         END LOOP;

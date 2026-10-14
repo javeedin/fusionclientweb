@@ -336,9 +336,19 @@ const TransactionDetailModal: React.FC<{
     }
     setCashTxnLoading(true);
     const base = APEX_DB_CONFIG.baseUrl;
+    const id = Number(notif.transactionId);
+    // the transaction straight from its table (read gateway); the REST search only when the gateway refuses
+    const camel = (row: Record<string, any>) => Object.fromEntries(Object.entries(row).map(([k, v]) =>
+      [k.toLowerCase().replace(/_([a-z0-9])/g, (_m, c: string) => c.toUpperCase()), v]));
+    const viaRest = () => fetch(`${base}/cash/externaltransactions?external_transaction_id=${id}`, { headers: { Accept: 'application/json' } })
+      .then(r => r.json())
+      .then(d => (d.items || []).find((t: any) => Number(t.externalTransactionId) === id) ?? null)   // never another transaction
+      .catch(() => null);
     Promise.all([
-      fetch(`${base}/cash/externaltransactions?external_transaction_id=${notif.transactionId}`, { headers: { Accept: 'application/json' } })
-        .then(r => r.json()).then(d => d.items?.[0] ?? null).catch(() => null),
+      poQuery(`SELECT * FROM RR_EXTERNAL_CASH_TRANSACTIONS WHERE EXTERNAL_TRANSACTION_ID = ${nlit(id)}`, 1, 'APPROVALS')
+        .then(rows => (rows[0] ? camel(rows[0]) : null))
+        .catch(() => null)
+        .then(t => t ?? viaRest()),
       getJson(`${base}/gl/journals/lines?reference2=${encodeURIComponent(String(notif.transactionId))}&reference5=BANK_EXTERNAL_TRANSACTIONS`)
         .then(itemsOf).catch(() => []),
     ])
@@ -571,12 +581,12 @@ const TransactionDetailModal: React.FC<{
                   <Descriptions.Item label="Reference">{cashTxn.referenceText || cashTxn.description || '—'}</Descriptions.Item>
                   <Descriptions.Item label="Status"><Tag>{cashTxn.status || '—'}</Tag></Descriptions.Item>
                   {cashTxn.payeeName && <Descriptions.Item label="Payee">{cashTxn.payeeName}</Descriptions.Item>}
-                  <Descriptions.Item label="Date">{cashTxn.transactionDate ? dayjs(cashTxn.transactionDate).format('DD-MMM-YYYY') : '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Date">{fmtDay(cashTxn.transactionDate)}</Descriptions.Item>
                   {cashTxn.description && cashTxn.description !== cashTxn.referenceText && (
                     <Descriptions.Item label="Description" span={2}>{cashTxn.description}</Descriptions.Item>
                   )}
                 </Descriptions>
-              : <Text type="secondary" style={{ fontSize: 12 }}>Transaction details not available — ensure DB patch 99 is deployed</Text>
+              : <Text type="secondary" style={{ fontSize: 12 }}>Transaction details not available — the transaction was not found (it may have been deleted)</Text>
           }
           {!cashTxnLoading && (() => {
             const { lines, posted } = cashAccountingLines(cashTxn, cashGl, notif);

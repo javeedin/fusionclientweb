@@ -1,5 +1,5 @@
-// The accounting of a transaction as Dr / Cr lines: each line's full code combination and, under it, every segment's
-// value with its description (Company 02 — BUIMERC CORP DIFC INVST, Account 1112101 — Emirates NBD current account …).
+// The accounting of a transaction as Dr / Cr lines: each line's full code combination and, under it, the natural
+// account segment with its description (Account 5112101 — Bank charges). Every segment is in the code's tooltip.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Spin, Tag, Tooltip, Typography, message } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
@@ -48,6 +48,11 @@ export function useSegmentBreakdowns(codes: string[]): { map: Record<string, Bre
   return { map, loading };
 }
 
+/** The natural-account segment ("Account", not "Sub Account"). */
+const accountSegment = (b: Breakdown | undefined) => b?.segments.find(s => /natural/i.test(s.name))
+  || b?.segments.find(s => /^account$/i.test(s.name.trim()))
+  || b?.segments.find(s => /account/i.test(s.name) && !/sub/i.test(s.name));
+
 const money = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const SIDE = { DR: { color: '#0572CE', tag: 'blue', label: 'Dr' }, CR: { color: '#389e0d', tag: 'green', label: 'Cr' } } as const;
 
@@ -67,7 +72,7 @@ const AccountingLinesView: React.FC<{ lines: AccountingLine[] }> = ({ lines }) =
         <thead>
           <tr>
             <th style={{ ...head, width: 44 }} />
-            <th style={{ ...head, textAlign: 'left' }}>Account — code combination and segments</th>
+            <th style={{ ...head, textAlign: 'left' }}>Account</th>
             <th style={{ ...head, textAlign: 'right', width: 120 }}>Debit {ccy}</th>
             <th style={{ ...head, textAlign: 'right', width: 120 }}>Credit {ccy}</th>
           </tr>
@@ -91,28 +96,38 @@ const AccountingLinesView: React.FC<{ lines: AccountingLine[] }> = ({ lines }) =
                   {l.label && <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 2 }}>{l.label}</div>}
                   {l.account ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <Text style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 600, wordBreak: 'break-all' }}>{l.account}</Text>
+                      <Tooltip title={b?.segments.length ? (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr', columnGap: 8, fontSize: 11 }}>
+                          {b.segments.map((s, k) => (
+                            <React.Fragment key={k}>
+                              <span style={{ opacity: 0.7 }}>{s.name}</span>
+                              <span style={{ fontFamily: 'monospace' }}>{s.value}</span>
+                              <span>{s.description || '—'}</span>
+                            </React.Fragment>
+                          ))}
+                        </div>) : undefined} overlayStyle={{ maxWidth: 460 }}>
+                        <Text style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 600, wordBreak: 'break-all', cursor: b?.segments.length ? 'help' : undefined }}>{l.account}</Text>
+                      </Tooltip>
                       <Tooltip title="Copy the code combination">
                         <Button size="small" type="text" icon={<CopyOutlined style={{ fontSize: 11 }} />}
                           onClick={() => navigator.clipboard?.writeText(l.account).then(() => message.success('Copied'))} />
                       </Tooltip>
                     </div>
                   ) : <Text type="danger" style={{ fontSize: 12 }}>No account on the transaction</Text>}
-                  {l.account && (loading && !b ? <Spin size="small" style={{ marginTop: 4 }} /> : b && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr', columnGap: 10, rowGap: 1, marginTop: 4,
-                      padding: '6px 8px', background: '#fafafa', borderRadius: 6, fontSize: 11 }}>
-                      {b.segments.map((s, k) => (
-                        <React.Fragment key={k}>
-                          <span style={{ color: '#8c8c8c', whiteSpace: 'nowrap' }}>{s.name}</span>
-                          <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{s.value}</span>
-                          <span style={{ color: s.description ? '#262626' : '#bfbfbf' }}>{s.description || '—'}</span>
-                        </React.Fragment>
-                      ))}
-                      {b.invalid.length > 0 && (
-                        <span style={{ gridColumn: '1 / -1', color: '#cf1322' }}>Not a valid value: {b.invalid.join(', ')}</span>
-                      )}
-                    </div>
-                  ))}
+                  {l.account && (loading && !b ? <Spin size="small" style={{ marginTop: 4 }} /> : b && (() => {
+                    const a = accountSegment(b);
+                    return (
+                      <div style={{ marginTop: 2, fontSize: 12 }}>
+                        {a && <>
+                          <span style={{ fontFamily: 'monospace', fontWeight: 600, marginRight: 6 }}>{a.value}</span>
+                          <span style={{ color: a.description ? '#262626' : '#bfbfbf' }}>{a.description || 'no description'}</span>
+                        </>}
+                        {b.invalid.length > 0 && (
+                          <div style={{ fontSize: 11, color: '#cf1322' }}>Not a valid value: {b.invalid.join(', ')}</div>
+                        )}
+                      </div>
+                    );
+                  })())}
                   {l.description && <div style={{ fontSize: 11, color: '#595959', marginTop: 4 }}>{l.description}</div>}
                 </td>
                 <td style={{ ...cell, textAlign: 'right' }}>{l.side === 'DR' ? amount : null}</td>
