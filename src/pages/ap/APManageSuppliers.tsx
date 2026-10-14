@@ -26,6 +26,7 @@ import {
   Tooltip,
   Statistic,
   Progress,
+  Alert,
 } from 'antd';
 import {
   HomeOutlined,
@@ -68,7 +69,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import FloatingMenu from '../../components/FloatingMenu';
 import InvoiceDetail from './InvoiceDetail';
-import RegisterSupplierModal from './RegisterSupplierModal';
+import RegisterSupplierModal, { AddSupplierSitesModal } from './RegisterSupplierModal';
 import type { ColumnsType } from 'antd/es/table';
 
 const { Content } = Layout;
@@ -579,6 +580,8 @@ const ManageSuppliers: React.FC = () => {
 
   // ── Register (create) supplier — shared dialog (RegisterSupplierModal) ──────
   const [createOpen,   setCreateOpen]   = useState(false);
+  // Add sites to an existing supplier (Edit Supplier → Sites)
+  const [siteAddTab,   setSiteAddTab]   = useState<SupplierTab | null>(null);
 
   // Compute filtered suppliers at component level so changes always propagate
   const filteredSuppliers = React.useMemo(() => {
@@ -1607,6 +1610,14 @@ const ManageSuppliers: React.FC = () => {
       {/* ── Register Supplier dialog ── */}
       <RegisterSupplierModal open={createOpen} onClose={() => setCreateOpen(false)}
         defaultBusinessUnit={selectedBU} onCreated={() => handleSearch()} />
+
+      {/* ── Add sites to an existing supplier ── */}
+      <AddSupplierSitesModal open={!!siteAddTab} onClose={() => setSiteAddTab(null)}
+        target={siteAddTab ? { supplierId: Number(siteAddTab.supplier.supplierId), supplier: siteAddTab.supplier.supplier, supplierNumber: siteAddTab.supplier.supplierNumber } : null}
+        existingSiteCodes={siteAddTab ? (sitesDetailMap[siteAddTab.key] || []).map(r => r.siteCode).filter(Boolean) : []}
+        needsAddress={siteAddTab ? (addressesMap[siteAddTab.key] || []).length === 0 : false}
+        defaultBusinessUnit={selectedBU}
+        onAdded={() => { if (siteAddTab) fetchSupplierDetailData(Number(siteAddTab.supplier.supplierId), siteAddTab.key); }} />
     </div>
   );
 
@@ -1653,8 +1664,21 @@ const ManageSuppliers: React.FC = () => {
       { title: 'Status', dataIndex: 'status', key: 'status', width: 90,
         render: (v: string) => <Tag color={String(v).toUpperCase() === 'ACTIVE' ? 'green' : 'default'}>{v || '-'}</Tag> },
     ];
+    const tab = openTabs.find(t => t.key === tabKey) || null;
+    const addBtn = (primary?: boolean) => (
+      <Button size="small" type={primary ? 'primary' : 'default'} icon={<PlusOutlined />} disabled={!tab}
+        style={primary ? { background: REDWOOD.primary, borderColor: REDWOOD.primary } : undefined}
+        onClick={() => setSiteAddTab(tab)}>Add Site</Button>
+    );
     return (
       <div style={{ padding: 12 }}>
+        {!detailLoadingMap[tabKey] && rows.length === 0 ? (
+          <Alert type="warning" showIcon style={{ marginBottom: 10 }}
+            message="This supplier has no site yet — invoices cannot be created for it until it has one."
+            action={addBtn(true)} />
+        ) : (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>{addBtn()}</div>
+        )}
         <Table columns={cols} dataSource={rows} loading={detailLoadingMap[tabKey]} size="small"
           rowKey="key" pagination={false} scroll={{ x: 1100 }}
           locale={{ emptyText: detailLoadingMap[tabKey] ? 'Loading…' : 'No sites' }} />

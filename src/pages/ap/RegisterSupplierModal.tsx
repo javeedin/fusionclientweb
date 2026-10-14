@@ -100,6 +100,96 @@ export function buildSupplierPayload(vals: any): any {
   };
 }
 
+const newSiteRow = (bu?: string) => ({ invoiceCurrency: 'AED', payFlag: true, purchasingFlag: true, procurementBu: bu || undefined });
+
+/** Site rows (Form.List "sites"). At least one site with a Procurement BU — invoices look the site up by BU. */
+const SitesEditor: React.FC<{ businessUnits: string[]; defaultBusinessUnit?: string; takenCodes?: string[] }> = ({ businessUnits, defaultBusinessUnit, takenCodes = [] }) => (
+  <Form.List name="sites" rules={[{
+    validator: async (_, rows) => { if (!rows || rows.length < 1) throw new Error('Add at least one site — an invoice needs a supplier site'); },
+  }]}>
+    {(fields, { add, remove }, { errors }) => (
+      <>
+        {fields.map(({ key, name: n, ...rest }, idx) => (
+          <div key={key} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: '8px 12px 0', marginBottom: 10, background: '#fcfcfc', position: 'relative' }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11 }}>Site {idx + 1}</Typography.Text>
+            {fields.length > 1 && (
+              <Tooltip title="Remove this site">
+                <MinusCircleOutlined style={{ color: ERR, cursor: 'pointer', position: 'absolute', top: 10, right: 12 }} onClick={() => remove(n)} />
+              </Tooltip>
+            )}
+            <Row gutter={10}>
+              <Col span={5}><Form.Item {...rest} name={[n, 'siteCode']} label="Site Code" style={{ marginBottom: 8 }}
+                rules={[{ required: true, whitespace: true, message: 'Required' },
+                  { validator: async (_, v) => { if (v && takenCodes.some(c => c.toUpperCase() === String(v).trim().toUpperCase())) throw new Error('Already a site'); } }]}>
+                <Input placeholder="e.g. DUBAI" /></Form.Item></Col>
+              <Col span={7}><Form.Item {...rest} name={[n, 'siteName']} label="Site Name" style={{ marginBottom: 8 }}><Input placeholder="defaults to the code" /></Form.Item></Col>
+              <Col span={12}><Form.Item {...rest} name={[n, 'procurementBu']} label="Procurement BU" style={{ marginBottom: 8 }}
+                rules={[{ required: true, message: 'Required — invoices find the site by its BU' }]}>
+                <Select showSearch allowClear placeholder="Select the business unit" optionFilterProp="label"
+                  popupMatchSelectWidth={false} style={{ width: '100%' }}
+                  options={businessUnits.map(bu => ({ value: bu, label: bu, title: bu }))} />
+              </Form.Item></Col>
+            </Row>
+            <Row gutter={10} align="bottom">
+              <Col span={9}><Form.Item {...rest} name={[n, 'paymentTerms']} label="Payment Terms" style={{ marginBottom: 8 }}><Input placeholder="e.g. Net 30" /></Form.Item></Col>
+              <Col span={5}><Form.Item {...rest} name={[n, 'invoiceCurrency']} label="Invoice Currency" style={{ marginBottom: 8 }}><Input placeholder="AED" /></Form.Item></Col>
+              <Col span={10}>
+                <Space size="large" style={{ marginBottom: 12 }}>
+                  <Form.Item {...rest} name={[n, 'payFlag']} valuePropName="checked" noStyle><Checkbox>Pay site</Checkbox></Form.Item>
+                  <Form.Item {...rest} name={[n, 'purchasingFlag']} valuePropName="checked" noStyle><Checkbox>Purchasing site</Checkbox></Form.Item>
+                </Space>
+              </Col>
+            </Row>
+          </div>
+        ))}
+        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add(newSiteRow(defaultBusinessUnit))}>
+          Add another site
+        </Button>
+        <Form.ErrorList errors={errors} />
+      </>
+    )}
+  </Form.List>
+);
+
+const AddressFields: React.FC = () => (
+  <>
+    <Row gutter={12}>
+      <Col span={8}><Form.Item name={['address', 'addressName']} label="Address Name"><Input placeholder="e.g. MAIN" /></Form.Item></Col>
+      <Col span={8}><Form.Item name={['address', 'country']} label="Country"><Input /></Form.Item></Col>
+      <Col span={8}><Form.Item name={['address', 'city']} label="City"><Input /></Form.Item></Col>
+    </Row>
+    <Row gutter={12}>
+      <Col span={12}><Form.Item name={['address', 'addressLine1']} label="Address Line 1"><Input /></Form.Item></Col>
+      <Col span={12}><Form.Item name={['address', 'addressLine2']} label="Address Line 2"><Input /></Form.Item></Col>
+    </Row>
+    <Row gutter={12}>
+      <Col span={6}><Form.Item name={['address', 'state']} label="State/Province"><Input /></Form.Item></Col>
+      <Col span={6}><Form.Item name={['address', 'postalCode']} label="Postal Code"><Input /></Form.Item></Col>
+      <Col span={6}><Form.Item name={['address', 'phoneNumber']} label="Phone"><Input /></Form.Item></Col>
+      <Col span={6}><Form.Item name={['address', 'email']} label="Email"><Input /></Form.Item></Col>
+    </Row>
+    <Space size="large">
+      <Form.Item name={['address', 'purposeOrdering']} valuePropName="checked" noStyle><Checkbox>Ordering address</Checkbox></Form.Item>
+      <Form.Item name={['address', 'purposeRemitTo']} valuePropName="checked" noStyle><Checkbox>Remit-to address</Checkbox></Form.Item>
+    </Space>
+  </>
+);
+
+const showApiRequest = (title: string, url: string, payload: unknown) => Modal.info({
+  title,
+  width: 660,
+  content: (
+    <div>
+      <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Method / URL</div>
+      <Typography.Text copyable code style={{ fontSize: 12, wordBreak: 'break-all' }}>{`POST ${url}`}</Typography.Text>
+      <div style={{ fontSize: 12, color: '#888', margin: '10px 0 4px' }}>JSON Body</div>
+      <pre style={{ fontSize: 11, background: '#0d0d0d', color: '#a8ff78', borderRadius: 4, padding: 10, maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+        {JSON.stringify(payload, null, 2)}
+      </pre>
+    </div>
+  ),
+});
+
 const RegisterSupplierModal: React.FC<{
   open: boolean;
   onClose: () => void;
@@ -119,8 +209,8 @@ const RegisterSupplierModal: React.FC<{
     form.resetFields();
     form.setFieldsValue({
       status: 'Active',
-      address: { country: 'United Arab Emirates' },
-      sites: [{ invoiceCurrency: 'AED', payFlag: true, purchasingFlag: true, procurementBu: defaultBusinessUnit || undefined }],
+      address: { addressName: 'MAIN', country: 'United Arab Emirates' },
+      sites: [newSiteRow(defaultBusinessUnit)],
     });
     loadBusinessUnits().then(setBusinessUnits).catch(() => {});
     loadExistingSuppliers().then(setExisting).catch(() => {});
@@ -136,23 +226,7 @@ const RegisterSupplierModal: React.FC<{
       || (t.length >= 5 && (e.taxRegistrationNumber || '').replace(/\s+/g, '') === t)).slice(0, 5);
   }, [name, trn, existing]);
 
-  const showApi = () => {
-    const payload = buildSupplierPayload(form.getFieldsValue());
-    Modal.info({
-      title: 'Create Supplier — API Request',
-      width: 660,
-      content: (
-        <div>
-          <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Method / URL</div>
-          <Typography.Text copyable code style={{ fontSize: 12, wordBreak: 'break-all' }}>{`POST ${CREATE_SUPPLIER_URL()}`}</Typography.Text>
-          <div style={{ fontSize: 12, color: '#888', margin: '10px 0 4px' }}>JSON Body</div>
-          <pre style={{ fontSize: 11, background: '#0d0d0d', color: '#a8ff78', borderRadius: 4, padding: 10, maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-            {JSON.stringify(payload, null, 2)}
-          </pre>
-        </div>
-      ),
-    });
-  };
+  const showApi = () => showApiRequest('Create Supplier — API Request', CREATE_SUPPLIER_URL(), buildSupplierPayload(form.getFieldsValue()));
 
   const submit = async () => {
     let vals: any;
@@ -231,54 +305,113 @@ const RegisterSupplierModal: React.FC<{
         </Row>
 
         <Divider titlePlacement="start" style={{ margin: '4px 0 12px', fontSize: 13 }}>Primary Address</Divider>
-        <Row gutter={12}>
-          <Col span={8}><Form.Item name={['address', 'addressName']} label="Address Name"><Input placeholder="e.g. MAIN" /></Form.Item></Col>
-          <Col span={8}><Form.Item name={['address', 'country']} label="Country"><Input /></Form.Item></Col>
-          <Col span={8}><Form.Item name={['address', 'city']} label="City"><Input /></Form.Item></Col>
-        </Row>
-        <Row gutter={12}>
-          <Col span={12}><Form.Item name={['address', 'addressLine1']} label="Address Line 1"><Input /></Form.Item></Col>
-          <Col span={12}><Form.Item name={['address', 'addressLine2']} label="Address Line 2"><Input /></Form.Item></Col>
-        </Row>
-        <Row gutter={12}>
-          <Col span={6}><Form.Item name={['address', 'state']} label="State/Province"><Input /></Form.Item></Col>
-          <Col span={6}><Form.Item name={['address', 'postalCode']} label="Postal Code"><Input /></Form.Item></Col>
-          <Col span={6}><Form.Item name={['address', 'phoneNumber']} label="Phone"><Input /></Form.Item></Col>
-          <Col span={6}><Form.Item name={['address', 'email']} label="Email"><Input /></Form.Item></Col>
-        </Row>
-        <Space size="large">
-          <Form.Item name={['address', 'purposeOrdering']} valuePropName="checked" noStyle><Checkbox>Ordering address</Checkbox></Form.Item>
-          <Form.Item name={['address', 'purposeRemitTo']} valuePropName="checked" noStyle><Checkbox>Remit-to address</Checkbox></Form.Item>
-        </Space>
+        <AddressFields />
 
         <Divider titlePlacement="start" style={{ margin: '14px 0 12px', fontSize: 13 }}>Sites</Divider>
-        <Form.List name="sites">
-          {(fields, { add, remove }) => (
-            <>
-              {fields.map(({ key, name: n, ...rest }) => (
-                <Row gutter={8} key={key} align="middle" style={{ marginBottom: 4 }}>
-                  <Col span={4}><Form.Item {...rest} name={[n, 'siteCode']} rules={[{ required: true, message: 'Code' }]} style={{ marginBottom: 8 }}><Input placeholder="Site Code *" /></Form.Item></Col>
-                  <Col span={4}><Form.Item {...rest} name={[n, 'siteName']} style={{ marginBottom: 8 }}><Input placeholder="Site Name" /></Form.Item></Col>
-                  <Col span={4}><Form.Item {...rest} name={[n, 'procurementBu']} style={{ marginBottom: 8 }}>
-                    <Select showSearch allowClear placeholder="Procurement BU" optionFilterProp="label"
-                      options={businessUnits.map(bu => ({ value: bu, label: bu }))} />
-                  </Form.Item></Col>
-                  <Col span={4}><Form.Item {...rest} name={[n, 'paymentTerms']} style={{ marginBottom: 8 }}><Input placeholder="Payment Terms" /></Form.Item></Col>
-                  <Col span={3}><Form.Item {...rest} name={[n, 'invoiceCurrency']} style={{ marginBottom: 8 }}><Input placeholder="Ccy" /></Form.Item></Col>
-                  <Col span={2}><Form.Item {...rest} name={[n, 'payFlag']} valuePropName="checked" style={{ marginBottom: 8 }}><Checkbox>Pay</Checkbox></Form.Item></Col>
-                  <Col span={2}><Form.Item {...rest} name={[n, 'purchasingFlag']} valuePropName="checked" style={{ marginBottom: 8 }}><Checkbox>Purch</Checkbox></Form.Item></Col>
-                  <Col span={1}><MinusCircleOutlined style={{ color: ERR, cursor: 'pointer' }} onClick={() => remove(n)} /></Col>
-                </Row>
-              ))}
-              <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ invoiceCurrency: 'AED', payFlag: true, purchasingFlag: true, procurementBu: defaultBusinessUnit || undefined })} style={{ marginTop: 4 }}>
-                Add Site
-              </Button>
-            </>
-          )}
-        </Form.List>
+        <SitesEditor businessUnits={businessUnits} defaultBusinessUnit={defaultBusinessUnit} />
       </Form>
     </Modal>
   );
 };
 
 export default RegisterSupplierModal;
+
+// ── Add sites to an existing supplier — POST suppliers/sites/add (database/ap/rr_supplier_add_sites.sql) ──
+const ADD_SITES_URL = () => `${APEX_DB_CONFIG.baseUrl}/suppliers/sites/add`;
+
+export interface SiteTarget { supplierId: number; supplier: string; supplierNumber?: string }
+
+export const AddSupplierSitesModal: React.FC<{
+  open: boolean;
+  onClose: () => void;
+  target: SiteTarget | null;
+  /** codes the supplier already has — refused client-side */
+  existingSiteCodes?: string[];
+  /** the supplier has no address yet: offer one (sites use it) */
+  needsAddress?: boolean;
+  defaultBusinessUnit?: string;
+  onAdded?: (r: { sites: number; siteIds: number[] }) => void;
+}> = ({ open, onClose, target, existingSiteCodes = [], needsAddress, defaultBusinessUnit, onAdded }) => {
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+  const [businessUnits, setBusinessUnits] = useState<string[]>(buCache || []);
+
+  useEffect(() => {
+    if (!open) return;
+    form.resetFields();
+    form.setFieldsValue({
+      address: needsAddress ? { addressName: 'MAIN', country: 'United Arab Emirates' } : undefined,
+      sites: [newSiteRow(defaultBusinessUnit)],
+    });
+    loadBusinessUnits().then(setBusinessUnits).catch(() => {});
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const payloadOf = (vals: any) => {
+    const p = buildSupplierPayload({ ...vals, supplier: target?.supplier });
+    return { supplierId: target?.supplierId, createdBy: 'REACTERP', address: needsAddress ? p.address : undefined, sites: p.sites };
+  };
+
+  const submit = async () => {
+    if (!target) return;
+    let vals: any;
+    try { vals = await form.validateFields(); }
+    catch { return; }
+    setSaving(true);
+    try {
+      const res = await fetch(ADD_SITES_URL(), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payloadOf(vals)),
+      });
+      const text = await res.text();
+      let data: any = {};
+      try { data = JSON.parse(text); } catch { /* HTML error page */ }
+      if (res.ok && data.success !== false) {
+        message.success(`${data.sites ?? vals.sites.length} site(s) added to ${target.supplier}`);
+        onAdded?.({ sites: Number(data.sites ?? vals.sites.length), siteIds: data.siteIds || [] });
+        onClose();
+      } else if (res.status === 404 && !data.error) {
+        message.error('The add-sites service is not installed — run database/ap/rr_supplier_add_sites.sql', 8);
+      } else {
+        message.error(data.error || data.message || `Add sites failed (HTTP ${res.status})`, 8);
+      }
+    } catch (e: any) {
+      message.error(e?.message || 'Add sites failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      title={<Space><PlusOutlined style={{ color: RED }} /><span>Add Sites — {target?.supplier}{target?.supplierNumber ? ` (${target.supplierNumber})` : ''}</span>
+        <Tooltip title="Show the API URL & JSON payload"><Button size="small" icon={<ApiOutlined />} style={{ color: INFO, borderColor: INFO }}
+          onClick={() => showApiRequest('Add Sites — API Request', ADD_SITES_URL(), payloadOf(form.getFieldsValue()))} /></Tooltip>
+      </Space>}
+      onCancel={() => { if (!saving) onClose(); }}
+      maskClosable={!saving}
+      width={880}
+      okText="Add Sites"
+      confirmLoading={saving}
+      onOk={submit}
+      okButtonProps={{ style: { background: RED, borderColor: RED } }}
+      destroyOnHidden
+    >
+      <Form form={form} layout="vertical" size="small">
+        {needsAddress && (
+          <>
+            <Alert type="info" showIcon style={{ marginBottom: 12 }} message="This supplier has no address yet — the sites below will use this one." />
+            <Divider titlePlacement="start" style={{ margin: '4px 0 12px', fontSize: 13 }}>Address</Divider>
+            <AddressFields />
+          </>
+        )}
+        <Divider titlePlacement="start" style={{ margin: needsAddress ? '14px 0 12px' : '4px 0 12px', fontSize: 13 }}>Sites</Divider>
+        <SitesEditor businessUnits={businessUnits} defaultBusinessUnit={defaultBusinessUnit} takenCodes={existingSiteCodes} />
+        {existingSiteCodes.length > 0 && (
+          <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+            Existing sites: {existingSiteCodes.join(', ')}
+          </Typography.Text>
+        )}
+      </Form>
+    </Modal>
+  );
+};
