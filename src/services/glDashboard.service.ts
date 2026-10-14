@@ -25,6 +25,7 @@ export const notPostedSql = `SELECT h.JE_HEADER_ID, h.BATCH_ID, b.BATCH_NAME, h.
        NVL(b.STATUS_MEANING, NVL(b.STATUS, h.POSTING_STATUS)) AS STATUS,
        NVL(h.RUNNING_TOTAL_DR, 0) AS ENTERED_DR,
        (SELECT SUM(NVL(l.ACCOUNTED_DR, 0)) FROM RR_GL_JE_LINES_ALL l WHERE l.JE_HEADER_ID = h.JE_HEADER_ID) AS ACCOUNTED_DR,
+       (SELECT SUM(NVL(l.ACCOUNTED_CR, 0)) FROM RR_GL_JE_LINES_ALL l WHERE l.JE_HEADER_ID = h.JE_HEADER_ID) AS ACCOUNTED_CR,
        (SELECT COUNT(*) FROM RR_GL_JE_LINES_ALL l WHERE l.JE_HEADER_ID = h.JE_HEADER_ID) AS LINE_COUNT,
        h.CREATED_BY, TO_CHAR(h.CREATION_DATE, 'YYYY-MM-DD"T"HH24:MI:SS') AS CREATED,
        TO_CHAR(h.DEFAULT_EFFECTIVE_DATE, 'YYYY-MM-DD') AS ACCOUNTING_DATE,
@@ -55,7 +56,7 @@ ORDER BY LEDGER_ID, START_DATE`;
 export interface GlJournal {
   headerId: number; batchId: number | null; batchName: string; journalName: string; description: string;
   category: string; source: string; period: string; ledgerId: number | null; ledger: string; currency: string; status: string;
-  enteredDr: number; accountedDr: number; lines: number; createdBy: string; created: string; accountingDate: string; ageDays: number;
+  enteredDr: number; accountedDr: number; accountedCr: number; lines: number; createdBy: string; created: string; accountingDate: string; ageDays: number;
   /** its period is not open (for its ledger, else for any ledger) — RR_POST_JOURNAL refuses it until the period is opened */
   periodClosed: boolean;
 }
@@ -107,7 +108,8 @@ export function toJournal(r: Row, open: OpenPeriod[] | null): GlJournal {
     headerId: num(r.JE_HEADER_ID), batchId: r.BATCH_ID == null ? null : num(r.BATCH_ID), batchName: str(r.BATCH_NAME),
     journalName: str(r.JOURNAL_NAME), description: str(r.JOURNAL_DESCRIPTION), category: str(r.CATEGORY), source: str(r.SOURCE),
     period, ledgerId, ledger: str(r.LEDGER_NAME), currency: str(r.CURRENCY_CODE), status: str(r.STATUS) || 'Unposted',
-    enteredDr: num(r.ENTERED_DR), accountedDr: r.ACCOUNTED_DR == null ? num(r.ENTERED_DR) : num(r.ACCOUNTED_DR), lines: num(r.LINE_COUNT),
+    enteredDr: num(r.ENTERED_DR), accountedDr: r.ACCOUNTED_DR == null ? num(r.ENTERED_DR) : num(r.ACCOUNTED_DR),
+    accountedCr: r.ACCOUNTED_CR == null ? num(r.ACCOUNTED_DR ?? r.ENTERED_DR) : num(r.ACCOUNTED_CR), lines: num(r.LINE_COUNT),
     createdBy: str(r.CREATED_BY), created: str(r.CREATED), accountingDate: str(r.ACCOUNTING_DATE), ageDays: num(r.AGE_DAYS),
     periodClosed: periodOpen(period, ledgerId, open) === false,
   };
@@ -180,4 +182,44 @@ export async function loadGlDashboard(): Promise<GlData> {
     periods: pc.map(r => ({ period: str(r.PERIOD_NAME), category: str(r.CATEGORY), month: str(r.MON), count: num(r.N), posted: num(r.POSTED) })),
     open, asOf: new Date(), queries, errors,
   };
+}
+
+// ── posting ─────────────────────────────────────────────────────────────────
+// PUT gl/journals/:jeBatchId/post (RR_POST_JOURNAL) posts a whole BATCH — every journal in it.
+export interface PostBatchItem {
+  batchId: number; batchName: string; period: string; ledger: string;
+  /** the selected journals of this batch */
+  journals: GlJournal[];
+  /** journals of this batch that were not selected — posted with it */
+  others: GlJournal[];
+  aed: number;
+  /** why it will not be sent (checked here first; RR_POST_JOURNAL checks again) */
+  blockers: string[];
+  status: 'ready' | 'skipped' | 'posting' | 'posted' | 'failed';
+  message?: string; errors?: string[];
+}
+
+/** Group the selected journals into the batches the post call works on, with the checks RR_POST_JOURNAL would fail. */
+export function planBatchPost(selected: GlJournal[], allNotPosted: GlJournal[]): PostBatchItem[] {
+  const byBatch = new Map<number, GlJournal[]>();
+  const noBatch: GlJournal[] = [];
+  selected.forEach(j => (j.batchId ? byBatch.set(j.batchId, [...(byBatch.get(j.batchId) || []), j]) : noBatch.push(j)));
+  const items: PostBatchItem[] = [...byBatch].map(([batchId, js]) => {
+    const picked = new Set(js.map(j => j.headerId));
+    const all = allNotPosted.filter(j => j.batchId === batchId);
+    const blockers: string[] = [];
+    const closed = all.filter(j => j.periodClosed);
+    if (closed.length) blockers.push(`Period ${[...new Set(closed.map(j => j.period))].join(', ')} is not open`);
+    const dr = r2(all.reduce((t, j) => t + j.accountedDr, 0)), cr = r2(all.reduce((t, j) => t + j.accountedCr, 0));
+    if (Math.abs(dr - cr) > 0.01) blockers.push(`Out of balance — Dr ${dr.toFixed(2)} ≠ Cr ${cr.toFixed(2)}`);
+    if (all.some(j => j.lines === 0)) blockers.push('A journal in the batch has no lines');
+    return {
+      batchId, batchName: js[0].batchName || `Batch ${batchId}`, period: js[0].period, ledger: js[0].ledger,
+      journals: js, others: all.filter(j => !picked.has(j.headerId)), aed: r2(all.reduce((t, j) => t + j.accountedDr, 0)),
+      blockers, status: blockers.length ? 'skipped' : 'ready',
+    };
+  });
+  noBatch.forEach(j => items.push({ batchId: 0, batchName: j.journalName || `Journal ${j.headerId}`, period: j.period, ledger: j.ledger,
+    journals: [j], others: [], aed: j.accountedDr, blockers: ['No batch — post it from Manage Journals'], status: 'skipped' }));
+  return items.sort((a, b) => a.batchName.localeCompare(b.batchName));
 }

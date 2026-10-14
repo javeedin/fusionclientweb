@@ -3,11 +3,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Col, Input, Modal, Row, Segmented, Skeleton, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
 import {
-  CalendarOutlined, CheckCircleOutlined, ClockCircleOutlined, CodeOutlined, CopyOutlined, ExclamationCircleOutlined,
-  ReloadOutlined, SearchOutlined, StopOutlined,
+  CalendarOutlined, CheckCircleOutlined, ClockCircleOutlined, CloseCircleOutlined, CodeOutlined, CopyOutlined, ExclamationCircleOutlined,
+  LoadingOutlined, MinusCircleOutlined, ReloadOutlined, SearchOutlined, SendOutlined, StopOutlined,
 } from '@ant-design/icons';
 import JournalFullPreview from '../../components/JournalFullPreview';
-import { AGES, inAge, isPmsCategory, loadGlDashboard, pmsKind, summarizeGl, type GlData, type GlJournal } from '../../services/glDashboard.service';
+import { APEX_DB_CONFIG } from '../../config/api.config';
+import { postJournal } from '../../services/manage-journals.service';
+import {
+  AGES, inAge, isPmsCategory, loadGlDashboard, planBatchPost, pmsKind, summarizeGl,
+  type GlData, type GlJournal, type PostBatchItem,
+} from '../../services/glDashboard.service';
 
 const { Text } = Typography;
 
@@ -29,6 +34,8 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<'PMS' | 'ALL'>(() => { try { return localStorage.getItem(MODE_KEY) === 'ALL' ? 'ALL' : 'PMS'; } catch { return 'PMS'; } });
   const [list, setList] = useState<{ title: string; rows: GlJournal[] } | null>(null);
+  const [selected, setSelected] = useState<number[]>([]);          // header ids picked in the list
+  const [post, setPost] = useState<{ items: PostBatchItem[]; running: boolean; done: boolean } | null>(null);
   const [search, setSearch] = useState('');
   const [preview, setPreview] = useState<GlJournal | null>(null);
   const [sqlOpen, setSqlOpen] = useState(false);
@@ -43,7 +50,38 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
   const changeMode = (m: 'PMS' | 'ALL') => { setMode(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* per-viewer convenience */ } };
 
   const s = useMemo(() => (data ? summarizeGl(data.journals, data.periods, data.open, mode === 'PMS') : null), [data, mode]);
-  const show = (title: string, rows: GlJournal[]) => { setSearch(''); setList({ title, rows }); };
+  const show = (title: string, rows: GlJournal[]) => { setSearch(''); setSelected([]); setList({ title, rows }); };
+
+  // Post: PUT gl/journals/:jeBatchId/post (RR_POST_JOURNAL), one batch at a time, the way Manage Journals' Post Batch does
+  const openPost = () => {
+    if (!data || !list) return;
+    const picked = list.rows.filter(j => selected.includes(j.headerId));
+    setPost({ items: planBatchPost(picked, data.journals), running: false, done: false });
+  };
+  const runPost = async () => {
+    if (!post) return;
+    const items = post.items.map(i => ({ ...i }));
+    setPost({ items, running: true, done: false });
+    for (let k = 0; k < items.length; k++) {
+      if (items[k].status !== 'ready') continue;
+      items[k] = { ...items[k], status: 'posting' };
+      setPost({ items: [...items], running: true, done: false });
+      const res = await postJournal(items[k].batchId);
+      items[k] = res.success
+        ? { ...items[k], status: 'posted', message: res.message || 'Posted' }
+        : { ...items[k], status: 'failed', message: res.error || res.message || 'Not posted', errors: res.errors };
+      setPost({ items: [...items], running: true, done: false });
+    }
+    setPost({ items, running: false, done: true });
+    const ok = items.filter(i => i.status === 'posted').length, bad = items.filter(i => i.status === 'failed').length;
+    (bad ? message.warning : message.success)(`${ok} batch${ok === 1 ? '' : 'es'} posted${bad ? ` · ${bad} failed` : ''}`);
+    if (ok) {
+      const posted = new Set(items.filter(i => i.status === 'posted').map(i => i.batchId));
+      setList(l => (l ? { ...l, rows: l.rows.filter(j => !j.batchId || !posted.has(j.batchId)) } : l));
+      setSelected([]);
+      load();
+    }
+  };
 
   if (loading && !data) {
     return <div style={{ marginBottom: 32 }}><Row gutter={[16, 16]}>{[9, 5, 5, 5].map((w, i) => (
@@ -242,12 +280,50 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
         </Col>
       </Row>
 
-      <Modal open={!!list} onCancel={() => setList(null)} width={1100} destroyOnHidden title={list?.title}
-        footer={<Space><Button onClick={() => { setList(null); onNavigate('/gl/manage-journals'); }}>Open Manage Journals</Button><Button type="primary" onClick={() => setList(null)}>Close</Button></Space>}>
-        <Input allowClear prefix={<SearchOutlined />} placeholder="Search batch, journal, category, created by" value={search}
-          onChange={e => setSearch(e.target.value)} style={{ maxWidth: 340, marginBottom: 12 }} />
-        {list && <JournalTable rows={list.rows.filter(j => !search || [j.batchName, j.journalName, j.category, j.createdBy, j.period]
-          .some(v => v.toLowerCase().includes(search.toLowerCase())))} onOpen={setPreview} />}
+      <Modal open={!!list} onCancel={() => setList(null)} width={1150} destroyOnHidden title={list?.title}
+        footer={<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {selected.length ? `${plural(selected.length, 'journal')} selected · AED ${money(list?.rows.filter(j => selected.includes(j.headerId)).reduce((t, j) => t + j.accountedDr, 0) ?? 0)}` : 'Tick journals to post them'}
+          </Text>
+          <Space>
+            <Button onClick={() => { setList(null); onNavigate('/gl/manage-journals'); }}>Open Manage Journals</Button>
+            <Button type="primary" icon={<SendOutlined />} disabled={!selected.length} onClick={openPost}
+              style={selected.length ? { background: '#1D7B4D', borderColor: '#1D7B4D' } : undefined}>
+              Post selected{selected.length ? ` (${selected.length})` : ''}
+            </Button>
+          </Space>
+        </div>}>
+        {(() => {
+          const shown = (list?.rows ?? []).filter(j => !search || [j.batchName, j.journalName, j.category, j.createdBy, j.period]
+            .some(v => v.toLowerCase().includes(search.toLowerCase())));
+          const postable = shown.filter(j => j.batchId && !j.periodClosed && Math.abs(j.accountedDr - j.accountedCr) <= 0.01);
+          return <>
+            <Space style={{ marginBottom: 12 }} wrap>
+              <Input allowClear prefix={<SearchOutlined />} placeholder="Search batch, journal, category, created by" value={search}
+                onChange={e => setSearch(e.target.value)} style={{ width: 340 }} />
+              <Tooltip title="Every journal shown that is balanced, has a batch and sits in an open period">
+                <Button onClick={() => setSelected(postable.map(j => j.headerId))} disabled={!postable.length}>Select postable ({postable.length})</Button>
+              </Tooltip>
+              {selected.length > 0 && <Button type="link" onClick={() => setSelected([])}>Clear</Button>}
+            </Space>
+            <JournalTable rows={shown} onOpen={setPreview} selection={{ keys: selected, onChange: setSelected }} />
+          </>;
+        })()}
+      </Modal>
+
+      <Modal open={!!post} width={980} destroyOnHidden maskClosable={!post?.running} closable={!post?.running}
+        onCancel={() => !post?.running && setPost(null)}
+        title={<Space><SendOutlined style={{ color: '#1D7B4D' }} />Post journals<Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>PUT gl/journals/:jeBatchId/post · RR_POST_JOURNAL</Text></Space>}
+        footer={post?.done
+          ? <Button type="primary" onClick={() => setPost(null)}>Close</Button>
+          : <Space>
+              <Button disabled={post?.running} onClick={() => setPost(null)}>Cancel</Button>
+              <Button type="primary" icon={<SendOutlined />} loading={post?.running} disabled={!post?.items.some(i => i.status === 'ready')}
+                style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }} onClick={runPost}>
+                Post {post ? plural(post.items.filter(i => i.status === 'ready').length, 'batch').replace('batchs', 'batches') : ''}
+              </Button>
+            </Space>}>
+        {post && <PostTable items={post.items} />}
       </Modal>
 
       <JournalFullPreview open={!!preview} jeHeaderId={preview?.headerId ?? null} batchId={preview?.batchId ?? null} onClose={() => setPreview(null)} />
@@ -272,8 +348,65 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
   );
 };
 
-const JournalTable: React.FC<{ rows: GlJournal[]; onOpen: (j: GlJournal) => void; compact?: boolean }> = ({ rows, onOpen, compact }) => (
+const PostTable: React.FC<{ items: PostBatchItem[] }> = ({ items }) => {
+  const ready = items.filter(i => i.status === 'ready').length, skipped = items.filter(i => i.blockers.length).length;
+  const others = items.reduce((t, i) => t + i.others.length, 0);
+  const posted = items.filter(i => i.status === 'posted').length, failed = items.filter(i => i.status === 'failed').length;
+  const finished = posted + failed > 0 && !items.some(i => i.status === 'ready' || i.status === 'posting');
+  const icon = (i: PostBatchItem) => ({
+    ready: <ClockCircleOutlined style={{ color: INK.muted }} />, skipped: <MinusCircleOutlined style={{ color: STATUS.warning }} />,
+    posting: <LoadingOutlined style={{ color: ACCENT }} />, posted: <CheckCircleOutlined style={{ color: STATUS.good }} />,
+    failed: <CloseCircleOutlined style={{ color: STATUS.critical }} />,
+  }[i.status]);
+  return (
+    <>
+      {finished ? (
+        <Alert type={failed ? 'warning' : 'success'} showIcon style={{ marginBottom: 12, fontSize: 12 }}
+          message={`${posted} batch${posted === 1 ? '' : 'es'} posted${failed ? ` · ${failed} refused by the database (reason shown)` : ''}${skipped ? ` · ${skipped} skipped` : ''}`} />
+      ) : (
+        <Alert type="info" showIcon style={{ marginBottom: 12, fontSize: 12 }}
+          message={<span>Posting works on a <b>batch</b>: every journal in it is posted together. {ready} of {items.length} batch{items.length === 1 ? '' : 'es'} ready
+            {skipped ? <> · {skipped} will be skipped (reason shown)</> : null}.
+            The database checks the period and balance again and refuses anything it cannot post.</span>} />
+      )}
+      {others > 0 && !finished && (
+        <Alert type="warning" showIcon style={{ marginBottom: 12, fontSize: 12 }}
+          message={`${plural(others, 'journal')} you did not select ${others === 1 ? 'shares' : 'share'} a batch with selected ones and will be posted with ${others === 1 ? 'it' : 'them'}.`} />
+      )}
+      <Table<PostBatchItem> size="small" rowKey={i => `${i.batchId}-${i.batchName}`} dataSource={items} pagination={items.length > 12 ? { pageSize: 12 } : false}
+        columns={[
+          { title: '', key: 's', width: 32, render: (_: unknown, i) => <Tooltip title={i.status}>{icon(i)}</Tooltip> },
+          { title: 'Batch', dataIndex: 'batchName', ellipsis: true, render: (v: string, i) => (
+            <div>{v}<div style={{ fontSize: 11, color: INK.muted }}>{plural(i.journals.length, 'journal')}{i.others.length ? ` + ${i.others.length} not selected` : ''} · {i.ledger}</div></div>) },
+          { title: 'Period', dataIndex: 'period', width: 80 },
+          { title: 'AED Dr', dataIndex: 'aed', width: 140, align: 'right', render: (v: number) => money(v) },
+          { title: 'Result', key: 'r', width: 340, render: (_: unknown, i) => {
+            if (i.blockers.length) return <Text style={{ fontSize: 12, color: INK.secondary }}>Skipped — {i.blockers.join('; ')}</Text>;
+            if (i.status === 'ready') return <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>PUT …/gl/journals/{i.batchId}/post</Text>;
+            if (i.status === 'posting') return <Text style={{ fontSize: 12 }}>Posting…</Text>;
+            return (
+              <Tooltip title={<span style={{ fontFamily: 'monospace', fontSize: 11 }}>PUT {APEX_DB_CONFIG.baseUrl}/gl/journals/{i.batchId}/post</span>} overlayStyle={{ maxWidth: 600 }}>
+                <div style={{ fontSize: 12, color: i.status === 'posted' ? INK.primary : STATUS.critical }}>
+                  {i.message}{i.errors?.length ? <ul style={{ margin: '2px 0 0', paddingLeft: 16 }}>{i.errors.map((e, k) => <li key={k}>{e}</li>)}</ul> : null}
+                </div>
+              </Tooltip>
+            );
+          } },
+        ]} />
+    </>
+  );
+};
+
+const JournalTable: React.FC<{
+  rows: GlJournal[]; onOpen: (j: GlJournal) => void; compact?: boolean;
+  selection?: { keys: number[]; onChange: (keys: number[]) => void };
+}> = ({ rows, onOpen, compact, selection }) => (
   <Table<GlJournal> size="small" rowKey="headerId" dataSource={rows}
+    rowSelection={selection ? {
+      selectedRowKeys: selection.keys, preserveSelectedRowKeys: true,
+      onChange: keys => selection.onChange(keys as number[]),
+      getCheckboxProps: r => ({ disabled: !r.batchId }),
+    } : undefined}
     pagination={compact ? false : { pageSize: 12, showSizeChanger: false, showTotal: t => `${t} journals` }}
     onRow={r => ({ onClick: () => onOpen(r), style: { cursor: 'pointer' } })}
     locale={{ emptyText: 'Nothing waiting' }}
