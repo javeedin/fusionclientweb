@@ -1,11 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Layout, Typography, Card, Breadcrumb, Space, Tooltip, Row, Col, Statistic, Input, Select, Button, Form, DatePicker, Spin, Tag, Modal, Table, message } from 'antd';
+import { Layout, Typography, Card, Breadcrumb, Space, Row, Col, Select, Form, DatePicker } from 'antd';
 import {
   HomeOutlined,
   FileTextOutlined,
   CheckSquareOutlined,
   BarChartOutlined,
-  SearchOutlined,
   SwapOutlined,
   ReconciliationOutlined,
   BookOutlined,
@@ -14,11 +13,7 @@ import {
   PieChartOutlined,
   FolderOutlined,
   CloseOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
-  ClockCircleOutlined,
   CheckCircleOutlined,
-  SyncOutlined,
   WarningOutlined,
   BankOutlined,
   CreditCardOutlined,
@@ -35,8 +30,6 @@ import {
   SettingOutlined,
   StopOutlined,
   ApiOutlined,
-  CopyOutlined,
-  CheckOutlined,
   TableOutlined,
   WalletOutlined,
   RetweetOutlined,
@@ -46,6 +39,8 @@ import {
 import { Link, useNavigate } from 'react-router-dom';
 import FloatingMenu from '../../components/FloatingMenu';
 import { APEX_DB_CONFIG } from '../../config/api.config';
+import PayablesDashboard from './PayablesDashboard';
+import { loadPayablesBusinessUnits } from '../../services/payablesDashboard.service';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -162,142 +157,24 @@ const paymentTaskItems: MenuItemType[] = [
   { key: 'retrieve-acknowledgments', icon: <CheckCircleOutlined />, label: 'Retrieve Disbursement Acknowledgments', description: 'Get bank responses', color: REDWOOD.warning },
 ];
 
-interface KpiData {
-  pendingInvoices: number;
-  approvedInvoices: number;
-  pendingPayments: number;
-  overduePayments: number;
-  totalPayables: number | null;
-  lastSync: string;
-}
-
-const DEFAULT_KPI: KpiData = {
-  pendingInvoices: 0,
-  approvedInvoices: 0,
-  pendingPayments: 0,
-  overduePayments: 0,
-  totalPayables: 0,
-  lastSync: '—',
-};
-
-interface SupplierOutstanding {
-  supplierNumber: string;
-  supplierName:   string;
-  invoiceCount:   number;
-  totalInvoiceAmount: number;
-  totalPaid:      number;
-  outstandingAmount: number;
-}
-
 const APModule: React.FC = () => {
   const navigate = useNavigate();
-  const [kpi, setKpi] = useState<KpiData>(DEFAULT_KPI);
-  const [kpiLoading, setKpiLoading] = useState(true);
   const [businessUnits, setBusinessUnits] = useState<string[]>([]);
   const [selectedBU, setSelectedBU] = useState<string>('');   // '' = All
-  const [apiModalVisible, setApiModalVisible] = useState(false);
-  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
 
-  // Drill-down: outstanding by supplier
-  const [drillModalOpen,   setDrillModalOpen]   = useState(false);
-  const [drillLoading,     setDrillLoading]     = useState(false);
-  const [drillRows,        setDrillRows]        = useState<SupplierOutstanding[]>([]);
-  const [drillSearch,      setDrillSearch]      = useState('');
-  const [drillApiUrl,      setDrillApiUrl]      = useState('');
-
-  const openDrillDown = async () => {
-    setDrillModalOpen(true);
-    setDrillLoading(true);
-    setDrillRows([]);
-    setDrillSearch('');
-    try {
-      const params = new URLSearchParams();
-      if (selectedBU) params.set('P_BUSINESS_UNIT', selectedBU);
-      // Same service (and formula) as the headline total, so the rows add up to it
-      const url = `${APEX_DB_CONFIG.baseUrl}/suppliers/balance/outstanding${params.toString() ? '?' + params : ''}`;
-      setDrillApiUrl(url);
-      const res  = await fetch(url);
-      const text = await res.text();
-      if (!text.trim()) throw new Error('Empty response from server');
-      const data = JSON.parse(text);
-      if (data.error || data.success === 'false') throw new Error(data.error || 'Failed to load outstanding');
-      const items: any[] = Array.isArray(data.items) ? data.items : (Array.isArray(data) ? data : []);
-      setDrillRows(items.map((r: any) => ({
-        supplierNumber:     r.supplier_number     || '',
-        supplierName:       r.supplier_name       || '',
-        invoiceCount:       Number(r.invoice_count        ?? 0),
-        totalInvoiceAmount: Number(r.total_invoice_amount ?? 0),
-        totalPaid:          Number(r.total_paid           ?? 0),
-        outstandingAmount:  Number(r.outstanding_amount   ?? 0),
-      })));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      message.error(`Failed to load outstanding: ${msg}`);
-      console.error('Drill-down error:', msg);
-    } finally {
-      setDrillLoading(false);
-    }
-  };
-
-  const copyUrl = (url: string) => {
-    navigator.clipboard.writeText(url);
-    setCopiedUrl(url);
-    setTimeout(() => setCopiedUrl(null), 2000);
-  };
-
-  // Fetch BU list once on mount
+  // Business units that have invoices (direct SQL); the GL list when the read gateway is not available
   useEffect(() => {
-    fetch(`${APEX_DB_CONFIG.baseUrl}/gl/businessunits`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (!data) return;
-        const items: any[] = Array.isArray(data) ? data : (data.items || []);
-        setBusinessUnits(items.map((i: any) => i.business_unit_name || '').filter(Boolean));
-      })
-      .catch(() => {});
+    loadPayablesBusinessUnits()
+      .then(setBusinessUnits)
+      .catch(() => fetch(`${APEX_DB_CONFIG.baseUrl}/gl/businessunits`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          const items: any[] = Array.isArray(data) ? data : (data?.items || []);
+          setBusinessUnits(items.map((i: any) => i.business_unit_name || '').filter(Boolean));
+        })
+        .catch(() => {}));
   }, []);
 
-  // Fetch stats whenever selectedBU changes
-  useEffect(() => {
-    const fetchStats = async () => {
-      setKpiLoading(true);
-
-      const buQs = selectedBU ? `?P_BUSINESS_UNIT=${encodeURIComponent(selectedBU)}` : '';
-
-      // Single call — stats endpoint returns all KPIs including total_outstanding
-      let d: any = {};
-      try {
-        const res  = await fetch(`${APEX_DB_CONFIG.baseUrl}/ap/invoices/stats${buQs}`);
-        const text = res.ok ? await res.text() : '';
-        const json = text.trim() ? JSON.parse(text) : {};
-        d = Array.isArray(json?.items) && json.items.length > 0 ? json.items[0] : json;
-      } catch { /* leave d empty — KPIs default to 0 */ }
-
-      // Total outstanding: same formula as the supplier balance dashboard
-      // (suppliers/balance/dashboard/:no), summed across the selected BU
-      let totalOutstanding: number | null = null;
-      try {
-        const res  = await fetch(`${APEX_DB_CONFIG.baseUrl}/suppliers/balance/outstanding${buQs}`);
-        const json = res.ok ? await res.json() : null;
-        const bal  = Number(json?.balance_summary?.balance);
-        if (json && json.success !== 'false' && Number.isFinite(bal)) totalOutstanding = bal;
-      } catch { /* service not deployed or failed — show "—" rather than a wrong figure */ }
-
-      setKpi({
-        pendingInvoices:  Number(d.pending_invoices  ?? 0),
-        approvedInvoices: Number(d.approved_invoices ?? 0),
-        pendingPayments:  Number(d.pending_payments  ?? 0),
-        overduePayments:  Number(d.overdue_payments  ?? 0),
-        totalPayables:    totalOutstanding,
-        lastSync: d.last_sync_date
-          ? new Date(d.last_sync_date).toLocaleString()
-          : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      });
-
-      setKpiLoading(false);
-    };
-    fetchStats();
-  }, [selectedBU]);
 
   const handleMenuItemClick = (key: string, path?: string) => {
     if (key === 'create-invoice') {
@@ -308,83 +185,6 @@ const APModule: React.FC = () => {
       navigate(path);
     }
   };
-
-  // KPI Card Component
-  const KpiCard = ({
-    title,
-    value,
-    icon,
-    color,
-    trend,
-    change,
-    suffix,
-    prefix,
-    isCurrency
-  }: {
-    title: string;
-    value: number;
-    icon: React.ReactNode;
-    color: string;
-    trend?: 'up' | 'down';
-    change?: number;
-    suffix?: string;
-    prefix?: string;
-    isCurrency?: boolean;
-  }) => (
-    <Card
-      style={{
-        borderRadius: 12,
-        border: 'none',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-      }}
-      bodyStyle={{ padding: 20 }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <Text type="secondary" style={{ fontSize: 13 }}>{title}</Text>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-            {isCurrency ? (
-              <Text style={{ fontSize: 24, fontWeight: 600, color: REDWOOD.neutral900 }}>
-                {prefix}{value.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </Text>
-            ) : (
-              <Statistic
-                value={value}
-                suffix={suffix}
-                prefix={prefix}
-                valueStyle={{ fontSize: 28, fontWeight: 600, color: REDWOOD.neutral900 }}
-              />
-            )}
-            {trend && change && (
-              <span style={{
-                color: trend === 'up' ? REDWOOD.success : REDWOOD.primary,
-                fontSize: 12,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 2,
-              }}>
-                {trend === 'up' ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
-                {change}%
-              </span>
-            )}
-          </div>
-        </div>
-        <div style={{
-          width: 48,
-          height: 48,
-          borderRadius: 12,
-          background: `${color}15`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: color,
-          fontSize: 24,
-        }}>
-          {icon}
-        </div>
-      </div>
-    </Card>
-  );
 
   // Menu Card Component — shows green "Implemented" badge when the feature has a path
   const MenuCard = ({ item }: { item: MenuItemType }) => (
@@ -522,76 +322,17 @@ const APModule: React.FC = () => {
                   <Select.Option key={bu} value={bu}>{bu}</Select.Option>
                 ))}
               </Select>
-              <Tooltip title="View API Endpoints">
-                <Button
-                  type="text"
-                  icon={<ApiOutlined style={{ color: REDWOOD.info }} />}
-                  onClick={() => setApiModalVisible(true)}
-                  size="small"
-                />
-              </Tooltip>
             </Space>
           </div>
 
-          {/* KPI Cards Row */}
-          <Spin spinning={kpiLoading}>
-            <Row gutter={[16, 16]} style={{ marginBottom: 32 }}>
-              <Col xs={24} sm={12} lg={6}>
-                <KpiCard title="Pending Invoices"  value={kpi.pendingInvoices}  icon={<ClockCircleOutlined />} color={REDWOOD.warning} />
-              </Col>
-              <Col xs={24} sm={12} lg={6}>
-                <KpiCard title="Approved Invoices" value={kpi.approvedInvoices} icon={<CheckCircleOutlined />}  color={REDWOOD.success} />
-              </Col>
-              <Col xs={24} sm={12} lg={6}>
-                <KpiCard title="Pending Payments"  value={kpi.pendingPayments}  icon={<CreditCardOutlined />}  color={REDWOOD.info} />
-              </Col>
-              <Col xs={24} sm={12} lg={6}>
-                <KpiCard title="Overdue Payments"  value={kpi.overduePayments}  icon={<WarningOutlined />}     color={REDWOOD.primary} />
-              </Col>
-            </Row>
+          {/* Payables dashboard — live, direct SQL (PayablesDashboard / payablesDashboard.service) */}
+          <PayablesDashboard
+            businessUnit={selectedBU}
+            onNavigate={path => navigate(path)}
+            onOpenInvoice={(invoiceId, invoiceNumber) =>
+              navigate('/ap/manage-invoices', { state: { openInvoiceId: invoiceId, openInvoiceNumber: invoiceNumber } })}
+          />
 
-            {/* Total Payables and Last Sync */}
-            <Row gutter={[16, 16]} style={{ marginBottom: 32 }}>
-              <Col xs={24} lg={12}>
-                <Card
-                  style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', cursor: 'pointer' }}
-                  bodyStyle={{ padding: 20 }}
-                  onClick={openDrillDown}
-                  hoverable
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <Text strong style={{ fontSize: 15 }}>Total Outstanding Payables</Text>
-                    <Space>
-                      <Text type="secondary" style={{ fontSize: 12 }}>Click to drill down</Text>
-                      <TableOutlined style={{ color: REDWOOD.info }} />
-                    </Space>
-                  </div>
-                  <Text style={{ fontSize: 32, fontWeight: 600, color: REDWOOD.neutral900 }}>
-                    {kpi.totalPayables !== null
-                      ? `AED ${kpi.totalPayables.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                      : '—'}
-                  </Text>
-                </Card>
-              </Col>
-              <Col xs={24} lg={12}>
-                <Card
-                  style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', height: '100%' }}
-                  bodyStyle={{ padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-                >
-                  <div>
-                    <Text strong style={{ fontSize: 15, display: 'block' }}>Last Data Sync</Text>
-                    <Text type="secondary">{kpi.lastSync}</Text>
-                  </div>
-                  <Button
-                    icon={<SyncOutlined />}
-                    onClick={() => { setKpiLoading(true); setKpi(DEFAULT_KPI); setTimeout(() => window.location.reload(), 100); }}
-                  >
-                    Sync Now
-                  </Button>
-                </Card>
-              </Col>
-            </Row>
-          </Spin>
 
           {/* Invoice Tasks Section */}
           <div style={{ marginBottom: 32 }}>
@@ -667,199 +408,6 @@ const APModule: React.FC = () => {
         </div>
 
       </Content>
-
-      {/* Outstanding by Supplier Drill-down Modal */}
-      <Modal
-        open={drillModalOpen}
-        onCancel={() => setDrillModalOpen(false)}
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 32 }}>
-            <Space>
-              <TableOutlined style={{ color: REDWOOD.info }} />
-              <span>Outstanding Payables by Supplier</span>
-              {selectedBU && <Tag color="blue">{selectedBU}</Tag>}
-            </Space>
-            <Tooltip title={drillApiUrl || 'API URL'} overlayStyle={{ maxWidth: 600 }}>
-              <Button
-                size="small"
-                icon={copiedUrl === drillApiUrl ? <CheckOutlined style={{ color: REDWOOD.success }} /> : <ApiOutlined style={{ color: REDWOOD.info }} />}
-                onClick={() => drillApiUrl && copyUrl(drillApiUrl)}
-                style={{ fontSize: 11 }}
-              >
-                {copiedUrl === drillApiUrl ? 'Copied' : 'API'}
-              </Button>
-            </Tooltip>
-          </div>
-        }
-        footer={<Button onClick={() => setDrillModalOpen(false)}>Close</Button>}
-        width={880}
-        destroyOnClose
-      >
-        <div style={{ marginBottom: 12 }}>
-          <Input
-            placeholder="Search supplier name or number…"
-            prefix={<SearchOutlined style={{ color: REDWOOD.neutral600 }} />}
-            value={drillSearch}
-            onChange={e => setDrillSearch(e.target.value)}
-            allowClear
-            style={{ maxWidth: 320 }}
-          />
-        </div>
-        <Table<SupplierOutstanding>
-          loading={drillLoading}
-          rowKey="supplierNumber"
-          size="small"
-          pagination={{ pageSize: 15, showSizeChanger: false, showTotal: (t) => `${t} suppliers` }}
-          dataSource={
-            drillRows.filter(r =>
-              !drillSearch ||
-              r.supplierName.toLowerCase().includes(drillSearch.toLowerCase()) ||
-              r.supplierNumber.toLowerCase().includes(drillSearch.toLowerCase())
-            )
-          }
-          summary={rows => {
-            const visible = rows as unknown as SupplierOutstanding[];
-            const totalOut = visible.reduce((s, r) => s + r.outstandingAmount, 0);
-            return (
-              <Table.Summary.Row style={{ background: '#fafafa', fontWeight: 600 }}>
-                <Table.Summary.Cell index={0} colSpan={3}>
-                  <Text strong>Total ({visible.length} suppliers)</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={3} align="right" />
-                <Table.Summary.Cell index={4} align="right">
-                  <Text strong style={{ color: REDWOOD.primary }}>
-                    AED {totalOut.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                  </Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={5} />
-              </Table.Summary.Row>
-            );
-          }}
-          columns={[
-            {
-              title: 'Supplier',
-              dataIndex: 'supplierName',
-              ellipsis: true,
-              render: (name, rec) => (
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: 13 }}>{name}</div>
-                  <div style={{ fontSize: 11, color: REDWOOD.neutral600 }}>{rec.supplierNumber}</div>
-                </div>
-              ),
-            },
-            {
-              title: 'Invoices',
-              dataIndex: 'invoiceCount',
-              width: 80,
-              align: 'center' as const,
-              render: (v: number) => <Tag>{v}</Tag>,
-            },
-            {
-              title: 'Invoice Amount (AED)',
-              dataIndex: 'totalInvoiceAmount',
-              width: 170,
-              align: 'right' as const,
-              render: (v: number) => v.toLocaleString('en-US', { minimumFractionDigits: 2 }),
-              sorter: (a, b) => a.totalInvoiceAmount - b.totalInvoiceAmount,
-            },
-            {
-              title: 'Total Paid (AED)',
-              dataIndex: 'totalPaid',
-              width: 150,
-              align: 'right' as const,
-              render: (v: number) => (
-                <span style={{ color: REDWOOD.success }}>
-                  {v.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                </span>
-              ),
-              sorter: (a, b) => a.totalPaid - b.totalPaid,
-            },
-            {
-              title: 'Outstanding (AED)',
-              dataIndex: 'outstandingAmount',
-              width: 160,
-              align: 'right' as const,
-              defaultSortOrder: 'descend' as const,
-              sorter: (a, b) => a.outstandingAmount - b.outstandingAmount,
-              render: (v: number) => (
-                <Text strong style={{ color: v > 0 ? REDWOOD.primary : REDWOOD.success }}>
-                  {v.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                </Text>
-              ),
-            },
-            {
-              title: '',
-              width: 60,
-              align: 'center' as const,
-              render: (_: any, rec: SupplierOutstanding) => (
-                <Tooltip title="View invoices">
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<FileTextOutlined />}
-                    onClick={() => {
-                      setDrillModalOpen(false);
-                      navigate('/ap/manage-invoices', { state: { filterSupplierNumber: rec.supplierNumber } });
-                    }}
-                  />
-                </Tooltip>
-              ),
-            },
-          ]}
-        />
-      </Modal>
-      {/* End Outstanding Drill-down Modal */}
-
-      {/* API Endpoints Modal */}
-      <Modal
-        title={<Space><ApiOutlined style={{ color: REDWOOD.info }} /><span>API Endpoints — Payables Dashboard</span></Space>}
-        open={apiModalVisible}
-        onCancel={() => setApiModalVisible(false)}
-        footer={<Button onClick={() => setApiModalVisible(false)}>Close</Button>}
-        width={720}
-      >
-        {[
-          {
-            label: 'Invoice Statistics (KPI cards)',
-            method: 'GET',
-            url: `${APEX_DB_CONFIG.baseUrl}/ap/invoices/stats`,
-            params: selectedBU ? `P_BUSINESS_UNIT=${selectedBU}` : '(no filter — all BUs)',
-            note: 'Returns pending/approved/payment counts. Deploy database/ap/rr_ap_dashboard_stats.sql to activate.',
-          },
-          {
-            label: 'Total Outstanding Payables (tile + drill-down)',
-            method: 'GET',
-            url: `${APEX_DB_CONFIG.baseUrl}/suppliers/balance/outstanding`,
-            params: selectedBU ? `P_BUSINESS_UNIT=${selectedBU}` : '(no filter — all BUs)',
-            note: 'balance_summary.balance uses the same formula as suppliers/balance/dashboard/:supplier_number. Deploy database/ap/rr_ap_supplier_balance_outstanding.sql to activate.',
-          },
-          {
-            label: 'Business Unit List',
-            method: 'GET',
-            url: `${APEX_DB_CONFIG.baseUrl}/gl/businessunits`,
-            params: '',
-            note: 'Populates the Business Unit dropdown.',
-          },
-        ].map((api, i) => (
-          <Card key={i} size="small" style={{ marginBottom: 12, border: `1px solid ${REDWOOD.neutral200}` }}>
-            <Space direction="vertical" style={{ width: '100%' }} size={4}>
-              <Space>
-                <Tag color={api.method === 'GET' ? 'green' : 'blue'}>{api.method}</Tag>
-                <Text strong>{api.label}</Text>
-              </Space>
-              <Space style={{ width: '100%' }}>
-                <Text code style={{ fontSize: 12, flex: 1, wordBreak: 'break-all' }}>{api.url}{api.params ? '?' + api.params : ''}</Text>
-                <Button
-                  size="small"
-                  icon={copiedUrl === api.url ? <CheckOutlined /> : <CopyOutlined />}
-                  onClick={() => copyUrl(api.url + (api.params && !api.params.startsWith('(') ? '?' + api.params : ''))}
-                />
-              </Space>
-              {api.note && <Text type="secondary" style={{ fontSize: 11 }}>{api.note}</Text>}
-            </Space>
-          </Card>
-        ))}
-      </Modal>
 
       {/* Autopilot Assistant */}
       
