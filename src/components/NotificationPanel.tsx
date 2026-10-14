@@ -14,6 +14,7 @@ import dayjs from 'dayjs';
 import { useNotifications, type AppNotification, type NotificationModule } from '../context/NotificationContext';
 import { APEX_DB_CONFIG } from '../config/api.config';
 import { poQuery, nlit } from '../services/po.service';
+import AccountingLinesView, { type AccountingLine } from './AccountingLinesView';
 
 const { Text } = Typography;
 
@@ -204,6 +205,37 @@ async function loadApInvoiceHeader(invoiceId: number, invoiceNumber?: string): P
   return one && pick(one, 'invoice_number', 'invoice_num') ? one : null;
 }
 
+/** External transaction accounting: the GL journal when it is already posted (reference2 = transaction id),
+ *  else the lines it will post — money in: Dr bank / Cr offset; money out: Dr offset / Cr bank. */
+function cashAccountingLines(txn: any, gl: any[] | null, notif: AppNotification): { lines: AccountingLine[]; posted: boolean } {
+  const ledgerCurrency = 'AED';
+  if (gl && gl.length) {
+    return {
+      posted: true,
+      lines: gl.map(l => {
+        const dr = Number(pick(l, 'entered_dr') || 0), cr = Number(pick(l, 'entered_cr') || 0);
+        const adr = Number(pick(l, 'accounted_dr') || 0), acr = Number(pick(l, 'accounted_cr') || 0);
+        return {
+          side: dr > 0 || adr > 0 ? 'DR' : 'CR', account: String(pick(l, 'account', 'account_combination', 'concatenated_segments') || ''),
+          entered: dr || cr, accounted: adr || acr, currency: String(pick(l, 'currency_code') || txn?.currencyCode || ledgerCurrency),
+          ledgerCurrency, description: pick(l, 'description', 'line_description'),
+        } as AccountingLine;
+      }),
+    };
+  }
+  if (!txn) return { lines: [], posted: false };
+  const amount = Math.abs(Number(txn.amount ?? notif.approvalAmount ?? 0));
+  const rate = Number(txn.bankConversionRate) || 1;
+  const currency = txn.currencyCode || notif.approvalCurrency || ledgerCurrency;
+  const moneyIn = (txn.transactionDirection ?? (Number(txn.amount ?? 0) >= 0 ? 'DR' : 'CR')) === 'DR';
+  const bank = { account: txn.assetAccountCombination || '', label: `Bank account${txn.bankAccountName ? ` — ${txn.bankAccountName}` : ''}` };
+  const offset = { account: txn.offsetAccountCombination || '', label: `Offset account${txn.transactionType ? ` — ${txn.transactionType}` : ''}` };
+  const line = (side: 'DR' | 'CR', a: { account: string; label: string }): AccountingLine => ({
+    side, ...a, entered: amount, currency, accounted: Math.round(amount * rate * 100) / 100, ledgerCurrency,
+  });
+  return { posted: false, lines: moneyIn ? [line('DR', bank), line('CR', offset)] : [line('DR', offset), line('CR', bank)] };
+}
+
 const fmtMoney = (v: any) => (v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const fmtDay = (v: any) => (v && dayjs(v).isValid() ? dayjs(v).format('DD-MMM-YYYY') : v || '—');
 
@@ -225,6 +257,8 @@ const TransactionDetailModal: React.FC<{
   const [apHeaderLoading, setApHeaderLoading] = useState(false);
   const [cashTxn, setCashTxn] = useState<any>(null);
   const [cashTxnLoading, setCashTxnLoading] = useState(false);
+  // its GL journal lines, when it is already accounted
+  const [cashGl, setCashGl] = useState<any[] | null>(null);
   // purchasing: the purchase order / requisition (and change order) being approved
   const [poDoc, setPoDoc] = useState<{ kind: string; head: any; lines: any[]; co?: any } | null>(null);
   const [poDocLoading, setPoDocLoading] = useState(false);
@@ -297,15 +331,18 @@ const TransactionDetailModal: React.FC<{
   React.useEffect(() => {
     if (!open || !notif?.transactionId || notif.approvalModule !== 'CASH') {
       setCashTxn(null);
+      setCashGl(null);
       return;
     }
     setCashTxnLoading(true);
-    fetch(`${APEX_DB_CONFIG.baseUrl}/cash/externaltransactions?external_transaction_id=${notif.transactionId}`, {
-      headers: { Accept: 'application/json' },
-    })
-      .then(r => r.json())
-      .then(d => setCashTxn(d.items?.[0] ?? null))
-      .catch(() => {})
+    const base = APEX_DB_CONFIG.baseUrl;
+    Promise.all([
+      fetch(`${base}/cash/externaltransactions?external_transaction_id=${notif.transactionId}`, { headers: { Accept: 'application/json' } })
+        .then(r => r.json()).then(d => d.items?.[0] ?? null).catch(() => null),
+      getJson(`${base}/gl/journals/lines?reference2=${encodeURIComponent(String(notif.transactionId))}&reference5=BANK_EXTERNAL_TRANSACTIONS`)
+        .then(itemsOf).catch(() => []),
+    ])
+      .then(([txn, gl]) => { setCashTxn(txn); setCashGl(gl); })
       .finally(() => setCashTxnLoading(false));
   }, [open, notif?.transactionId, notif?.approvalModule]);
 
@@ -535,14 +572,26 @@ const TransactionDetailModal: React.FC<{
                   <Descriptions.Item label="Status"><Tag>{cashTxn.status || '—'}</Tag></Descriptions.Item>
                   {cashTxn.payeeName && <Descriptions.Item label="Payee">{cashTxn.payeeName}</Descriptions.Item>}
                   <Descriptions.Item label="Date">{cashTxn.transactionDate ? dayjs(cashTxn.transactionDate).format('DD-MMM-YYYY') : '—'}</Descriptions.Item>
-                  {cashTxn.assetAccountCombination && (
-                    <Descriptions.Item label="Asset Account" span={2}>
-                      <Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{cashTxn.assetAccountCombination}</Text>
-                    </Descriptions.Item>
+                  {cashTxn.description && cashTxn.description !== cashTxn.referenceText && (
+                    <Descriptions.Item label="Description" span={2}>{cashTxn.description}</Descriptions.Item>
                   )}
                 </Descriptions>
               : <Text type="secondary" style={{ fontSize: 12 }}>Transaction details not available — ensure DB patch 99 is deployed</Text>
           }
+          {!cashTxnLoading && (() => {
+            const { lines, posted } = cashAccountingLines(cashTxn, cashGl, notif);
+            if (!lines.length) return null;
+            return (
+              <>
+                <Divider style={{ margin: '14px 0 8px', fontSize: 12 }}>
+                  <Space size={6}>Accounting
+                    <Tag color={posted ? 'success' : 'gold'} style={{ margin: 0, fontSize: 10 }}>{posted ? 'posted in the GL' : 'on approval and accounting'}</Tag>
+                  </Space>
+                </Divider>
+                <AccountingLinesView lines={lines} />
+              </>
+            );
+          })()}
         </>
       )}
     </Modal>
