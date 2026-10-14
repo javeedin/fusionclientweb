@@ -18,7 +18,6 @@ export interface AccountingLine {
   /** in the ledger currency, when it differs from the entered amount */
   accounted?: number;
   ledgerCurrency?: string;
-  description?: string;
 }
 
 interface SegmentInfo { name: string; value: string; description: string }
@@ -128,7 +127,6 @@ const AccountingLinesView: React.FC<{ lines: AccountingLine[] }> = ({ lines }) =
                       </div>
                     );
                   })())}
-                  {l.description && <div style={{ fontSize: 11, color: '#595959', marginTop: 4 }}>{l.description}</div>}
                 </td>
                 <td style={{ ...cell, textAlign: 'right' }}>{l.side === 'DR' ? amount : null}</td>
                 <td style={{ ...cell, textAlign: 'right' }}>{l.side === 'CR' ? amount : null}</td>

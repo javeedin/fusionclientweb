@@ -218,7 +218,7 @@ function cashAccountingLines(txn: any, gl: any[] | null, notif: AppNotification)
         return {
           side: dr > 0 || adr > 0 ? 'DR' : 'CR', account: String(pick(l, 'account', 'account_combination', 'concatenated_segments') || ''),
           entered: dr || cr, accounted: adr || acr, currency: String(pick(l, 'currency_code') || txn?.currencyCode || ledgerCurrency),
-          ledgerCurrency, description: pick(l, 'description', 'line_description'),
+          ledgerCurrency,
         } as AccountingLine;
       }),
     };
