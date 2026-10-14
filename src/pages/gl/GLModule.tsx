@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Layout, Typography, Card, Breadcrumb, Space, Tooltip, Row, Col, Statistic, Progress } from 'antd';
+import { Layout, Typography, Card, Breadcrumb, Space, Tooltip, Row, Col } from 'antd';
 import {
   HomeOutlined,
   AccountBookOutlined,
@@ -19,17 +19,13 @@ import {
   ProfileOutlined,
   SolutionOutlined,
   CloseOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
-  ClockCircleOutlined,
   CheckCircleOutlined,
-  SyncOutlined,
-  WarningOutlined,
   TagsOutlined,
   RobotOutlined,
   DeleteOutlined,
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
+import GlDashboard from './GlDashboard';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -101,16 +97,6 @@ const setupMenuItems: MenuItemType[] = [
   { key: 'income-statement-templates', icon: <LineChartOutlined />, label: 'Income Statement Templates', description: 'Manage P&L statement templates', color: REDWOOD.success, path: '/gl/income-statement-templates' },
   { key: 'categories', icon: <TagsOutlined />, label: 'Manage Categories', description: 'Journal entry categories', color: REDWOOD.info, path: '/gl/categories' },
 ];
-
-// GL KPI Data (mock - would come from API)
-const glKpiData = {
-  pendingJournals: { value: 24, trend: 'up', change: 8 },
-  postedJournals: { value: 156, trend: 'up', change: 12 },
-  unpostedBatches: { value: 5, trend: 'down', change: 3 },
-  openPeriods: { value: 2, total: 12 },
-  periodProgress: 67,
-  lastSync: '2 hours ago',
-};
 
 const GLModule: React.FC = () => {
   const navigate = useNavigate();
@@ -314,72 +300,6 @@ const GLModule: React.FC = () => {
     </div>
   );
 
-  // KPI Card Component
-  const KpiCard = ({
-    title,
-    value,
-    icon,
-    color,
-    trend,
-    change,
-    suffix
-  }: {
-    title: string;
-    value: number;
-    icon: React.ReactNode;
-    color: string;
-    trend?: 'up' | 'down';
-    change?: number;
-    suffix?: string;
-  }) => (
-    <Card
-      style={{
-        borderRadius: 12,
-        border: 'none',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-      }}
-      bodyStyle={{ padding: 20 }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <Text type="secondary" style={{ fontSize: 13 }}>{title}</Text>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-            <Statistic
-              value={value}
-              suffix={suffix}
-              valueStyle={{ fontSize: 28, fontWeight: 600, color: REDWOOD.neutral900 }}
-            />
-            {trend && change && (
-              <span style={{
-                color: trend === 'up' ? REDWOOD.success : REDWOOD.primary,
-                fontSize: 12,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 2,
-              }}>
-                {trend === 'up' ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
-                {change}%
-              </span>
-            )}
-          </div>
-        </div>
-        <div style={{
-          width: 48,
-          height: 48,
-          borderRadius: 12,
-          background: `${color}15`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: color,
-          fontSize: 24,
-        }}>
-          {icon}
-        </div>
-      </div>
-    </Card>
-  );
-
   // Menu Card Component
   const MenuCard = ({ item }: { item: MenuItemType }) => (
     <Card
@@ -498,104 +418,9 @@ const GLModule: React.FC = () => {
             </Space>
           </div>
 
-          {/* KPI Cards Row */}
-          <Row gutter={[16, 16]} style={{ marginBottom: 32 }}>
-            <Col xs={24} sm={12} lg={6}>
-              <KpiCard
-                title="Pending Journals"
-                value={glKpiData.pendingJournals.value}
-                icon={<ClockCircleOutlined />}
-                color={REDWOOD.warning}
-                trend={glKpiData.pendingJournals.trend as 'up' | 'down'}
-                change={glKpiData.pendingJournals.change}
-              />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
-              <KpiCard
-                title="Posted This Period"
-                value={glKpiData.postedJournals.value}
-                icon={<CheckCircleOutlined />}
-                color={REDWOOD.success}
-                trend={glKpiData.postedJournals.trend as 'up' | 'down'}
-                change={glKpiData.postedJournals.change}
-              />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
-              <KpiCard
-                title="Unposted Batches"
-                value={glKpiData.unpostedBatches.value}
-                icon={<WarningOutlined />}
-                color={REDWOOD.primary}
-                trend={glKpiData.unpostedBatches.trend as 'up' | 'down'}
-                change={glKpiData.unpostedBatches.change}
-              />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
-              <KpiCard
-                title="Open Periods"
-                value={glKpiData.openPeriods.value}
-                icon={<CalendarOutlined />}
-                color={REDWOOD.info}
-                suffix={`/ ${glKpiData.openPeriods.total}`}
-              />
-            </Col>
-          </Row>
+          {/* GL dashboard — live, direct SQL, PMS journals first (GlDashboard / glDashboard.service) */}
+          <GlDashboard onNavigate={path => navigate(path)} />
 
-          {/* Period Progress Card */}
-          <Row gutter={[16, 16]} style={{ marginBottom: 32 }}>
-            <Col xs={24} lg={12}>
-              <Card
-                style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
-                bodyStyle={{ padding: 20 }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <Text strong style={{ fontSize: 15 }}>Period Close Progress</Text>
-                  <Text type="secondary">Dec 2024</Text>
-                </div>
-                <Progress
-                  percent={glKpiData.periodProgress}
-                  strokeColor={{
-                    '0%': REDWOOD.primary,
-                    '100%': REDWOOD.success,
-                  }}
-                  trailColor={REDWOOD.neutral200}
-                  strokeWidth={12}
-                  style={{ marginBottom: 8 }}
-                />
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {glKpiData.periodProgress}% complete • {100 - glKpiData.periodProgress}% remaining tasks
-                </Text>
-              </Card>
-            </Col>
-            <Col xs={24} lg={12}>
-              <Card
-                style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', height: '100%' }}
-                bodyStyle={{ padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-              >
-                <div>
-                  <Text strong style={{ fontSize: 15, display: 'block' }}>Last Data Sync</Text>
-                  <Text type="secondary">{glKpiData.lastSync}</Text>
-                </div>
-                <Link to="/sync">
-                  <div style={{
-                    padding: '10px 20px',
-                    background: REDWOOD.surface,
-                    border: `1px solid ${REDWOOD.neutral200}`,
-                    borderRadius: 8,
-                    color: REDWOOD.neutral600,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                  }}>
-                    <SyncOutlined />
-                    <span>Sync Now</span>
-                  </div>
-                </Link>
-              </Card>
-            </Col>
-          </Row>
 
           {/* Tasks Section */}
           <div style={{ marginBottom: 32 }}>

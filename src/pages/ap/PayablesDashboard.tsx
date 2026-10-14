@@ -27,7 +27,7 @@ const plural = (n: number, w: string) => `${n.toLocaleString()} ${w}${n === 1 ? 
 const monthLabel = (ym: string) => new Date(`${ym}-01T00:00:00`).toLocaleString('en-US', { month: 'short' });
 const dayLabel = (d: string) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-') : '—');
 
-const card: React.CSSProperties = { background: '#fff', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)', padding: 20, height: '100%' };
+const card: React.CSSProperties = { background: '#fff', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)', padding: 20, height: '100%', boxSizing: 'border-box' };
 const clickable = (on: boolean): React.CSSProperties => (on ? { cursor: 'pointer' } : {});
 
 /** A list of invoices the user opened from a tile, a bar or an action. */
