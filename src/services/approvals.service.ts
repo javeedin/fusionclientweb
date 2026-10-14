@@ -190,10 +190,46 @@ async function getList<T>(url: string, keys: readonly string[] = []): Promise<T[
   }
 }
 
+// ─── Reads: direct execute (read gateway), the REST handler only as a fallback ───
+// Every list is one SELECT through POST ai/executequery — the same read gateway Purchasing uses — so the screens no
+// longer depend on which version of a GET handler is deployed (collection query, PL/SQL, 32 KB limit). The REST GET
+// is used only when the gateway refuses (not installed, or a table not allowed by RR_AI_OBJECT_ACL — see
+// database/approvals/24_gateway_approval_lists.sql).
+const sqlLit = (v: unknown) => `'${String(v ?? '').replace(/'/g, "''")}'`;
+const ISO = (col: string, alias = col) => `TO_CHAR(${col}, 'YYYY-MM-DD"T"HH24:MI:SS') AS ${alias}`;
+
+/** One SELECT through the read gateway: rows keyed by UPPER column name. */
+async function gatewayRows(sql: string, maxRows = 5000): Promise<Record<string, any>[]> {
+  const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/ai/executequery`, {
+    method: 'POST', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ sql: sql.replace(/\s+/g, ' ').trim(), maxRows, appUser: 'APPROVALS' }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || data.success === false) throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
+  const cols: string[] = (data.columns || []).map((c: any) => String(typeof c === 'string' ? c : c?.name ?? c).toUpperCase());
+  return (data.rows || []).map((r: any[]) => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
+}
+
+/** Read a list through the gateway (UPPER_SNAKE columns → the camelCase keys the screens read); REST only if it refuses. */
+async function readList<T>(what: string, sql: string, keys: readonly string[], rest: () => Promise<T[]>, maxRows?: number): Promise<T[]> {
+  let rows: Record<string, any>[];
+  try {
+    rows = await gatewayRows(sql, maxRows);
+  } catch (e) {
+    console.debug(`[approvals] ${what}: read gateway refused (${e instanceof Error ? e.message : e}) — using the REST handler`);
+    return rest();
+  }
+  return rows.map(r => withKeys<T>(r, keys));
+}
+
 // ─── Approver Users CRUD ──────────────────────────────────────────────────────
 
 export async function getApprovalUsers(): Promise<ApprovalUser[]> {
-  const raw = await getList<any>(`${BASE}/users`, USER_KEYS);
+  const raw = await readList<any>('users', `SELECT USER_ID, FULL_NAME, EMAIL, PHONE_NUMBER, DEPARTMENT, JOB_TITLE,
+      MAX_APPROVAL_AMT AS MAX_APPROVAL_AMOUNT, NVL(CURRENCY, 'AED') AS CURRENCY, MODULES, NVL(ACTIVE, 'Y') AS ACTIVE, CREATED_BY,
+      ${ISO('CREATION_DATE')}, ${ISO('LAST_UPDATE_DATE')}
+    FROM RR_APPROVAL_USERS ORDER BY FULL_NAME`, USER_KEYS, () => getList<any>(`${BASE}/users`, USER_KEYS));
   return raw.map(u => ({
     ...u,
     modules: typeof u.modules === 'string'
@@ -233,9 +269,32 @@ export async function deleteApprovalUser(userId: number): Promise<void> {
 // ─── Approval Rules CRUD ──────────────────────────────────────────────────────
 
 export async function getApprovalRules(module?: string): Promise<ApprovalRule[]> {
-  const url = module ? `${BASE}/rules?module=${encodeURIComponent(module)}` : `${BASE}/rules`;
-  const rules = await getList<ApprovalRule>(url, RULE_KEYS);
-  return rules.map(r => ({ ...r, approvers: (r.approvers || []).map(a => withKeys<RuleApprover>(a, ['sequence', 'userId', 'fullName', 'email', 'department'])) }));
+  const APPROVER_KEYS = ['sequence', 'userId', 'fullName', 'email', 'department'] as const;
+  const rest = async () => {
+    const url = module ? `${BASE}/rules?module=${encodeURIComponent(module)}` : `${BASE}/rules`;
+    const rules = await getList<ApprovalRule>(url, RULE_KEYS);
+    return rules.map(r => ({ ...r, approvers: (r.approvers || []).map(a => withKeys<RuleApprover>(a, APPROVER_KEYS)) }));
+  };
+  const where = module ? `WHERE r.MODULE = ${sqlLit(module)}` : '';
+  let rules: Record<string, any>[], approvers: Record<string, any>[];
+  try {
+    [rules, approvers] = await Promise.all([
+      gatewayRows(`SELECT r.RULE_ID, r.RULE_NAME, r.MODULE, r.TRANSACTION_TYPE, r.DESCRIPTION, NVL(r.MIN_AMOUNT, 0) AS MIN_AMOUNT,
+          r.MAX_AMOUNT, NVL(r.CURRENCY, 'AED') AS CURRENCY, NVL(r.APPROVAL_TYPE, 'SEQUENTIAL') AS APPROVAL_TYPE,
+          NVL(r.PRIORITY, 10) AS PRIORITY, NVL(r.ACTIVE, 'Y') AS ACTIVE, r.CREATED_BY, ${ISO('r.CREATION_DATE', 'CREATION_DATE')}
+        FROM RR_APPROVAL_RULES r ${where} ORDER BY r.PRIORITY, r.RULE_NAME`),
+      gatewayRows(`SELECT ra.RULE_ID, ra.SEQUENCE, u.USER_ID, u.FULL_NAME, u.EMAIL, u.DEPARTMENT
+        FROM RR_APPROVAL_RULE_APPROVERS ra JOIN RR_APPROVAL_USERS u ON u.USER_ID = ra.USER_ID
+        JOIN RR_APPROVAL_RULES r ON r.RULE_ID = ra.RULE_ID ${where} ORDER BY ra.RULE_ID, ra.SEQUENCE`),
+    ]);
+  } catch (e) {
+    console.debug(`[approvals] rules: read gateway refused (${e instanceof Error ? e.message : e}) — using the REST handler`);
+    return rest();
+  }
+  return rules.map(r => ({
+    ...withKeys<ApprovalRule>(r, RULE_KEYS),
+    approvers: approvers.filter(a => Number(a.RULE_ID) === Number(r.RULE_ID)).map(a => withKeys<RuleApprover>(a, APPROVER_KEYS)),
+  }));
 }
 
 export async function createApprovalRule(
@@ -280,12 +339,30 @@ export async function getApprovalRequests(params?: {
   if (params?.from)   qs.set('from', params.from);
   if (params?.to)     qs.set('to', params.to);
   const url = `${BASE}/requests${qs.toString() ? '?' + qs.toString() : ''}`;
-  return getList<ApprovalRequest>(url, REQUEST_KEYS);
+  const day = (v?: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+  const where = [
+    params?.module ? `rq.MODULE = ${sqlLit(params.module)}` : '',
+    params?.status ? `rq.STATUS = ${sqlLit(params.status)}` : '',
+    day(params?.from) ? `rq.REQUESTED_DATE >= TO_DATE(${sqlLit(day(params?.from))}, 'YYYY-MM-DD')` : '',
+    day(params?.to) ? `rq.REQUESTED_DATE < TO_DATE(${sqlLit(day(params?.to))}, 'YYYY-MM-DD') + 1` : '',
+  ].filter(Boolean);
+  return readList<ApprovalRequest>('requests', `SELECT rq.REQUEST_ID, rq.MODULE, rq.TRANSACTION_TYPE, rq.TRANSACTION_ID, rq.TRANSACTION_REF,
+      rq.AMOUNT, NVL(rq.CURRENCY, 'AED') AS CURRENCY, rq.DESCRIPTION, rq.REQUESTED_BY_NAME, NVL(rq.STATUS, 'PENDING') AS STATUS,
+      rq.RULE_ID, ru.RULE_NAME, ${ISO('rq.REQUESTED_DATE', 'REQUESTED_DATE')},
+      u.FULL_NAME AS CURRENT_APPROVER_NAME, u.EMAIL AS CURRENT_APPROVER_EMAIL
+    FROM RR_APPROVAL_REQUESTS rq
+    LEFT JOIN RR_APPROVAL_USERS u ON u.USER_ID = rq.CURRENT_APPROVER_ID
+    LEFT JOIN RR_APPROVAL_RULES ru ON ru.RULE_ID = rq.RULE_ID
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY rq.REQUESTED_DATE DESC, rq.REQUEST_ID DESC`, REQUEST_KEYS, () => getList<ApprovalRequest>(url, REQUEST_KEYS), 10000);
 }
 
 export async function getApprovalHistory(requestId: number): Promise<ApprovalHistoryEntry[]> {
-  // a collection-query handler (01_setup.sql) — its keys arrive lowercased
-  return getList<ApprovalHistoryEntry>(`${BASE}/requests/${requestId}/history`, HISTORY_KEYS);
+  return readList<ApprovalHistoryEntry>('history', `SELECT HISTORY_ID, REQUEST_ID, ACTION, ACTOR_NAME, COMMENTS,
+      ${ISO('ACTION_DATE')}, NOTIFICATION_SENT
+    FROM RR_APPROVAL_HISTORY WHERE REQUEST_ID = ${Number(requestId) || 0} ORDER BY ACTION_DATE, HISTORY_ID`, HISTORY_KEYS,
+    // the REST handler is a collection query (01_setup.sql) — its keys arrive lowercased
+    () => getList<ApprovalHistoryEntry>(`${BASE}/requests/${requestId}/history`, HISTORY_KEYS));
 }
 
 export async function submitApprovalAction(
@@ -519,7 +596,10 @@ export async function sendTestNotification(
 // ─── Email Replies ────────────────────────────────────────────────────────────
 
 export async function getEmailReplies(): Promise<EmailReply[]> {
-  return getList<EmailReply>(`${BASE}/email-replies`, REPLY_KEYS);
+  return readList<EmailReply>('email replies', `SELECT REPLY_ID, FROM_EMAIL, FROM_NAME, SUBJECT, BODY_TEXT,
+      NVL(ACTION_DETECTED, 'UNKNOWN') AS ACTION_DETECTED, REF_NUMBER, REQUEST_ID, NVL(STATUS, 'PENDING') AS STATUS,
+      ${ISO('RECEIVED_DATE')}, ${ISO('PROCESSED_DATE')}, PROCESSED_BY, NOTES
+    FROM RR_APPROVAL_EMAIL_REPLIES ORDER BY RECEIVED_DATE DESC`, REPLY_KEYS, () => getList<EmailReply>(`${BASE}/email-replies`, REPLY_KEYS), 100);
 }
 
 export async function processEmailReply(
@@ -552,7 +632,9 @@ export async function simulateEmailReply(
 }
 
 export async function getApprovalTokens(): Promise<ApprovalToken[]> {
-  return getList<ApprovalToken>(`${BASE}/tokens`, TOKEN_KEYS);
+  return readList<ApprovalToken>('tokens', `SELECT TOKEN_ID, ACTION, REQUEST_REF, REQUEST_ID, TO_EMAIL, TO_NAME, NVL(STATUS, 'PENDING') AS STATUS,
+      ${ISO('CREATED_DATE')}, ${ISO('EXPIRES_DATE')}, ${ISO('USED_DATE')}
+    FROM RR_APPROVAL_TOKENS ORDER BY CREATED_DATE DESC`, TOKEN_KEYS, () => getList<ApprovalToken>(`${BASE}/tokens`, TOKEN_KEYS), 200);
 }
 
 // ─── External Transaction Approval ───────────────────────────────────────────
@@ -739,8 +821,6 @@ export interface ApprovalTrailEvent {
 }
 export interface ApprovalTrail { events: ApprovalTrailEvent[]; requests: number; source: 'query' | 'rest' }
 
-const sqlLit = (v: unknown) => `'${String(v ?? '').replace(/'/g, "''")}'`;
-
 /**
  * All requests and actions for one transaction, oldest first. Reads RR_APPROVAL_REQUESTS / _HISTORY through the
  * read gateway (one call); falls back to the approvals REST endpoints when the gateway is not available.
@@ -764,15 +844,7 @@ export async function getApprovalTrail(params: {
     WHERE r.MODULE = ${sqlLit(module)} AND ${match}${types.length ? ` AND r.TRANSACTION_TYPE IN (${types.map(sqlLit).join(', ')})` : ''}
     ORDER BY r.REQUEST_ID, h.ACTION_DATE, h.HISTORY_ID`;
   try {
-    const res = await fetch(`${APEX_DB_CONFIG.baseUrl}/ai/executequery`, {
-      method: 'POST', cache: 'no-store',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ sql: sql.replace(/\s+/g, ' ').trim(), maxRows: 1000, appUser: 'APPROVALS' }),
-    });
-    const data = await res.json();
-    if (!res.ok || data?.success === false) throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
-    const cols: string[] = (data.columns || []).map((c: any) => String(typeof c === 'string' ? c : c?.name ?? c).toUpperCase());
-    const rows: Record<string, any>[] = (data.rows || []).map((r: any[]) => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
+    const rows = await gatewayRows(sql, 1000);
     const events: ApprovalTrailEvent[] = rows.filter(r => r.ACTION).map(r => ({
       requestId: Number(r.REQUEST_ID), action: String(r.ACTION), actorName: r.ACTOR_NAME ?? undefined, comments: r.COMMENTS ?? undefined,
       actionDate: r.ACTION_DATE ?? undefined, requestStatus: r.REQUEST_STATUS ?? undefined,
