@@ -26,7 +26,7 @@ import { useAuth } from '../../context/AuthContext';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { createAccounting, checkAccountingExists, type SlaCreatePayload } from '../../services/sla.service';
 import {
-  planRevaluationJournals, postRevaluationToGl, checkRevaluationInGl, describeRevalPosting, periodLastDay,
+  planRevaluationJournalsWithGl, postRevaluationToGl, checkRevaluationInGl, describeRevalPosting, periodLastDay,
   revaluationJournalOptions, readRevaluationGlCounts, planRevaluationRebuild, rebuildRevaluationGl, type RevalPostOutcome,
 } from '../../services/revaluationPosting.service';
 import { buildGlJournalPayload, makeBatchName } from '../../services/glPosting.service';
@@ -458,7 +458,7 @@ const ManageRevaluation: React.FC = () => {
         throw new Error('No journal lines found on this revaluation');
 
       // Every line goes to its currency's journal — nothing is left behind (see revaluationPosting.service)
-      const plan = planRevaluationJournals(d.lines, d.ccyRows);
+      const plan = await planRevaluationJournalsWithGl(d.lines, d.ccyRows);
       if (plan.problems.length) {
         updateStep(0, 'error', plan.problems.join(' '));
         throw new Error(plan.problems.join(' '));
@@ -664,7 +664,7 @@ const ManageRevaluation: React.FC = () => {
 
       // ── Step 2: GL journal create — one per currency, carrying all of its lines ──
       // Same plan and payload builder as the real posting (revaluationPosting.service → buildGlJournalPayload)
-      const plan      = planRevaluationJournals(d.lines, d.ccyRows);
+      const plan      = await planRevaluationJournalsWithGl(d.lines, d.ccyRows);
       if (plan.problems.length) message.warning(plan.problems.join(' '), 8);
       const acctLabel = d.accountDesc || d.account;
       const ctx = {
@@ -774,7 +774,7 @@ const ManageRevaluation: React.FC = () => {
   // and every line is posted again — one journal per currency — then the GL is read back.
   const prepareRevalRebuild = async (id: number) => {
     const d    = await fetchRevalDetail(id);
-    const plan = planRevaluationJournals(d.lines, d.ccyRows);
+    const plan = await planRevaluationJournalsWithGl(d.lines, d.ccyRows);
     const periodName = d.periodName.replace(/^(?:ReERP|Dynamic|YTD):\s*/, '');
     const sla  = await checkAccountingExists('RR_REVALUE_HEADER', id, 'GL_REVALUATION').catch(() => null);
     const acctLabel = d.accountDesc || d.account;

@@ -25,7 +25,7 @@ export interface RevalLineIn {
   crAmount: number;
   currencyCode?: string | null;
 }
-export interface RevalCcyIn { currencyCode: string; newRate: number }
+export interface RevalCcyIn { currencyCode: string; newRate: number; /** the currency's AED adjustment (gain +, loss −) */ revalAmt?: number }
 
 export interface RevalJournalPlan { ccy: string; rate: number; lines: RevalLineIn[]; dr: number; cr: number }
 export interface RevalPlan { journals: RevalJournalPlan[]; lineCount: number; problems: string[] }
@@ -42,8 +42,42 @@ const sum = (ls: RevalLineIn[], k: 'drAmount' | 'crAmount') => r2(ls.reduce((s, 
 // The Trial Balance writes the currency into the gain/loss line: "Unrealized FX Gain - INR (Sep-26)"
 const CCY_IN_DESC = /\bFX\s+(?:Gain|Loss)\s*[-–]\s*([A-Z]{3})\b/i;
 
+/** A revaluation currency named in a line's description as a word ("Julius Bar USD Adhoc Ac") — only when exactly one is. */
+const ccyNamedIn = (desc: string | undefined, known: string[]) => {
+  const hits = known.filter(c => new RegExp(`(^|[^A-Z])${c}([^A-Z]|$)`).test(String(desc || '').toUpperCase()));
+  return hits.length === 1 ? hits[0] : '';
+};
+
+/**
+ * Lines saved without a currency (before database/gl/164): the currency each one's account actually holds in the GL.
+ * account combination → currency, only where the account has activity in exactly one of the revaluation's currencies
+ * (revaluation journals themselves are left out).
+ */
+export async function readRevaluationCurrencyHints(lines: RevalLineIn[], ccyRows: RevalCcyIn[]): Promise<Record<string, string>> {
+  const known = [...new Set(ccyRows.map(c => upper(c.currencyCode)).filter(Boolean))];
+  const accts = [...new Set(lines.filter(l => !upper(l.currencyCode) && amountOf(l) !== 0).map(l => normAcct(l.combo)).filter(Boolean))];
+  if (known.length < 2 || !accts.length) return {};
+  const seen = new Map<string, Set<string>>();
+  for (let i = 0; i < accts.length; i += 300) {
+    const rows = await poQuery(
+      `SELECT UPPER(TRIM(l.account_combination)) AS acct, UPPER(l.currency_code) AS ccy FROM rr_gl_je_lines_all l `
+      + `WHERE UPPER(TRIM(l.account_combination)) IN (${accts.slice(i, i + 300).map(lit).join(', ')}) `
+      + `AND UPPER(l.currency_code) IN (${known.map(lit).join(', ')}) `
+      + `AND NVL(UPPER(l.reference5), '-') NOT IN ('GL_REVALUATION', 'GL-REVALUATION') `
+      + `GROUP BY UPPER(TRIM(l.account_combination)), UPPER(l.currency_code)`, 5000, 'GL_REVALUATION');
+    rows.forEach(r => seen.set(String(r.ACCT), new Set([...(seen.get(String(r.ACCT)) || []), String(r.CCY)])));
+  }
+  return Object.fromEntries([...seen].filter(([, cs]) => cs.size === 1).map(([a, cs]) => [a, [...cs][0]]));
+}
+
+/** planRevaluationJournals, with the GL's currency evidence for lines saved without one. */
+export async function planRevaluationJournalsWithGl(lines: RevalLineIn[], ccyRows: RevalCcyIn[]): Promise<RevalPlan> {
+  const hints = await readRevaluationCurrencyHints(lines, ccyRows).catch(() => ({} as Record<string, string>));
+  return planRevaluationJournals(lines, ccyRows, hints);
+}
+
 /** Every line → its currency's journal. Lines it cannot place are reported, never dropped. */
-export function planRevaluationJournals(lines: RevalLineIn[], ccyRows: RevalCcyIn[]): RevalPlan {
+export function planRevaluationJournals(lines: RevalLineIn[], ccyRows: RevalCcyIn[], glHints: Record<string, string> = {}): RevalPlan {
   const problems: string[] = [];
   const rates = new Map<string, number>();
   ccyRows.forEach(c => {
@@ -53,12 +87,16 @@ export function planRevaluationJournals(lines: RevalLineIn[], ccyRows: RevalCcyI
   const known = [...rates.keys()];
   const live = lines.filter(l => amountOf(l) !== 0).sort((a, b) => n(a.lineNum) - n(b.lineNum));
 
-  // 1. the line's own currency (CURRENCY_CODE, or the one in its description)
+  // 1. the line's own currency: CURRENCY_CODE; else the one its account holds in the GL; else the one its
+  //    description names ("FX Gain - USD", or a single revaluation currency as a word: "Julius Bar USD Adhoc Ac")
   const ccyOf = live.map(l => {
     const own = upper(l.currencyCode);
     if (own) return own;
+    const gl = glHints[normAcct(l.combo)];
+    if (gl && rates.has(gl)) return gl;
     const m = CCY_IN_DESC.exec(l.description || '');
-    return m && rates.has(m[1].toUpperCase()) ? m[1].toUpperCase() : '';
+    if (m && rates.has(m[1].toUpperCase())) return m[1].toUpperCase();
+    return ccyNamedIn(l.description, known);
   });
   // 2. a line without one takes its pair partner's — lines are written as Dr/Cr pairs of the same amount
   const first = [...ccyOf];
@@ -70,11 +108,24 @@ export function planRevaluationJournals(lines: RevalLineIn[], ccyRows: RevalCcyI
   });
   // 3. a single-currency revaluation needs no more
   if (known.length === 1) live.forEach((_, i) => { if (!ccyOf[i]) ccyOf[i] = known[0]; });
+  // 4. only one currency has an adjustment (CHF 0.00, USD 8.58) and it accounts for every line (2.03 + 6.55 = 8.58):
+  //    the lines are all that currency's. A currency netting to zero can still have gain and loss lines — then the
+  //    totals do not match and nothing is assumed.
+  if (ccyOf.some(c => !c)) {
+    const adj = (c: string) => ccyRows.find(x => upper(x.currencyCode) === c)?.revalAmt;
+    const withAdj = known.filter(c => adj(c) != null && Math.abs(n(adj(c))) >= TOL);
+    if (known.every(c => adj(c) != null) && withAdj.length === 1
+        && Math.abs(sum(live, 'drAmount') - Math.abs(n(adj(withAdj[0])))) < 0.01
+        && ccyOf.every(c => !c || c === withAdj[0])) {
+      live.forEach((_, i) => { if (!ccyOf[i]) ccyOf[i] = withAdj[0]; });
+    }
+  }
 
   const unplaced = live.filter((_, i) => !ccyOf[i]);
   if (unplaced.length) {
     problems.push(`Line${unplaced.length === 1 ? '' : 's'} ${lineList(unplaced)}: cannot tell which currency ${unplaced.length === 1 ? 'it belongs' : 'they belong'} to `
-      + `(the revaluation has ${known.join(', ') || 'no currency with a rate'}). Install database/gl/164 and save the revaluation again from the Trial Balance.`);
+      + `(the revaluation has ${known.join(', ') || 'no currency with a rate'}; neither the line, its account's GL activity nor its `
+      + `description says which). Install database/gl/164 and save the revaluation again from the Trial Balance.`);
   }
 
   const byCcy = new Map<string, RevalLineIn[]>();

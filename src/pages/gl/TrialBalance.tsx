@@ -85,7 +85,7 @@ import { searchCombinations, createCombination, type DistCombination } from '../
 const SummaryCell = Table.Summary.Cell as React.ComponentType<React.ComponentProps<typeof Table.Summary.Cell> & { style?: React.CSSProperties }>;
 import { createAccounting, checkAccountingExists, type SlaCreatePayload } from '../../services/sla.service';
 import {
-  planRevaluationJournals, postRevaluationToGl, checkRevaluationInGl, describeRevalPosting,
+  planRevaluationJournalsWithGl, postRevaluationToGl, checkRevaluationInGl, describeRevalPosting,
   type RevalPostOutcome,
 } from '../../services/revaluationPosting.service';
 
@@ -3040,7 +3040,7 @@ const TrialBalance: React.FC = () => {
       if (!d.lines || d.lines.length === 0)
         throw new Error('No journal lines found on this revaluation');
       // Every line goes to its currency's journal — nothing is left behind (see revaluationPosting.service)
-      const plan = planRevaluationJournals(d.lines, d.ccyRows);
+      const plan = await planRevaluationJournalsWithGl(d.lines, d.ccyRows);
       if (plan.problems.length) {
         updateStep(0, 'error', plan.problems.join(' '));
         throw new Error(plan.problems.join(' '));
