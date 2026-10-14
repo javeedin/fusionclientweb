@@ -11,7 +11,9 @@
 //   planRevaluationJournals  — puts every line in its currency's journal, refuses anything it cannot place
 //   postRevaluationToGl      — posts only what the GL does not have yet (a retry or repair never duplicates)
 //   checkRevaluationInGl     — reads the GL back; the revaluation is marked ACCOUNTED only when it all matches
-import { postSlaToGL, type GlPostingOptions, type GlPostingResult } from './glPosting.service';
+import { postSlaToGL, buildGlJournalPayload, makeBatchName, type GlPostingOptions, type GlPostingResult } from './glPosting.service';
+import { APEX_DB_CONFIG } from '../config/api.config';
+import { apiStepName, type ApiCall } from './apiCallRecorder';
 import { poQuery, lit, n, type Row } from './po.service';
 
 export interface RevalLineIn {
@@ -91,7 +93,7 @@ export function planRevaluationJournals(lines: RevalLineIn[], ccyRows: RevalCcyI
 /** GL lines already posted for a revaluation (REFERENCE2 = revalue id). */
 export async function readRevaluationGl(revalueId: number): Promise<Row[]> {
   return poQuery(
-    `SELECT l.je_header_id, l.account_combination, l.accounted_dr, l.accounted_cr, l.currency_code, l.reference1 `
+    `SELECT l.batch_id, l.je_header_id, l.account_combination, l.accounted_dr, l.accounted_cr, l.currency_code, l.reference1 `
     + `FROM rr_gl_je_lines_all l WHERE l.reference2 = ${lit(String(revalueId))} `
     + `AND (UPPER(l.reference5) IN ('GL_REVALUATION', 'GL-REVALUATION') OR l.reference1 LIKE ${lit(`REVAL-${revalueId}%`)})`,
     5000, 'GL_REVALUATION');
@@ -256,6 +258,99 @@ export async function checkRevaluationInGl(revalueId: number, plan: RevalPlan, p
     } catch { /* the check itself already failed; keep its message */ }
   }
   return { ok, inGl: cmp.inGl, lineCount: plan.lineCount, missing, strays: cmp.strays.length, message };
+}
+
+// ── Delete & re-post ──────────────────────────────────────────────────────────
+// The GL allows one journal per reference2 + reference5 (journals/create answers DUPLICATE), so a
+// half-posted revaluation cannot be completed by adding a second journal. Instead: delete the
+// revaluation's GL batches — the same DELETE gl/journals/batches/:id the Delete Journals page uses
+// (deleted rows are kept in the RR_GL_*_DEL audit tables) — then post every line again.
+
+const BASE = APEX_DB_CONFIG.baseUrl;
+
+export interface RebuildBatch { batchId: number; name: string; status: string; lines: number; mine: number; dr: number }
+export interface RebuildPlan {
+  ctx: RevalPostContext;
+  plan: RevalPlan;
+  batches: RebuildBatch[];     // to delete
+  problems: string[];          // block the run
+  warnings: string[];
+  calls: ApiCall[];            // exactly what will be sent (placeholders where the server assigns ids)
+}
+
+export async function planRevaluationRebuild(ctx: RevalPostContext, plan: RevalPlan): Promise<RebuildPlan> {
+  const problems = [...plan.problems];
+  const warnings: string[] = [];
+  const gl = await readRevaluationGl(ctx.revalueId);
+  const ids = [...new Set(gl.map(l => n(l.BATCH_ID)).filter(Boolean))];
+  let batches: RebuildBatch[] = [];
+  if (ids.length) {
+    const list = ids.join(', ');
+    const counts = await poQuery(
+      `SELECT l.batch_id, COUNT(*) AS n, SUM(CASE WHEN l.reference2 = ${lit(String(ctx.revalueId))} THEN 1 ELSE 0 END) AS mine, `
+      + `SUM(NVL(l.accounted_dr, 0)) AS dr FROM rr_gl_je_lines_all l WHERE l.batch_id IN (${list}) GROUP BY l.batch_id`, 200, 'GL_REVALUATION');
+    const meta = await poQuery(`SELECT b.* FROM rr_gl_journal_batches b WHERE b.je_batch_id IN (${list})`, 200, 'GL_REVALUATION').catch(() => [] as Row[]);
+    batches = ids.map(id => {
+      const c = counts.find(r => n(r.BATCH_ID) === id);
+      const m = meta.find(r => n(r.JE_BATCH_ID) === id);
+      return { batchId: id, name: String(m?.BATCH_NAME || m?.NAME || `Batch ${id}`), status: String(m?.STATUS_MEANING || m?.STATUS || ''),
+        lines: n(c?.N), mine: n(c?.MINE), dr: r2(n(c?.DR)) };
+    });
+    batches.filter(b => b.lines !== b.mine).forEach(b =>
+      problems.push(`${b.name} also holds ${b.lines - b.mine} line(s) of other transactions — it is not deleted automatically; delete or correct it from Delete Journals.`));
+  }
+  plan.journals.forEach(j => {
+    const cos = [...new Set(j.lines.map(l => String(l.combo || '').split('-')[0]))];
+    if (cos.length > 1) problems.push(`${j.ccy} lines use companies ${cos.join(', ')} — the GL rejects a journal that spans companies.`);
+  });
+  if (plan.journals.length > 1) {
+    warnings.push(`This revaluation needs ${plan.journals.length} journals (one per currency: ${plan.journals.map(j => j.ccy).join(', ')}). `
+      + 'If the GL rejects the second one as DUPLICATE (one journal per reference2 + reference5), only the first currency will be posted.');
+  }
+  const calls: ApiCall[] = [
+    ...batches.map(b => ({ step: `Delete GL batch ${b.name}${b.status ? ` (${b.status})` : ''} — ${b.lines} lines`, method: 'DELETE', url: `${BASE}/gl/journals/batches/${b.batchId}` })),
+    ...plan.journals.flatMap(j => {
+      const opts = revaluationJournalOptions(ctx, j);
+      const body = buildGlJournalPayload(opts, makeBatchName(opts.eventTypeCode, opts.sourceNumber));
+      return [
+        { step: apiStepName('POST', '/journals/create', body), method: 'POST', url: `${BASE}/journals/create`, body },
+        { step: `Post GL batch — ${j.ccy}`, method: 'PUT', url: `${BASE}/gl/journals/{jeBatchId returned by create}/post` },
+        { step: 'Stamp SLA header with the GL batch', method: 'POST', url: `${BASE}/sla/accounting/post`,
+          body: { headerId: ctx.slaHeaderId, glBatchId: '{jeBatchId}', glBatchName: body.batch.batchName, glHeaderId: '{jeHeaderId}', postedBy: ctx.createdBy } },
+      ];
+    }),
+  ];
+  return { ctx, plan, batches, problems, warnings, calls };
+}
+
+export interface RebuildOutcome { deleted: RebuildBatch[]; outcome: RevalPostOutcome; check: GlCheck }
+
+/** Deletes the revaluation's GL batches, posts every line again and reads the GL back. */
+export async function rebuildRevaluationGl(rp: RebuildPlan): Promise<RebuildOutcome> {
+  if (rp.problems.length) throw new Error(rp.problems.join(' '));
+  const deleted: RebuildBatch[] = [];
+  for (const b of rp.batches) {
+    const res = await fetch(`${BASE}/gl/journals/batches/${b.batchId}`, { method: 'DELETE', headers: { Accept: 'application/json' } });
+    const data = await res.json().catch(() => ({} as any));
+    const ok = res.ok && data?.success !== false && !/^ERROR$/i.test(String(data?.status ?? ''));
+    if (!ok) {
+      const why = data?.message || data?.error || `HTTP ${res.status}`;
+      throw new Error(deleted.length
+        ? `Deleted ${deleted.map(d => d.name).join(', ')}, but ${b.name} could not be deleted: ${why}. Nothing new was posted.`
+        : `${b.name} could not be deleted: ${why}. Nothing was changed.`);
+    }
+    deleted.push(b);
+  }
+  let outcome: RevalPostOutcome;
+  try {
+    outcome = await postRevaluationToGl(rp.ctx, rp.plan);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    throw new Error(`${deleted.length ? `Deleted ${deleted.map(d => d.name).join(', ')} (kept in the delete archive). ` : ''}`
+      + `The new journal was not posted: ${why}. Fix the cause and run Delete & re-post again — every line will be posted.`);
+  }
+  const check = await checkRevaluationInGl(rp.ctx.revalueId, rp.plan, outcome.posted.map(p => p.result.batchId));
+  return { deleted, outcome, check };
 }
 
 /** Last day of a Mon-YY period as YYYY-MM-DD in LOCAL time (toISOString would shift it a day back east of UTC). */

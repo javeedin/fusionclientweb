@@ -6,12 +6,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Empty, Modal, Segmented, Space, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
 import {
-  AccountBookOutlined, CheckCircleFilled, CloseCircleFilled, CodeOutlined, ExclamationCircleFilled,
+  AccountBookOutlined, ApiOutlined, CheckCircleFilled, CloseCircleFilled, CodeOutlined, ExclamationCircleFilled,
   ExpandOutlined, ReloadOutlined, WarningFilled,
 } from '@ant-design/icons';
 import { poQuery, lit, nlit, n, money, day, type Row } from '../services/po.service';
 import { useAccountDescriptions } from '../hooks/useAccountDescriptions';
 import JournalFullPreview from './JournalFullPreview';
+import ApiCallList from './ApiCallList';
+import { recordApiCalls, type ApiCall } from '../services/apiCallRecorder';
 
 const { Text } = Typography;
 
@@ -59,6 +61,15 @@ function reconcile(expected: ExpectedLine[], journals: Journal[]): CheckRow[] {
   return rows;
 }
 
+/** A fix the screen offers when the GL does not match the source document. */
+export interface GlRepair {
+  label: string;
+  /** what will happen — read-only, called when the dialog opens */
+  prepare: () => Promise<{ steps: string[]; problems: string[]; warnings: string[]; calls: ApiCall[] }>;
+  /** does it; resolves to a summary. The modal records the HTTP calls it makes. */
+  run: () => Promise<string>;
+}
+
 const SourceJournalsModal: React.FC<{
   open: boolean;
   onClose: () => void;
@@ -72,8 +83,9 @@ const SourceJournalsModal: React.FC<{
   loadExpected?: () => Promise<ExpectedLine[]>;
   sourceLabel?: string;
   /** offered when source lines are missing from the GL: posts them, resolves to a summary */
-  repairMissing?: () => Promise<string>;
-}> = ({ open, onClose, title, reference2, reference5, reference1Prefix, loadExpected, sourceLabel = 'source', repairMissing }) => {
+  /** offered when the GL does not match the source: e.g. delete the source's journals and post them again */
+  repair?: GlRepair;
+}> = ({ open, onClose, title, reference2, reference5, reference1Prefix, loadExpected, sourceLabel = 'source', repair }) => {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [journals, setJournals] = useState<Journal[]>([]);
@@ -84,7 +96,32 @@ const SourceJournalsModal: React.FC<{
   const [view, setView] = useState<'J' | 'C'>('J');
   const [full, setFull] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
-  const [repairing, setRepairing] = useState(false);
+  const [repairOpen, setRepairOpen] = useState(false);
+  const [prep, setPrep] = useState<{ loading: boolean; error?: string; data?: Awaited<ReturnType<GlRepair['prepare']>> }>({ loading: false });
+  const [running, setRunning] = useState(false);
+  const [runResult, setRunResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [sent, setSent] = useState<ApiCall[]>([]);
+  const [apiOpen, setApiOpen] = useState(false);
+
+  const prepareRepair = async () => {
+    if (!repair) return;
+    setPrep({ loading: true });
+    try { setPrep({ loading: false, data: await repair.prepare() }); }
+    catch (e: any) { setPrep({ loading: false, error: e?.message || String(e) }); }
+  };
+  const openRepair = () => { setRepairOpen(true); setRunResult(null); setSent([]); prepareRepair(); };
+  const runRepair = async () => {
+    if (!repair) return;
+    setRunning(true); setRunResult(null); setSent([]);
+    try {
+      const text = await recordApiCalls(() => repair.run(), c => setSent(prev => [...prev, c]));
+      setRunResult({ ok: true, text }); message.success(text, 6);
+    } catch (e: any) {
+      setRunResult({ ok: false, text: e?.message || String(e) });
+    } finally {
+      setRunning(false); setTick(t => t + 1);
+    }
+  };
 
   const where = useMemo(() => {
     const alt: string[] = [];
@@ -261,6 +298,7 @@ const SourceJournalsModal: React.FC<{
         title={<Space wrap><AccountBookOutlined style={{ color: C.info }} /><span>Posted Journals</span><span style={{ color: C.muted, fontWeight: 400 }}>{title}</span>
           <Tag style={{ fontFamily: 'monospace', fontWeight: 400 }}>reference2 = {String(reference2)}</Tag></Space>}
         footer={[
+          <Button key="api" icon={<ApiOutlined />} type="text" onClick={() => { setApiOpen(true); if (!sent.length && repair && !prep.data && !prep.loading) prepareRepair(); }}>API</Button>,
           <Button key="sql" icon={<CodeOutlined />} type="text" onClick={() => setShowSql(s => !s)}>{showSql ? 'Hide SQL' : 'SQL'}</Button>,
           <Button key="r" icon={<ReloadOutlined />} onClick={() => setTick(t => t + 1)} loading={loading}>Refresh</Button>,
           <Button key="c" type="primary" onClick={onClose}>Close</Button>,
@@ -273,6 +311,7 @@ const SourceJournalsModal: React.FC<{
               <div>No GL journal found for this {sourceLabel}.</div>
               <Text type="secondary" style={{ fontSize: 12 }}>Looked for GL lines with reference2 = {String(reference2)}
                 {reference5?.length ? <> and reference5 {reference5.join(' / ')}</> : null}.</Text>
+              {repair && loadExpected && <div style={{ marginTop: 12 }}><Button type="primary" danger onClick={openRepair}>{repair.label}</Button></div>}
             </>} />
           )}
 
@@ -295,24 +334,14 @@ const SourceJournalsModal: React.FC<{
                 )}
               </div>
 
-              {check && !checkOk && missing.length > 0 && (
-                <Alert type="error" showIcon style={{ marginBottom: 12 }}
-                  message={`${missing.length} ${sourceLabel} line${missing.length === 1 ? ' was' : 's were'} never posted to the GL (${money(missDr)} Dr / ${money(missCr)} Cr)`}
+              {check && !checkOk && (
+                <Alert type={missing.length ? 'error' : 'warning'} showIcon style={{ marginBottom: 12 }}
+                  message={missing.length
+                    ? `${missing.length} ${sourceLabel} line${missing.length === 1 ? ' was' : 's were'} never posted to the GL (${money(missDr)} Dr / ${money(missCr)} Cr)`
+                    : `The GL does not match the ${sourceLabel}: ${differs.length + extra.length} line${differs.length + extra.length === 1 ? '' : 's'} to review`}
                   description={<>The {sourceLabel} has {expected!.length} lines; the GL has {allLines.length}.{' '}
                     <a onClick={() => setView('C')}>See which lines</a>.</>}
-                  action={repairMissing && !differs.length && !extra.length ? (
-                    <Button danger loading={repairing} onClick={() => Modal.confirm({
-                      title: `Post the ${missing.length} missing line${missing.length === 1 ? '' : 's'} to the GL?`,
-                      content: `Creates and posts a journal per currency with only the lines the GL does not have yet (${money(missDr)} Dr / ${money(missCr)} Cr). Lines already in the GL are not touched.`,
-                      okText: 'Post missing lines',
-                      onOk: async () => {
-                        setRepairing(true);
-                        try { message.success(await repairMissing(), 6); setTick(t => t + 1); }
-                        catch (e: any) { Modal.error({ title: 'Could not post the missing lines', content: e?.message || String(e) }); }
-                        finally { setRepairing(false); }
-                      },
-                    })}>Post missing lines</Button>
-                  ) : undefined} />
+                  action={repair ? <Button danger onClick={openRepair}>{repair.label}</Button> : undefined} />
               )}
 
               {loadExpected && (
@@ -363,6 +392,55 @@ const SourceJournalsModal: React.FC<{
         <style>{`.rr-sj-missing > td { background: #fff1f0 !important; }`}</style>
       </Modal>
       <JournalFullPreview open={full != null} jeHeaderId={full} onClose={() => setFull(null)} />
+
+      {repair && (
+        <Modal open={repairOpen} width={980} style={{ top: 32 }} onCancel={() => !running && setRepairOpen(false)}
+          title={<Space><ExclamationCircleFilled style={{ color: C.primary }} />{repair.label} — {title}</Space>}
+          footer={[
+            <Button key="api" icon={<ApiOutlined />} onClick={() => setApiOpen(true)} disabled={!prep.data && !sent.length}>API</Button>,
+            <Button key="c" onClick={() => setRepairOpen(false)} disabled={running}>{runResult?.ok ? 'Close' : 'Cancel'}</Button>,
+            !runResult?.ok && (
+              <Button key="run" type="primary" danger loading={running} disabled={!prep.data || prep.data.problems.length > 0}
+                onClick={runRepair}>{repair.label}</Button>
+            ),
+          ]}>
+          <Spin spinning={prep.loading}>
+            {prep.error && <Alert type="error" showIcon message="Could not prepare" description={prep.error} />}
+            {prep.data && (
+              <>
+                <Text strong>What will happen</Text>
+                <ol style={{ margin: '6px 0 12px', paddingLeft: 22 }}>
+                  {prep.data.steps.map((st, i) => <li key={i} style={{ fontSize: 13, lineHeight: '22px' }}>{st}</li>)}
+                </ol>
+                {prep.data.problems.length > 0 && <Alert type="error" showIcon style={{ marginBottom: 10 }} message="Cannot run"
+                  description={<ul style={{ margin: 0, paddingLeft: 18 }}>{prep.data.problems.map(p => <li key={p}>{p}</li>)}</ul>} />}
+                {prep.data.warnings.map(w => <Alert key={w} type="warning" showIcon style={{ marginBottom: 10 }} message={w} />)}
+              </>
+            )}
+            {runResult && <Alert type={runResult.ok ? 'success' : 'error'} showIcon style={{ margin: '4px 0 12px' }}
+              message={runResult.ok ? 'Done' : 'Stopped'} description={runResult.text} />}
+            {(sent.length > 0 || prep.data) && (
+              <details open={sent.length > 0} style={{ marginTop: 4 }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, userSelect: 'none' }}>
+                  <ApiOutlined /> {sent.length ? `API calls sent (${sent.length})` : `API calls that will be sent (${prep.data!.calls.length})`}
+                </summary>
+                <div style={{ marginTop: 10 }}><ApiCallList calls={sent.length ? sent : prep.data!.calls} /></div>
+              </details>
+            )}
+          </Spin>
+        </Modal>
+      )}
+
+      <Modal open={apiOpen} onCancel={() => setApiOpen(false)} width={980} style={{ top: 32 }}
+        title={<Space><ApiOutlined style={{ color: C.info }} />{sent.length ? 'API calls sent' : 'API calls that will be sent'}</Space>}
+        footer={<Button onClick={() => setApiOpen(false)}>Close</Button>}>
+        <Spin spinning={prep.loading}>
+          {sent.length ? <ApiCallList calls={sent} />
+            : prep.data ? <ApiCallList calls={prep.data.calls} />
+            : prep.error ? <Alert type="error" showIcon message={prep.error} />
+            : <Empty description={repair ? 'Preparing…' : 'No API calls from this screen yet'} />}
+        </Spin>
+      </Modal>
     </>
   );
 };

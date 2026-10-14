@@ -141,8 +141,10 @@ export function buildGlJournalPayload(opts: GlPostingOptions, batchName: string)
   // For revaluation journals enteredDr/Cr are 0, so fall back to accountedDr/Cr.
   const entTotalDr = lines.reduce((s, l) => s + (l.enteredDr ?? 0), 0);
   const entTotalCr = lines.reduce((s, l) => s + (l.enteredCr ?? 0), 0);
-  const totalDr = entTotalDr > 0 ? entTotalDr : lines.reduce((s, l) => s + (l.accountedDr ?? 0), 0);
-  const totalCr = entTotalCr > 0 ? entTotalCr : lines.reduce((s, l) => s + (l.accountedCr ?? 0), 0);
+  // rounded to cents: summing floats gives 1595.2099999999998-style totals
+  const cents   = (v: number) => Math.round(v * 100) / 100;
+  const totalDr = cents(entTotalDr > 0 ? entTotalDr : lines.reduce((s, l) => s + (l.accountedDr ?? 0), 0));
+  const totalCr = cents(entTotalCr > 0 ? entTotalCr : lines.reduce((s, l) => s + (l.accountedCr ?? 0), 0));
 
   return {
     batch: {

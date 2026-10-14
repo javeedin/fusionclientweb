@@ -27,10 +27,10 @@ import { APEX_DB_CONFIG } from '../../config/api.config';
 import { createAccounting, checkAccountingExists, type SlaCreatePayload } from '../../services/sla.service';
 import {
   planRevaluationJournals, postRevaluationToGl, checkRevaluationInGl, describeRevalPosting, periodLastDay,
-  revaluationJournalOptions, readRevaluationGlCounts, type RevalPostOutcome,
+  revaluationJournalOptions, readRevaluationGlCounts, planRevaluationRebuild, rebuildRevaluationGl, type RevalPostOutcome,
 } from '../../services/revaluationPosting.service';
 import { buildGlJournalPayload, makeBatchName } from '../../services/glPosting.service';
-import SourceJournalsModal from '../../components/SourceJournalsModal';
+import SourceJournalsModal, { type GlRepair } from '../../components/SourceJournalsModal';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -769,26 +769,56 @@ const ManageRevaluation: React.FC = () => {
     return matchStatus && matchSearch && (!onlyGlGaps || !!glGap(r));
   });
 
-  // Repair a revaluation the old posting loop left half-posted: post only the lines the GL is missing,
-  // with the same plan as Create Accounting (one journal per currency), then read the GL back.
-  const postMissingRevalLines = async (id: number): Promise<string> => {
+  // Repair a revaluation the old posting loop left half-posted. The GL allows one journal per
+  // reference2 + reference5, so the old journal is deleted (Delete Journals' DELETE gl/journals/batches/:id)
+  // and every line is posted again — one journal per currency — then the GL is read back.
+  const prepareRevalRebuild = async (id: number) => {
     const d    = await fetchRevalDetail(id);
     const plan = planRevaluationJournals(d.lines, d.ccyRows);
     const periodName = d.periodName.replace(/^(?:ReERP|Dynamic|YTD):\s*/, '');
     const sla  = await checkAccountingExists('RR_REVALUE_HEADER', id, 'GL_REVALUATION').catch(() => null);
     const acctLabel = d.accountDesc || d.account;
-    const outcome = await postRevaluationToGl({
-      revalueId: id, account: d.account, periodName, accountingDate: periodLastDay(periodName),
+    const lastDay = periodLastDay(periodName);
+    const rp = await planRevaluationRebuild({
+      revalueId: id, account: d.account, periodName, accountingDate: lastDay,
       ledgerName: d.ledgerName || '', ledgerId: d.ledgerId || 0, slaHeaderId: sla?.headerId || 0,
       createdBy: user?.username || 'SYSTEM',
       journalDescription: `FX Revaluation – ${acctLabel} – ${periodName}`,
       lineDescription: (l, ccy) => l.description || `FX Revaluation – ${ccy} – ${acctLabel} – ${periodName}`,
     }, plan);
-    const glCheck = await checkRevaluationInGl(id, plan, outcome.posted.map(p => p.result.batchId));
-    if (!glCheck.ok) throw new Error(`${describeRevalPosting(outcome)}. GL check: ${glCheck.message}`);
-    load();
-    return `Revaluation #${id}: ${describeRevalPosting(outcome)}. ${glCheck.message}.`;
+    const steps = [
+      ...(rp.batches.length
+        ? rp.batches.map(b => `Delete GL batch ${b.name}${b.status ? ` (${b.status})` : ''} — ${b.lines} line${b.lines === 1 ? '' : 's'}, Dr ${fmt2(b.dr)}. Kept in the journal delete archive.`)
+        : ['No GL journal to delete for this revaluation.']),
+      ...plan.journals.map(j => `Create and post one ${j.ccy} journal with all ${j.lines.length} lines (Dr ${fmt2(j.dr)} / Cr ${fmt2(j.cr)}), rate ${j.rate}, dated ${lastDay}, reference2 = ${id}.`),
+      `Read the GL back and confirm all ${plan.lineCount} revaluation lines are there.`,
+      `Point revaluation #${id} at the new GL batch (status ACCOUNTED).`,
+    ];
+    return { rp, steps };
   };
+
+  const revalRepair = (id: number): GlRepair => ({
+    label: 'Delete & re-post',
+    prepare: async () => {
+      const { rp, steps } = await prepareRevalRebuild(id);
+      return { steps, problems: rp.problems, warnings: rp.warnings, calls: rp.calls };
+    },
+    run: async () => {
+      const { rp } = await prepareRevalRebuild(id);            // fresh: the GL may have changed since the dialog opened
+      const r = await rebuildRevaluationGl(rp);
+      const last = r.outcome.posted[r.outcome.posted.length - 1]?.result;
+      if (last?.batchId) {
+        await fetch(`${ORDS_BASE}/${APEX_DB_CONFIG.endpoints.revaluation}/${id}/accounting`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'ACCOUNTED', gl_batch_id: last.batchId, gl_batch_name: last.batchName, gl_header_id: last.headerId || 0 }),
+        }).catch(() => null);
+      }
+      load();
+      const del = r.deleted.length ? `Deleted ${r.deleted.map(b => b.name).join(', ')}. ` : '';
+      if (!r.check.ok) throw new Error(`${del}${describeRevalPosting(r.outcome)}. GL check: ${r.check.message}`);
+      return `Revaluation #${id}: ${del}${describeRevalPosting(r.outcome)}. ${r.check.message}.`;
+    },
+  });
 
   const handleViewAccounting = (revalueId: number) => {
     setViewAcctRec(data.find(r => r.revalueId === revalueId) ?? null);
@@ -1070,7 +1100,7 @@ const ManageRevaluation: React.FC = () => {
           {glGapCount > 0 && (
             <Alert type="error" showIcon style={{ marginBottom: 16, borderRadius: 8 }}
               message={`${glGapCount} accounted revaluation${glGapCount === 1 ? ' is' : 's are'} missing GL lines`}
-              description="Posting used to send only the first Dr/Cr pair of each currency to the GL. Open View Accounting on each one and use Post missing lines; new revaluations post every line."
+              description="Posting used to send only the first Dr/Cr pair of each currency to the GL. Open View Accounting on each one and use Delete & re-post; new revaluations post every line."
               action={<Button size="small" onClick={() => setOnlyGlGaps(v => !v)}>{onlyGlGaps ? 'Show all' : 'Show only these'}</Button>} />
           )}
 
@@ -1520,7 +1550,7 @@ const ManageRevaluation: React.FC = () => {
           .filter(l => l.drAmount || l.crAmount)
           .map(l => ({ lineNum: l.lineNum, combo: l.combo, description: l.description, dr: l.drAmount, cr: l.crAmount })) : undefined}
         sourceLabel="revaluation"
-        repairMissing={viewAcctRec ? () => postMissingRevalLines(viewAcctRec.revalueId) : undefined}
+        repair={viewAcctRec ? revalRepair(viewAcctRec.revalueId) : undefined}
       />
 
       {/* PDF Modal */}
