@@ -14,6 +14,8 @@ import {
 import type { AccountingLine } from '../components/AccountingLinesView';
 
 export const GL_APPROVAL_SCRIPT = 'database/gl/166_gl_journal_approval.sql';
+/** per-viewer preference: post a journal right after approving it (bell and journal rows) */
+export const POST_AFTER_APPROVE_KEY = 'bell.gl.postAfterApprove';
 export const GL_PROC = {
   send: 'RR_GL_APPROVAL_PKG.SEND_FOR_APPROVAL',
   decide: 'RR_GL_APPROVAL_PKG.DECIDE',

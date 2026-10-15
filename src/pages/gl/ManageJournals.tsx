@@ -88,7 +88,7 @@ import type { ColumnsType } from 'antd/es/table';
 import AccountSelector, { validateAccountCode } from '../../components/AccountSelector';
 import CreateJournal from './CreateJournal';
 import ApprovalStatusModal from '../../components/approvals/ApprovalStatusModal';
-import { JournalApprovalModal, JournalApprovalTag, useApprovalUser, type JournalToSend } from '../../components/approvals/JournalApprovalModal';
+import { JournalApprovalAction, JournalApprovalModal, JournalApprovalTag, useApprovalUser, type JournalToSend } from '../../components/approvals/JournalApprovalModal';
 import { onApprovalsChanged, type ApprovalRule } from '../../services/approvals.service';
 import {
   cleanDbMessage, journalGate, loadJournalApprovals, loadJournalRules, ruleFor, withdrawJournalApproval, type JournalApproval,
@@ -1499,15 +1499,28 @@ const ManageJournals: React.FC = () => {
       title: 'Batch Name',
       dataIndex: 'batchName',
       key: 'batchName',
-      width: 200,
+      width: 230,
       fixed: 'left',
       ellipsis: true,
+      // unposted: the approval icon first — send for approval, or approve / reject right here
       render: (text, record) => (
-        <Tooltip title={record.batchDescription || text}>
-          <a style={{ color: REDWOOD.info, fontWeight: 500 }} onClick={() => openJournalTab(record)}>
-            {text || '-'}
-          </a>
-        </Tooltip>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+          {record.jeBatchId && record.statusMeaning !== 'Posted' && (
+            <JournalApprovalAction batchId={record.jeBatchId} batchName={record.batchName || `Batch ${record.jeBatchId}`}
+              gate={approvalGateFor(record.jeBatchId)} approval={jeApprovals.get(record.jeBatchId)}
+              onSend={() => setApprovalSendFor(journalsToSend([record]))}
+              onTrail={jeApprovals.get(record.jeBatchId) ? () => setApprovalTrailFor(record) : undefined}
+              onDecided={({ posted }) => {
+                if (posted) setJournals(prev => prev.map(j => (j.jeBatchId === record.jeBatchId ? { ...j, statusMeaning: 'Posted', status: 'P' } : j)));
+                loadJeApprovals();
+              }} />
+          )}
+          <Tooltip title={record.batchDescription || text}>
+            <a style={{ color: REDWOOD.info, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => openJournalTab(record)}>
+              {text || '-'}
+            </a>
+          </Tooltip>
+        </div>
       ),
       sorter: (a, b) => (a.batchName || '').localeCompare(b.batchName || ''),
       ...getColumnSearchProps('batchName', 'Search batch name'),

@@ -2,16 +2,17 @@
 // next to a journal. The approver gets each batch in their notifications (bell) with its lines and approves or
 // rejects it there; until then the batch cannot be posted. See glApproval.service.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Checkbox, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Checkbox, Input, Modal, Popover, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
 import {
-  CheckCircleOutlined, ClockCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, LoadingOutlined,
-  MinusCircleOutlined, SendOutlined, WarningOutlined,
+  AuditOutlined, CheckCircleFilled, CheckCircleOutlined, ClockCircleOutlined, CloseCircleFilled, CloseCircleOutlined,
+  ExclamationCircleOutlined, HistoryOutlined, LoadingOutlined, MinusCircleOutlined, SendOutlined, WarningOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useAuth } from '../../context/AuthContext';
-import type { ApprovalRule } from '../../services/approvals.service';
+import { emitApprovalsChanged, type ApprovalRule } from '../../services/approvals.service';
+import { postJournal } from '../../services/manage-journals.service';
 import {
-  GL_APPROVAL_SCRIPT, journalApprovers, ruleBand, sendJournalForApproval,
+  GL_APPROVAL_SCRIPT, POST_AFTER_APPROVE_KEY, cleanDbMessage, decideJournalApproval, journalApprovers, ruleBand, sendJournalForApproval,
   type JournalApproval, type JournalApprover, type JournalGate, type GateTone,
 } from '../../services/glApproval.service';
 
@@ -60,6 +61,128 @@ export const JournalApprovalTag: React.FC<{ gate: JournalGate; approval?: Journa
         {compact ? SHORT[gate.tone] ?? gate.label : gate.label}{!compact && who && (gate.tone === 'pending' || gate.tone === 'approved' || gate.tone === 'rejected') ? ` · ${who}` : ''}
       </Tag>
     </Tooltip>
+  );
+};
+
+// ── row action ──────────────────────────────────────────────────────────────
+
+/**
+ * The approval icon at the start of a journal row. Waiting for approval → approve / reject right there (optionally
+ * posting it); not sent → send for approval; approved / rejected → the history.
+ */
+export const JournalApprovalAction: React.FC<{
+  batchId: number;
+  batchName: string;
+  gate: JournalGate;
+  approval?: JournalApproval;
+  onSend: () => void;
+  onTrail?: () => void;
+  /** after a decision here (posted: it was also posted) */
+  onDecided?: (r: { status: 'APPROVED' | 'REJECTED'; posted: boolean }) => void;
+}> = ({ batchId, batchName, gate, approval, onSend, onTrail, onDecided }) => {
+  const user = useApprovalUser();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<'APPROVED' | 'REJECTED' | null>(null);
+  const [comments, setComments] = useState('');
+  const [postAfter, setPostAfter] = useState<boolean>(() => { try { return localStorage.getItem(POST_AFTER_APPROVE_KEY) === 'Y'; } catch { return false; } });
+  const changePostAfter = (v: boolean) => { setPostAfter(v); try { localStorage.setItem(POST_AFTER_APPROVE_KEY, v ? 'Y' : 'N'); } catch { /* per-viewer convenience */ } };
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();   // the row's own click (open / preview) stays out of it
+  const btn: React.CSSProperties = { width: 22, height: 22, minWidth: 22, padding: 0 };
+
+  const decide = async (status: 'APPROVED' | 'REJECTED') => {
+    if (!approval) return;
+    setBusy(status);
+    try {
+      await decideJournalApproval(approval.requestId, status, comments.trim() || undefined, user, { name: user });
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : String(e), 8);
+      setBusy(null);
+      return;
+    }
+    emitApprovalsChanged({ reason: 'decided', module: 'GL', transactionId: batchId, transactionRef: batchName, status, actorName: user, from: 'screen' });
+    let posted = false;
+    if (status === 'APPROVED' && postAfter) {
+      const key = `post-${batchId}`;
+      message.loading({ content: `Approved — posting ${batchName}…`, key, duration: 0 });
+      const r = await postJournal(batchId);
+      posted = !!r.success;
+      if (posted) message.success({ content: `${batchName} approved and posted`, key });
+      else {
+        message.destroy(key);
+        Modal.error({ title: `${batchName} approved, but not posted`, width: 520,
+          content: <div>{cleanDbMessage(r.error || r.message) || 'The journal could not be posted.'}
+            {r.errors?.length ? <ul style={{ paddingLeft: 18, margin: '6px 0 0' }}>{r.errors.map((x, i) => <li key={i}>{x}</li>)}</ul> : null}</div> });
+      }
+    } else {
+      message.success(`${batchName} ${status === 'APPROVED' ? 'approved — it can be posted' : 'rejected'}`);
+    }
+    setBusy(null); setOpen(false); setComments('');
+    onDecided?.({ status, posted });
+  };
+
+  if (gate.tone === 'pending' && approval) {
+    const content = (
+      <div style={{ width: 300 }} onClick={stop}>
+        <div style={{ fontSize: 12, marginBottom: 8 }}>
+          <div><b>{approval.currency} {money(Math.abs(approval.amount ?? 0))}</b> · sent by {approval.requestedBy || '—'}{approval.requestedDate ? ` · ${day(approval.requestedDate)}` : ''}</div>
+          <div style={{ color: '#8c8c8c' }}>waiting for {approval.approverName || 'the approver'}{approval.approverName && approval.approverName === user ? ' (you)' : ''}</div>
+        </div>
+        <Input.TextArea rows={2} maxLength={1000} placeholder="Comment (optional — the reason when rejecting)" value={comments}
+          onChange={e => setComments(e.target.value)} disabled={!!busy} />
+        <Checkbox checked={postAfter} onChange={e => changePostAfter(e.target.checked)} disabled={!!busy} style={{ fontSize: 12, marginTop: 8 }}>
+          Post it right after approving
+        </Checkbox>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+          {onTrail ? <Button size="small" type="link" icon={<HistoryOutlined />} style={{ padding: 0 }} onClick={() => { setOpen(false); onTrail(); }}>History</Button> : <span />}
+          <Space size={6}>
+            <Button size="small" danger icon={<CloseCircleOutlined />} loading={busy === 'REJECTED'} disabled={!!busy} onClick={() => decide('REJECTED')}>Reject</Button>
+            <Button size="small" type="primary" icon={<CheckCircleOutlined />} loading={busy === 'APPROVED'} disabled={!!busy}
+              style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }} onClick={() => decide('APPROVED')}>{postAfter ? 'Approve & post' : 'Approve'}</Button>
+          </Space>
+        </div>
+      </div>
+    );
+    return (
+      <span onClick={stop}>
+        <Popover trigger="click" open={open} onOpenChange={v => !busy && setOpen(v)} content={content} placement="bottomLeft"
+          title={<Space size={6}><ClockCircleOutlined style={{ color: '#d48806' }} /><span>{`Approve ${batchName}?`}</span></Space>}>
+          <Tooltip title={open ? '' : `Waiting for approval${approval.approverName ? ` from ${approval.approverName}` : ''} — click to approve or reject`}>
+            <Button type="text" size="small" style={btn} aria-label="Approve or reject"
+              icon={<CheckCircleOutlined style={{ color: '#1D7B4D', fontSize: 16 }} />} />
+          </Tooltip>
+        </Popover>
+      </span>
+    );
+  }
+  if (gate.tone === 'approved') {
+    return (
+      <span onClick={stop}>
+        <Tooltip title={`Approved${approval?.decidedBy ? ` by ${approval.decidedBy}` : ''}${approval?.decidedDate ? ` · ${day(approval.decidedDate)}` : ''} — ready to post${onTrail ? ' · click for the history' : ''}`}>
+          <Button type="text" size="small" style={btn} aria-label="Approved" onClick={onTrail}
+            icon={<CheckCircleFilled style={{ color: '#1D7B4D', fontSize: 16 }} />} />
+        </Tooltip>
+      </span>
+    );
+  }
+  if (gate.tone === 'rejected') {
+    return (
+      <span onClick={stop}>
+        <Tooltip title={`${gate.block}${onTrail ? ' · click for the history (send it again from there)' : ''}`}>
+          <Button type="text" size="small" style={btn} aria-label="Rejected" onClick={onTrail ?? onSend}
+            icon={<CloseCircleFilled style={{ color: '#d03b3b', fontSize: 16 }} />} />
+        </Tooltip>
+      </span>
+    );
+  }
+  // not sent / withdrawn / needs approval / changed after approval → send it
+  const loud = gate.tone === 'needed' || gate.tone === 'changed';
+  return (
+    <span onClick={stop}>
+      <Tooltip title={gate.block ? `${gate.block} · click to send it for approval` : 'Send for approval'}>
+        <Button type="text" size="small" style={btn} aria-label="Send for approval" onClick={onSend}
+          icon={<AuditOutlined style={{ color: loud ? '#d48806' : '#8c8c8c', fontSize: 15 }} />} />
+      </Tooltip>
+    </span>
   );
 };
 

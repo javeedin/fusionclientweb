@@ -16,7 +16,7 @@ import { APEX_DB_CONFIG } from '../config/api.config';
 import { poQuery, nlit } from '../services/po.service';
 import AccountingLinesView, { type AccountingLine } from './AccountingLinesView';
 import { loadExternalTransaction } from '../services/externalTxnLookup';
-import { loadJournalForApproval, cleanDbMessage, type JournalForApproval } from '../services/glApproval.service';
+import { loadJournalForApproval, cleanDbMessage, POST_AFTER_APPROVE_KEY as POST_AFTER_KEY, type JournalForApproval } from '../services/glApproval.service';
 import { postJournal } from '../services/manage-journals.service';
 
 const { Text } = Typography;
@@ -239,7 +239,6 @@ function cashAccountingLines(txn: any, gl: any[] | null, notif: AppNotification)
   return { posted: false, lines: moneyIn ? [line('DR', bank), line('CR', offset)] : [line('DR', offset), line('CR', bank)] };
 }
 
-const POST_AFTER_KEY = 'bell.gl.postAfterApprove';
 const fmtMoney = (v: any) => (v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const fmtDay = (v: any) => (v && dayjs(v).isValid() ? dayjs(v).format('DD-MMM-YYYY') : v || '—');
 

@@ -802,6 +802,8 @@ export interface ApprovalsChangedDetail {
   transactionRef?: string;
   status?: 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'RECALLED';
   actorName?: string;
+  /** decided on a screen (not in the bell) — the bell drops the request right away */
+  from?: 'screen';
 }
 export const emitApprovalsChanged = (detail: ApprovalsChangedDetail) => {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(APPROVALS_CHANGED_EVENT, { detail }));

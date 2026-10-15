@@ -329,7 +329,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   // A request was just sent from this app → show it in the bell now (no wait for the next poll)
   React.useEffect(() => onApprovalsChanged(d => {
-    if (d.reason === 'sent') setTimeout(checkPendingApprovals, 400);
+    if (d.reason === 'sent' || d.from === 'screen') setTimeout(checkPendingApprovals, 400);
   }), [checkPendingApprovals]);
 
   // Poll approvals every 60 seconds

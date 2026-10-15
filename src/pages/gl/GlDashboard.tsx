@@ -8,7 +8,7 @@ import {
 } from '@ant-design/icons';
 import JournalFullPreview from '../../components/JournalFullPreview';
 import ApprovalStatusModal from '../../components/approvals/ApprovalStatusModal';
-import { JournalApprovalModal, JournalApprovalTag, useApprovalUser, type JournalToSend } from '../../components/approvals/JournalApprovalModal';
+import { JournalApprovalAction, JournalApprovalModal, JournalApprovalTag, useApprovalUser, type JournalToSend } from '../../components/approvals/JournalApprovalModal';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { postJournal } from '../../services/manage-journals.service';
 import { onApprovalsChanged, type ApprovalRule } from '../../services/approvals.service';
@@ -99,6 +99,13 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
         approval: approvals.get(batchId), gate: gateOfBatch(batchId, dr),
       };
     });
+  };
+  // approved / rejected from a row: posted → off the not-posted lists
+  const afterDecision = (j: GlJournal, posted: boolean) => {
+    if (posted && j.batchId) {
+      setList(l => (l ? { ...l, rows: l.rows.filter(x => x.batchId !== j.batchId) } : l));
+      load();
+    } else loadApprovals();
   };
   const withdraw = async (j: GlJournal) => {
     if (!j.batchId) return;
@@ -354,7 +361,8 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
                 <a style={{ fontSize: 12 }} onClick={() => onNavigate('/gl/manage-journals')}>Manage Journals</a>
               </Space>
             </div>
-            <JournalTable rows={oldestFirst.slice(0, 6)} compact onOpen={setPreview} gateOf={gateOf} approvals={approvals} onTrail={setTrailFor} />
+            <JournalTable rows={oldestFirst.slice(0, 6)} compact onOpen={setPreview} gateOf={gateOf} approvals={approvals} onTrail={setTrailFor}
+              onSend={j => setSendFor(toSend([j]))} onDecided={afterDecision} />
           </div>
         </Col>
       </Row>
@@ -391,7 +399,8 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
               </Tooltip>
               {selected.length > 0 && <Button type="link" onClick={() => setSelected([])}>Clear</Button>}
             </Space>
-            <JournalTable rows={shown} onOpen={setPreview} selection={{ keys: selected, onChange: setSelected }} gateOf={gateOf} approvals={approvals} onTrail={setTrailFor} />
+            <JournalTable rows={shown} onOpen={setPreview} selection={{ keys: selected, onChange: setSelected }} gateOf={gateOf} approvals={approvals} onTrail={setTrailFor}
+              onSend={j => setSendFor(toSend([j]))} onDecided={afterDecision} />
           </>;
         })()}
       </Modal>
@@ -503,7 +512,8 @@ const JournalTable: React.FC<{
   rows: GlJournal[]; onOpen: (j: GlJournal) => void; compact?: boolean;
   selection?: { keys: number[]; onChange: (keys: number[]) => void };
   gateOf?: (j: GlJournal) => JournalGate; approvals?: Map<number, JournalApproval>; onTrail?: (j: GlJournal) => void;
-}> = ({ rows, onOpen, compact, selection, gateOf, approvals, onTrail }) => (
+  onSend?: (j: GlJournal) => void; onDecided?: (j: GlJournal, posted: boolean) => void;
+}> = ({ rows, onOpen, compact, selection, gateOf, approvals, onTrail, onSend, onDecided }) => (
   <Table<GlJournal> size="small" rowKey="headerId" dataSource={rows}
     rowSelection={selection ? {
       selectedRowKeys: selection.keys, preserveSelectedRowKeys: true,
@@ -523,9 +533,16 @@ const JournalTable: React.FC<{
     )}
     columns={[
       { title: 'Batch / journal', key: 'b', ellipsis: true, render: (_: unknown, r) => (
-        <div style={{ minWidth: 0 }}>
-          <a style={{ fontSize: 12 }}>{r.batchName || r.journalName || `#${r.headerId}`}</a>
-          {!compact && r.journalName && r.journalName !== r.batchName && <div style={{ fontSize: 11, color: INK.muted }}>{r.journalName}</div>}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+          {gateOf && onSend && r.batchId && (
+            <JournalApprovalAction batchId={r.batchId} batchName={r.batchName || `Batch ${r.batchId}`} gate={gateOf(r)} approval={approvals?.get(r.batchId)}
+              onSend={() => onSend(r)} onTrail={approvals?.get(r.batchId) && onTrail ? () => onTrail(r) : undefined}
+              onDecided={({ posted }) => onDecided?.(r, posted)} />
+          )}
+          <div style={{ minWidth: 0, overflow: 'hidden' }}>
+            <a style={{ fontSize: 12 }}>{r.batchName || r.journalName || `#${r.headerId}`}</a>
+            {!compact && r.journalName && r.journalName !== r.batchName && <div style={{ fontSize: 11, color: INK.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.journalName}</div>}
+          </div>
         </div>) },
       { title: 'Category', dataIndex: 'category', width: compact ? 150 : 170, ellipsis: true,
         render: (v: string) => (isPmsCategory(v) ? <Tag color="blue" style={{ margin: 0 }}>{v}</Tag> : v) },
