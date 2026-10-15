@@ -1,5 +1,5 @@
-import React from 'react';
-import { Layout, Typography, Card, Breadcrumb, Row, Col, Space } from 'antd';
+import React, { useEffect, useState } from 'react';
+import { Layout, Typography, Card, Breadcrumb, Row, Col, Space, Select } from 'antd';
 import {
   HomeOutlined,
   FileTextOutlined,
@@ -11,6 +11,8 @@ import {
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import FloatingMenu from '../../components/FloatingMenu';
+import ReceivablesDashboard from './ReceivablesDashboard';
+import { loadReceivablesBusinessUnits } from '../../services/receivablesDashboard.service';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -87,8 +89,14 @@ const tasks = [
   },
 ];
 
+const BU_KEY = 'ar.dashboard.bu';
+
 const ARModule: React.FC = () => {
   const navigate = useNavigate();
+  const [businessUnits, setBusinessUnits] = useState<string[]>([]);
+  const [selectedBU, setSelectedBU] = useState<string>(() => { try { return localStorage.getItem(BU_KEY) || ''; } catch { return ''; } });
+  useEffect(() => { loadReceivablesBusinessUnits().then(setBusinessUnits); }, []);
+  const changeBU = (v: string) => { setSelectedBU(v); try { localStorage.setItem(BU_KEY, v); } catch { /* per-viewer convenience */ } };
 
   return (
     <Layout style={{ minHeight: '100vh', background: REDWOOD.neutral100 }}>
@@ -106,9 +114,10 @@ const ARModule: React.FC = () => {
           ]} />
         </div>
 
-        <div style={{ padding: 24 }}>
+        {/* right padding keeps the floating menu off the dashboard (as on Fixed Assets) */}
+        <div style={{ padding: 24, paddingRight: 100 }}>
           {/* Page title — matches Payables style */}
-          <div style={{ marginBottom: 24 }}>
+          <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             <Space align="center">
               <div style={{
                 width: 56, height: 56, borderRadius: 12,
@@ -125,7 +134,16 @@ const ARModule: React.FC = () => {
                 <Text type="secondary">Manage invoices, customers and receipts</Text>
               </div>
             </Space>
+            {/* Business Unit filter (the dashboard below follows it) */}
+            <Space>
+              <Text type="secondary" style={{ fontSize: 13 }}>Business Unit:</Text>
+              <Select value={selectedBU || 'all'} onChange={v => changeBU(v === 'all' ? '' : v)} style={{ width: 260 }} showSearch
+                options={[{ value: 'all', label: 'All Business Units' }, ...businessUnits.map(b => ({ value: b, label: b }))]} />
+            </Space>
           </div>
+
+          {/* Receivables dashboard — live, direct SQL (ReceivablesDashboard / receivablesDashboard.service) */}
+          <ReceivablesDashboard businessUnit={selectedBU} onNavigate={path => navigate(path)} />
 
           {/* Task Cards */}
           <Row gutter={[16, 16]}>

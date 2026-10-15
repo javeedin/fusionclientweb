@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Layout, Typography, Card, Breadcrumb, Space, Tooltip, Row, Col, Statistic } from 'antd';
+import { Layout, Typography, Card, Breadcrumb, Space, Tooltip, Row, Col } from 'antd';
 import {
   HomeOutlined,
   BarChartOutlined,
@@ -7,11 +7,7 @@ import {
   SettingOutlined,
   CheckSquareOutlined,
   CloseOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
-  ClockCircleOutlined,
   CheckCircleOutlined,
-  WarningOutlined,
   PlusCircleOutlined,
   SearchOutlined,
   ToolOutlined,
@@ -23,9 +19,9 @@ import {
   EnvironmentOutlined,
   ScheduleOutlined,
   SwapOutlined,
-  DollarOutlined,
 } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
+import FaDashboard from './FaDashboard';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -146,14 +142,6 @@ const setupMenuItems: MenuItemType[] = [
     color: REDWOOD.neutral600, path: '/fa/setup/book-controls',
   },
 ];
-
-// ── Mock KPI data ─────────────────────────────────────────────────────────────
-const faKpi = {
-  activeAssets:  { value: 1_248, trend: 'up',   change: 5  },
-  totalCost:     { value: 24_730_000, trend: 'up', change: 3 },
-  totalNbv:      { value: 18_210_000, trend: 'down', change: 2 },
-  retiredAssets: { value: 87, trend: 'up', change: 11 },
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -293,48 +281,6 @@ const FAModule: React.FC = () => {
     </div>
   );
 
-  const KpiCard = ({
-    title, value, icon, color, trend, change, prefix,
-  }: {
-    title: string; value: number; icon: React.ReactNode; color: string;
-    trend?: 'up' | 'down'; change?: number; prefix?: string;
-  }) => (
-    <Card
-      style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
-      bodyStyle={{ padding: 20 }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <Text type="secondary" style={{ fontSize: 13 }}>{title}</Text>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-            <Statistic
-              value={value}
-              prefix={prefix}
-              valueStyle={{ fontSize: 24, fontWeight: 600, color: REDWOOD.neutral900 }}
-            />
-            {trend && change && (
-              <span style={{
-                color: trend === 'up' ? REDWOOD.success : REDWOOD.primary,
-                fontSize: 12, display: 'flex', alignItems: 'center', gap: 2,
-              }}>
-                {trend === 'up' ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
-                {change}%
-              </span>
-            )}
-          </div>
-        </div>
-        <div style={{
-          width: 48, height: 48, borderRadius: 12,
-          background: `${color}15`, display: 'flex',
-          alignItems: 'center', justifyContent: 'center',
-          color, fontSize: 24,
-        }}>
-          {icon}
-        </div>
-      </div>
-    </Card>
-  );
-
   const MenuCard = ({ item }: { item: MenuItemType }) => (
     <Card
       hoverable={!!item.path}
@@ -433,51 +379,8 @@ const FAModule: React.FC = () => {
             </Space>
           </div>
 
-          {/* KPI Cards */}
-          <Row gutter={[16, 16]} style={{ marginBottom: 32 }}>
-            <Col xs={24} sm={12} lg={6}>
-              <KpiCard
-                title="Active Assets"
-                value={faKpi.activeAssets.value}
-                icon={<CheckCircleOutlined />}
-                color={REDWOOD.success}
-                trend={faKpi.activeAssets.trend as 'up' | 'down'}
-                change={faKpi.activeAssets.change}
-              />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
-              <KpiCard
-                title="Total Cost"
-                value={faKpi.totalCost.value}
-                icon={<DollarOutlined />}
-                color={FA_COLOR}
-                prefix="$"
-                trend={faKpi.totalCost.trend as 'up' | 'down'}
-                change={faKpi.totalCost.change}
-              />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
-              <KpiCard
-                title="Total NBV"
-                value={faKpi.totalNbv.value}
-                icon={<LineChartOutlined />}
-                color={REDWOOD.info}
-                prefix="$"
-                trend={faKpi.totalNbv.trend as 'up' | 'down'}
-                change={faKpi.totalNbv.change}
-              />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
-              <KpiCard
-                title="Retired Assets"
-                value={faKpi.retiredAssets.value}
-                icon={<WarningOutlined />}
-                color={REDWOOD.primary}
-                trend={faKpi.retiredAssets.trend as 'up' | 'down'}
-                change={faKpi.retiredAssets.change}
-              />
-            </Col>
-          </Row>
+          {/* Fixed Assets dashboard — live, direct SQL (FaDashboard / faDashboard.service) */}
+          <FaDashboard onNavigate={path => navigate(path)} />
 
           {/* Quick-action strip */}
           <Row gutter={[16, 16]} style={{ marginBottom: 32 }}>
