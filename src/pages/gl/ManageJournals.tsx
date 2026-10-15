@@ -91,7 +91,7 @@ import ApprovalStatusModal from '../../components/approvals/ApprovalStatusModal'
 import { JournalApprovalAction, JournalApprovalModal, JournalApprovalTag, useApprovalUser, type JournalToSend } from '../../components/approvals/JournalApprovalModal';
 import { onApprovalsChanged, type ApprovalRule } from '../../services/approvals.service';
 import {
-  cleanDbMessage, journalGate, loadJournalApprovals, loadJournalRules, ruleFor, withdrawJournalApproval, type JournalApproval,
+  cleanDbMessage, journalGate, loadJournalApprovals, loadJournalRules, postApprovedJournal, ruleFor, withdrawJournalApproval, type JournalApproval,
 } from '../../services/glApproval.service';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -297,6 +297,19 @@ const ManageJournals: React.FC = () => {
   const [jeRules, setJeRules] = useState<ApprovalRule[]>([]);
   const [approvalSendFor, setApprovalSendFor] = useState<JournalToSend[] | null>(null);
   const [approvalTrailFor, setApprovalTrailFor] = useState<JournalRecord | null>(null);
+  // approved but still NEW (approved before approval posted automatically, or its post was refused then)
+  const [approvedPost, setApprovedPost] = useState<{ running: boolean; done: number; total: number; failed: string[] } | null>(null);
+  const postApprovedBatches = async (batches: { batchId: number; batchName: string }[]) => {
+    setApprovedPost({ running: true, done: 0, total: batches.length, failed: [] });
+    const failed: string[] = [];
+    for (let i = 0; i < batches.length; i++) {
+      const r = await postApprovedJournal(batches[i].batchId, batches[i].batchName);   // marks the rows Posted (event)
+      if (!r.posted) failed.push(`${batches[i].batchName}: ${r.why}`);
+      setApprovedPost({ running: i < batches.length - 1, done: i + 1, total: batches.length, failed: [...failed] });
+    }
+    const ok = batches.length - failed.length;
+    (failed.length ? message.warning : message.success)(`${ok} approved journal${ok === 1 ? '' : 's'} posted${failed.length ? ` · ${failed.length} refused (reason shown)` : ''}`);
+  };
   const loadJeApprovals = React.useCallback(async () => {
     const [a, r] = await Promise.all([loadJournalApprovals().catch(() => new Map<number, JournalApproval>()), loadJournalRules().catch(() => [])]);
     setJeApprovals(a); setJeRules(r);
@@ -5058,6 +5071,31 @@ const ManageJournals: React.FC = () => {
             }}
             bodyStyle={{ padding: 0 }}
           >
+            {(() => {
+              const seen = new Set<number>();
+              const waiting = journals.filter(j => j.jeBatchId && j.statusMeaning !== 'Posted' && jeApprovals.get(j.jeBatchId)?.status === 'APPROVED'
+                && !jeApprovals.get(j.jeBatchId)?.batchPosted && !seen.has(j.jeBatchId) && seen.add(j.jeBatchId))
+                .map(j => ({ batchId: j.jeBatchId, batchName: j.batchName || `Batch ${j.jeBatchId}` }));
+              if (!waiting.length && !approvedPost) return null;
+              return (
+                <Alert type={approvedPost?.failed.length ? 'warning' : 'info'} showIcon banner style={{ borderBottom: `1px solid ${REDWOOD.neutral200}` }}
+                  message={approvedPost?.running
+                    ? `Posting approved journals… ${approvedPost.done} of ${approvedPost.total}`
+                    : waiting.length
+                      ? `${waiting.length} approved journal${waiting.length === 1 ? ' is' : 's are'} not posted yet: ${waiting.slice(0, 3).map(w => w.batchName).join(', ')}${waiting.length > 3 ? ' …' : ''}`
+                      : `Approved journals posted (${approvedPost!.total - approvedPost!.failed.length} of ${approvedPost!.total})`}
+                  description={approvedPost?.failed.length
+                    ? <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{approvedPost.failed.map((f, i) => <li key={i}>{f}</li>)}</ul>
+                    : waiting.length && !approvedPost?.running ? 'Approval now posts the journal; these were approved before that (or their post was refused). Post them with the same PUT gl/journals/:id/post as Post Batch.' : undefined}
+                  action={<Space size={6}>
+                    {waiting.length > 0 && (
+                      <Button size="small" type="primary" loading={approvedPost?.running} style={{ background: REDWOOD.success, borderColor: REDWOOD.success }}
+                        onClick={() => postApprovedBatches(waiting)}>Post {waiting.length === 1 ? 'it' : `them (${waiting.length})`} now</Button>
+                    )}
+                    {approvedPost && !approvedPost.running && <Button size="small" type="text" onClick={() => setApprovedPost(null)}>Dismiss</Button>}
+                  </Space>} />
+              );
+            })()}
             {/* Toolbar */}
             <div style={{
               padding: '8px 12px',

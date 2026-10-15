@@ -11,7 +11,7 @@ import dayjs from 'dayjs';
 import { useAuth } from '../../context/AuthContext';
 import { emitApprovalsChanged, type ApprovalRule } from '../../services/approvals.service';
 import {
-  GL_APPROVAL_SCRIPT, decideJournalApproval, journalApprovers, ruleBand, sendJournalForApproval,
+  GL_APPROVAL_SCRIPT, decideJournalApproval, journalApprovers, postApprovedJournal, ruleBand, sendJournalForApproval,
   type JournalApproval, type JournalApprover, type JournalGate, type GateTone,
 } from '../../services/glApproval.service';
 
@@ -146,12 +146,36 @@ export const JournalApprovalAction: React.FC<{
     );
   }
   if (gate.tone === 'approved') {
+    // the row is not posted (posted rows get no icon): approved before approval posted automatically → post it now
+    const who = `Approved${approval?.decidedBy ? ` by ${approval.decidedBy}` : ''}${approval?.decidedDate ? ` · ${day(approval.decidedDate)}` : ''}`;
+    const postNow = async () => {
+      setBusy('APPROVED');
+      const key = `post-${batchId}`;
+      message.loading({ content: `Posting ${batchName}…`, key, duration: 0 });
+      const r = await postApprovedJournal(batchId, batchName);
+      setBusy(null); setOpen(false);
+      if (r.posted) { message.success({ content: `${batchName} posted`, key }); onDecided?.({ status: 'APPROVED', posted: true }); }
+      else {
+        message.destroy(key);
+        Modal.warning({ title: `${batchName} was not posted`, width: 520, content: r.why });
+      }
+    };
     return (
       <span onClick={stop}>
-        <Tooltip title={`Approved${approval?.decidedBy ? ` by ${approval.decidedBy}` : ''}${approval?.decidedDate ? ` · ${day(approval.decidedDate)}` : ''} — ready to post${onTrail ? ' · click for the history' : ''}`}>
-          <Button type="text" size="small" style={btn} aria-label="Approved" onClick={onTrail}
-            icon={<CheckCircleFilled style={{ color: '#1D7B4D', fontSize: 16 }} />} />
-        </Tooltip>
+        <Popover trigger="click" open={open} onOpenChange={v => !busy && setOpen(v)} placement="bottomLeft"
+          title={<Space size={6}><CheckCircleFilled style={{ color: '#1D7B4D' }} /><span>{`${batchName} is approved`}</span></Space>}
+          content={<div style={{ width: 280 }} onClick={stop}>
+            <div style={{ fontSize: 12, marginBottom: 10 }}>{who} — <b>not posted yet</b>. Posting runs PUT gl/journals/{batchId}/post (Post Batch).</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              {onTrail ? <Button size="small" type="link" icon={<HistoryOutlined />} style={{ padding: 0 }} onClick={() => { setOpen(false); onTrail(); }}>History</Button> : <span />}
+              <Button size="small" type="primary" icon={<SendOutlined />} loading={!!busy} style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }} onClick={postNow}>Post now</Button>
+            </div>
+          </div>}>
+          <Tooltip title={open ? '' : `${who} — not posted yet · click to post it`}>
+            <Button type="text" size="small" style={btn} aria-label="Approved — post it"
+              icon={<CheckCircleFilled style={{ color: '#1D7B4D', fontSize: 16 }} />} />
+          </Tooltip>
+        </Popover>
       </span>
     );
   }

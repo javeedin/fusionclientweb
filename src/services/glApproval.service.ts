@@ -286,6 +286,17 @@ export async function decideJournalApproval(requestId: number, decision: 'APPROV
   return { via, message: `Approved, but not posted: ${why}`, posted: false, warning: `Approved, but not posted: ${why}` };
 }
 
+/**
+ * Post an approved journal that is still NEW (approved before approval posted automatically, or the post was
+ * refused then): PUT gl/journals/:id/post. Screens showing it mark it Posted.
+ */
+export async function postApprovedJournal(batchId: number, batchName?: string): Promise<{ posted: boolean; why?: string }> {
+  const p = await postJournal(batchId);
+  if (!p.success) return { posted: false, why: cleanDbMessage(p.errors?.[0] || p.error || p.message) || 'posting refused' };
+  emitApprovalsChanged({ reason: 'decided', module: 'GL', transactionId: batchId, transactionRef: batchName, status: 'APPROVED', posted: true, from: 'screen' });
+  return { posted: true };
+}
+
 /** The sender takes a pending request back. */
 export async function withdrawJournalApproval(batchId: number, user: string, current?: JournalApproval): Promise<string> {
   try {
