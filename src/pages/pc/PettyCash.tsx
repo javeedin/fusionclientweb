@@ -13,7 +13,7 @@ import { saveAs } from 'file-saver';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-  HomeOutlined, WalletOutlined, PlusOutlined, SearchOutlined,
+  HomeOutlined, WalletOutlined, PlusOutlined, SearchOutlined, DashboardOutlined,
   ReloadOutlined, EditOutlined, DeleteOutlined, CloseOutlined,
   DollarOutlined, MinusCircleOutlined, ArrowUpOutlined, ArrowDownOutlined,
   DownloadOutlined, RollbackOutlined, BankOutlined,
@@ -24,6 +24,7 @@ import {
   QuestionCircleOutlined, FullscreenOutlined, FullscreenExitOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import FloatingMenu from '../../components/FloatingMenu';
+import PettyCashDashboard from './PettyCashDashboard';
 import ApiDocsModal, { type ApiEndpoint } from '../../components/ApiDocsModal';
 import AccountSelector, { validateAccountCode } from '../../components/AccountSelector';
 import { useAuth } from '../../context/AuthContext';
@@ -6244,7 +6245,7 @@ const PettyCash: React.FC = () => {
   const [regActionForm] = Form.useForm();
   const [transferForm]  = Form.useForm();
 
-  const [activeTab, setActiveTab]             = useState('search');
+  const [activeTab, setActiveTab]             = useState('dashboard');
   const [openTabs, setOpenTabs]               = useState<RegisterTab[]>([]);
   const [cashAccountNames, setCashAccountNames] = useState<Map<number, string>>(new Map());
   const [createTabOpen, setCreateTabOpen]     = useState(false);
@@ -6687,10 +6688,19 @@ const PettyCash: React.FC = () => {
 
   // ── Tab items ──────────────────────────────────────────────
   const tabItems = [
+    // Dashboard tab — the registers' key figures, live (PettyCashDashboard / pettyCashDashboard.service)
+    {
+      key: 'dashboard',
+      label: <Space><DashboardOutlined />Dashboard</Space>,
+      closable: false,
+      children: (
+        <PettyCashDashboard active={activeTab === 'dashboard'} onOpenRegister={openRegisterTab} onShowSearch={() => setActiveTab('search')} />
+      ),
+    },
     // Search tab
     {
       key: 'search',
-      label: <Space><SearchOutlined />Registers</Space>,
+      label: <Space><SearchOutlined />Search</Space>,
       children: (
         <div style={{ padding: '12px 0' }}>
           {/* Search form */}
