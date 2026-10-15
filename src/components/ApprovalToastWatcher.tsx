@@ -47,10 +47,12 @@ const ApprovalToastWatcher: React.FC<Props> = ({ onOpenPanel }) => {
       const handleApprove = async () => {
         const notif = getNotifForRequest(req.requestId);
         try {
-          await approveNotification(req.requestId, notif?.id ?? `approval-${req.requestId}`,
+          const r = await approveNotification(req.requestId, notif?.id ?? `approval-${req.requestId}`,
             { module: req.module, transactionId: req.transactionId, transactionRef: req.transactionRef });
           notification.destroy(toastKey);
-          notification.success({ message: `Approved: ${req.transactionRef}`, duration: 3 });
+          // a journal approval also posts it; a cash approval starts its accounting (reported by its own message)
+          if (r?.warn) notification.warning({ message: `Approved: ${req.transactionRef}`, description: r.note, duration: 10 });
+          else if (req.module !== 'CASH') notification.success({ message: `${req.transactionRef} ${r?.note || 'approved'}`, duration: 3 });
         } catch (err: any) {
           notification.error({ message: 'Approve failed', description: err?.message, duration: 5 });
         }

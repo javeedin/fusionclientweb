@@ -33,6 +33,7 @@ import {
 import { getGlJournalLines } from '../../services/glPosting.service';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { loadExternalTransaction } from '../../services/externalTxnLookup';
+import { accountExternalTransaction } from '../../services/cashAutoAccounting.service';
 import { searchCombinations, type DistCombination } from '../../services/distCombinations.service';
 import { validateGlPayload, persistValidationLog, type GlJournalPayload } from '../../services/glValidation.service';
 import { useGlValidation } from '../../context/GlValidationContext';
@@ -3048,6 +3049,11 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
 
   // Approved / rejected from the notification bell → show it in the list right away
   useEffect(() => onApprovalsChanged(d => {
+    // accounting created after an approval (bell, or the banner below) → Accounted
+    if (d.reason === 'accounted' && d.module === 'CASH' && d.transactionId) {
+      setTransactions(prev => prev.map(t => (t.externalTransactionId === d.transactionId ? { ...t, accountingFlag: 'Y' } : t)));
+      return;
+    }
     if (d.reason !== 'decided' || d.module !== 'CASH' || !d.status) return;
     const hit = (t: ExternalTxnRecord) => t.externalTransactionId === d.transactionId || (!!d.transactionRef && t.approvalRef === d.transactionRef);
     const patch = { approvalStatus: storedDecision(d.status), approvedDate: new Date().toISOString(), ...(d.actorName ? { approvalApproverName: d.actorName } : {}) };
@@ -3056,6 +3062,21 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
   }), []);
   const [approvalDebugSteps, setApprovalDebugSteps]     = useState<import('../../services/approvals.service').ApprovalDebugStep[]>([]);
   const [approvalDebugOpen, setApprovalDebugOpen]       = useState(false);
+  // approved but not accounted (e.g. approved from an e-mail link, where no screen ran the accounting)
+  const [autoAcct, setAutoAcct] = useState<{ running: boolean; done: number; total: number; failed: string[] } | null>(null);
+  const runApprovedAccounting = async (rows: ExternalTxnRecord[]) => {
+    setAutoAcct({ running: true, done: 0, total: rows.length, failed: [] });
+    const failed: string[] = [];
+    let posted = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = await accountExternalTransaction(rows[i].externalTransactionId, currentUser, { post: true });
+      if (r.outcome === 'failed' || !r.ok) failed.push(r.message);
+      if (r.posted) posted += 1;
+      setAutoAcct({ running: i < rows.length - 1, done: i + 1, total: rows.length, failed: [...failed] });
+    }
+    const ok = rows.length - failed.length;
+    (failed.length ? message.warning : message.success)(`${ok} approved transaction${ok === 1 ? '' : 's'} accounted${posted ? ` · ${posted} journal${posted === 1 ? '' : 's'} posted` : ''}${failed.length ? ` · ${failed.length} not (reason shown)` : ''}`);
+  };
 
   // ── Accounting for all transactions ────────────────────────────────────────
   const [accountingAllModalOpen, setAccountingAllModalOpen] = useState(false);
@@ -5187,6 +5208,30 @@ const ManageExternalTransactions: React.FC<{ module?: 'ap' | 'cash' }> = ({ modu
               </div>
             }
           >
+            {(() => {
+              const waiting = transactions.filter(t => approvalState(t.approvalStatus) === 'APPROVED' && t.accountingFlag !== 'Y');
+              if (!waiting.length && !autoAcct) return null;
+              return (
+                <Alert type={autoAcct?.failed.length ? 'warning' : 'info'} showIcon style={{ marginBottom: 10 }}
+                  message={autoAcct?.running
+                    ? `Creating accounting for approved transactions… ${autoAcct.done} of ${autoAcct.total}`
+                    : waiting.length
+                      ? `${waiting.length} approved transaction${waiting.length === 1 ? ' is' : 's are'} not accounted yet`
+                      : `Approved transactions accounted (${autoAcct!.total - autoAcct!.failed.length} of ${autoAcct!.total})`}
+                  description={<>
+                    {waiting.length > 0 && !autoAcct?.running && <span>Approval normally creates the accounting and posts its journal; these were approved where that could not run (e.g. from an e-mail link). </span>}
+                    {autoAcct?.failed.length ? <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{autoAcct.failed.map((f, i) => <li key={i}>{f}</li>)}</ul> : null}
+                  </>}
+                  action={<Space direction="vertical" size={4}>
+                    {waiting.length > 0 && (
+                      <Button size="small" type="primary" loading={autoAcct?.running} onClick={() => runApprovedAccounting(waiting)}>
+                        Create accounting &amp; post ({waiting.length})
+                      </Button>
+                    )}
+                    {autoAcct && !autoAcct.running && <Button size="small" type="text" onClick={() => setAutoAcct(null)}>Dismiss</Button>}
+                  </Space>} />
+              );
+            })()}
             <Table
               dataSource={filtered} columns={columns} rowKey="externalTransactionId"
               loading={loading} size="small" pagination={{

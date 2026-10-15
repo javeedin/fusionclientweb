@@ -75,7 +75,14 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
   }, [loadApprovals]);
   useEffect(() => { load(); }, [load]);
   // approved / rejected from the bell, or sent from another screen → show it
-  useEffect(() => onApprovalsChanged(d => { if (!d.module || d.module === 'GL') loadApprovals(); }), [loadApprovals]);
+  // an approval that posted the journal takes it off the not-posted figures
+  useEffect(() => onApprovalsChanged(d => {
+    if (d.module && d.module !== 'GL') return;
+    if (d.posted && d.transactionId) {
+      setList(l => (l ? { ...l, rows: l.rows.filter(x => x.batchId !== d.transactionId) } : l));
+      load();
+    } else loadApprovals();
+  }), [loadApprovals, load]);
 
   // a batch is approved as a whole: its amount is every not-posted journal in it
   const batchAed = useMemo(() => {
@@ -99,13 +106,6 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
         approval: approvals.get(batchId), gate: gateOfBatch(batchId, dr),
       };
     });
-  };
-  // approved / rejected from a row: posted → off the not-posted lists
-  const afterDecision = (j: GlJournal, posted: boolean) => {
-    if (posted && j.batchId) {
-      setList(l => (l ? { ...l, rows: l.rows.filter(x => x.batchId !== j.batchId) } : l));
-      load();
-    } else loadApprovals();
   };
   const withdraw = async (j: GlJournal) => {
     if (!j.batchId) return;
@@ -362,7 +362,7 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
               </Space>
             </div>
             <JournalTable rows={oldestFirst.slice(0, 6)} compact onOpen={setPreview} gateOf={gateOf} approvals={approvals} onTrail={setTrailFor}
-              onSend={j => setSendFor(toSend([j]))} onDecided={afterDecision} />
+              onSend={j => setSendFor(toSend([j]))} />
           </div>
         </Col>
       </Row>
@@ -400,7 +400,7 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
               {selected.length > 0 && <Button type="link" onClick={() => setSelected([])}>Clear</Button>}
             </Space>
             <JournalTable rows={shown} onOpen={setPreview} selection={{ keys: selected, onChange: setSelected }} gateOf={gateOf} approvals={approvals} onTrail={setTrailFor}
-              onSend={j => setSendFor(toSend([j]))} onDecided={afterDecision} />
+              onSend={j => setSendFor(toSend([j]))} />
           </>;
         })()}
       </Modal>

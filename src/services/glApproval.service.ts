@@ -11,11 +11,10 @@ import {
   emailApprover, emitApprovalsChanged, JOURNAL_EMAIL_AREA,
   type ApprovalRule, type ApprovalUser, type ApprovalDebugStep,
 } from './approvals.service';
+import { postJournal } from './manage-journals.service';
 import type { AccountingLine } from '../components/AccountingLinesView';
 
 export const GL_APPROVAL_SCRIPT = 'database/gl/166_gl_journal_approval.sql';
-/** per-viewer preference: post a journal right after approving it (bell and journal rows) */
-export const POST_AFTER_APPROVE_KEY = 'bell.gl.postAfterApprove';
 export const GL_PROC = {
   send: 'RR_GL_APPROVAL_PKG.SEND_FOR_APPROVAL',
   decide: 'RR_GL_APPROVAL_PKG.DECIDE',
@@ -49,7 +48,15 @@ export interface JournalApproval {
   decidedDate?: string;
   comments?: string;
   ruleName?: string;
+  /** accounted debits of the batch now (the figure the approval amount is compared with) */
+  currentAmount?: number | null;
+  /** the batch is posted */
+  batchPosted?: boolean;
 }
+
+/** The batch's accounted debits, from its lines — the amount an approval covers (as the database computes it). */
+const BATCH_AMOUNT = (batch: string) => `(SELECT ROUND(SUM(NVL(l.ACCOUNTED_DR, 0)), 2) FROM RR_GL_JE_LINES_ALL l
+           WHERE l.JE_HEADER_ID IN (SELECT h.JE_HEADER_ID FROM RR_GL_JE_HEADERS h WHERE h.BATCH_ID = ${batch}))`;
 
 const ISO = (col: string, alias: string) => `TO_CHAR(${col}, 'YYYY-MM-DD"T"HH24:MI:SS') AS ${alias}`;
 const latestSql = (decided: boolean) => `SELECT * FROM (
@@ -61,6 +68,9 @@ const latestSql = (decided: boolean) => `SELECT * FROM (
            WHERE h.REQUEST_ID = r.REQUEST_ID AND h.ACTION IN ('APPROVED', 'REJECTED', 'RECALLED')) AS DECISION_COMMENTS,
          (SELECT MAX(h.ACTOR_NAME) KEEP (DENSE_RANK LAST ORDER BY h.ACTION_DATE, h.HISTORY_ID) FROM RR_APPROVAL_HISTORY h
            WHERE h.REQUEST_ID = r.REQUEST_ID AND h.ACTION IN ('APPROVED', 'REJECTED', 'RECALLED')) AS DECISION_ACTOR,
+         ${BATCH_AMOUNT('r.TRANSACTION_ID')} AS CURRENT_AMOUNT,
+         (SELECT MAX(CASE WHEN UPPER(b.STATUS) = 'P' OR UPPER(b.STATUS_MEANING) = 'POSTED' THEN 'Y' END)
+            FROM RR_GL_JOURNAL_BATCHES b WHERE b.JE_BATCH_ID = r.TRANSACTION_ID) AS BATCH_POSTED,
          ROW_NUMBER() OVER (PARTITION BY r.TRANSACTION_ID ORDER BY r.REQUEST_ID DESC) AS RN
   FROM RR_APPROVAL_REQUESTS r
   LEFT JOIN RR_APPROVAL_USERS u ON u.USER_ID = r.CURRENT_APPROVER_ID
@@ -87,6 +97,7 @@ export async function loadJournalApprovals(): Promise<Map<number, JournalApprova
         requestedDate: r.REQUESTED_DATE ?? undefined, approverName: r.APPROVER_NAME ?? undefined, approverEmail: r.APPROVER_EMAIL ?? undefined,
         decidedBy: r.DECIDED_BY ?? r.DECISION_ACTOR ?? undefined, decidedDate: r.DECIDED_DATE ?? undefined,
         comments: r.DECISION_COMMENTS ?? undefined, ruleName: r.RULE_NAME ?? undefined,
+        currentAmount: num(r.CURRENT_AMOUNT), batchPosted: r.BATCH_POSTED === 'Y',
       });
     });
     return out;
@@ -168,9 +179,19 @@ export interface JournalGate {
 
 const money = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-/** Where a batch stands for posting, given its latest request, its current amount and the rule that covers it. */
-export function journalGate(a: JournalApproval | undefined, amount: number, rule: ApprovalRule | null): JournalGate {
+/**
+ * Where a batch stands for posting, given its latest request, its current amount and the rule that covers it.
+ * The "changed after approval" check uses the amount read with the request (accounted debits of the lines, as the
+ * database compares) — a screen's own total can be in another currency. A posted batch only shows its approval.
+ */
+export function journalGate(a: JournalApproval | undefined, amount: number, rule: ApprovalRule | null, posted = false): JournalGate {
   const st = a?.status;
+  if (posted || a?.batchPosted) {
+    if (st === 'APPROVED') return { tone: 'approved', label: 'Approved', canSend: false, block: null };
+    if (st === 'REJECTED') return { tone: 'rejected', label: 'Rejected', canSend: false, block: null };
+    return { tone: 'free', label: 'No approval needed', canSend: false, block: null };
+  }
+  const now = a?.currentAmount ?? amount;
   if (st === 'PENDING') {
     return { tone: 'pending', label: 'Awaiting approval', canSend: true,
       block: `Waiting for approval${a?.approverName ? ` from ${a.approverName}` : ''} — it can be posted once approved` };
@@ -180,9 +201,9 @@ export function journalGate(a: JournalApproval | undefined, amount: number, rule
       block: `Rejected${a?.decidedBy ? ` by ${a.decidedBy}` : ''}${a?.comments ? ` — "${a.comments}"` : ''} — change it and send it again` };
   }
   if (st === 'APPROVED') {
-    if (a?.amount != null && Math.abs(Math.abs(amount) - Math.abs(a.amount)) > 0.01) {
+    if (a?.amount != null && Math.abs(Math.abs(now) - Math.abs(a.amount)) > 0.01) {
       return { tone: 'changed', label: 'Changed after approval', canSend: true,
-        block: `Changed after it was approved (approved ${money(a.amount)}, now ${money(Math.abs(amount))}) — send it for approval again` };
+        block: `Changed after it was approved (approved ${money(a.amount)}, now ${money(Math.abs(now))}) — send it for approval again` };
     }
     return { tone: 'approved', label: 'Approved', canSend: false, block: null };
   }
@@ -210,7 +231,9 @@ export async function sendJournalForApproval(p: {
     res = { ok: true, message: r.message || `Sent to ${approver.fullName} for approval`, requestId: r.id ?? undefined, via: 'package' };
   } catch (e) {
     if (!notInstalled(e)) return { ok: false, message: cleanDbMessage((e as Error)?.message || String(e)) };
-    const r = await sendJournalApprovalRest({ batchId, batchName, amount: Math.abs(amount), currency, description, approverEmail: approver.email, sentBy: user });
+    // the same figure the package records: accounted debits of the lines
+    const dbAmount = await poQuery(`SELECT ${BATCH_AMOUNT(nlit(batchId))} AS AMT FROM DUAL`, 1, 'GL').then(r => num(r[0]?.AMT)).catch(() => null);
+    const r = await sendJournalApprovalRest({ batchId, batchName, amount: Math.abs(dbAmount ?? amount), currency, description, approverEmail: approver.email, sentBy: user });
     if (!r.success) return { ok: false, message: r.message, debug: r.debug };
     res = { ok: true, message: `Sent to ${approver.fullName} for approval${r.requestId ? ` (request #${r.requestId})` : ''}`, requestId: r.requestId, via: 'rest', debug: r.debug };
   }
@@ -226,17 +249,41 @@ export async function sendJournalForApproval(p: {
   return res;
 }
 
-/** Approve / reject from the bell: RR_GL_APPROVAL_PKG.DECIDE, else the approvals status endpoint. */
+export interface JournalDecision {
+  via: 'package' | 'rest';
+  message: string;
+  /** approved and posted */
+  posted: boolean;
+  /** approved, but posting was refused — why */
+  warning?: string;
+}
+
+/**
+ * Approve / reject a journal: RR_GL_APPROVAL_PKG.DECIDE (which posts an approved journal itself), else the approvals
+ * status endpoint. An approval always ends with the journal posted: when the package did not post it (an older
+ * install, or before script 166), it is posted here with PUT gl/journals/:id/post.
+ */
 export async function decideJournalApproval(requestId: number, decision: 'APPROVED' | 'REJECTED', comments: string | undefined,
-  user: string, actor: { name: string; email?: string }): Promise<{ via: 'package' | 'rest'; message: string }> {
+  user: string, actor: { name: string; email?: string }, batchId?: number): Promise<JournalDecision> {
+  let via: JournalDecision['via'] = 'package';
+  let message = '';
   try {
     const r = await poExec(GL_PROC.decide, { p_request_id: requestId, p_decision: decision, p_comments: comments || null }, user);
-    return { via: 'package', message: r.message || '' };
+    message = r.message || '';
+    if (decision === 'REJECTED') return { via, message, posted: false };
+    if (r.status === 'W') return { via, message, posted: false, warning: message };
+    if (/approved and posted/i.test(message)) return { via, message, posted: true };
   } catch (e) {
     if (!notInstalled(e)) throw new Error(cleanDbMessage((e as Error)?.message || String(e)));
+    via = 'rest';
+    await updateApprovalStatus(requestId, decision, actor.name, comments, actor.email);
+    if (decision === 'REJECTED') return { via, message: 'Rejected', posted: false };
   }
-  await updateApprovalStatus(requestId, decision, actor.name, comments, actor.email);
-  return { via: 'rest', message: '' };
+  if (!batchId) return { via, message: message || 'Approved', posted: false };
+  const p = await postJournal(batchId);
+  if (p.success) return { via, message: 'Approved and posted', posted: true };
+  const why = cleanDbMessage(p.errors?.[0] || p.error || p.message) || 'posting refused';
+  return { via, message: `Approved, but not posted: ${why}`, posted: false, warning: `Approved, but not posted: ${why}` };
 }
 
 /** The sender takes a pending request back. */

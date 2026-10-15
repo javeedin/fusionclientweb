@@ -4,6 +4,8 @@ import { useAuth } from './AuthContext';
 import { getApprovalRequests, emitApprovalsChanged, onApprovalsChanged } from '../services/approvals.service';
 import { poExec, PROC } from '../services/po.service';
 import { decideJournalApproval, GL_PROC } from '../services/glApproval.service';
+import { accountExternalTransaction } from '../services/cashAutoAccounting.service';
+import { message } from 'antd';
 import type { ApprovalRequest } from '../services/approvals.service';
 import dayjs from 'dayjs';
 
@@ -57,8 +59,8 @@ interface NotificationContextValue {
   approvalChecking: boolean;
   checkPendingApprovals: () => Promise<void>;
   refreshApprovalNotifications: () => Promise<void>;
-  approveNotification: (requestId: number, notifId: string, meta?: DecisionMeta) => Promise<void>;
-  rejectNotification: (requestId: number, notifId: string, comments?: string, meta?: DecisionMeta) => Promise<void>;
+  approveNotification: (requestId: number, notifId: string, meta?: DecisionMeta) => Promise<DecisionNote>;
+  rejectNotification: (requestId: number, notifId: string, comments?: string, meta?: DecisionMeta) => Promise<DecisionNote>;
   newApprovalRequests: ApprovalRequest[];
   clearNewApprovalRequests: () => void;
   lastApprovalApiCall: ApprovalApiCall | null;
@@ -66,6 +68,11 @@ interface NotificationContextValue {
 
 /** What is being decided, when the caller knows it (the pop-up toast can act before the bell list has the entry). */
 export interface DecisionMeta { module?: string; transactionId?: number; transactionRef?: string }
+/** What else happened with the decision (a journal approval also posts it) — warn: it did not go all the way. */
+export interface DecisionNote { note?: string; warn?: boolean }
+
+/** CASH-EXT-123 → 123 (the external transaction of a cash approval request) */
+const cashExtId = (txnId?: number, ref?: string) => Number(txnId) || Number(String(ref || '').match(/CASH-EXT-(\d+)/)?.[1]) || 0;
 
 const NotificationContext = createContext<NotificationContextValue | null>(null);
 
@@ -250,6 +257,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     const txnId = meta?.transactionId ?? n?.transactionId;
     const ref = meta?.transactionRef ?? n?.trxNo;
     let decidedBy = actorName;
+    let result: DecisionNote = {};
+    let posted: boolean | undefined;
 
     if (module === 'PROCUREMENT') {
       // Purchasing: through RR_PO_APPROVAL_PKG.DECIDE (po/execute) — refuses your own document and records
@@ -275,7 +284,10 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       const body: Record<string, any> = { proc: GL_PROC.decide, params, user: actorName };
       setLastApprovalApiCall({ url, method: 'POST', body, status: 'Pending…', response: '', ts: Date.now() });
       try {
-        const r = await decideJournalApproval(requestId, status, comments, actorName, { name: actorName, email: actorEmail });
+        // an approval posts the journal (in the package, or here when the package did not)
+        const r = await decideJournalApproval(requestId, status, comments, actorName, { name: actorName, email: actorEmail }, txnId);
+        posted = r.posted;
+        if (status === 'APPROVED') result = r.posted ? { note: 'approved and posted' } : { note: r.warning || r.message, warn: true };
         setLastApprovalApiCall({ url: r.via === 'rest' ? buildApexUrl(`approvals/requests/${requestId}/status`) : url,
           method: r.via === 'rest' ? 'PUT' : 'POST', body, status: 200, response: JSON.stringify(r), ts: Date.now() });
       } catch (err) {
@@ -308,16 +320,28 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     setNotifications(prev => prev.map(x => (x.id === notifId || x.approvalRequestId === requestId) ? { ...x, status: 'Actioned' } : x));
     setTimeout(() => setNotifications(prev => prev.filter(x => !(x.id === notifId || x.approvalRequestId === requestId))), 1500);
     // let open screens (invoices, external transactions, purchase orders) show the decision right away
-    emitApprovalsChanged({ reason: 'decided', module, transactionId: txnId, transactionRef: ref, status, actorName: decidedBy });
+    emitApprovalsChanged({ reason: 'decided', module, transactionId: txnId, transactionRef: ref, status, actorName: decidedBy, posted });
+
+    // Cash: an approved external transaction gets its accounting now (journal created and posted, flagged accounted)
+    const extId = module === 'CASH' && status === 'APPROVED' ? cashExtId(txnId, ref) : 0;
+    if (extId) {
+      const key = `cash-acct-${extId}`;
+      message.loading({ content: `Approved — creating the accounting of ${ref || extId}…`, key, duration: 0 });
+      void accountExternalTransaction(extId, user?.email || user?.username || actorName, { post: true }).then(r => {
+        if (r.outcome === 'failed') message.warning({ content: `Approved, but the accounting was not created — ${r.message}`, key, duration: 10 });
+        else if (r.outcome === 'already') message.info({ content: r.message, key, duration: 5 });
+        else (r.posted && r.ok ? message.success : message.warning)({ content: r.message, key, duration: r.posted && r.ok ? 5 : 10 });
+      });
+      result = { note: 'accounting is being created' };
+    }
+    return result;
   }, [actorName, actorEmail, user]);
 
-  const approveNotification = useCallback(async (requestId: number, notifId: string, meta?: DecisionMeta) => {
-    await _doApprovalPut(requestId, notifId, 'APPROVED', undefined, meta);
-  }, [_doApprovalPut]);
+  const approveNotification = useCallback(async (requestId: number, notifId: string, meta?: DecisionMeta) =>
+    _doApprovalPut(requestId, notifId, 'APPROVED', undefined, meta), [_doApprovalPut]);
 
-  const rejectNotification = useCallback(async (requestId: number, notifId: string, comments?: string, meta?: DecisionMeta) => {
-    await _doApprovalPut(requestId, notifId, 'REJECTED', comments, meta);
-  }, [_doApprovalPut]);
+  const rejectNotification = useCallback(async (requestId: number, notifId: string, comments?: string, meta?: DecisionMeta) =>
+    _doApprovalPut(requestId, notifId, 'REJECTED', comments, meta), [_doApprovalPut]);
 
   // Run on mount: PDC + approvals
   React.useEffect(() => {

@@ -303,14 +303,21 @@ const ManageJournals: React.FC = () => {
   }, []);
   useEffect(() => {
     loadJeApprovals();
-    return onApprovalsChanged(d => { if (!d.module || d.module === 'GL') loadJeApprovals(); });
+    return onApprovalsChanged(d => {
+      if (d.module && d.module !== 'GL') return;
+      // an approval posts the journal → the row shows Posted without searching again
+      if (d.posted && d.transactionId) {
+        setJournals(prev => prev.map(j => (j.jeBatchId === d.transactionId ? { ...j, statusMeaning: 'Posted', status: 'P', approvalStatusMeaning: 'Approved' } : j)));
+      }
+      loadJeApprovals();
+    });
   }, [loadJeApprovals]);
   /** accounted debits of the batch (its journals on this page) */
   const batchAccountedDr = (batchId: number) =>
     journals.filter(j => j.jeBatchId === batchId).reduce((t, j) => t + (Number(j.accountedDebit) || Number(j.enteredDebit) || 0), 0);
-  const approvalGateFor = (batchId: number, amount?: number) => {
+  const approvalGateFor = (batchId: number, amount?: number, posted = false) => {
     const aed = amount ?? batchAccountedDr(batchId);
-    return journalGate(jeApprovals.get(batchId), aed, ruleFor(aed, jeRules));
+    return journalGate(jeApprovals.get(batchId), aed, ruleFor(aed, jeRules), posted);
   };
   const journalsToSend = (rows: JournalRecord[]): JournalToSend[] => {
     const ids = [...new Set(rows.filter(j => j.jeBatchId && j.statusMeaning !== 'Posted').map(j => j.jeBatchId))];
@@ -1510,10 +1517,7 @@ const ManageJournals: React.FC = () => {
               gate={approvalGateFor(record.jeBatchId)} approval={jeApprovals.get(record.jeBatchId)}
               onSend={() => setApprovalSendFor(journalsToSend([record]))}
               onTrail={jeApprovals.get(record.jeBatchId) ? () => setApprovalTrailFor(record) : undefined}
-              onDecided={({ posted }) => {
-                if (posted) setJournals(prev => prev.map(j => (j.jeBatchId === record.jeBatchId ? { ...j, statusMeaning: 'Posted', status: 'P' } : j)));
-                loadJeApprovals();
-              }} />
+              onDecided={() => loadJeApprovals()} />
           )}
           <Tooltip title={record.batchDescription || text}>
             <a style={{ color: REDWOOD.info, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => openJournalTab(record)}>
@@ -1650,7 +1654,7 @@ const ManageJournals: React.FC = () => {
       render: (status, record) => {
         const a = record.jeBatchId ? jeApprovals.get(record.jeBatchId) : undefined;
         if (record.jeBatchId && (a || (record.statusMeaning !== 'Posted' && jeRules.length))) {
-          const gate = approvalGateFor(record.jeBatchId);
+          const gate = approvalGateFor(record.jeBatchId, undefined, record.statusMeaning === 'Posted');
           if (a || gate.tone !== 'free') {
             return <JournalApprovalTag gate={gate} approval={a} compact onClick={a ? () => setApprovalTrailFor(record) : undefined} />;
           }

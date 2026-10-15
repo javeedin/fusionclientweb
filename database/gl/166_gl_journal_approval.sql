@@ -13,6 +13,9 @@
 --         amount (module GL, transaction type JOURNAL), if any.
 --     DECIDE   (p_request_id, p_decision, p_comments)   APPROVED / REJECTED, records who decided.
 --              An approval is refused when the journal changed after it was sent.
+--              APPROVED posts the journal right away (RR_POST_JOURNAL, as Post Batch does): the batch becomes
+--              Posted and its approval Approved. If posting is refused (closed period …) the approval stands
+--              and the reason comes back as a warning.
 --     WITHDRAW (p_batch_id, p_comments)                 the sender takes the request back.
 --
 --   Triggers (whichever path decides — the bell, an e-mail link, the package):
@@ -65,7 +68,7 @@ CREATE OR REPLACE PACKAGE BODY RR_GL_APPROVAL_PKG AS
     FUNCTION err_text (p_sqlerrm IN VARCHAR2) RETURN VARCHAR2 IS
         v VARCHAR2(4000) := p_sqlerrm;
     BEGIN
-        IF v LIKE 'ORA-20001:%' THEN v := TRIM(SUBSTR(v, 11)); END IF;
+        IF REGEXP_LIKE(v, '^ORA-20[0-9]{3}: ') THEN v := TRIM(SUBSTR(v, 11)); END IF;   -- our own messages (20001, the 20460 post guard)
         IF INSTR(v, CHR(10) || 'ORA-') > 0 THEN v := SUBSTR(v, 1, INSTR(v, CHR(10) || 'ORA-') - 1); END IF;
         RETURN SUBSTR(v, 1, 4000);
     END;
@@ -187,6 +190,25 @@ CREATE OR REPLACE PACKAGE BODY RR_GL_APPROVAL_PKG AS
     EXCEPTION WHEN OTHERS THEN p_status := 'E'; p_message := err_text(SQLERRM);
     END;
 
+    /**
+     * Post the batch with RR_POST_JOURNAL — the procedure behind PUT gl/journals/:id/post (Post Batch).
+     * NULL = posted, else why not. Called dynamically: this package compiles whatever version is installed.
+     */
+    FUNCTION post_now (p_batch_id IN NUMBER) RETURN VARCHAR2 IS
+        v_http NUMBER;
+        v_out  CLOB;
+        v_why  VARCHAR2(4000);
+    BEGIN
+        EXECUTE IMMEDIATE 'BEGIN RR_POST_JOURNAL(p_je_batch_id => :b, p_status => :s, p_message => :m); END;'
+            USING IN p_batch_id, OUT v_http, OUT v_out;
+        IF v_http = 200 THEN RETURN NULL; END IF;
+        v_why := JSON_VALUE(v_out, '$.errors[0]' RETURNING VARCHAR2(4000) NULL ON ERROR);
+        IF v_why IS NULL THEN v_why := JSON_VALUE(v_out, '$.error' RETURNING VARCHAR2(4000) NULL ON ERROR); END IF;
+        RETURN err_text(NVL(v_why, 'posting refused (HTTP ' || v_http || ')'));
+    EXCEPTION WHEN OTHERS THEN
+        RETURN err_text(SQLERRM);
+    END;
+
     PROCEDURE DECIDE (p_request_id IN VARCHAR2, p_decision IN VARCHAR2, p_comments IN VARCHAR2, p_user IN VARCHAR2,
                       p_id OUT NUMBER, p_number OUT VARCHAR2, p_status OUT VARCHAR2, p_message OUT VARCHAR2) IS
         v_id    NUMBER := to_num(p_request_id);
@@ -198,6 +220,7 @@ CREATE OR REPLACE PACKAGE BODY RR_GL_APPROVAL_PKG AS
         v_amt   NUMBER;
         v_by    VARCHAR2(200);
         v_now   NUMBER;
+        v_why   VARCHAR2(4000);
     BEGIN
         IF v_dec NOT IN ('APPROVED', 'REJECTED') THEN err('Decision must be APPROVED or REJECTED'); END IF;
         SELECT MODULE, STATUS, TRANSACTION_ID, TRANSACTION_REF, AMOUNT, REQUESTED_BY_NAME
@@ -221,7 +244,21 @@ CREATE OR REPLACE PACKAGE BODY RR_GL_APPROVAL_PKG AS
         history(v_id, v_dec, p_user,
                 CASE WHEN UPPER(v_by) = UPPER(p_user) AND p_comments IS NULL THEN 'Self-approved' ELSE p_comments END);
         p_id := v_id; p_number := v_ref; p_status := 'S';
-        p_message := 'Journal ' || v_ref || CASE WHEN v_dec = 'APPROVED' THEN ' approved — it can be posted' ELSE ' rejected' END;
+        IF v_dec = 'REJECTED' THEN
+            p_message := 'Journal ' || v_ref || ' rejected';
+            RETURN;
+        END IF;
+
+        -- Approved → post it now. The approval is committed first: it stands even when posting is refused
+        -- (closed period, out of balance …) — the reason comes back as a warning and it can be posted later.
+        COMMIT;
+        v_why := post_now(v_batch);
+        IF v_why IS NULL THEN
+            p_message := 'Journal ' || v_ref || ' approved and posted';
+        ELSE
+            p_status  := 'W';
+            p_message := SUBSTR('Journal ' || v_ref || ' approved, but not posted: ' || v_why, 1, 4000);
+        END IF;
     EXCEPTION WHEN NO_DATA_FOUND THEN p_status := 'E'; p_message := 'Approval request not found';
               WHEN OTHERS THEN p_status := 'E'; p_message := err_text(SQLERRM);
     END;

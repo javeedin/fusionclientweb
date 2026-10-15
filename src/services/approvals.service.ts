@@ -796,7 +796,8 @@ export function approvalSummary(s: string | null | undefined, who?: { approverNa
 export const APPROVALS_CHANGED_EVENT = 'rr:approvals-changed';
 export interface ApprovalsChangedDetail {
   /** sent: a request was created (the bell refreshes) · decided: approved / rejected in the app */
-  reason: 'sent' | 'decided';
+  /** accounted: an approved cash transaction got its accounting (journal created and posted) */
+  reason: 'sent' | 'decided' | 'accounted';
   module?: string;
   transactionId?: number;
   transactionRef?: string;
@@ -804,6 +805,8 @@ export interface ApprovalsChangedDetail {
   actorName?: string;
   /** decided on a screen (not in the bell) — the bell drops the request right away */
   from?: 'screen';
+  /** a journal approval also posted it */
+  posted?: boolean;
 }
 export const emitApprovalsChanged = (detail: ApprovalsChangedDetail) => {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(APPROVALS_CHANGED_EVENT, { detail }));

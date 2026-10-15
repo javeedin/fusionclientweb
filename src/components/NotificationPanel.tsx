@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Drawer, Button, Badge, Tag, Typography, Space, Tooltip, Empty, Spin, Tabs,
-  Table, Select, Modal, Descriptions, Divider, Input, Alert, Checkbox, message,
+  Table, Select, Modal, Descriptions, Divider, Input, Alert, message,
 } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -16,8 +16,7 @@ import { APEX_DB_CONFIG } from '../config/api.config';
 import { poQuery, nlit } from '../services/po.service';
 import AccountingLinesView, { type AccountingLine } from './AccountingLinesView';
 import { loadExternalTransaction } from '../services/externalTxnLookup';
-import { loadJournalForApproval, cleanDbMessage, POST_AFTER_APPROVE_KEY as POST_AFTER_KEY, type JournalForApproval } from '../services/glApproval.service';
-import { postJournal } from '../services/manage-journals.service';
+import { loadJournalForApproval, cleanDbMessage, type JournalForApproval } from '../services/glApproval.service';
 
 const { Text } = Typography;
 
@@ -246,8 +245,7 @@ const TransactionDetailModal: React.FC<{
   notif: AppNotification | null;
   open: boolean;
   onClose: () => void;
-  /** postJournal: a GL journal is posted right after it is approved */
-  onApprove: (opts?: { postJournal?: boolean }) => void;
+  onApprove: () => void;
   onReject: (comments: string) => void;
   acting: boolean;
   /** open the full invoice (attachments, accounting …) */
@@ -301,8 +299,6 @@ const TransactionDetailModal: React.FC<{
   // GL: the journal batch being approved (headers + lines, direct SQL)
   const [glJe, setGlJe] = useState<JournalForApproval | null>(null);
   const [glLoading, setGlLoading] = useState(false);
-  const [postAfter, setPostAfter] = useState<boolean>(() => { try { return localStorage.getItem(POST_AFTER_KEY) === 'Y'; } catch { return false; } });
-  const changePostAfter = (v: boolean) => { setPostAfter(v); try { localStorage.setItem(POST_AFTER_KEY, v ? 'Y' : 'N'); } catch { /* per-viewer convenience */ } };
   React.useEffect(() => {
     if (!open || !notif?.transactionId || notif.approvalModule !== 'GL') { setGlJe(null); return; }
     let cancelled = false;
@@ -428,16 +424,14 @@ const TransactionDetailModal: React.FC<{
                 <Button danger icon={<StopOutlined />} onClick={() => setShowRejectInput(true)}>
                   Reject
                 </Button>
-                {notif.approvalModule === 'GL' && (
-                  <Tooltip title="Post the journal (PUT gl/journals/:id/post) as soon as it is approved">
-                    <Checkbox checked={postAfter} onChange={e => changePostAfter(e.target.checked)} style={{ fontSize: 12 }}>and post it</Checkbox>
-                  </Tooltip>
-                )}
-                <Button type="primary" loading={acting} icon={<CheckCircleOutlined />}
-                  style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }}
-                  onClick={() => onApprove(notif.approvalModule === 'GL' ? { postJournal: postAfter } : undefined)}>
-                  {notif.approvalModule === 'GL' && postAfter ? 'Approve & post' : 'Approve'}
-                </Button>
+                <Tooltip title={notif.approvalModule === 'GL' ? 'Approving posts the journal (status Posted)'
+                  : notif.approvalModule === 'CASH' ? 'Approving creates the accounting and posts its journal (if not accounted yet)' : undefined}>
+                  <Button type="primary" loading={acting} icon={<CheckCircleOutlined />}
+                    style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }}
+                    onClick={onApprove}>
+                    {notif.approvalModule === 'GL' ? 'Approve & post' : notif.approvalModule === 'CASH' ? 'Approve & account' : 'Approve'}
+                  </Button>
+                </Tooltip>
               </>
             )}
           </Space>
@@ -713,38 +707,30 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
     return true;
   });
 
-  const handleApprove = async (notif: AppNotification, opts?: { postJournal?: boolean }) => {
+  const handleApprove = async (notif: AppNotification) => {
     if (!notif.approvalRequestId) return;
     setActingId(notif.id);
     try {
-      await approveNotification(notif.approvalRequestId, notif.id);
-      message.success(`Approved: ${notif.trxNo}`);
+      // a journal approval also posts it; a cash approval starts its accounting (both reported in the note)
+      const r = await approveNotification(notif.approvalRequestId, notif.id);
       setDetailNotif(null);
-    } catch (e: any) {
-      message.error(e?.message || 'Approve failed', 8);
-      setApprovalApiModalOpen(true);
-      setActingId(null);
-      return;
-    }
-    // GL: post the approved journal (the same PUT gl/journals/:jeBatchId/post as Manage Journals' Post Batch)
-    if (opts?.postJournal && notif.approvalModule === 'GL' && notif.transactionId) {
-      const key = `post-${notif.transactionId}`;
-      message.loading({ content: `Posting ${notif.trxNo}…`, key, duration: 0 });
-      const r = await postJournal(Number(notif.transactionId));
-      if (r.success) message.success({ content: `Posted: ${notif.trxNo}`, key });
-      else {
-        message.destroy(key);
-        Modal.error({
+      if (r?.warn) {
+        Modal.warning({
           title: `${notif.trxNo} approved, but not posted`, width: 540,
           content: <div>
-            <p style={{ marginBottom: 6 }}>{cleanDbMessage(r.error || r.message) || 'The journal could not be posted.'}</p>
-            {r.errors?.length ? <ul style={{ paddingLeft: 18, margin: 0 }}>{r.errors.map((e, i) => <li key={i}>{e}</li>)}</ul> : null}
+            <p style={{ marginBottom: 6 }}>{cleanDbMessage(String(r.note || '').replace(/^.*approved, but not posted:\s*/i, '')) || 'The journal could not be posted.'}</p>
             <p style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>It stays approved — post it from the GL dashboard or Manage Journals once fixed.</p>
           </div>,
         });
+      } else if (notif.approvalModule !== 'CASH') {
+        message.success(`${r?.note ? `${notif.trxNo} ${r.note}` : `Approved: ${notif.trxNo}`}`);
       }
+    } catch (e: any) {
+      message.error(e?.message || 'Approve failed', 8);
+      setApprovalApiModalOpen(true);
+    } finally {
+      setActingId(null);
     }
-    setActingId(null);
   };
 
   const handleReject = async (notif: AppNotification, comments?: string) => {
@@ -1083,7 +1069,7 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
         open={!!detailNotif}
         onClose={() => setDetailNotif(null)}
         acting={!!actingId}
-        onApprove={opts => detailNotif && handleApprove(detailNotif, opts)}
+        onApprove={() => detailNotif && handleApprove(detailNotif)}
         onReject={(comments) => detailNotif && handleReject(detailNotif, comments)}
         onOpenInvoice={(openInvoiceId, openInvoiceNumber) => {
           setDetailNotif(null);
