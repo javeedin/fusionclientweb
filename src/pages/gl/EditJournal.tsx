@@ -46,6 +46,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import { PROXY_CONFIG, ORACLE_FUSION_CONFIG, APEX_DB_CONFIG } from '../../config/api.config';
 import { postJournal } from '../../services/manage-journals.service';
+import { cleanDbMessage } from '../../services/glApproval.service';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -689,7 +690,8 @@ const EditJournal: React.FC = () => {
         message.success('Journal posted successfully');
         navigate('/gl/manage-journals');
       } else {
-        message.error(`Post failed: ${result.error || 'Unknown error'}`);
+        // e.g. the journal waits for approval (database/gl/166 refuses posting until it is approved)
+        message.error(`Post failed: ${cleanDbMessage(result.error) || 'Unknown error'}`, 8);
       }
     } catch (error) {
       message.error('Failed to post journal');

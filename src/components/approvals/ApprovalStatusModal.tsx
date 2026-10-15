@@ -45,11 +45,14 @@ export const ApprovalStatusModal: React.FC<{
   decisionDate?: string;
   /** offered while the transaction is not approved */
   onSendAgain?: () => void;
-}> = ({ open, onClose, module, transactionId, transactionRef, transactionTypes, title, status, sentBy, sentDate, approverName, approverEmail, decisionDate, onSendAgain }) => {
+  /** offered while it waits for approval: the sender takes the request back */
+  onWithdraw?: () => Promise<void>;
+}> = ({ open, onClose, module, transactionId, transactionRef, transactionTypes, title, status, sentBy, sentDate, approverName, approverEmail, decisionDate, onSendAgain, onWithdraw }) => {
   const typesKey = (transactionTypes || []).join(',');
   const [trail, setTrail] = useState<ApprovalTrail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [withdrawing, setWithdrawing] = useState(false);
 
   const load = useCallback(async () => {
     if (!transactionId && !transactionRef) return;
@@ -113,6 +116,12 @@ export const ApprovalStatusModal: React.FC<{
     <Modal open={open} onCancel={onClose} width={560} destroyOnHidden
       title={<Space><AuditOutlined style={{ color: look.color }} /><span>Approval — {title}</span></Space>}
       footer={<Space>
+        {onWithdraw && st === 'PENDING' && (
+          <Tooltip title="Take the request back — the approver no longer sees it">
+            <Button icon={<MinusCircleOutlined />} loading={withdrawing}
+              onClick={async () => { setWithdrawing(true); try { await onWithdraw(); await load(); } finally { setWithdrawing(false); } }}>Withdraw</Button>
+          </Tooltip>
+        )}
         {onSendAgain && st !== 'APPROVED' && (
           <Tooltip title={st === 'PENDING' ? 'Send to another approver — replaces the pending request' : 'Send for approval again'}>
             <Button icon={<SendOutlined />} onClick={onSendAgain}>{st === 'NONE' ? 'Send for approval' : 'Send again'}</Button>

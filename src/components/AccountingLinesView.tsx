@@ -18,6 +18,9 @@ export interface AccountingLine {
   /** in the ledger currency, when it differs from the entered amount */
   accounted?: number;
   ledgerCurrency?: string;
+  /** natural account value + description read with the lines (shown when the segment lookup has nothing) */
+  accountValue?: string;
+  accountDescription?: string;
 }
 
 interface SegmentInfo { name: string; value: string; description: string }
@@ -113,15 +116,16 @@ const AccountingLinesView: React.FC<{ lines: AccountingLine[] }> = ({ lines }) =
                       </Tooltip>
                     </div>
                   ) : <Text type="danger" style={{ fontSize: 12 }}>No account on the transaction</Text>}
-                  {l.account && (loading && !b ? <Spin size="small" style={{ marginTop: 4 }} /> : b && (() => {
-                    const a = accountSegment(b);
+                  {l.account && (loading && !b && !l.accountDescription ? <Spin size="small" style={{ marginTop: 4 }} /> : (() => {
+                    const a = accountSegment(b) ?? (l.accountDescription ? { value: l.accountValue || '', description: l.accountDescription } : undefined);
+                    if (!a && !b?.invalid.length) return null;
                     return (
                       <div style={{ marginTop: 2, fontSize: 12 }}>
                         {a && <>
                           <span style={{ fontFamily: 'monospace', fontWeight: 600, marginRight: 6 }}>{a.value}</span>
                           <span style={{ color: a.description ? '#262626' : '#bfbfbf' }}>{a.description || 'no description'}</span>
                         </>}
-                        {b.invalid.length > 0 && (
+                        {b && b.invalid.length > 0 && (
                           <div style={{ fontSize: 11, color: '#cf1322' }}>Not a valid value: {b.invalid.join(', ')}</div>
                         )}
                       </div>

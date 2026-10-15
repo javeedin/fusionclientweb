@@ -87,6 +87,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import AccountSelector, { validateAccountCode } from '../../components/AccountSelector';
 import CreateJournal from './CreateJournal';
+import ApprovalStatusModal from '../../components/approvals/ApprovalStatusModal';
+import { JournalApprovalModal, JournalApprovalTag, useApprovalUser, type JournalToSend } from '../../components/approvals/JournalApprovalModal';
+import { onApprovalsChanged, type ApprovalRule } from '../../services/approvals.service';
+import {
+  cleanDbMessage, journalGate, loadJournalApprovals, loadJournalRules, ruleFor, withdrawJournalApproval, type JournalApproval,
+} from '../../services/glApproval.service';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -284,6 +290,42 @@ const ManageJournals: React.FC = () => {
   const [journals, setJournals] = useState<JournalRecord[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [totalCount, setTotalCount] = useState(0);
+
+  // ── Journal approval (RR_APPROVAL_REQUESTS, module GL — see glApproval.service) ──
+  const approvalUser = useApprovalUser();
+  const [jeApprovals, setJeApprovals] = useState<Map<number, JournalApproval>>(new Map());
+  const [jeRules, setJeRules] = useState<ApprovalRule[]>([]);
+  const [approvalSendFor, setApprovalSendFor] = useState<JournalToSend[] | null>(null);
+  const [approvalTrailFor, setApprovalTrailFor] = useState<JournalRecord | null>(null);
+  const loadJeApprovals = React.useCallback(async () => {
+    const [a, r] = await Promise.all([loadJournalApprovals().catch(() => new Map<number, JournalApproval>()), loadJournalRules().catch(() => [])]);
+    setJeApprovals(a); setJeRules(r);
+  }, []);
+  useEffect(() => {
+    loadJeApprovals();
+    return onApprovalsChanged(d => { if (!d.module || d.module === 'GL') loadJeApprovals(); });
+  }, [loadJeApprovals]);
+  /** accounted debits of the batch (its journals on this page) */
+  const batchAccountedDr = (batchId: number) =>
+    journals.filter(j => j.jeBatchId === batchId).reduce((t, j) => t + (Number(j.accountedDebit) || Number(j.enteredDebit) || 0), 0);
+  const approvalGateFor = (batchId: number, amount?: number) => {
+    const aed = amount ?? batchAccountedDr(batchId);
+    return journalGate(jeApprovals.get(batchId), aed, ruleFor(aed, jeRules));
+  };
+  const journalsToSend = (rows: JournalRecord[]): JournalToSend[] => {
+    const ids = [...new Set(rows.filter(j => j.jeBatchId && j.statusMeaning !== 'Posted').map(j => j.jeBatchId))];
+    return ids.map(batchId => {
+      const all = journals.filter(j => j.jeBatchId === batchId);
+      const pool = all.length ? all : rows.filter(j => j.jeBatchId === batchId);
+      const dr = pool.reduce((t, j) => t + (Number(j.accountedDebit) || Number(j.enteredDebit) || 0), 0);
+      const cr = pool.reduce((t, j) => t + (Number(j.accountedCredit) || Number(j.enteredCredit) || 0), 0);
+      return {
+        batchId, batchName: pool[0].batchName || `Batch ${batchId}`, period: pool[0].periodName, category: pool[0].category,
+        journals: pool.length, amount: Math.round(dr * 100) / 100, currency: 'AED', balanced: Math.abs(dr - cr) <= 0.01,
+        approval: jeApprovals.get(batchId), gate: approvalGateFor(batchId, dr),
+      };
+    });
+  };
   const [searchExpanded, setSearchExpanded] = useState<string[]>(['search']);
 
   // Ledger and Period state
@@ -1590,8 +1632,18 @@ const ManageJournals: React.FC = () => {
       title: 'Approval',
       dataIndex: 'approvalStatusMeaning',
       key: 'approvalStatusMeaning',
-      width: 110,
-      render: (status) => getApprovalStatusTag(status),
+      width: 170,
+      // the journal approval engine first (latest request of the batch / a rule that covers it), else the stored value
+      render: (status, record) => {
+        const a = record.jeBatchId ? jeApprovals.get(record.jeBatchId) : undefined;
+        if (record.jeBatchId && (a || (record.statusMeaning !== 'Posted' && jeRules.length))) {
+          const gate = approvalGateFor(record.jeBatchId);
+          if (a || gate.tone !== 'free') {
+            return <JournalApprovalTag gate={gate} approval={a} compact onClick={a ? () => setApprovalTrailFor(record) : undefined} />;
+          }
+        }
+        return getApprovalStatusTag(status);
+      },
     },
     {
       title: 'JE Batch ID',
@@ -1646,6 +1698,8 @@ const ManageJournals: React.FC = () => {
     if (periodRecord && periodRecord.status !== 'Open') {
       errors.push(`Period "${journal.periodName}" is ${periodRecord.status} — must be Open.`);
     }
+    const gate = journal.jeBatchId ? approvalGateFor(journal.jeBatchId) : null;
+    if (gate?.block) errors.push(gate.block);
     return errors;
   };
 
@@ -1880,7 +1934,7 @@ const ManageJournals: React.FC = () => {
             ...results[i],
             status: 'failed',
             validationErrors: [...results[i].validationErrors, ...serverErrors],
-            serverError: resp.error,
+            serverError: cleanDbMessage(resp.error),
           };
         }
       } catch (err) {
@@ -3095,6 +3149,23 @@ const ManageJournals: React.FC = () => {
       if (!journal.jeBatchId) {
         errors.push('No Batch ID found — cannot post.');
       }
+
+      // Journal approval: waiting / rejected / changed after approval / a rule says it needs one
+      const accounted = lines.reduce((s, l) => s + (Number(l.accountedDr) || Number(l.enteredDr) || 0), 0);
+      const gate = journal.jeBatchId ? approvalGateFor(journal.jeBatchId, accounted) : null;
+      if (gate?.block && errors.length === 0) {
+        Modal.confirm({
+          title: 'Approval needed before posting',
+          width: 520,
+          icon: <AuditOutlined style={{ color: REDWOOD.warning }} />,
+          content: <div style={{ fontSize: 13, marginTop: 8 }}>{gate.block}</div>,
+          okText: gate.tone === 'pending' ? 'Send to another approver' : 'Send for approval',
+          cancelText: 'Close',
+          onOk: () => setApprovalSendFor(journalsToSend([journal])),
+        });
+        return;
+      }
+      if (gate?.block) errors.push(gate.block);
 
       if (companySegmentErrors.length > 1) {
         errors.push(
@@ -5050,6 +5121,17 @@ const ManageJournals: React.FC = () => {
                 <Text type="secondary" style={{ fontSize: 11 }}>
                   {totalCount > 0 ? `${totalCount} journals found` : 'No results'}
                 </Text>
+                {(() => {
+                  const toSend = journalsToSend(journals.filter(j => selectedRowKeys.includes(j.key)));
+                  return (
+                    <Tooltip title={toSend.length ? 'The approver approves or rejects each batch from their notifications; until then it cannot be posted' : 'Select unposted journals to send them for approval'}>
+                      <Button size="small" icon={<AuditOutlined />} disabled={!toSend.length} style={{ fontSize: 11 }}
+                        onClick={() => setApprovalSendFor(toSend)}>
+                        Send for Approval{toSend.length ? ` (${toSend.length})` : ''}
+                      </Button>
+                    </Tooltip>
+                  );
+                })()}
                 <Button
                   size="small"
                   disabled={
@@ -5583,6 +5665,27 @@ const ManageJournals: React.FC = () => {
 
       {/* Autopilot — controlled from floating icons */}
       
+
+      {/* ── Journal approval: send + history ─────────────────────────────────── */}
+      <JournalApprovalModal open={!!approvalSendFor} batches={approvalSendFor ?? []} rules={jeRules}
+        onClose={() => setApprovalSendFor(null)} onDone={loadJeApprovals} />
+      {(() => {
+        const r = approvalTrailFor;
+        const a = r?.jeBatchId ? jeApprovals.get(r.jeBatchId) : undefined;
+        return (
+          <ApprovalStatusModal open={!!r} onClose={() => setApprovalTrailFor(null)} module="GL"
+            transactionId={r?.jeBatchId || undefined} transactionTypes={['JOURNAL']} title={r ? r.batchName || r.journalName : ''}
+            status={a?.status} sentBy={a?.requestedBy} sentDate={a?.requestedDate}
+            approverName={a?.status === 'PENDING' ? a?.approverName : a?.decidedBy || a?.approverName} approverEmail={a?.approverEmail}
+            decisionDate={a?.decidedDate}
+            onSendAgain={r && r.statusMeaning !== 'Posted' ? () => { setApprovalTrailFor(null); setApprovalSendFor(journalsToSend([r])); } : undefined}
+            onWithdraw={r?.jeBatchId ? async () => {
+              try { message.success(await withdrawJournalApproval(r.jeBatchId, approvalUser, a)); }
+              catch (e) { message.error(e instanceof Error ? e.message : String(e)); }
+              await loadJeApprovals();
+            } : undefined} />
+        );
+      })()}
 
       {/* ── Bulk Post Modal ─────────────────────────────────────────────────── */}
       {(() => {

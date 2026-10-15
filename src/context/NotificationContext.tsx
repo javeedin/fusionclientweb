@@ -3,6 +3,7 @@ import { buildApexUrl } from '../config/api.helper';
 import { useAuth } from './AuthContext';
 import { getApprovalRequests, emitApprovalsChanged, onApprovalsChanged } from '../services/approvals.service';
 import { poExec, PROC } from '../services/po.service';
+import { decideJournalApproval, GL_PROC } from '../services/glApproval.service';
 import type { ApprovalRequest } from '../services/approvals.service';
 import dayjs from 'dayjs';
 
@@ -262,6 +263,21 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       try {
         const r = await poExec(PROC.decide, params, poUser);
         setLastApprovalApiCall({ url, method: 'POST', body, status: 200, response: JSON.stringify(r), ts: Date.now() });
+      } catch (err) {
+        setLastApprovalApiCall({ url, method: 'POST', body, status: 'Refused', response: String((err as Error)?.message || err), ts: Date.now() });
+        throw err;
+      }
+    } else if (module === 'GL') {
+      // Journals: through RR_GL_APPROVAL_PKG.DECIDE (po/execute) — refuses a journal that changed after it was sent and
+      // records who decided; the batch follows through the database trigger. Before script 166: the status endpoint.
+      const url = buildApexUrl('po/execute');
+      const params = { p_request_id: requestId, p_decision: status, p_comments: comments || null };
+      const body: Record<string, any> = { proc: GL_PROC.decide, params, user: actorName };
+      setLastApprovalApiCall({ url, method: 'POST', body, status: 'Pending…', response: '', ts: Date.now() });
+      try {
+        const r = await decideJournalApproval(requestId, status, comments, actorName, { name: actorName, email: actorEmail });
+        setLastApprovalApiCall({ url: r.via === 'rest' ? buildApexUrl(`approvals/requests/${requestId}/status`) : url,
+          method: r.via === 'rest' ? 'PUT' : 'POST', body, status: 200, response: JSON.stringify(r), ts: Date.now() });
       } catch (err) {
         setLastApprovalApiCall({ url, method: 'POST', body, status: 'Refused', response: String((err as Error)?.message || err), ts: Date.now() });
         throw err;

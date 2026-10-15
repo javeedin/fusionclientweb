@@ -3,12 +3,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Col, Input, Modal, Row, Segmented, Skeleton, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
 import {
-  CalendarOutlined, CheckCircleOutlined, ClockCircleOutlined, CloseCircleOutlined, CodeOutlined, CopyOutlined, ExclamationCircleOutlined,
-  LoadingOutlined, MinusCircleOutlined, ReloadOutlined, SearchOutlined, SendOutlined, StopOutlined,
+  AuditOutlined, CalendarOutlined, CheckCircleOutlined, ClockCircleOutlined, CloseCircleOutlined, CodeOutlined, CopyOutlined, ExclamationCircleOutlined,
+  LoadingOutlined, MinusCircleOutlined, ReloadOutlined, SearchOutlined, SendOutlined, StopOutlined, WarningOutlined,
 } from '@ant-design/icons';
 import JournalFullPreview from '../../components/JournalFullPreview';
+import ApprovalStatusModal from '../../components/approvals/ApprovalStatusModal';
+import { JournalApprovalModal, JournalApprovalTag, useApprovalUser, type JournalToSend } from '../../components/approvals/JournalApprovalModal';
 import { APEX_DB_CONFIG } from '../../config/api.config';
 import { postJournal } from '../../services/manage-journals.service';
+import { onApprovalsChanged, type ApprovalRule } from '../../services/approvals.service';
+import {
+  cleanDbMessage, journalGate, loadJournalApprovals, loadJournalRules, ruleFor, withdrawJournalApproval,
+  type GateTone, type JournalApproval, type JournalGate,
+} from '../../services/glApproval.service';
 import {
   AGES, inAge, isPmsCategory, loadGlDashboard, planBatchPost, pmsKind, summarizeGl,
   type GlData, type GlJournal, type PostBatchItem,
@@ -28,6 +35,15 @@ const plural = (n: number, w: string) => `${n.toLocaleString()} ${w}${n === 1 ? 
 const card: React.CSSProperties = { background: '#fff', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)', padding: 20, height: '100%', boxSizing: 'border-box' };
 const clickable = (on: boolean): React.CSSProperties => (on ? { cursor: 'pointer' } : {});
 const MODE_KEY = 'gl.dashboard.mode';
+const FREE_GATE: JournalGate = { tone: 'free', label: 'No approval needed', block: null, canSend: false };
+/** approval chips in the headline card, in the order a journal moves through them */
+const APPROVAL_CHIPS: { tone: GateTone; label: string; color: string; icon: React.ReactNode; title: string }[] = [
+  { tone: 'needed',   label: 'need approval',   color: 'orange', icon: <ExclamationCircleOutlined />, title: 'Not posted — an approval rule covers them, not sent yet' },
+  { tone: 'pending',  label: 'awaiting approval', color: 'gold', icon: <ClockCircleOutlined />,       title: 'Not posted — waiting for the approver' },
+  { tone: 'rejected', label: 'rejected',        color: 'red',    icon: <CloseCircleOutlined />,       title: 'Not posted — rejected by the approver' },
+  { tone: 'changed',  label: 'changed after approval', color: 'orange', icon: <WarningOutlined />,    title: 'Not posted — changed after they were approved' },
+  { tone: 'approved', label: 'approved, ready to post', color: 'green', icon: <CheckCircleOutlined />, title: 'Approved — ready to post' },
+];
 
 const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavigate }) => {
   const [data, setData] = useState<GlData | null>(null);
@@ -39,14 +55,57 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
   const [search, setSearch] = useState('');
   const [preview, setPreview] = useState<GlJournal | null>(null);
   const [sqlOpen, setSqlOpen] = useState(false);
+  // journal approvals: the latest request of each batch + the rules that say which journals need one
+  const [approvals, setApprovals] = useState<Map<number, JournalApproval>>(new Map());
+  const [rules, setRules] = useState<ApprovalRule[]>([]);
+  const [sendFor, setSendFor] = useState<JournalToSend[] | null>(null);
+  const [trailFor, setTrailFor] = useState<GlJournal | null>(null);
+  const approvalUser = useApprovalUser();
 
+  const loadApprovals = useCallback(async () => {
+    const [a, r] = await Promise.all([loadJournalApprovals().catch(() => new Map<number, JournalApproval>()), loadJournalRules().catch(() => [])]);
+    setApprovals(a); setRules(r);
+  }, []);
   const load = useCallback(async () => {
     setLoading(true);
+    loadApprovals();
     try { setData(await loadGlDashboard()); }
     catch (e) { message.error(`GL dashboard: ${e instanceof Error ? e.message : e}`); }
     finally { setLoading(false); }
-  }, []);
+  }, [loadApprovals]);
   useEffect(() => { load(); }, [load]);
+  // approved / rejected from the bell, or sent from another screen → show it
+  useEffect(() => onApprovalsChanged(d => { if (!d.module || d.module === 'GL') loadApprovals(); }), [loadApprovals]);
+
+  // a batch is approved as a whole: its amount is every not-posted journal in it
+  const batchAed = useMemo(() => {
+    const m = new Map<number, number>();
+    data?.journals.forEach(j => { if (j.batchId) m.set(j.batchId, (m.get(j.batchId) || 0) + j.accountedDr); });
+    return m;
+  }, [data]);
+  const gateOfBatch = useCallback((batchId: number | null, aed: number): JournalGate =>
+    (batchId ? journalGate(approvals.get(batchId), aed, ruleFor(aed, rules)) : FREE_GATE), [approvals, rules]);
+  const gateOf = useCallback((j: GlJournal) => gateOfBatch(j.batchId, j.batchId ? batchAed.get(j.batchId) ?? j.accountedDr : j.accountedDr),
+    [gateOfBatch, batchAed]);
+  const toSend = (journals: GlJournal[]): JournalToSend[] => {
+    const ids = [...new Set(journals.map(j => j.batchId).filter((b): b is number => !!b))];
+    return ids.map(batchId => {
+      const all = (data?.journals ?? []).filter(j => j.batchId === batchId);
+      const dr = all.reduce((t, j) => t + j.accountedDr, 0), cr = all.reduce((t, j) => t + j.accountedCr, 0);
+      const first = all[0] ?? journals.find(j => j.batchId === batchId)!;
+      return {
+        batchId, batchName: first.batchName || `Batch ${batchId}`, period: first.period, category: first.category, journals: all.length || 1,
+        amount: Math.round(dr * 100) / 100, currency: 'AED', balanced: Math.abs(dr - cr) <= 0.01,
+        approval: approvals.get(batchId), gate: gateOfBatch(batchId, dr),
+      };
+    });
+  };
+  const withdraw = async (j: GlJournal) => {
+    if (!j.batchId) return;
+    try { message.success(await withdrawJournalApproval(j.batchId, approvalUser, approvals.get(j.batchId))); }
+    catch (e) { message.error(e instanceof Error ? e.message : String(e)); }
+    await loadApprovals();
+  };
   const changeMode = (m: 'PMS' | 'ALL') => { setMode(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* per-viewer convenience */ } };
 
   const s = useMemo(() => (data ? summarizeGl(data.journals, data.periods, data.open, mode === 'PMS') : null), [data, mode]);
@@ -56,7 +115,7 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
   const openPost = () => {
     if (!data || !list) return;
     const picked = list.rows.filter(j => selected.includes(j.headerId));
-    setPost({ items: planBatchPost(picked, data.journals), running: false, done: false });
+    setPost({ items: planBatchPost(picked, data.journals, (batchId, aed) => gateOfBatch(batchId, aed).block), running: false, done: false });
   };
   const runPost = async () => {
     if (!post) return;
@@ -69,7 +128,7 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
       const res = await postJournal(items[k].batchId);
       items[k] = res.success
         ? { ...items[k], status: 'posted', message: res.message || 'Posted' }
-        : { ...items[k], status: 'failed', message: res.error || res.message || 'Not posted', errors: res.errors };
+        : { ...items[k], status: 'failed', message: cleanDbMessage(res.error || res.message) || 'Not posted', errors: res.errors };
       setPost({ items: [...items], running: true, done: false });
     }
     setPost({ items, running: false, done: true });
@@ -81,6 +140,7 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
       setSelected([]);
       load();
     }
+    if (bad) loadApprovals();
   };
 
   if (loading && !data) {
@@ -96,6 +156,9 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
   const maxMonth = Math.max(1, ...s.months.map(m => m.posted + m.notPosted));
   const pct = s.currentTotal ? Math.round((s.currentPosted / s.currentTotal) * 100) : 0;
   const oldestFirst = [...s.notPosted].sort((a, b) => b.ageDays - a.ageDays);
+  const byTone = new Map<GateTone, GlJournal[]>();
+  s.notPosted.forEach(j => { const t = gateOf(j).tone; byTone.set(t, [...(byTone.get(t) || []), j]); });
+  const chips = APPROVAL_CHIPS.filter(c => byTone.get(c.tone)?.length);
 
   return (
     <div style={{ marginBottom: 32 }}>
@@ -128,6 +191,22 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
             {s.byStatus.length > 0 && (
               <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {s.byStatus.map(x => <Tag key={x.status} style={{ margin: 0 }}>{x.status} <b>{x.count}</b></Tag>)}
+              </div>
+            )}
+            {chips.length > 0 && (
+              <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
+                <Text style={{ fontSize: 12, color: INK.secondary }}><AuditOutlined /> Approval</Text>
+                {chips.map(c => {
+                  const rows = byTone.get(c.tone)!;
+                  return (
+                    <Tooltip key={c.tone} title={`${c.title} · AED ${money(rows.reduce((t, j) => t + j.accountedDr, 0))} · click for the journals`}>
+                      <Tag color={c.color} icon={c.icon} style={{ margin: 0, cursor: 'pointer' }}
+                        onClick={() => show(`${scope[0].toUpperCase()}${scope.slice(1)} — ${c.label}`, [...rows].sort((a, b) => b.ageDays - a.ageDays))}>
+                        <b>{rows.length}</b> {c.label}
+                      </Tag>
+                    </Tooltip>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -275,7 +354,7 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
                 <a style={{ fontSize: 12 }} onClick={() => onNavigate('/gl/manage-journals')}>Manage Journals</a>
               </Space>
             </div>
-            <JournalTable rows={oldestFirst.slice(0, 6)} compact onOpen={setPreview} />
+            <JournalTable rows={oldestFirst.slice(0, 6)} compact onOpen={setPreview} gateOf={gateOf} approvals={approvals} onTrail={setTrailFor} />
           </div>
         </Col>
       </Row>
@@ -283,10 +362,16 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
       <Modal open={!!list} onCancel={() => setList(null)} width={1150} destroyOnHidden title={list?.title}
         footer={<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            {selected.length ? `${plural(selected.length, 'journal')} selected · AED ${money(list?.rows.filter(j => selected.includes(j.headerId)).reduce((t, j) => t + j.accountedDr, 0) ?? 0)}` : 'Tick journals to post them'}
+            {selected.length ? `${plural(selected.length, 'journal')} selected · AED ${money(list?.rows.filter(j => selected.includes(j.headerId)).reduce((t, j) => t + j.accountedDr, 0) ?? 0)}` : 'Tick journals to send them for approval or post them'}
           </Text>
           <Space>
             <Button onClick={() => { setList(null); onNavigate('/gl/manage-journals'); }}>Open Manage Journals</Button>
+            <Tooltip title="The approver approves or rejects each batch from their notifications; until then it cannot be posted">
+              <Button icon={<AuditOutlined />} disabled={!selected.length}
+                onClick={() => list && setSendFor(toSend(list.rows.filter(j => selected.includes(j.headerId))))}>
+                Send for approval{selected.length ? ` (${new Set(list?.rows.filter(j => selected.includes(j.headerId)).map(j => j.batchId)).size})` : ''}
+              </Button>
+            </Tooltip>
             <Button type="primary" icon={<SendOutlined />} disabled={!selected.length} onClick={openPost}
               style={selected.length ? { background: '#1D7B4D', borderColor: '#1D7B4D' } : undefined}>
               Post selected{selected.length ? ` (${selected.length})` : ''}
@@ -296,17 +381,17 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
         {(() => {
           const shown = (list?.rows ?? []).filter(j => !search || [j.batchName, j.journalName, j.category, j.createdBy, j.period]
             .some(v => v.toLowerCase().includes(search.toLowerCase())));
-          const postable = shown.filter(j => j.batchId && !j.periodClosed && Math.abs(j.accountedDr - j.accountedCr) <= 0.01);
+          const postable = shown.filter(j => j.batchId && !j.periodClosed && Math.abs(j.accountedDr - j.accountedCr) <= 0.01 && !gateOf(j).block);
           return <>
             <Space style={{ marginBottom: 12 }} wrap>
               <Input allowClear prefix={<SearchOutlined />} placeholder="Search batch, journal, category, created by" value={search}
                 onChange={e => setSearch(e.target.value)} style={{ width: 340 }} />
-              <Tooltip title="Every journal shown that is balanced, has a batch and sits in an open period">
+              <Tooltip title="Every journal shown that is balanced, has a batch, sits in an open period and is not held by approval">
                 <Button onClick={() => setSelected(postable.map(j => j.headerId))} disabled={!postable.length}>Select postable ({postable.length})</Button>
               </Tooltip>
               {selected.length > 0 && <Button type="link" onClick={() => setSelected([])}>Clear</Button>}
             </Space>
-            <JournalTable rows={shown} onOpen={setPreview} selection={{ keys: selected, onChange: setSelected }} />
+            <JournalTable rows={shown} onOpen={setPreview} selection={{ keys: selected, onChange: setSelected }} gateOf={gateOf} approvals={approvals} onTrail={setTrailFor} />
           </>;
         })()}
       </Modal>
@@ -326,6 +411,22 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
         {post && <PostTable items={post.items} />}
       </Modal>
 
+      <JournalApprovalModal open={!!sendFor} batches={sendFor ?? []} rules={rules} onClose={() => setSendFor(null)} onDone={loadApprovals} />
+
+      {(() => {
+        const a = trailFor?.batchId ? approvals.get(trailFor.batchId) : undefined;
+        return (
+          <ApprovalStatusModal open={!!trailFor} onClose={() => setTrailFor(null)} module="GL"
+            transactionId={trailFor?.batchId ?? undefined} transactionTypes={['JOURNAL']}
+            title={trailFor ? trailFor.batchName || trailFor.journalName : ''}
+            status={a?.status} sentBy={a?.requestedBy} sentDate={a?.requestedDate}
+            approverName={a?.status === 'PENDING' ? a?.approverName : a?.decidedBy || a?.approverName} approverEmail={a?.approverEmail}
+            decisionDate={a?.decidedDate}
+            onSendAgain={trailFor ? () => { const j = trailFor; setTrailFor(null); setSendFor(toSend([j])); } : undefined}
+            onWithdraw={trailFor ? () => withdraw(trailFor) : undefined} />
+        );
+      })()}
+
       <JournalFullPreview open={!!preview} jeHeaderId={preview?.headerId ?? null} batchId={preview?.batchId ?? null} onClose={() => setPreview(null)} />
 
       <Modal open={sqlOpen} onCancel={() => setSqlOpen(false)} width={960} footer={<Button onClick={() => setSqlOpen(false)}>Close</Button>}
@@ -333,6 +434,7 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
         <Text type="secondary" style={{ display: 'block', marginBottom: 10, fontSize: 12 }}>
           PMS journals = category starting with “PMS” (PMS FD / Loan / Stock Journals). Posted = batch STATUS 'P' / Posted, or header Posted.
           Open period = RR_ACCOUNTING_PERIODS_STATUS, General Ledger (101), CLOSING_STATUS 'O' — the check RR_POST_JOURNAL makes.
+          Approval = the batch's latest request in RR_APPROVAL_REQUESTS (module GL); "needs approval" = an active GL / JOURNAL approval rule covers its amount.
         </Text>
         {data.queries.map(q => (
           <div key={q.label} style={{ marginBottom: 14 }}>
@@ -400,7 +502,8 @@ const PostTable: React.FC<{ items: PostBatchItem[] }> = ({ items }) => {
 const JournalTable: React.FC<{
   rows: GlJournal[]; onOpen: (j: GlJournal) => void; compact?: boolean;
   selection?: { keys: number[]; onChange: (keys: number[]) => void };
-}> = ({ rows, onOpen, compact, selection }) => (
+  gateOf?: (j: GlJournal) => JournalGate; approvals?: Map<number, JournalApproval>; onTrail?: (j: GlJournal) => void;
+}> = ({ rows, onOpen, compact, selection, gateOf, approvals, onTrail }) => (
   <Table<GlJournal> size="small" rowKey="headerId" dataSource={rows}
     rowSelection={selection ? {
       selectedRowKeys: selection.keys, preserveSelectedRowKeys: true,
@@ -412,9 +515,10 @@ const JournalTable: React.FC<{
     locale={{ emptyText: 'Nothing waiting' }}
     summary={compact ? undefined : () => (
       <Table.Summary.Row style={{ background: '#fafafa' }}>
-        <Table.Summary.Cell index={0} colSpan={4}><Text strong>Total ({rows.length})</Text></Table.Summary.Cell>
-        <Table.Summary.Cell index={4} align="right"><Text strong>{money(rows.reduce((t, r) => t + r.accountedDr, 0))}</Text></Table.Summary.Cell>
-        <Table.Summary.Cell index={5} colSpan={3} />
+        {/* lead = selection box + batch, category, period, status */}
+        <Table.Summary.Cell index={0} colSpan={(selection ? 1 : 0) + 4}><Text strong>Total ({rows.length})</Text></Table.Summary.Cell>
+        <Table.Summary.Cell index={(selection ? 1 : 0) + 4} align="right"><Text strong>{money(rows.reduce((t, r) => t + r.accountedDr, 0))}</Text></Table.Summary.Cell>
+        <Table.Summary.Cell index={(selection ? 1 : 0) + 5} colSpan={gateOf ? 4 : 3} />
       </Table.Summary.Row>
     )}
     columns={[
@@ -431,6 +535,10 @@ const JournalTable: React.FC<{
       { title: 'AED Dr', dataIndex: 'accountedDr', width: 130, align: 'right' as const, sorter: (a: GlJournal, b: GlJournal) => a.accountedDr - b.accountedDr, render: (v: number) => money(v) },
       { title: 'Waiting', dataIndex: 'ageDays', width: 90, align: 'right' as const, sorter: (a: GlJournal, b: GlJournal) => a.ageDays - b.ageDays,
         render: (v: number) => (v <= 0 ? 'today' : `${v} d`) },
+      ...(gateOf ? [{ title: 'Approval', key: 'appr', width: compact ? 150 : 200, render: (_: unknown, r: GlJournal) => {
+        const a = r.batchId ? approvals?.get(r.batchId) : undefined;
+        return <JournalApprovalTag gate={gateOf(r)} approval={a} compact={compact} onClick={a && onTrail ? () => onTrail(r) : undefined} />;
+      } }] : []),
       ...(compact ? [] : [
         { title: 'Created by', dataIndex: 'createdBy', width: 170, ellipsis: true },
         { title: 'Ledger', dataIndex: 'ledger', width: 150, ellipsis: true },

@@ -639,6 +639,10 @@ export async function getApprovalTokens(): Promise<ApprovalToken[]> {
 
 // ─── External Transaction Approval ───────────────────────────────────────────
 
+export interface EmailArea { module: string; title: string; noun: string }
+const CASH_EMAIL_AREA: EmailArea = { module: 'Cash Management', title: 'Cash — External Transaction Approval', noun: 'A cash external transaction' };
+export const JOURNAL_EMAIL_AREA: EmailArea = { module: 'General Ledger', title: 'General Ledger — Journal Approval', noun: 'A journal' };
+
 function buildTxnApprovalEmailHtml(params: {
   recipientName: string;
   today: string;
@@ -650,8 +654,11 @@ function buildTxnApprovalEmailHtml(params: {
   currency: string;
   description: string;
   submittedBy: string;
+  /** what is approved — cash external transactions unless given */
+  area?: EmailArea;
 }): string {
   const { recipientName, today, approveUrl, rejectUrl, txnRef, txnType, amount, currency, description, submittedBy } = params;
+  const area = params.area ?? CASH_EMAIL_AREA;
   const fmtAmt = `${currency} ${amount.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -664,7 +671,7 @@ function buildTxnApprovalEmailHtml(params: {
   <tr><td style="background:linear-gradient(135deg,#C74634 0%,#9B3528 100%);padding:32px;text-align:center;">
     <div style="font-size:10px;letter-spacing:3px;color:rgba(255,255,255,0.70);margin-bottom:8px;text-transform:uppercase;">Bumeric Business Solutions</div>
     <div style="font-size:28px;font-weight:700;color:#ffffff;margin-bottom:6px;">&#128338; Approval Required</div>
-    <div style="font-size:12px;color:rgba(255,255,255,0.80);">Cash — External Transaction Approval</div>
+    <div style="font-size:12px;color:rgba(255,255,255,0.80);">${area.title}</div>
   </td></tr>
   <tr><td style="background:#fff8e1;padding:12px 32px;border-bottom:2px solid #ffe082;">
     <table width="100%" cellpadding="0" cellspacing="0"><tr>
@@ -675,7 +682,7 @@ function buildTxnApprovalEmailHtml(params: {
   <tr><td style="padding:28px 32px 0;">
     <p style="margin:0 0 10px;font-size:15px;color:#1a1a1a;font-weight:500;">Dear ${recipientName},</p>
     <p style="margin:0 0 22px;font-size:13px;color:#555;line-height:1.7;">
-      A cash external transaction has been submitted for your approval. Click <strong>Approve</strong> or
+      ${area.noun} has been submitted for your approval. Click <strong>Approve</strong> or
       <strong>Reject</strong> below — your response will be recorded instantly.
       Each link is single-use and expires in 72 hours.
     </p>
@@ -686,7 +693,7 @@ function buildTxnApprovalEmailHtml(params: {
       <tr><td colspan="2" style="background:#f8f9fa;padding:10px 16px;font-size:10px;font-weight:700;color:#999;letter-spacing:1px;text-transform:uppercase;">Transaction Details</td></tr>
       <tr style="border-top:1px solid #e8e8e8;">
         <td style="padding:11px 16px;font-size:12px;color:#888;width:130px;background:#fff;">Module</td>
-        <td style="padding:11px 16px;font-size:13px;font-weight:600;background:#fff;">Cash Management</td>
+        <td style="padding:11px 16px;font-size:13px;font-weight:600;background:#fff;">${area.module}</td>
       </tr>
       <tr style="border-top:1px solid #e8e8e8;">
         <td style="padding:11px 16px;font-size:12px;color:#888;background:#f8f9fa;">Transaction Type</td>
@@ -1007,10 +1014,22 @@ export async function sendExternalTxnApproval(params: {
   if (!sendEmail) return { success: true, message: sentMsg, debug, requestId };
 
   // Step 4 — Optional approval email with single-use links (failure does not undo the request)
+  const warning = await emailApprover({ approvalRef, requestId: requestId ?? txnId, approverEmail, approverName, txnType, txnRef, amount, currency, description, sentBy }, debug);
+  return { success: true, message: warning ? sentMsg : `${sentMsg} An email with approve / reject links was also sent to ${approverEmail}.`, debug, requestId, warning: warning || undefined };
+}
+
+/**
+ * The approval email with single-use approve / reject links (generate-links → send-email).
+ * Returns '' when sent, else a warning — the request itself stands either way.
+ */
+export async function emailApprover(p: {
+  approvalRef: string; requestId: number; approverEmail: string; approverName: string;
+  txnType: string; txnRef: string; amount: number; currency: string; description: string; sentBy: string; area?: EmailArea;
+}, debug: ApprovalDebugStep[]): Promise<string> {
+  const { approvalRef, requestId, approverEmail, approverName, txnType, txnRef, amount, currency, description, sentBy, area } = p;
   const today = new Date().toLocaleDateString('en-AE', { year: 'numeric', month: 'long', day: 'numeric' });
-  let warning = '';
   const tokensUrl = `${BASE}/generate-links`;
-  const tokensPayload = { requestRef: approvalRef, requestId: requestId ?? txnId, toEmail: approverEmail, toName: approverName, transactionType: txnType };
+  const tokensPayload = { requestRef: approvalRef, requestId, toEmail: approverEmail, toName: approverName, transactionType: txnType };
   try {
     const tokRes = await fetch(tokensUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tokensPayload) });
     const tokData = await tokRes.json().catch(() => ({}));
@@ -1019,16 +1038,40 @@ export async function sendExternalTxnApproval(params: {
     const approveUrl = `https://erp-approval.reerperp.workers.dev?token=${tokData.approveToken ?? ''}`;
     const rejectUrl  = `https://erp-approval.reerperp.workers.dev?token=${tokData.rejectToken ?? ''}`;
     const emailUrl = `${APEX_DB_CONFIG.baseUrl}/approvals/send-email`;
-    const html = buildTxnApprovalEmailHtml({ recipientName: approverName, today, approveUrl, rejectUrl, txnRef, txnType, amount, currency, description, submittedBy: sentBy });
+    const html = buildTxnApprovalEmailHtml({ recipientName: approverName, today, approveUrl, rejectUrl, txnRef, txnType, amount, currency, description, submittedBy: sentBy, area });
     const emailPayload = { toEmail: approverEmail, toName: approverName, subject: `[Approval Required] ${txnType || 'External Transaction'} — ${txnRef}`, htmlContent: '(HTML omitted from debug — see full email)' };
     const sendRes = await fetch(emailUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...emailPayload, htmlContent: html }) });
     const sendData = await sendRes.json().catch(() => ({ status: 'ERROR', message: sendRes.statusText }));
     debug.push({ step: '5 — Send Email (ORDS proxy)', url: emailUrl, method: 'POST', payload: emailPayload, status: sendRes.status, response: sendData });
     if (sendData.status !== 'SUCCESS') throw new Error(sendData.message ?? 'Email send failed');
+    return '';
   } catch (err) {
-    warning = `The email could not be sent (${err instanceof Error ? err.message : String(err)}); the approver can still act on it from their notifications.`;
+    return `The email could not be sent (${err instanceof Error ? err.message : String(err)}); the approver can still act on it from their notifications.`;
   }
-  return { success: true, message: warning ? sentMsg : `${sentMsg} An email with approve / reject links was also sent to ${approverEmail}.`, debug, requestId, warning: warning || undefined };
+}
+
+/**
+ * Send a GL journal batch for approval through the approvals REST endpoints — used until
+ * database/gl/166_gl_journal_approval.sql (RR_GL_APPROVAL_PKG) is installed. A resend replaces the batch's pending request.
+ */
+export async function sendJournalApprovalRest(params: {
+  batchId: number; batchName: string; amount: number; currency: string; description: string;
+  approverEmail: string; sentBy: string;
+}): Promise<{ success: boolean; message: string; debug: ApprovalDebugStep[]; requestId?: number }> {
+  const { batchId, batchName, amount, currency, description, approverEmail, sentBy } = params;
+  const debug: ApprovalDebugStep[] = [];
+  const created = await createApprovalRequest({
+    module: 'GL', transactionType: 'JOURNAL', transactionId: batchId, transactionRef: batchName || `GL-JE-${batchId}`,
+    amount, currency, description, requestedByName: sentBy, approverEmail,
+  }, debug, '1 — Create In-App Approval Request');
+  if (!created.ok) return { success: false, message: created.error || 'Could not create the approval request', debug };
+  await replaceEarlierRequests('GL', r => Number(r.transactionId) === batchId, created.requestId, sentBy, debug, '2 — Cancel Earlier Request');
+  return { success: true, message: `Sent for approval${created.requestId ? ` (request #${created.requestId})` : ''}.`, debug, requestId: created.requestId };
+}
+
+/** Cancel / recall one request through the approvals REST endpoint (best-effort fallback). */
+export async function recallApprovalRequest(requestId: number, actorName: string, comments: string): Promise<boolean> {
+  return cancelApprovalRequest(requestId, actorName, comments, [], 'Recall');
 }
 
 // ─── AP Invoice Approval ──────────────────────────────────────────────────────

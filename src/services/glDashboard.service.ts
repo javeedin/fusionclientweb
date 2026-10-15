@@ -199,8 +199,11 @@ export interface PostBatchItem {
   message?: string; errors?: string[];
 }
 
-/** Group the selected journals into the batches the post call works on, with the checks RR_POST_JOURNAL would fail. */
-export function planBatchPost(selected: GlJournal[], allNotPosted: GlJournal[]): PostBatchItem[] {
+/**
+ * Group the selected journals into the batches the post call works on, with the checks RR_POST_JOURNAL would fail —
+ * and, when given, the approval check (waiting for approval, rejected, changed after approval, needs approval).
+ */
+export function planBatchPost(selected: GlJournal[], allNotPosted: GlJournal[], approvalBlock?: (batchId: number, aed: number) => string | null): PostBatchItem[] {
   const byBatch = new Map<number, GlJournal[]>();
   const noBatch: GlJournal[] = [];
   selected.forEach(j => (j.batchId ? byBatch.set(j.batchId, [...(byBatch.get(j.batchId) || []), j]) : noBatch.push(j)));
@@ -213,6 +216,8 @@ export function planBatchPost(selected: GlJournal[], allNotPosted: GlJournal[]):
     const dr = r2(all.reduce((t, j) => t + j.accountedDr, 0)), cr = r2(all.reduce((t, j) => t + j.accountedCr, 0));
     if (Math.abs(dr - cr) > 0.01) blockers.push(`Out of balance — Dr ${dr.toFixed(2)} ≠ Cr ${cr.toFixed(2)}`);
     if (all.some(j => j.lines === 0)) blockers.push('A journal in the batch has no lines');
+    const approval = approvalBlock?.(batchId, dr);
+    if (approval) blockers.push(approval);
     return {
       batchId, batchName: js[0].batchName || `Batch ${batchId}`, period: js[0].period, ledger: js[0].ledger,
       journals: js, others: all.filter(j => !picked.has(j.headerId)), aed: r2(all.reduce((t, j) => t + j.accountedDr, 0)),

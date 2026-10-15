@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Drawer, Button, Badge, Tag, Typography, Space, Tooltip, Empty, Spin, Tabs,
-  Table, Select, Modal, Descriptions, Divider, Input, Alert, message,
+  Table, Select, Modal, Descriptions, Divider, Input, Alert, Checkbox, message,
 } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -16,6 +16,8 @@ import { APEX_DB_CONFIG } from '../config/api.config';
 import { poQuery, nlit } from '../services/po.service';
 import AccountingLinesView, { type AccountingLine } from './AccountingLinesView';
 import { loadExternalTransaction } from '../services/externalTxnLookup';
+import { loadJournalForApproval, cleanDbMessage, type JournalForApproval } from '../services/glApproval.service';
+import { postJournal } from '../services/manage-journals.service';
 
 const { Text } = Typography;
 
@@ -237,6 +239,7 @@ function cashAccountingLines(txn: any, gl: any[] | null, notif: AppNotification)
   return { posted: false, lines: moneyIn ? [line('DR', bank), line('CR', offset)] : [line('DR', offset), line('CR', bank)] };
 }
 
+const POST_AFTER_KEY = 'bell.gl.postAfterApprove';
 const fmtMoney = (v: any) => (v == null || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const fmtDay = (v: any) => (v && dayjs(v).isValid() ? dayjs(v).format('DD-MMM-YYYY') : v || '—');
 
@@ -244,7 +247,8 @@ const TransactionDetailModal: React.FC<{
   notif: AppNotification | null;
   open: boolean;
   onClose: () => void;
-  onApprove: () => void;
+  /** postJournal: a GL journal is posted right after it is approved */
+  onApprove: (opts?: { postJournal?: boolean }) => void;
   onReject: (comments: string) => void;
   acting: boolean;
   /** open the full invoice (attachments, accounting …) */
@@ -295,6 +299,21 @@ const TransactionDetailModal: React.FC<{
   }, [open, notif?.transactionId, notif?.approvalModule, notif?.approvalTransactionType]);
   const [rejectComments, setRejectComments] = useState('');
   const [showRejectInput, setShowRejectInput] = useState(false);
+  // GL: the journal batch being approved (headers + lines, direct SQL)
+  const [glJe, setGlJe] = useState<JournalForApproval | null>(null);
+  const [glLoading, setGlLoading] = useState(false);
+  const [postAfter, setPostAfter] = useState<boolean>(() => { try { return localStorage.getItem(POST_AFTER_KEY) === 'Y'; } catch { return false; } });
+  const changePostAfter = (v: boolean) => { setPostAfter(v); try { localStorage.setItem(POST_AFTER_KEY, v ? 'Y' : 'N'); } catch { /* per-viewer convenience */ } };
+  React.useEffect(() => {
+    if (!open || !notif?.transactionId || notif.approvalModule !== 'GL') { setGlJe(null); return; }
+    let cancelled = false;
+    setGlLoading(true);
+    loadJournalForApproval(Number(notif.transactionId))
+      .then(j => { if (!cancelled) setGlJe(j); })
+      .catch(() => { if (!cancelled) setGlJe(null); })
+      .finally(() => { if (!cancelled) setGlLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, notif?.transactionId, notif?.approvalModule]);
 
   React.useEffect(() => {
     if (!open || !notif?.transactionId || notif.approvalModule !== 'AP') {
@@ -410,10 +429,15 @@ const TransactionDetailModal: React.FC<{
                 <Button danger icon={<StopOutlined />} onClick={() => setShowRejectInput(true)}>
                   Reject
                 </Button>
+                {notif.approvalModule === 'GL' && (
+                  <Tooltip title="Post the journal (PUT gl/journals/:id/post) as soon as it is approved">
+                    <Checkbox checked={postAfter} onChange={e => changePostAfter(e.target.checked)} style={{ fontSize: 12 }}>and post it</Checkbox>
+                  </Tooltip>
+                )}
                 <Button type="primary" loading={acting} icon={<CheckCircleOutlined />}
                   style={{ background: '#1D7B4D', borderColor: '#1D7B4D' }}
-                  onClick={onApprove}>
-                  Approve
+                  onClick={() => onApprove(notif.approvalModule === 'GL' ? { postJournal: postAfter } : undefined)}>
+                  {notif.approvalModule === 'GL' && postAfter ? 'Approve & post' : 'Approve'}
                 </Button>
               </>
             )}
@@ -553,6 +577,72 @@ const TransactionDetailModal: React.FC<{
         );
       })()}
 
+      {notif.approvalModule === 'GL' && notif.transactionId && (() => {
+        const j = glJe;
+        const sent = Number(notif.approvalAmount);
+        const changed = j && Number.isFinite(sent) && Math.abs(j.totalDr - sent) > 0.01;
+        const balanced = j && Math.abs(j.totalDr - j.totalCr) <= 0.01;
+        const posted = j && /^(p|posted)$/i.test(String(j.batchStatus || ''));
+        return (
+          <>
+            <Divider style={{ margin: '8px 0', fontSize: 12 }}>
+              <Space size={8}>
+                <span>Journal</span>
+                {onOpenPath && <Button size="small" type="link" icon={<EyeOutlined />} style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                  onClick={() => onOpenPath('/gl/manage-journals')}>Open Manage Journals</Button>}
+              </Space>
+            </Divider>
+            {glLoading ? <div style={{ textAlign: 'center', padding: 8 }}><Spin size="small" /></div>
+              : !j ? <Alert type="warning" showIcon style={{ fontSize: 12 }} message={`Journal batch ${notif.transactionId} could not be loaded — it may have been deleted`} />
+              : <>
+                {changed && (
+                  <Alert type="warning" showIcon style={{ marginBottom: 8, fontSize: 12 }}
+                    message={`Changed after it was sent — sent ${notif.approvalCurrency || ''} ${fmtMoney(sent)}, now ${j.ledgerCurrency} ${fmtMoney(j.totalDr)}`}
+                    description="Approving is refused; ask the sender to send it for approval again (or reject it)." />
+                )}
+                {posted && <Alert type="info" showIcon style={{ marginBottom: 8, fontSize: 12 }} message="This journal is already posted." />}
+                <Descriptions bordered size="small" column={2} style={{ marginBottom: 8 }}>
+                  <Descriptions.Item label="Batch" span={2}>{j.batchName}</Descriptions.Item>
+                  <Descriptions.Item label="Period">{j.period || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Accounting date">{fmtDay(j.accountingDate)}</Descriptions.Item>
+                  <Descriptions.Item label="Ledger">{j.ledger || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Source">{j.source || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Created by">{j.createdBy || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Status"><Tag style={{ margin: 0 }}>{j.batchStatus || 'Unposted'}</Tag></Descriptions.Item>
+                  <Descriptions.Item label="Amount" span={2}>
+                    <Text strong style={{ fontFamily: 'monospace' }}>{j.ledgerCurrency} {fmtMoney(j.totalDr)}</Text>
+                    <Tag color={balanced ? 'success' : 'error'} icon={balanced ? <CheckCircleOutlined /> : <WarningOutlined />} style={{ marginLeft: 8 }}>
+                      {balanced ? 'balanced' : `out of balance — Cr ${fmtMoney(j.totalCr)}`}
+                    </Tag>
+                  </Descriptions.Item>
+                </Descriptions>
+                {j.journals.length > 1 && (
+                  <div style={{ fontSize: 12, marginBottom: 8 }}>
+                    {j.journals.map(x => (
+                      <div key={x.headerId} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '2px 0', borderBottom: '1px solid #f5f5f5' }}>
+                        <span>{x.name}{x.category ? <Text type="secondary" style={{ fontSize: 11 }}> · {x.category}</Text> : null}</span>
+                        <Text type="secondary" style={{ fontSize: 11 }}>{x.lines} line{x.lines === 1 ? '' : 's'}</Text>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {j.journals.length === 1 && j.journals[0].description && (
+                  <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 8 }}>{j.journals[0].description}</Text>
+                )}
+                <Divider style={{ margin: '10px 0 8px', fontSize: 12 }}>
+                  <Space size={6}>Accounting <Text type="secondary" style={{ fontSize: 11 }}>{j.lines.length} line{j.lines.length === 1 ? '' : 's'}{j.mixed ? ` · in ${j.ledgerCurrency}` : ''}</Text></Space>
+                </Divider>
+                {j.lineNote && j.lineNote !== j.journals[0]?.description && (
+                  <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>{j.lineNote}</Text>
+                )}
+                {j.lines.length
+                  ? <div style={{ maxHeight: 380, overflowY: 'auto' }}><AccountingLinesView lines={j.lines} /></div>
+                  : <Text type="secondary" style={{ fontSize: 12 }}>No lines</Text>}
+              </>}
+          </>
+        );
+      })()}
+
       {notif.approvalModule === 'CASH' && notif.transactionId && (
         <>
           <Divider style={{ margin: '8px 0', fontSize: 12 }}>Transaction Details</Divider>
@@ -624,7 +714,7 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
     return true;
   });
 
-  const handleApprove = async (notif: AppNotification) => {
+  const handleApprove = async (notif: AppNotification, opts?: { postJournal?: boolean }) => {
     if (!notif.approvalRequestId) return;
     setActingId(notif.id);
     try {
@@ -634,9 +724,28 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
     } catch (e: any) {
       message.error(e?.message || 'Approve failed', 8);
       setApprovalApiModalOpen(true);
-    } finally {
       setActingId(null);
+      return;
     }
+    // GL: post the approved journal (the same PUT gl/journals/:jeBatchId/post as Manage Journals' Post Batch)
+    if (opts?.postJournal && notif.approvalModule === 'GL' && notif.transactionId) {
+      const key = `post-${notif.transactionId}`;
+      message.loading({ content: `Posting ${notif.trxNo}…`, key, duration: 0 });
+      const r = await postJournal(Number(notif.transactionId));
+      if (r.success) message.success({ content: `Posted: ${notif.trxNo}`, key });
+      else {
+        message.destroy(key);
+        Modal.error({
+          title: `${notif.trxNo} approved, but not posted`, width: 540,
+          content: <div>
+            <p style={{ marginBottom: 6 }}>{cleanDbMessage(r.error || r.message) || 'The journal could not be posted.'}</p>
+            {r.errors?.length ? <ul style={{ paddingLeft: 18, margin: 0 }}>{r.errors.map((e, i) => <li key={i}>{e}</li>)}</ul> : null}
+            <p style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>It stays approved — post it from the GL dashboard or Manage Journals once fixed.</p>
+          </div>,
+        });
+      }
+    }
+    setActingId(null);
   };
 
   const handleReject = async (notif: AppNotification, comments?: string) => {
@@ -975,7 +1084,7 @@ const NotificationPanel: React.FC<{ open: boolean; onClose: () => void }> = ({ o
         open={!!detailNotif}
         onClose={() => setDetailNotif(null)}
         acting={!!actingId}
-        onApprove={() => detailNotif && handleApprove(detailNotif)}
+        onApprove={opts => detailNotif && handleApprove(detailNotif, opts)}
         onReject={(comments) => detailNotif && handleReject(detailNotif, comments)}
         onOpenInvoice={(openInvoiceId, openInvoiceNumber) => {
           setDetailNotif(null);
