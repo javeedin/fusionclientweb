@@ -179,7 +179,7 @@ const GlDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavig
         </Space>
       </div>
       {data.errors.length > 0 && (
-        <Alert type="error" showIcon style={{ marginBottom: 12 }} message="Some figures could not be read"
+        <Alert type="error" showIcon closable style={{ marginBottom: 12 }} message="Some figures could not be read"
           description={<ul style={{ margin: 0, paddingLeft: 18 }}>{data.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>} />
       )}
 

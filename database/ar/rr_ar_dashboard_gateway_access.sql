@@ -17,7 +17,7 @@ BEGIN
     IF v_whitelist > 0 THEN
         FOR t IN (SELECT table_name FROM user_tables
                   WHERE table_name IN ('RR_AR_INVOICE_HEADERS', 'RR_AR_INVOICE_INSTALLMENTS', 'RR_AR_RECEIPTS',
-                                       'RR_AR_RECEIPT_APPLICATIONS', 'RR_AR_ADJUSTMENTS')) LOOP
+                                       'RR_AR_RECEIPT_APPLICATIONS', 'RR_AR_ADJUSTMENTS', 'RR_AR_CM_APPLICATIONS')) LOOP
             MERGE INTO RR_AI_OBJECT_ACL a USING (SELECT t.table_name n FROM dual) s ON (a.OBJECT_NAME = s.n)
             WHEN NOT MATCHED THEN INSERT (OBJECT_NAME, ALLOWED_FLAG) VALUES (s.n, 'Y');
         END LOOP;

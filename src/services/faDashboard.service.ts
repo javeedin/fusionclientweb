@@ -54,7 +54,7 @@ FROM assets`;
 /** Cost, depreciation and NBV per category (in service). */
 export const byCategorySql = `WITH ${ASSETS}
 SELECT CATEGORY, COUNT(*) AS ASSETS, ROUND(SUM(COST), 2) AS COST, ROUND(SUM(LEAST(RESERVE, COST)), 2) AS RESERVE
-FROM assets WHERE RETIRED = 'N' GROUP BY CATEGORY ORDER BY SUM(COST) DESC FETCH FIRST 8 ROWS ONLY`;
+FROM assets WHERE RETIRED = 'N' GROUP BY CATEGORY ORDER BY COST DESC FETCH FIRST 8 ROWS ONLY`;
 
 export const LIFE = [
   { key: 'Q1', label: 'Under 25% used' }, { key: 'Q2', label: '25–50%' }, { key: 'Q3', label: '50–75%' },

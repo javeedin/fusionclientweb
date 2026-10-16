@@ -1,6 +1,7 @@
 // Petty cash dashboard — direct SQL through the read gateway (POST ai/executequery), aggregated in the database.
+// Active registers only (as the Search tab lists them by default): draft, inactive and closed ones are left out everywhere.
 //
-// The same figures a register shows in its header, for every register at once:
+// The same figures a register shows in its header, for every active register at once:
 //   balance = money in (debits) − money out (credits)   (as GET pc/registers computes it)
 //   balance with suspense = balance − suspense amounts   (as the register screen computes it)
 //   available to add = limit − balance (registers with a limit)
@@ -10,7 +11,7 @@ import type { PCRegister } from './pc.service';
 
 const APP = 'PETTY_CASH';
 
-/** One row per register with its totals. */
+/** One row per active register with its totals. */
 export const registersSql = `SELECT r.REGISTER_ID, r.REGISTER_NAME, r.BUSINESS_UNIT, NVL(r.CURRENCY, 'AED') AS CURRENCY, r.STATUS, r.OWNED_BY,
        r.CASH_LIMIT, TO_CHAR(r.START_DATE, 'YYYY-MM-DD') AS START_DATE, TO_CHAR(r.END_DATE, 'YYYY-MM-DD') AS END_DATE,
        r.CASH_ACCOUNT_CCID, r.CASH_ACCOUNT_DESC, r.COMMENTS, r.CREATED_BY, TO_CHAR(r.CREATION_DATE, 'YYYY-MM-DD') AS CREATION_DATE,
@@ -24,24 +25,25 @@ export const registersSql = `SELECT r.REGISTER_ID, r.REGISTER_NAME, r.BUSINESS_U
        TO_CHAR(MAX(t.TRANSACTION_DATE), 'YYYY-MM-DD') AS LAST_TXN
 FROM RR_PC_REGISTERS r
 LEFT JOIN RR_PC_TRANSACTIONS t ON t.REGISTER_ID = r.REGISTER_ID
+WHERE UPPER(r.STATUS) = 'ACTIVE'
 GROUP BY r.REGISTER_ID, r.REGISTER_NAME, r.BUSINESS_UNIT, r.CURRENCY, r.STATUS, r.OWNED_BY, r.CASH_LIMIT, r.START_DATE, r.END_DATE,
          r.CASH_ACCOUNT_CCID, r.CASH_ACCOUNT_DESC, r.COMMENTS, r.CREATED_BY, r.CREATION_DATE
 ORDER BY r.REGISTER_NAME`;
 
-/** Money in / out per month, last 6 months, per currency. */
+/** Money in / out per month, last 6 months, per currency (active registers). */
 export const monthsSql = `SELECT TO_CHAR(TRUNC(t.TRANSACTION_DATE, 'MM'), 'YYYY-MM') AS MON, NVL(t.CURRENCY, 'AED') AS CURRENCY,
        SUM(NVL(t.DEBIT_AMOUNT, 0)) AS MONEY_IN, SUM(NVL(t.CREDIT_AMOUNT, 0)) AS MONEY_OUT
-FROM RR_PC_TRANSACTIONS t
+FROM RR_PC_TRANSACTIONS t JOIN RR_PC_REGISTERS r ON r.REGISTER_ID = t.REGISTER_ID AND UPPER(r.STATUS) = 'ACTIVE'
 WHERE t.TRANSACTION_DATE >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -5)
 GROUP BY TO_CHAR(TRUNC(t.TRANSACTION_DATE, 'MM'), 'YYYY-MM'), NVL(t.CURRENCY, 'AED')`;
 
-/** Spending (expenses) by expense type, last 90 days, per currency. */
+/** Spending (expenses) by expense type, last 90 days, per currency (active registers). */
 export const expenseTypesSql = `SELECT NVL(t.EXPENSE_TYPE, '(no expense type)') AS EXPENSE_TYPE, NVL(t.CURRENCY, 'AED') AS CURRENCY,
        SUM(NVL(t.CREDIT_AMOUNT, 0)) AS AMOUNT, COUNT(*) AS N
-FROM RR_PC_TRANSACTIONS t
+FROM RR_PC_TRANSACTIONS t JOIN RR_PC_REGISTERS r ON r.REGISTER_ID = t.REGISTER_ID AND UPPER(r.STATUS) = 'ACTIVE'
 WHERE t.TRANSACTION_TYPE = 'Expense' AND t.TRANSACTION_DATE >= TRUNC(SYSDATE) - 90
 GROUP BY NVL(t.EXPENSE_TYPE, '(no expense type)'), NVL(t.CURRENCY, 'AED')
-ORDER BY SUM(NVL(t.CREDIT_AMOUNT, 0)) DESC FETCH FIRST 40 ROWS ONLY`;
+ORDER BY AMOUNT DESC FETCH FIRST 40 ROWS ONLY`;
 
 // ── shapes ─────────────────────────────────────────────────────────────────
 const num = (v: unknown) => Number(v) || 0;
@@ -81,7 +83,7 @@ const monthLabel = (ym: string) => {
 
 export async function loadPettyCashDashboard(): Promise<PcData> {
   const queries = [
-    { label: 'Registers and their totals', sql: registersSql },
+    { label: 'Active registers and their totals', sql: registersSql },
     { label: 'Money in and out per month', sql: monthsSql },
     { label: 'Spending by expense type (90 days)', sql: expenseTypesSql },
   ];
@@ -111,7 +113,7 @@ export async function loadPettyCashDashboard(): Promise<PcData> {
     };
   });
 
-  const activeAll = registers.filter(x => x.register.status === 'ACTIVE');
+  const activeAll = registers.filter(x => String(x.register.status).toUpperCase() === 'ACTIVE');
   const counts = new Map<string, number>();
   (activeAll.length ? activeAll : registers).forEach(x => counts.set(x.register.currency, (counts.get(x.register.currency) || 0) + 1));
   const currency = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] || 'AED';

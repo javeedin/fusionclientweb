@@ -57,14 +57,16 @@ const ReceivablesDashboard: React.FC<{ businessUnit: string; onNavigate: (path: 
   const maxAge = Math.max(1, ...data.ages.map(a => a.aed));
   const maxCust = Math.max(1, ...data.topCustomers.map(c => c.aed));
   const maxMonth = Math.max(1, ...data.months.flatMap(m => [m.billed, m.received]));
-  // 91–180 and over 180 days (an invoice with installments in both counts in each)
+  // 91–180 and over 180 days
   const over90 = data.ages.filter(a => a.key === 'D180' || a.key === 'OVER').reduce((t, a) => t + a.invoices, 0);
   const attention = [
     { key: 'over90', label: 'Overdue more than 90 days', count: over90, hint: 'invoices — follow up or provide for them', icon: <WarningOutlined style={{ color: STATUS.critical }} />,
       go: () => showInvoices('Overdue more than 90 days', 'OVER90') },
-    { key: 'unapplied', label: 'Receipts not fully applied', count: data.unapplied.length, hint: `${FUNCTIONAL_CCY} ${money(data.unappliedAed)} cash not matched to invoices`,
+    { key: 'unapplied', label: 'Receipts not fully applied', count: data.unappliedCount, hint: `${FUNCTIONAL_CCY} ${money(data.unappliedAed)} cash not matched to invoices`,
       icon: <WalletOutlined style={{ color: STATUS.warning }} />, go: () => setReceipts(data.unapplied) },
-    { key: 'incomplete', label: 'Incomplete invoices', count: data.attention.incomplete, hint: 'not completed — they are not receivable yet',
+    { key: 'overapplied', label: 'Over-applied invoices', count: data.overApplied, hint: `more received or credited than billed (${FUNCTIONAL_CCY} ${money(-data.overAppliedAed)}) — check the applications`,
+      icon: <ExclamationCircleOutlined style={{ color: STATUS.critical }} />, go: () => showInvoices('Over-applied invoices', 'OVERAPPLIED') },
+    { key: 'incomplete', label: 'Incomplete invoices', count: data.attention.incomplete, hint: `${FUNCTIONAL_CCY} ${money(data.attention.incompleteAed)} not completed — not in the balance yet`,
       icon: <FileTextOutlined style={{ color: STATUS.warning }} />, go: () => onNavigate('/ar/manage-receivables') },
     { key: 'disputed', label: 'Disputed installments', count: data.attention.disputed, hint: 'customer disputes on open balances',
       icon: <ExclamationCircleOutlined style={{ color: STATUS.warning }} />, go: () => onNavigate('/ar/manage-receivables') },
@@ -80,7 +82,7 @@ const ReceivablesDashboard: React.FC<{ businessUnit: string; onNavigate: (path: 
         <Tooltip title="The SQL behind every figure"><Button size="small" type="text" icon={<CodeOutlined />} onClick={() => setSqlOpen(true)}>SQL</Button></Tooltip>
       </div>
       {data.errors.length > 0 && (
-        <Alert type="error" showIcon style={{ marginBottom: 12 }} message="Some figures could not be read"
+        <Alert type="error" showIcon closable style={{ marginBottom: 12 }} message="Some figures could not be read"
           description={<ul style={{ margin: 0, paddingLeft: 18 }}>{data.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>} />
       )}
 
@@ -104,6 +106,17 @@ const ReceivablesDashboard: React.FC<{ businessUnit: string; onNavigate: (path: 
                 <span>{swatch(DARK)}Overdue {money(data.overdue, 0)} ({overduePct}%)</span>
               </Space>
             </>}
+            {data.parts && data.open > 0 && (
+              <Tooltip title="How the open balance adds up, over the open invoices: original amounts − receipts applied − credit memos applied + approved adjustments">
+                <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${INK.hairline}`, fontSize: 12, color: INK.muted, fontVariantNumeric: 'tabular-nums' }}>
+                  billed {compact(data.parts.original)}
+                  {' − '}received {compact(data.parts.received)}
+                  {data.parts.credited ? <>{' − '}credit memos {compact(data.parts.credited)}</> : null}
+                  {data.parts.adjusted ? <>{data.parts.adjusted < 0 ? ' − ' : ' + '}adjustments {compact(Math.abs(data.parts.adjusted))}</> : null}
+                  {' = '}<span style={{ color: INK.secondary }}>{compact(data.open)}</span>
+                </div>
+              </Tooltip>
+            )}
           </div>
         </Col>
         <Col xs={24} sm={8} lg={5}>
@@ -125,9 +138,9 @@ const ReceivablesDashboard: React.FC<{ businessUnit: string; onNavigate: (path: 
         </Col>
         <Col xs={24} sm={8} lg={5}>
           <div style={{ ...card, ...clickable(data.unapplied.length > 0) }} onClick={() => data.unapplied.length && setReceipts(data.unapplied)}>
-            <Space size={6}><WalletOutlined style={{ color: data.unapplied.length ? STATUS.warning : INK.muted }} /><Text style={{ fontSize: 13, color: INK.secondary }}>Unapplied cash</Text></Space>
+            <Space size={6}><WalletOutlined style={{ color: data.unappliedCount ? STATUS.warning : INK.muted }} /><Text style={{ fontSize: 13, color: INK.secondary }}>Unapplied cash</Text></Space>
             <div style={{ fontSize: 24, fontWeight: 600, color: INK.primary, margin: '6px 0 4px' }}>{compact(data.unappliedAed)}</div>
-            <Text style={{ fontSize: 12, color: INK.secondary }}>{data.unapplied.length ? `${data.unapplied.length} receipt${data.unapplied.length === 1 ? '' : 's'} to apply to invoices` : 'every receipt is applied'}</Text>
+            <Text style={{ fontSize: 12, color: INK.secondary }}>{data.unappliedCount ? `${data.unappliedCount.toLocaleString()} receipt${data.unappliedCount === 1 ? '' : 's'} to apply to invoices` : 'every receipt is applied'}</Text>
           </div>
         </Col>
       </Row>
@@ -228,15 +241,15 @@ const ReceivablesDashboard: React.FC<{ businessUnit: string; onNavigate: (path: 
         </Col>
       </Row>
 
-      <Modal open={!!list} onCancel={() => setList(null)} width={1050} destroyOnHidden title={list?.title} footer={<Button onClick={() => setList(null)}>Close</Button>}>
+      <Modal open={!!list} onCancel={() => setList(null)} width={1250} destroyOnHidden title={list?.title} footer={<Button onClick={() => setList(null)}>Close</Button>}>
         <Table<OpenInvoice> size="small" rowKey="id" loading={!list?.rows} dataSource={list?.rows ?? []}
           pagination={{ pageSize: 12, showSizeChanger: false, showTotal: t => `${t} invoice${t === 1 ? '' : 's'}${t >= 500 ? ' (first 500)' : ''}` }}
           onRow={r => ({ onClick: () => { setList(null); onNavigate(`/ar/invoices/${r.id}`); }, style: { cursor: 'pointer' } })}
           summary={rows => (
             <Table.Summary.Row style={{ background: '#fafafa' }}>
-              <Table.Summary.Cell index={0} colSpan={4}><Text strong>Total ({rows.length})</Text></Table.Summary.Cell>
-              <Table.Summary.Cell index={4} />
-              <Table.Summary.Cell index={5} align="right"><Text strong>{money(rows.reduce((t, r) => t + r.aed, 0))}</Text></Table.Summary.Cell>
+              <Table.Summary.Cell index={0} colSpan={8}><Text strong>Total ({rows.length})</Text></Table.Summary.Cell>
+              <Table.Summary.Cell index={8} />
+              <Table.Summary.Cell index={9} align="right"><Text strong>{money(rows.reduce((t, r) => t + r.aed, 0))}</Text></Table.Summary.Cell>
             </Table.Summary.Row>
           )}
           columns={[
@@ -245,12 +258,17 @@ const ReceivablesDashboard: React.FC<{ businessUnit: string; onNavigate: (path: 
             { title: 'Due', dataIndex: 'dueDate', width: 105 },
             { title: 'Late', dataIndex: 'late', width: 90, align: 'right', sorter: (a, b) => a.late - b.late,
               render: (v: number) => (v > 0 ? <span><WarningOutlined style={{ color: v > 90 ? STATUS.critical : STATUS.warning, marginRight: 4 }} />{v} d</span> : <Text type="secondary">not due</Text>) },
+            { title: 'Original', dataIndex: 'original', width: 120, align: 'right', render: (v: number) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{money(v)}</span> },
+            { title: 'Received', dataIndex: 'received', width: 115, align: 'right', render: (v: number) => <span style={{ fontVariantNumeric: 'tabular-nums', color: v ? INK.primary : INK.muted }}>{v ? `−${money(v)}` : '—'}</span> },
+            { title: 'Credited', dataIndex: 'credited', width: 105, align: 'right', render: (v: number) => <span style={{ fontVariantNumeric: 'tabular-nums', color: v ? INK.primary : INK.muted }}>{v ? `−${money(v)}` : '—'}</span> },
+            { title: 'Adjusted', dataIndex: 'adjusted', width: 105, align: 'right', render: (v: number) => <span style={{ fontVariantNumeric: 'tabular-nums', color: v ? INK.primary : INK.muted }}>{v ? `${v > 0 ? '+' : '−'}${money(Math.abs(v))}` : '—'}</span> },
             { title: 'Balance', key: 'bal', width: 150, align: 'right', render: (_: unknown, r) => <span style={{ fontVariantNumeric: 'tabular-nums' }}><Text type="secondary" style={{ fontSize: 11 }}>{r.ccy}</Text> {money(r.balance)}</span> },
             { title: FUNCTIONAL_CCY, dataIndex: 'aed', width: 140, align: 'right', sorter: (a, b) => a.aed - b.aed, render: (v: number) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{money(v)}</span> },
           ]} />
       </Modal>
 
-      <Modal open={!!receipts} onCancel={() => setReceipts(null)} width={950} destroyOnHidden title="Receipts not fully applied"
+      <Modal open={!!receipts} onCancel={() => setReceipts(null)} width={1050} destroyOnHidden
+        title={<Space>Receipts not fully applied<Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>{data.unappliedCount.toLocaleString()} receipts · {FUNCTIONAL_CCY} {money(data.unappliedAed)}{data.unappliedCount > data.unapplied.length ? ` · the largest ${data.unapplied.length} listed` : ''}</Text></Space>}
         footer={<Space><Button onClick={() => { setReceipts(null); onNavigate('/ar/manage-receipts'); }}>Open Receipts</Button><Button onClick={() => setReceipts(null)}>Close</Button></Space>}>
         <Table<UnappliedReceipt> size="small" rowKey="id" dataSource={receipts ?? []} pagination={{ pageSize: 12, showSizeChanger: false }}
           columns={[
@@ -258,6 +276,7 @@ const ReceivablesDashboard: React.FC<{ businessUnit: string; onNavigate: (path: 
             { title: 'Customer', dataIndex: 'customer', ellipsis: true },
             { title: 'Date', dataIndex: 'date', width: 105 },
             { title: 'Age', dataIndex: 'age', width: 80, align: 'right', sorter: (a, b) => a.age - b.age, render: (v: number) => `${v} d` },
+            { title: 'Amount', dataIndex: 'amount', width: 130, align: 'right', render: (v: number) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{money(v)}</span> },
             { title: 'Unapplied', key: 'u', width: 150, align: 'right', render: (_: unknown, r) => <span style={{ fontVariantNumeric: 'tabular-nums' }}><Text type="secondary" style={{ fontSize: 11 }}>{r.ccy}</Text> {money(r.unapplied)}</span> },
             { title: FUNCTIONAL_CCY, dataIndex: 'aed', width: 130, align: 'right', render: (v: number) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{money(v)}</span> },
           ]} />
@@ -266,8 +285,9 @@ const ReceivablesDashboard: React.FC<{ businessUnit: string; onNavigate: (path: 
       <Modal open={sqlOpen} onCancel={() => setSqlOpen(false)} width={960} footer={<Button onClick={() => setSqlOpen(false)}>Close</Button>}
         title={<Space><CodeOutlined />SQL behind the dashboard<Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>POST ai/executequery</Text></Space>}>
         <Text type="secondary" style={{ display: 'block', marginBottom: 10, fontSize: 12 }}>
-          Open balance = installments' balance due (reduced by receipts applied here and in Fusion), else the invoice balance; void invoices left out.
-          Due = installment due date, else invoice due date, else transaction date. Amounts in {FUNCTIONAL_CCY} at each document's rate.
+          Balance of each invoice = original amount − receipts applied − credit memos applied + approved adjustments (latest applications only).
+          Complete invoices, debit memos and chargebacks; void, incomplete and credit memos left out. Due = invoice due date, else first installment's,
+          else transaction date. Unapplied cash = receipt amount − applications. Amounts in {FUNCTIONAL_CCY} at each document's rate.
         </Text>
         {data.queries.map(q => (
           <div key={q.label} style={{ marginBottom: 14 }}>

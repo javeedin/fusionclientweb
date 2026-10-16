@@ -1,11 +1,11 @@
 // Petty cash dashboard (first tab of Petty Cash Registers): the key figures every register shows in its header —
-// balance, balance with suspense, available to add, limit, money in / out — across all registers, plus what needs
+// balance, balance with suspense, available to add, limit, money in / out — across the active registers, plus what needs
 // attention. Direct SQL through the read gateway — see pettyCashDashboard.service. Opening a register opens its tab.
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Col, Modal, Row, Skeleton, Space, Tooltip, Typography, message } from 'antd';
 import {
   CheckCircleOutlined, ClockCircleOutlined, CloseCircleOutlined, CodeOutlined, CopyOutlined, ExclamationCircleOutlined,
-  ReloadOutlined, SearchOutlined, WalletOutlined, WarningOutlined,
+  ReloadOutlined, SearchOutlined, WarningOutlined,
 } from '@ant-design/icons';
 import type { PCRegister } from '../../services/pc.service';
 import { loadPettyCashDashboard, type PcData, type PcRegisterStat } from '../../services/pettyCashDashboard.service';
@@ -60,7 +60,6 @@ const PettyCashDashboard: React.FC<{
   const withUnposted = data.registers.filter(x => x.unposted > 0);
   const withErrors = data.registers.filter(x => x.errors > 0);
   const withSuspense = data.registers.filter(x => x.suspense > 0.005);
-  const idleCash = data.registers.filter(x => x.register.status !== 'ACTIVE' && Math.abs(x.register.balance) > 0.005);
   const attention = [
     { key: 'low', label: 'Need a refill', rows: lowOnes, hint: `balance under ${LOW}% of the limit`, icon: <WarningOutlined style={{ color: STATUS.warning }} /> },
     { key: 'neg', label: 'Negative balance', rows: negative, hint: 'more paid out than put in', icon: <CloseCircleOutlined style={{ color: STATUS.critical }} /> },
@@ -68,7 +67,6 @@ const PettyCashDashboard: React.FC<{
     { key: 'unposted', label: 'Transactions to post', rows: withUnposted, hint: `${plural(data.unposted, 'transaction')} · ${ccy} ${money(data.unpostedAmount)}`, icon: <ClockCircleOutlined style={{ color: STATUS.warning }} /> },
     { key: 'errors', label: 'Posting errors', rows: withErrors, hint: `${plural(data.errors, 'transaction')} failed to post`, icon: <CloseCircleOutlined style={{ color: STATUS.critical }} /> },
     { key: 'susp', label: 'Suspense to clear', rows: withSuspense, hint: `${ccy} ${money(data.suspense)} in suspense`, icon: <ExclamationCircleOutlined style={{ color: '#722ed1' }} /> },
-    { key: 'idle', label: 'Cash in inactive registers', rows: idleCash, hint: 'not active, balance not zero', icon: <WalletOutlined style={{ color: INK.muted }} /> },
   ];
 
   const registerRow = (x: PcRegisterStat) => {
@@ -124,7 +122,7 @@ const PettyCashDashboard: React.FC<{
         <Tooltip title="The SQL behind every figure"><Button size="small" type="text" icon={<CodeOutlined />} onClick={() => setSqlOpen(true)}>SQL</Button></Tooltip>
       </div>
       {data.errors_.length > 0 && (
-        <Alert type="error" showIcon style={{ marginBottom: 12 }} message="Some figures could not be read"
+        <Alert type="error" showIcon closable style={{ marginBottom: 12 }} message="Some figures could not be read"
           description={<ul style={{ margin: 0, paddingLeft: 18 }}>{data.errors_.map((e, i) => <li key={i}>{e}</li>)}</ul>} />
       )}
 
