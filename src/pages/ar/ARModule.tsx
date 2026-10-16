@@ -90,12 +90,14 @@ const tasks = [
 ];
 
 const BU_KEY = 'ar.dashboard.bu';
+/** The receivables dashboard is hidden for now — set true to bring it (and its Business Unit filter) back. */
+const SHOW_DASHBOARD = false;
 
 const ARModule: React.FC = () => {
   const navigate = useNavigate();
   const [businessUnits, setBusinessUnits] = useState<string[]>([]);
   const [selectedBU, setSelectedBU] = useState<string>(() => { try { return localStorage.getItem(BU_KEY) || ''; } catch { return ''; } });
-  useEffect(() => { loadReceivablesBusinessUnits().then(setBusinessUnits); }, []);
+  useEffect(() => { if (SHOW_DASHBOARD) loadReceivablesBusinessUnits().then(setBusinessUnits); }, []);
   const changeBU = (v: string) => { setSelectedBU(v); try { localStorage.setItem(BU_KEY, v); } catch { /* per-viewer convenience */ } };
 
   return (
@@ -135,15 +137,15 @@ const ARModule: React.FC = () => {
               </div>
             </Space>
             {/* Business Unit filter (the dashboard below follows it) */}
-            <Space>
+            {SHOW_DASHBOARD && <Space>
               <Text type="secondary" style={{ fontSize: 13 }}>Business Unit:</Text>
               <Select value={selectedBU || 'all'} onChange={v => changeBU(v === 'all' ? '' : v)} style={{ width: 260 }} showSearch
                 options={[{ value: 'all', label: 'All Business Units' }, ...businessUnits.map(b => ({ value: b, label: b }))]} />
-            </Space>
+            </Space>}
           </div>
 
           {/* Receivables dashboard — live, direct SQL (ReceivablesDashboard / receivablesDashboard.service) */}
-          <ReceivablesDashboard businessUnit={selectedBU} onNavigate={path => navigate(path)} />
+          {SHOW_DASHBOARD && <ReceivablesDashboard businessUnit={selectedBU} onNavigate={path => navigate(path)} />}
 
           {/* Task Cards */}
           <Row gutter={[16, 16]}>

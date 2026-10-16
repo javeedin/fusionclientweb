@@ -6290,7 +6290,9 @@ const PettyCash: React.FC = () => {
   const handleSearch = useCallback(async () => {
     setSearchLoading(true);
     try {
-      const values = searchForm.getFieldsValue();
+      // the whole store: the Search tab may not have been opened yet (the Dashboard tab comes first), and
+      // getFieldsValue() without `true` only returns fields that are on screen — the ACTIVE default would be lost
+      const values = searchForm.getFieldsValue(true);
       const rows = await searchRegisters({
         q:        values.registerName || undefined,
         status:   values.status       || undefined,
@@ -6711,7 +6713,7 @@ const PettyCash: React.FC = () => {
               key: 'search',
               label: <Text style={{ fontWeight: 500 }}>Search Criteria</Text>,
               children: (
-                <Form form={searchForm} layout="vertical" size="small">
+                <Form form={searchForm} layout="vertical" size="small" initialValues={{ status: 'ACTIVE' }}>
                   <Row gutter={16}>
                     <Col span={5}>
                       <Form.Item label="Register Name" name="registerName">
