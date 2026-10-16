@@ -4,6 +4,8 @@
 -- The approval status dialog (AP invoices, cash external transactions) reads every request and
 -- action of a transaction in one SELECT through POST ai/executequery:
 --   RR_APPROVAL_REQUESTS, RR_APPROVAL_HISTORY, RR_APPROVAL_USERS
+-- and the notification bell finds the requests waiting on the signed-in approver (current approver,
+-- or one of a PARALLEL / ANY_ONE rule's approvers):  RR_APPROVAL_RULES, RR_APPROVAL_RULE_APPROVERS
 -- When RR_AI_OBJECT_ACL runs in whitelist mode (any 'Y' row) these tables must be listed;
 -- in open mode nothing is added (adding 'Y' rows would switch it to whitelist mode).
 -- Without this the dialog falls back to the approvals REST endpoints (slower, one call per request).
@@ -16,7 +18,8 @@ BEGIN
     SELECT COUNT(*) INTO v_whitelist FROM RR_AI_OBJECT_ACL WHERE ALLOWED_FLAG = 'Y';
     IF v_whitelist > 0 THEN
         FOR t IN (SELECT table_name FROM user_tables
-                  WHERE table_name IN ('RR_APPROVAL_REQUESTS', 'RR_APPROVAL_HISTORY', 'RR_APPROVAL_USERS')) LOOP
+                  WHERE table_name IN ('RR_APPROVAL_REQUESTS', 'RR_APPROVAL_HISTORY', 'RR_APPROVAL_USERS',
+                                       'RR_APPROVAL_RULES', 'RR_APPROVAL_RULE_APPROVERS')) LOOP
             MERGE INTO RR_AI_OBJECT_ACL a USING (SELECT t.table_name n FROM dual) s ON (a.OBJECT_NAME = s.n)
             WHEN NOT MATCHED THEN INSERT (OBJECT_NAME, ALLOWED_FLAG) VALUES (s.n, 'Y');
         END LOOP;

@@ -357,6 +357,56 @@ export async function getApprovalRequests(params?: {
     ORDER BY rq.REQUESTED_DATE DESC, rq.REQUEST_ID DESC`, REQUEST_KEYS, () => getList<ApprovalRequest>(url, REQUEST_KEYS), 10000);
 }
 
+/** Who is signed in — used to find them among the registered approvers (RR_APPROVAL_USERS). */
+export interface ApproverIdentity { email?: string | null; username?: string | null; name?: string | null }
+
+/**
+ * Pending requests waiting on this person — the bell and the pop-ups show only these:
+ *  • they are the request's current approver, or
+ *  • the request's rule is PARALLEL / ANY_ONE and they are one of the rule's approvers, or
+ *  • nobody is assigned (no current approver, no rule approvers) and they approve that module within their limit.
+ * The person is matched by email or full name; without a real email, by username (as the email or the part before the @).
+ */
+export async function getMyPendingApprovals(me: ApproverIdentity): Promise<ApprovalRequest[]> {
+  const low = (v?: string | null) => (v || '').trim().toLowerCase();
+  const ids = [...new Set([low(me.email), low(me.username)].filter(Boolean))];
+  // the part before the @ only for people signed in without a real email (APEX users keyed by username)
+  const locals = ids.some(v => v.includes('@')) ? [] : ids;
+  const name = low(me.name);
+  if (!ids.length && !name) return [];
+  const who = [
+    ids.length ? `LOWER(u0.EMAIL) IN (${ids.map(sqlLit).join(', ')})` : '',
+    locals.length ? `LOWER(SUBSTR(u0.EMAIL, 1, INSTR(u0.EMAIL, '@') - 1)) IN (${locals.map(sqlLit).join(', ')})` : '',
+    name ? `LOWER(TRIM(u0.FULL_NAME)) = ${sqlLit(name)}` : '',
+  ].filter(Boolean).join(' OR ');
+  const sql = `WITH me AS (
+      SELECT u0.USER_ID, UPPER(REPLACE(u0.MODULES, ' ', '')) AS MODS, u0.MAX_APPROVAL_AMT
+      FROM RR_APPROVAL_USERS u0
+      WHERE NVL(u0.ACTIVE, 'Y') = 'Y' AND (${who}))
+    SELECT rq.REQUEST_ID, rq.MODULE, rq.TRANSACTION_TYPE, rq.TRANSACTION_ID, rq.TRANSACTION_REF,
+      rq.AMOUNT, NVL(rq.CURRENCY, 'AED') AS CURRENCY, rq.DESCRIPTION, rq.REQUESTED_BY_NAME, NVL(rq.STATUS, 'PENDING') AS STATUS,
+      rq.RULE_ID, ru.RULE_NAME, ${ISO('rq.REQUESTED_DATE', 'REQUESTED_DATE')},
+      u.FULL_NAME AS CURRENT_APPROVER_NAME, u.EMAIL AS CURRENT_APPROVER_EMAIL
+    FROM RR_APPROVAL_REQUESTS rq
+    LEFT JOIN RR_APPROVAL_USERS u ON u.USER_ID = rq.CURRENT_APPROVER_ID
+    LEFT JOIN RR_APPROVAL_RULES ru ON ru.RULE_ID = rq.RULE_ID
+    WHERE rq.STATUS = 'PENDING'
+      AND (rq.CURRENT_APPROVER_ID IN (SELECT USER_ID FROM me)
+        OR (UPPER(NVL(ru.APPROVAL_TYPE, 'SEQUENTIAL')) IN ('PARALLEL', 'ANY_ONE')
+            AND EXISTS (SELECT 1 FROM RR_APPROVAL_RULE_APPROVERS ra JOIN me ON me.USER_ID = ra.USER_ID WHERE ra.RULE_ID = rq.RULE_ID))
+        OR (rq.CURRENT_APPROVER_ID IS NULL
+            AND NOT EXISTS (SELECT 1 FROM RR_APPROVAL_RULE_APPROVERS ra WHERE ra.RULE_ID = rq.RULE_ID)
+            AND EXISTS (SELECT 1 FROM me WHERE (',' || me.MODS || ',') LIKE ('%,' || UPPER(rq.MODULE) || ',%')
+                          AND (me.MAX_APPROVAL_AMT IS NULL OR me.MAX_APPROVAL_AMT >= NVL(rq.AMOUNT, 0)))))
+    ORDER BY rq.REQUESTED_DATE DESC, rq.REQUEST_ID DESC`;
+  // REST fallback (gateway refused): the handler lists every pending request — keep the ones assigned to this person
+  const rest = async () => (await getList<ApprovalRequest>(`${BASE}/requests?status=PENDING`, REQUEST_KEYS)).filter(r => {
+    const em = low((r as any).currentApproverEmail);
+    return (em && (ids.includes(em) || locals.includes(em.split('@')[0]))) || (!!name && low(r.currentApproverName) === name);
+  });
+  return readList<ApprovalRequest>('my pending requests', sql, REQUEST_KEYS, rest, 2000);
+}
+
 export async function getApprovalHistory(requestId: number): Promise<ApprovalHistoryEntry[]> {
   return readList<ApprovalHistoryEntry>('history', `SELECT HISTORY_ID, REQUEST_ID, ACTION, ACTOR_NAME, COMMENTS,
       ${ISO('ACTION_DATE')}, NOTIFICATION_SENT

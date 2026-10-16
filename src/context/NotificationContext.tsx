@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { buildApexUrl } from '../config/api.helper';
 import { useAuth } from './AuthContext';
-import { getApprovalRequests, emitApprovalsChanged, onApprovalsChanged } from '../services/approvals.service';
+import { getMyPendingApprovals, emitApprovalsChanged, onApprovalsChanged } from '../services/approvals.service';
 import { poExec, PROC } from '../services/po.service';
 import { decideJournalApproval, GL_PROC } from '../services/glApproval.service';
 import { accountExternalTransaction } from '../services/cashAutoAccounting.service';
@@ -126,6 +126,10 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const approvalIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const notificationsRef = useRef<AppNotification[]>([]);
   notificationsRef.current = notifications;
+  // who is signed in — approvals show only for the approvers concerned (getMyPendingApprovals)
+  const meRef = useRef({ email: user?.email, username: user?.username, name: user?.name });
+  meRef.current = { email: user?.email, username: user?.username, name: user?.name };
+  const meKey = [user?.email, user?.username, user?.name].map(v => (v || '').toLowerCase()).join('|');
 
   const addNotification = useCallback((n: Omit<AppNotification, 'id' | 'createdAt'>) => {
     const notif: AppNotification = { ...n, id: uid(), createdAt: Date.now() };
@@ -214,7 +218,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const checkPendingApprovals = useCallback(async () => {
     setApprovalChecking(true);
     try {
-      const requests = await getApprovalRequests({ status: 'PENDING' });
+      // only the requests waiting on this person (current approver / rule approver / module approver when unassigned)
+      const requests = await getMyPendingApprovals(meRef.current);
       const pendingIds = new Set(requests.map(r => r.requestId));
 
       // Detect brand-new arrivals (not seen before)
@@ -348,8 +353,15 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     if (didMountCheck.current) return;
     didMountCheck.current = true;
     checkPdcMaturity();
-    checkPendingApprovals();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Approvals belong to the signed-in person: (re)load them on sign-in and whenever the user changes
+  React.useEffect(() => {
+    seenApprovalIdsRef.current = new Set();
+    setNotifications(prev => prev.filter(n => n.module !== 'Approvals'));
+    setNewApprovalRequests([]);
+    if (meKey.replace(/\|/g, '')) checkPendingApprovals();
+  }, [meKey, checkPendingApprovals]);
 
   // A request was just sent from this app → show it in the bell now (no wait for the next poll)
   React.useEffect(() => onApprovalsChanged(d => {
